@@ -372,6 +372,89 @@
                 <section class="subsection-panel ops-section">
                   <div class="ops-grid">
                     <section class="stack">
+                      <div class="section-header">
+                        <div>
+                          <p class="eyebrow">Remote Access</p>
+                          <h2>Teams, operators, and API-key control</h2>
+                        </div>
+                        <p class="panel-lede">
+                          Keep local browser control open while adding explicit remote operators,
+                          role boundaries, and non-browser ingress keys.
+                        </p>
+                      </div>
+
+                      <article class="library-card">
+                        <div class="row">
+                          <strong id="access-posture-headline">Remote ingress is local-only</strong>
+                          <div class="pill-row">
+                            <span id="access-team-count" class="pill">0 teams</span>
+                            <span id="access-operator-count" class="pill">0 operators</span>
+                            <span id="access-key-count" class="pill">0 keys</span>
+                            <span id="access-request-count" class="pill">0 remote requests</span>
+                          </div>
+                        </div>
+                        <div id="access-posture-summary" class="small-muted">
+                          No operator API keys are active yet. The browser workflow stays available,
+                          but external control is still closed.
+                        </div>
+                      </article>
+
+                      <form id="team-form" class="stack compact-form">
+                        <input name="name" type="text" placeholder="Team name" required />
+                        <input name="slug" type="text" placeholder="Optional slug" />
+                        <textarea
+                          name="description"
+                          placeholder="What this team owns or how it should use OpenZues"
+                        ></textarea>
+                        <button type="submit">Create Team</button>
+                      </form>
+
+                      <form id="operator-form" class="stack compact-form">
+                        <select name="team_id" id="operator-team-select"></select>
+                        <input name="name" type="text" placeholder="Operator name" required />
+                        <input name="email" type="email" placeholder="Email (optional)" />
+                        <select name="role">
+                          <option value="owner">Owner</option>
+                          <option value="admin">Admin</option>
+                          <option value="operator" selected>Operator</option>
+                          <option value="viewer">Viewer</option>
+                        </select>
+                        <div class="toggle-row">
+                          <label class="checkbox">
+                            <input name="enabled" type="checkbox" checked />
+                            Enabled
+                          </label>
+                          <label class="checkbox">
+                            <input name="issue_api_key" type="checkbox" checked />
+                            Issue API key now
+                          </label>
+                        </div>
+                        <button type="submit">Create Operator</button>
+                      </form>
+
+                      <div id="teams-list" class="stack library-list"></div>
+                      <div id="operators-list" class="stack library-list"></div>
+                    </section>
+
+                    <section class="stack">
+                      <div class="section-header">
+                        <div>
+                          <p class="eyebrow">Remote Request Ledger</p>
+                          <h2>Authenticated external launches and task triggers</h2>
+                        </div>
+                        <p class="panel-lede">
+                          Every remote request is attributed to an operator, team, role, and source.
+                        </p>
+                      </div>
+
+                      <div id="remote-requests" class="stack library-list"></div>
+                    </section>
+                  </div>
+                </section>
+
+                <section class="subsection-panel ops-section">
+                  <div class="ops-grid">
+                    <section class="stack">
                       <section class="stack">
                         <div class="section-header">
                           <div>

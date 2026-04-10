@@ -17,13 +17,13 @@ from openzues.services.dreams import build_dream_deck
 from openzues.settings import Settings
 
 
-def make_client(tmp_path):
+def make_client(tmp_path, *, client_host: str = "testclient"):
     app_settings = Settings(
         data_dir=tmp_path / "data",
         db_path=tmp_path / "data" / "openzues-test.db",
     )
     app = create_app(app_settings)
-    return TestClient(app)
+    return TestClient(app, client=(client_host, 50000))
 
 
 def make_instance_view(
@@ -219,6 +219,219 @@ def test_desktop_instance_creation_is_supported(tmp_path) -> None:
     assert created["command"] is None
     assert created["args"] is None
     assert created["resolved_transport"] is None
+
+
+def test_dashboard_bootstraps_remote_access_foundations(tmp_path) -> None:
+    with make_client(tmp_path) as client:
+        response = client.get("/api/dashboard")
+
+    assert response.status_code == 200
+    dashboard = response.json()
+    assert dashboard["ops_mesh"]["access_posture"]["team_count"] == 1
+    assert dashboard["ops_mesh"]["teams"][0]["name"] == "Local Control"
+    assert dashboard["ops_mesh"]["operators"][0]["role"] == "owner"
+    assert dashboard["ops_mesh"]["remote_requests"] == []
+
+
+def test_remote_mission_endpoint_requires_api_key(tmp_path) -> None:
+    with make_client(tmp_path) as client:
+        response = client.post(
+            "/api/remote/missions",
+            json={
+                "name": "Remote launch",
+                "objective": "Create a mission from outside the browser.",
+                "start_immediately": False,
+            },
+        )
+
+    assert response.status_code == 401
+    assert "API key" in response.json()["detail"]
+
+
+def test_remote_management_requires_admin_auth(tmp_path) -> None:
+    with make_client(tmp_path, client_host="203.0.113.7") as client:
+        response = client.post(
+            "/api/operators",
+            json={
+                "name": "Remote Builder",
+                "role": "owner",
+                "issue_api_key": True,
+            },
+        )
+
+    assert response.status_code == 401
+    assert "API key" in response.json()["detail"]
+
+
+def test_remote_owner_can_manage_teams_with_api_key(tmp_path) -> None:
+    with make_client(tmp_path) as local_client:
+        issue_response = local_client.post("/api/operators/1/api-key")
+        api_key = issue_response.json()["api_key"]
+        assert api_key
+    with make_client(tmp_path, client_host="203.0.113.7") as remote_client:
+        response = remote_client.post(
+            "/api/teams",
+            headers={"Authorization": f"Bearer {api_key}"},
+            json={"name": "Remote Ops"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["slug"] == "remote-ops"
+
+
+def test_remote_mission_rejects_unknown_project(tmp_path) -> None:
+    with make_client(tmp_path) as client:
+        instance_response = client.post(
+            "/api/instances",
+            json={
+                "name": "Local Codex Desktop",
+                "transport": "desktop",
+                "cwd": str(tmp_path),
+                "auto_connect": False,
+            },
+        )
+        instance_id = instance_response.json()["id"]
+        operator_response = client.post(
+            "/api/operators",
+            json={
+                "name": "Remote Builder",
+                "role": "operator",
+                "issue_api_key": True,
+            },
+        )
+        api_key = operator_response.json()["api_key"]
+        response = client.post(
+            "/api/remote/missions",
+            headers={"Authorization": f"Bearer {api_key}"},
+            json={
+                "name": "Remote launch",
+                "objective": "Create a mission from outside the browser.",
+                "instance_id": instance_id,
+                "project_id": 999,
+                "start_immediately": False,
+            },
+        )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Unknown project 999"
+
+
+def test_remote_requests_are_logged_in_dashboard(tmp_path) -> None:
+    with make_client(tmp_path) as client:
+        instance_response = client.post(
+            "/api/instances",
+            json={
+                "name": "Local Codex Desktop",
+                "transport": "desktop",
+                "cwd": str(tmp_path),
+                "auto_connect": False,
+            },
+        )
+        instance_id = instance_response.json()["id"]
+        operator_response = client.post(
+            "/api/operators",
+            json={
+                "name": "Remote Builder",
+                "role": "operator",
+                "issue_api_key": True,
+            },
+        )
+        api_key = operator_response.json()["api_key"]
+        assert api_key
+        headers = {"Authorization": f"Bearer {api_key}", "Idempotency-Key": "mission-req-1"}
+        mission_response = client.post(
+            "/api/remote/missions",
+            headers=headers,
+            json={
+                "name": "Remote launch",
+                "objective": "Create a mission from outside the browser.",
+                "start_immediately": False,
+            },
+        )
+        task_response = client.post(
+            "/api/tasks",
+            json={
+                "name": "Remote task",
+                "summary": "Task launched from a remote operator.",
+                "objective_template": "Check the workspace and leave a checkpoint.",
+                "instance_id": instance_id,
+                "project_id": None,
+                "cadence_minutes": None,
+                "cwd": str(tmp_path),
+                "model": "gpt-5.4",
+                "reasoning_effort": None,
+                "collaboration_mode": None,
+                "max_turns": 2,
+                "use_builtin_agents": True,
+                "run_verification": True,
+                "auto_commit": False,
+                "pause_on_approval": True,
+                "allow_auto_reflexes": True,
+                "auto_recover": True,
+                "auto_recover_limit": 2,
+                "reflex_cooldown_seconds": 900,
+                "allow_failover": True,
+                "enabled": True,
+            },
+        )
+        task_id = task_response.json()["id"]
+        task_remote_response = client.post(
+            f"/api/remote/tasks/{task_id}/run",
+            headers={"Authorization": f"Bearer {api_key}", "Idempotency-Key": "task-req-1"},
+            json={"dry_run": True},
+        )
+        dashboard_response = client.get("/api/dashboard")
+
+    assert mission_response.status_code == 200
+    created_request = mission_response.json()
+    assert created_request["status"] == "completed"
+    assert created_request["target_kind"] == "mission"
+    assert task_remote_response.status_code == 200
+    assert task_remote_response.json()["status"] == "dry_run"
+    dashboard = dashboard_response.json()
+    assert dashboard["missions"][0]["name"] == "Remote launch"
+    assert dashboard["ops_mesh"]["access_posture"]["api_key_count"] == 1
+    assert dashboard["ops_mesh"]["access_posture"]["recent_remote_request_count"] == 2
+    kinds = [request["kind"] for request in dashboard["ops_mesh"]["remote_requests"]]
+    assert "mission.create" in kinds
+    assert "task.trigger" in kinds
+
+
+def test_mission_creation_rejects_unknown_project(tmp_path) -> None:
+    with make_client(tmp_path) as client:
+        instance_response = client.post(
+            "/api/instances",
+            json={
+                "name": "Local Codex Desktop",
+                "transport": "desktop",
+                "cwd": str(tmp_path),
+                "auto_connect": False,
+            },
+        )
+        instance_id = instance_response.json()["id"]
+        response = client.post(
+            "/api/missions",
+            json={
+                "name": "Ship autonomy loop",
+                "objective": "Keep improving the product until the mission runner works.",
+                "instance_id": instance_id,
+                "project_id": 999,
+                "cwd": str(tmp_path),
+                "thread_id": None,
+                "model": "gpt-5.4",
+                "reasoning_effort": None,
+                "collaboration_mode": None,
+                "max_turns": 3,
+                "use_builtin_agents": True,
+                "run_verification": True,
+                "auto_commit": True,
+                "pause_on_approval": True,
+                "start_immediately": False,
+            },
+        )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Unknown project 999"
 
 
 def test_mission_creation_appears_on_dashboard(tmp_path) -> None:

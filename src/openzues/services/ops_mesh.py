@@ -11,6 +11,7 @@ from urllib.request import Request, urlopen
 
 from openzues.database import Database, utcnow
 from openzues.schemas import (
+    DashboardAccessPostureView,
     DashboardAuthPostureView,
     DashboardOpsMeshView,
     DashboardSkillbookView,
@@ -25,12 +26,15 @@ from openzues.schemas import (
     MissionView,
     NotificationRouteCreate,
     NotificationRouteView,
+    OperatorView,
     ProjectView,
+    RemoteRequestView,
     SkillPinCreate,
     SkillPinView,
     TaskBlueprintCreate,
     TaskBlueprintView,
     TaskStatus,
+    TeamView,
     VaultSecretCreate,
     VaultSecretView,
 )
@@ -165,6 +169,20 @@ def _build_auth_posture(integrations: list[IntegrationView]) -> DashboardAuthPos
     )
 
 
+def _empty_access_posture() -> DashboardAccessPostureView:
+    return DashboardAccessPostureView(
+        headline="Remote ingress is local-only",
+        summary=(
+            "No operator API keys are active yet. The browser workflow stays available, "
+            "but external control is still closed."
+        ),
+        team_count=0,
+        operator_count=0,
+        api_key_count=0,
+        recent_remote_request_count=0,
+    )
+
+
 def _build_lane_snapshot_view(
     row: dict[str, Any],
     instance_names: dict[int, str],
@@ -281,6 +299,11 @@ def build_ops_mesh(
     integrations: list[IntegrationView],
     notification_routes: list[NotificationRouteView],
     lane_snapshots: list[LaneSnapshotView],
+    *,
+    access_posture: DashboardAccessPostureView | None = None,
+    teams: list[TeamView] | None = None,
+    operators: list[OperatorView] | None = None,
+    remote_requests: list[RemoteRequestView] | None = None,
 ) -> DashboardOpsMeshView:
     project_by_id = {project.id: project for project in projects}
     instance_by_id = {instance.id: instance for instance in instances}
@@ -429,7 +452,11 @@ def build_ops_mesh(
             tasks=tasks,
         ),
         auth_posture=auth_posture,
+        access_posture=access_posture or _empty_access_posture(),
         skillbooks=skillbooks,
+        teams=teams or [],
+        operators=operators or [],
+        remote_requests=remote_requests or [],
         vault_secrets=vault_secrets,
         integrations=integrations,
         notification_routes=notification_routes,

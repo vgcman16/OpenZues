@@ -41,6 +41,32 @@ class Database:
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS teams (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    slug TEXT NOT NULL UNIQUE,
+                    description TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS operators (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    team_id INTEGER NOT NULL,
+                    name TEXT NOT NULL,
+                    email TEXT,
+                    role TEXT NOT NULL,
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    api_key_hash TEXT,
+                    api_key_preview TEXT,
+                    api_key_issued_at TEXT,
+                    api_key_last_used_at TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_operators_team_role
+                    ON operators(team_id, role);
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_operators_api_key_hash
+                    ON operators(api_key_hash);
                 CREATE TABLE IF NOT EXISTS events (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     instance_id INTEGER,
@@ -203,6 +229,30 @@ class Database:
                 );
                 CREATE INDEX IF NOT EXISTS idx_lane_snapshots_instance
                     ON lane_snapshots(instance_id, id DESC);
+                CREATE TABLE IF NOT EXISTS remote_requests (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    team_id INTEGER NOT NULL,
+                    operator_id INTEGER NOT NULL,
+                    idempotency_key TEXT,
+                    kind TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    source_ip TEXT,
+                    user_agent TEXT,
+                    target_kind TEXT,
+                    target_id INTEGER,
+                    target_label TEXT,
+                    payload_json TEXT NOT NULL,
+                    result_json TEXT,
+                    error TEXT,
+                    requested_at TEXT NOT NULL,
+                    resolved_at TEXT,
+                    UNIQUE(operator_id, idempotency_key)
+                );
+                CREATE INDEX IF NOT EXISTS idx_remote_requests_requested
+                    ON remote_requests(requested_at DESC, id DESC);
+                CREATE INDEX IF NOT EXISTS idx_remote_requests_team
+                    ON remote_requests(team_id, id DESC);
                 """
             )
             await self._ensure_column(db, "missions", "phase", "TEXT")
@@ -325,6 +375,145 @@ class Database:
             cursor = await db.execute("SELECT * FROM projects WHERE id = ?", (project_id,))
             row = await cursor.fetchone()
             return dict(row) if row else None
+
+    async def list_teams(self) -> list[dict[str, Any]]:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            rows = await db.execute_fetchall("SELECT * FROM teams ORDER BY id ASC")
+            return [dict(row) for row in rows]
+
+    async def get_team(self, team_id: int) -> dict[str, Any] | None:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute("SELECT * FROM teams WHERE id = ?", (team_id,))
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+
+    async def create_team(
+        self,
+        *,
+        name: str,
+        slug: str,
+        description: str | None,
+    ) -> int:
+        now = utcnow()
+        async with aiosqlite.connect(self.path) as db:
+            cursor = await db.execute(
+                """
+                INSERT INTO teams (
+                    name,
+                    slug,
+                    description,
+                    created_at,
+                    updated_at
+                )
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (name, slug, description, now, now),
+            )
+            await db.commit()
+            assert cursor.lastrowid is not None
+            return int(cursor.lastrowid)
+
+    async def update_team(self, team_id: int, **fields: Any) -> None:
+        if not fields:
+            return
+        fields["updated_at"] = utcnow()
+        assignments = ", ".join(f"{key} = ?" for key in fields)
+        values = list(fields.values()) + [team_id]
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute(
+                f"UPDATE teams SET {assignments} WHERE id = ?",
+                values,
+            )
+            await db.commit()
+
+    async def list_operators(self) -> list[dict[str, Any]]:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            rows = await db.execute_fetchall("SELECT * FROM operators ORDER BY id ASC")
+            return [dict(row) for row in rows]
+
+    async def get_operator(self, operator_id: int) -> dict[str, Any] | None:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute("SELECT * FROM operators WHERE id = ?", (operator_id,))
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+
+    async def get_operator_by_api_key_hash(
+        self,
+        api_key_hash: str,
+    ) -> dict[str, Any] | None:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT * FROM operators WHERE api_key_hash = ?",
+                (api_key_hash,),
+            )
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+
+    async def create_operator(
+        self,
+        *,
+        team_id: int,
+        name: str,
+        email: str | None,
+        role: str,
+        enabled: bool,
+        api_key_hash: str | None,
+        api_key_preview: str | None,
+        api_key_issued_at: str | None,
+    ) -> int:
+        now = utcnow()
+        async with aiosqlite.connect(self.path) as db:
+            cursor = await db.execute(
+                """
+                INSERT INTO operators (
+                    team_id,
+                    name,
+                    email,
+                    role,
+                    enabled,
+                    api_key_hash,
+                    api_key_preview,
+                    api_key_issued_at,
+                    api_key_last_used_at,
+                    created_at,
+                    updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
+                """,
+                (
+                    team_id,
+                    name,
+                    email,
+                    role,
+                    int(enabled),
+                    api_key_hash,
+                    api_key_preview,
+                    api_key_issued_at,
+                    now,
+                    now,
+                ),
+            )
+            await db.commit()
+            assert cursor.lastrowid is not None
+            return int(cursor.lastrowid)
+
+    async def update_operator(self, operator_id: int, **fields: Any) -> None:
+        if not fields:
+            return
+        fields["updated_at"] = utcnow()
+        assignments = ", ".join(f"{key} = ?" for key in fields)
+        values = list(fields.values()) + [operator_id]
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute(
+                f"UPDATE operators SET {assignments} WHERE id = ?",
+                values,
+            )
+            await db.commit()
 
     async def list_playbooks(self) -> list[dict[str, Any]]:
         async with aiosqlite.connect(self.path) as db:
@@ -1074,3 +1263,145 @@ class Database:
                 item["payload"] = json.loads(item.pop("payload_json"))
                 output.append(item)
             return output
+
+    async def list_remote_requests(self, *, limit: int = 50) -> list[dict[str, Any]]:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            rows = await db.execute_fetchall(
+                """
+                SELECT *
+                FROM remote_requests
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (limit,),
+            )
+            output = []
+            for row in rows:
+                item = dict(row)
+                item["payload"] = json.loads(item.pop("payload_json"))
+                result_json = item.pop("result_json")
+                item["result"] = json.loads(result_json) if result_json else None
+                output.append(item)
+            return list(reversed(output))
+
+    async def get_remote_request(self, request_id: int) -> dict[str, Any] | None:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute("SELECT * FROM remote_requests WHERE id = ?", (request_id,))
+            row = await cursor.fetchone()
+            if row is None:
+                return None
+            item = dict(row)
+            item["payload"] = json.loads(item.pop("payload_json"))
+            result_json = item.pop("result_json")
+            item["result"] = json.loads(result_json) if result_json else None
+            return item
+
+    async def get_remote_request_by_idempotency(
+        self,
+        *,
+        operator_id: int,
+        idempotency_key: str,
+    ) -> dict[str, Any] | None:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                """
+                SELECT *
+                FROM remote_requests
+                WHERE operator_id = ? AND idempotency_key = ?
+                """,
+                (operator_id, idempotency_key),
+            )
+            row = await cursor.fetchone()
+            if row is None:
+                return None
+            item = dict(row)
+            item["payload"] = json.loads(item.pop("payload_json"))
+            result_json = item.pop("result_json")
+            item["result"] = json.loads(result_json) if result_json else None
+            return item
+
+    async def create_remote_request(
+        self,
+        *,
+        team_id: int,
+        operator_id: int,
+        idempotency_key: str | None,
+        kind: str,
+        status: str,
+        source: str,
+        source_ip: str | None,
+        user_agent: str | None,
+        target_kind: str | None,
+        target_id: int | None,
+        target_label: str | None,
+        payload: dict[str, Any],
+        result: dict[str, Any] | None = None,
+        error: str | None = None,
+        resolved_at: str | None = None,
+    ) -> int:
+        now = utcnow()
+        async with aiosqlite.connect(self.path) as db:
+            cursor = await db.execute(
+                """
+                INSERT INTO remote_requests (
+                    team_id,
+                    operator_id,
+                    idempotency_key,
+                    kind,
+                    status,
+                    source,
+                    source_ip,
+                    user_agent,
+                    target_kind,
+                    target_id,
+                    target_label,
+                    payload_json,
+                    result_json,
+                    error,
+                    requested_at,
+                    resolved_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    team_id,
+                    operator_id,
+                    idempotency_key,
+                    kind,
+                    status,
+                    source,
+                    source_ip,
+                    user_agent,
+                    target_kind,
+                    target_id,
+                    target_label,
+                    json.dumps(payload),
+                    json.dumps(result) if result is not None else None,
+                    error,
+                    now,
+                    resolved_at,
+                ),
+            )
+            await db.commit()
+            assert cursor.lastrowid is not None
+            return int(cursor.lastrowid)
+
+    async def update_remote_request(self, request_id: int, **fields: Any) -> None:
+        if "payload" in fields:
+            fields["payload_json"] = json.dumps(fields.pop("payload"))
+        if "result" in fields:
+            result = fields.pop("result")
+            fields["result_json"] = json.dumps(result) if result is not None else None
+        if not fields:
+            return
+        assignments = ", ".join(f"{key} = ?" for key in fields)
+        values = list(fields.values()) + [request_id]
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute(
+                f"UPDATE remote_requests SET {assignments} WHERE id = ?",
+                values,
+            )
+            await db.commit()

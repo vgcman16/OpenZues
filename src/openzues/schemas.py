@@ -32,6 +32,9 @@ ReflexKind = Literal[
     "resume_handoff",
 ]
 IntegrationAuthStatus = Literal["satisfied", "missing", "degraded"]
+OperatorRole = Literal["owner", "admin", "operator", "viewer"]
+RemoteRequestKind = Literal["mission.create", "task.trigger"]
+RemoteRequestStatus = Literal["accepted", "completed", "failed", "denied", "dry_run"]
 
 
 class InstanceCreate(BaseModel):
@@ -92,6 +95,52 @@ class ProjectView(BaseModel):
     recent_commits: list[dict[str, Any]] = Field(default_factory=list)
     pull_requests: list[dict[str, Any]] = Field(default_factory=list)
     last_scan_at: str | None = None
+
+
+class TeamCreate(BaseModel):
+    name: str
+    slug: str | None = None
+    description: str | None = None
+
+
+class TeamView(BaseModel):
+    id: int
+    name: str
+    slug: str
+    description: str | None = None
+    member_count: int = 0
+    created_at: datetime
+    updated_at: datetime
+
+
+class OperatorCreate(BaseModel):
+    team_id: int | None = None
+    name: str
+    email: str | None = None
+    role: OperatorRole = "operator"
+    enabled: bool = True
+    issue_api_key: bool = False
+
+
+class OperatorView(BaseModel):
+    id: int
+    team_id: int
+    team_name: str | None = None
+    name: str
+    email: str | None = None
+    role: OperatorRole
+    enabled: bool = True
+    has_api_key: bool = False
+    api_key_preview: str | None = None
+    api_key_issued_at: str | None = None
+    api_key_last_used_at: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class OperatorCredentialView(BaseModel):
+    operator: OperatorView
+    api_key: str | None = None
 
 
 class ThreadCreate(BaseModel):
@@ -326,6 +375,35 @@ class LaneSnapshotView(BaseModel):
     created_at: datetime
 
 
+class RemoteMissionCreate(BaseModel):
+    name: str
+    objective: str
+    instance_id: int | None = None
+    project_id: int | None = None
+    task_blueprint_id: int | None = None
+    cwd: str | None = None
+    thread_id: str | None = None
+    model: str = "gpt-5.4"
+    reasoning_effort: str | None = None
+    collaboration_mode: str | None = None
+    max_turns: int | None = Field(default=None, ge=1)
+    use_builtin_agents: bool = True
+    run_verification: bool = True
+    auto_commit: bool = True
+    pause_on_approval: bool = True
+    allow_auto_reflexes: bool = True
+    auto_recover: bool = True
+    auto_recover_limit: int = Field(default=2, ge=0)
+    reflex_cooldown_seconds: int = Field(default=900, ge=60)
+    allow_failover: bool = True
+    start_immediately: bool = False
+    dry_run: bool = False
+
+
+class RemoteTaskTrigger(BaseModel):
+    dry_run: bool = False
+
+
 class MissionCreate(BaseModel):
     name: str
     objective: str
@@ -529,6 +607,30 @@ class DashboardTaskInboxView(BaseModel):
     tasks: list[DashboardTaskView] = Field(default_factory=list)
 
 
+class RemoteRequestView(BaseModel):
+    id: int
+    team_id: int
+    team_name: str | None = None
+    operator_id: int
+    operator_name: str | None = None
+    operator_role: OperatorRole
+    kind: RemoteRequestKind
+    status: RemoteRequestStatus
+    source: str
+    source_ip: str | None = None
+    user_agent: str | None = None
+    target_kind: str | None = None
+    target_id: int | None = None
+    target_label: str | None = None
+    idempotency_key: str | None = None
+    summary: str
+    error: str | None = None
+    payload_preview: str | None = None
+    result_preview: str | None = None
+    requested_at: datetime
+    resolved_at: datetime | None = None
+
+
 class DashboardSkillbookView(BaseModel):
     project_id: int
     project_label: str
@@ -543,12 +645,25 @@ class DashboardAuthPostureView(BaseModel):
     degraded_count: int = 0
 
 
+class DashboardAccessPostureView(BaseModel):
+    headline: str
+    summary: str
+    team_count: int = 0
+    operator_count: int = 0
+    api_key_count: int = 0
+    recent_remote_request_count: int = 0
+
+
 class DashboardOpsMeshView(BaseModel):
     headline: str
     summary: str
     task_inbox: DashboardTaskInboxView
     auth_posture: DashboardAuthPostureView
+    access_posture: DashboardAccessPostureView
     skillbooks: list[DashboardSkillbookView] = Field(default_factory=list)
+    teams: list[TeamView] = Field(default_factory=list)
+    operators: list[OperatorView] = Field(default_factory=list)
+    remote_requests: list[RemoteRequestView] = Field(default_factory=list)
     vault_secrets: list[VaultSecretView] = Field(default_factory=list)
     integrations: list[IntegrationView] = Field(default_factory=list)
     notification_routes: list[NotificationRouteView] = Field(default_factory=list)

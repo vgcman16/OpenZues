@@ -32,6 +32,21 @@ async def test_database_round_trip(tmp_path) -> None:
         instance_id=instance_id,
         payload={"template": "git status", "cwd": str(tmp_path)},
     )
+    team_id = await database.create_team(
+        name="Remote Ops",
+        slug="remote-ops",
+        description="Remote operator team.",
+    )
+    operator_id = await database.create_operator(
+        team_id=team_id,
+        name="Remote Operator",
+        email="remote@example.com",
+        role="operator",
+        enabled=True,
+        api_key_hash="hash123",
+        api_key_preview="ozk_abcd...1234",
+        api_key_issued_at="2026-04-10T00:00:00+00:00",
+    )
     mission_id = await database.create_mission(
         name="Nightly builder",
         objective="Keep shipping.",
@@ -61,16 +76,40 @@ async def test_database_round_trip(tmp_path) -> None:
         kind="final_answer",
         summary="Verified the first milestone.",
     )
+    remote_request_id = await database.create_remote_request(
+        team_id=team_id,
+        operator_id=operator_id,
+        idempotency_key="req-123",
+        kind="mission.create",
+        status="completed",
+        source="api_key",
+        source_ip="127.0.0.1",
+        user_agent="pytest",
+        target_kind="mission",
+        target_id=mission_id,
+        target_label="Nightly builder",
+        payload={"name": "Nightly builder"},
+        result={"summary": "Mission created."},
+        resolved_at="2026-04-10T00:01:00+00:00",
+    )
 
     instances = await database.list_instances()
+    teams = await database.list_teams()
+    operators = await database.list_operators()
     events = await database.list_events()
     playbooks = await database.list_playbooks()
     missions = await database.list_missions()
     checkpoints = await database.list_mission_checkpoints(mission_id)
+    remote_requests = await database.list_remote_requests()
 
     assert instances[0]["name"] == "Local Codex"
+    assert teams[0]["slug"] == "remote-ops"
+    assert operators[0]["api_key_preview"] == "ozk_abcd...1234"
     assert events[0]["payload"]["ok"] is True
     assert playbook_id == playbooks[0]["id"]
     assert missions[0]["name"] == "Nightly builder"
     assert missions[0]["allow_failover"] == 1
     assert checkpoints[0]["summary"] == "Verified the first milestone."
+    assert remote_request_id == remote_requests[0]["id"]
+    assert remote_requests[0]["payload"]["name"] == "Nightly builder"
+    assert remote_requests[0]["result"]["summary"] == "Mission created."

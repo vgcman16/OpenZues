@@ -27,8 +27,17 @@ const authPostureSummaryEl = document.querySelector("#auth-posture-summary");
 const authSatisfiedCountEl = document.querySelector("#auth-satisfied-count");
 const authMissingCountEl = document.querySelector("#auth-missing-count");
 const authDegradedCountEl = document.querySelector("#auth-degraded-count");
+const accessPostureHeadlineEl = document.querySelector("#access-posture-headline");
+const accessPostureSummaryEl = document.querySelector("#access-posture-summary");
+const accessTeamCountEl = document.querySelector("#access-team-count");
+const accessOperatorCountEl = document.querySelector("#access-operator-count");
+const accessKeyCountEl = document.querySelector("#access-key-count");
+const accessRequestCountEl = document.querySelector("#access-request-count");
 const taskBlueprintsEl = document.querySelector("#task-blueprints");
 const skillbooksEl = document.querySelector("#skillbooks");
+const teamsListEl = document.querySelector("#teams-list");
+const operatorsListEl = document.querySelector("#operators-list");
+const remoteRequestsEl = document.querySelector("#remote-requests");
 const vaultSecretsEl = document.querySelector("#vault-secrets");
 const integrationsListEl = document.querySelector("#integrations-list");
 const notificationRoutesEl = document.querySelector("#notification-routes");
@@ -59,6 +68,9 @@ const instancesEl = document.querySelector("#instances");
 const taskFormEl = document.querySelector("#task-form");
 const taskInstanceSelectEl = document.querySelector("#task-instance-select");
 const taskProjectSelectEl = document.querySelector("#task-project-select");
+const teamFormEl = document.querySelector("#team-form");
+const operatorFormEl = document.querySelector("#operator-form");
+const operatorTeamSelectEl = document.querySelector("#operator-team-select");
 const skillPinFormEl = document.querySelector("#skill-pin-form");
 const skillProjectSelectEl = document.querySelector("#skill-project-select");
 const vaultSecretFormEl = document.querySelector("#vault-secret-form");
@@ -505,6 +517,38 @@ function toneForAuthStatus(status) {
   return "";
 }
 
+function toneForOperatorRole(role) {
+  if (role === "owner" || role === "admin") {
+    return "ok";
+  }
+  if (role === "operator") {
+    return "warn";
+  }
+  return "";
+}
+
+function toneForRemoteStatus(status) {
+  if (status === "completed") {
+    return "ok";
+  }
+  if (status === "failed" || status === "denied") {
+    return "bad";
+  }
+  if (status === "accepted" || status === "dry_run") {
+    return "warn";
+  }
+  return "";
+}
+
+function revealApiKey(apiKey, label) {
+  if (!apiKey) {
+    return;
+  }
+  try {
+    window.prompt(`Copy the one-time API key for ${label}`, apiKey);
+  } catch {}
+}
+
 function syncVaultSecretOptions(opsMesh) {
   const secrets = opsMesh?.vault_secrets ?? [];
   const options = secrets
@@ -553,8 +597,34 @@ function renderOpsMesh() {
       authDegradedCountEl.textContent = "0 degraded";
       authDegradedCountEl.className = "pill";
     }
+    if (accessPostureHeadlineEl) {
+      accessPostureHeadlineEl.textContent = "Remote ingress is local-only";
+    }
+    if (accessPostureSummaryEl) {
+      accessPostureSummaryEl.textContent =
+        "No operator API keys are active yet. The browser workflow stays available, but external control is still closed.";
+    }
+    if (accessTeamCountEl) {
+      accessTeamCountEl.textContent = "0 teams";
+      accessTeamCountEl.className = "pill";
+    }
+    if (accessOperatorCountEl) {
+      accessOperatorCountEl.textContent = "0 operators";
+      accessOperatorCountEl.className = "pill";
+    }
+    if (accessKeyCountEl) {
+      accessKeyCountEl.textContent = "0 keys";
+      accessKeyCountEl.className = "pill";
+    }
+    if (accessRequestCountEl) {
+      accessRequestCountEl.textContent = "0 remote requests";
+      accessRequestCountEl.className = "pill";
+    }
     taskBlueprintsEl.innerHTML = "";
     skillbooksEl.innerHTML = "";
+    teamsListEl.innerHTML = "";
+    operatorsListEl.innerHTML = "";
+    remoteRequestsEl.innerHTML = "";
     if (vaultSecretsEl) {
       vaultSecretsEl.innerHTML = "";
     }
@@ -584,6 +654,28 @@ function renderOpsMesh() {
   if (authDegradedCountEl) {
     authDegradedCountEl.textContent = `${opsMesh.auth_posture.degraded_count} degraded`;
     authDegradedCountEl.className = opsMesh.auth_posture.degraded_count ? "pill bad" : "pill";
+  }
+  if (accessPostureHeadlineEl) {
+    accessPostureHeadlineEl.textContent = opsMesh.access_posture.headline;
+  }
+  if (accessPostureSummaryEl) {
+    accessPostureSummaryEl.textContent = opsMesh.access_posture.summary;
+  }
+  if (accessTeamCountEl) {
+    accessTeamCountEl.textContent = `${opsMesh.access_posture.team_count} teams`;
+    accessTeamCountEl.className = opsMesh.access_posture.team_count ? "pill ok" : "pill";
+  }
+  if (accessOperatorCountEl) {
+    accessOperatorCountEl.textContent = `${opsMesh.access_posture.operator_count} operators`;
+    accessOperatorCountEl.className = opsMesh.access_posture.operator_count ? "pill ok" : "pill";
+  }
+  if (accessKeyCountEl) {
+    accessKeyCountEl.textContent = `${opsMesh.access_posture.api_key_count} keys`;
+    accessKeyCountEl.className = opsMesh.access_posture.api_key_count ? "pill warn" : "pill";
+  }
+  if (accessRequestCountEl) {
+    accessRequestCountEl.textContent = `${opsMesh.access_posture.recent_remote_request_count} remote requests`;
+    accessRequestCountEl.className = opsMesh.access_posture.recent_remote_request_count ? "pill ok" : "pill";
   }
   syncVaultSecretOptions(opsMesh);
 
@@ -685,6 +777,128 @@ function renderOpsMesh() {
           <strong>No skillbooks yet.</strong>
           <p class="small-muted">
             Pin the skills you trust for each project and OpenZues will weave them into task drafts.
+          </p>
+        </article>
+      `;
+
+  teamsListEl.innerHTML = opsMesh.teams.length
+    ? opsMesh.teams
+        .map(
+          (team) => `
+            <article class="library-card">
+              <div class="row">
+                <strong>${escapeHtml(team.name)}</strong>
+                <div class="pill-row">
+                  ${pill(team.slug)}
+                  ${pill(
+                    summarizeCount(team.member_count, "member"),
+                    team.member_count ? "ok" : "",
+                  )}
+                </div>
+              </div>
+              ${
+                team.description
+                  ? `<div class="ops-note">${escapeHtml(team.description)}</div>`
+                  : `<div class="small-muted">Created ${escapeHtml(formatRelativeTimestamp(team.created_at))}.</div>`
+              }
+            </article>
+          `,
+        )
+        .join("")
+    : `
+        <article class="library-card empty-state">
+          <strong>No teams yet.</strong>
+          <p class="small-muted">
+            Create a team to group remote operators and keep access ownership explicit.
+          </p>
+        </article>
+      `;
+
+  operatorsListEl.innerHTML = opsMesh.operators.length
+    ? opsMesh.operators
+        .map(
+          (operator) => `
+            <article class="library-card">
+              <div class="row">
+                <strong>${escapeHtml(operator.name)}</strong>
+                <div class="pill-row">
+                  ${pill(operator.role, toneForOperatorRole(operator.role))}
+                  ${operator.team_name ? pill(operator.team_name) : ""}
+                  ${operator.enabled ? pill("enabled", "ok") : pill("disabled", "bad")}
+                  ${operator.has_api_key ? pill(operator.api_key_preview || "key", "warn") : pill("no key")}
+                </div>
+              </div>
+              <div class="small-muted">
+                ${operator.email ? escapeHtml(operator.email) : "No email recorded."}
+              </div>
+              <div class="small-muted">
+                ${
+                  operator.api_key_last_used_at
+                    ? `Last remote auth ${escapeHtml(formatRelativeTimestamp(operator.api_key_last_used_at))}.`
+                    : "API key has not been used yet."
+                }
+              </div>
+              <div class="actions">
+                <button
+                  type="button"
+                  class="ghost"
+                  data-action="issue-api-key"
+                  data-operator-id="${operator.id}"
+                  data-operator-name="${escapeHtml(operator.name)}"
+                >
+                  ${operator.has_api_key ? "Rotate key" : "Issue key"}
+                </button>
+              </div>
+            </article>
+          `,
+        )
+        .join("")
+    : `
+        <article class="library-card empty-state">
+          <strong>No operators yet.</strong>
+          <p class="small-muted">
+            Add named operators so remote requests can be attributed to real roles instead of a shared secret.
+          </p>
+        </article>
+      `;
+
+  remoteRequestsEl.innerHTML = opsMesh.remote_requests.length
+    ? [...opsMesh.remote_requests]
+        .reverse()
+        .map(
+          (request) => `
+            <article class="library-card">
+              <div class="row">
+                <strong>${escapeHtml(request.target_label || request.kind)}</strong>
+                <div class="pill-row">
+                  ${pill(request.kind)}
+                  ${pill(request.status, toneForRemoteStatus(request.status))}
+                  ${request.operator_role ? pill(request.operator_role, toneForOperatorRole(request.operator_role)) : ""}
+                </div>
+              </div>
+              <div class="small-muted">
+                ${escapeHtml(request.operator_name || "Unknown operator")}
+                ${request.team_name ? ` on ${escapeHtml(request.team_name)}` : ""}
+                ${
+                  request.source_ip
+                    ? ` from ${escapeHtml(request.source_ip)}`
+                    : ""
+                }.
+                ${escapeHtml(formatRelativeTimestamp(request.requested_at))}
+              </div>
+              <div class="ops-note">${escapeHtml(request.summary)}</div>
+              ${request.payload_preview ? `<pre>${escapeHtml(request.payload_preview)}</pre>` : ""}
+              ${request.result_preview ? `<pre>${escapeHtml(request.result_preview)}</pre>` : ""}
+              ${request.error ? `<div class="mission-alert">${escapeHtml(request.error)}</div>` : ""}
+            </article>
+          `,
+        )
+        .join("")
+    : `
+        <article class="library-card empty-state">
+          <strong>No authenticated remote requests yet.</strong>
+          <p class="small-muted">
+            External task triggers and mission launches will appear here with operator and team attribution.
           </p>
         </article>
       `;
@@ -1291,10 +1505,12 @@ function applyMissionDraft(draft) {
 function syncMissionOptions() {
   const instances = state.dashboard?.instances ?? [];
   const projects = state.dashboard?.projects ?? [];
+  const teams = state.dashboard?.ops_mesh?.teams ?? [];
   const selectedInstance = missionInstanceSelectEl.value;
   const selectedProject = missionProjectSelectEl.value;
   const selectedTaskInstance = taskInstanceSelectEl.value;
   const selectedTaskProject = taskProjectSelectEl.value;
+  const selectedOperatorTeam = operatorTeamSelectEl.value;
   const selectedSkillProject = skillProjectSelectEl.value;
   const selectedIntegrationProject = integrationProjectSelectEl.value;
   const instanceOptions = instances.length
@@ -1372,6 +1588,19 @@ function syncMissionOptions() {
   ) {
     integrationProjectSelectEl.value = selectedIntegrationProject;
   }
+  operatorTeamSelectEl.innerHTML = teams.length
+    ? teams
+        .map(
+          (team) =>
+            `<option value="${team.id}">${escapeHtml(
+              `${team.name} (${team.member_count} member${team.member_count === 1 ? "" : "s"})`,
+            )}</option>`,
+        )
+        .join("")
+    : `<option value="">Create a team first</option>`;
+  if (selectedOperatorTeam && teams.some((team) => String(team.id) === selectedOperatorTeam)) {
+    operatorTeamSelectEl.value = selectedOperatorTeam;
+  }
 }
 
 function renderDiagnostics() {
@@ -1440,6 +1669,7 @@ function renderShellChrome() {
   const routes = opsMesh?.notification_routes ?? [];
   const meshIntegrations = opsMesh?.integrations ?? [];
   const authPosture = opsMesh?.auth_posture;
+  const accessPosture = opsMesh?.access_posture;
   const snapshots = opsMesh?.lane_snapshots ?? [];
   const continuityPackets = state.dashboard?.continuity?.packets ?? [];
   const dreams = state.dashboard?.dream_deck?.dreams ?? [];
@@ -1488,6 +1718,12 @@ function renderShellChrome() {
     } else if (authPosture?.degraded_count) {
       opsShellSummaryEl.textContent =
         "At least one integration points at a broken vault credential and needs operator repair.";
+    } else if (accessPosture?.recent_remote_request_count) {
+      opsShellSummaryEl.textContent =
+        "Remote ingress is active alongside the recurring ops mesh, with authenticated external requests landing in the ledger.";
+    } else if (accessPosture?.api_key_count) {
+      opsShellSummaryEl.textContent =
+        "Remote operator access is armed, but it stays tucked behind explicit teams, roles, and API-key audit records.";
     } else if (authPosture?.missing_count) {
       opsShellSummaryEl.textContent =
         "Integration inventory exists, but some entries still need credentials attached from the vault.";
@@ -2285,6 +2521,44 @@ document.querySelector("#project-form").addEventListener("submit", async (event)
   }
 });
 
+teamFormEl.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = new FormData(event.currentTarget);
+  try {
+    await submitJson("/api/teams", {
+      name: form.get("name"),
+      slug: form.get("slug") || null,
+      description: form.get("description") || null,
+    });
+    event.currentTarget.reset();
+    showToast("Team created.");
+  } catch (error) {
+    showToast(normalizeError(error), true);
+  }
+});
+
+operatorFormEl.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = new FormData(event.currentTarget);
+  try {
+    const result = await submitJson("/api/operators", {
+      team_id: form.get("team_id") ? Number(form.get("team_id")) : null,
+      name: form.get("name"),
+      email: form.get("email") || null,
+      role: form.get("role") || "operator",
+      enabled: form.get("enabled") === "on",
+      issue_api_key: form.get("issue_api_key") === "on",
+    });
+    event.currentTarget.reset();
+    showToast("Operator created.");
+    if (result?.api_key) {
+      revealApiKey(result.api_key, result.operator?.name || "operator");
+    }
+  } catch (error) {
+    showToast(normalizeError(error), true);
+  }
+});
+
 taskFormEl.addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = new FormData(event.currentTarget);
@@ -2520,6 +2794,11 @@ document.addEventListener("click", async (event) => {
       await api(`/api/skill-pins/${target.dataset.skillPinId}`, { method: "DELETE" });
       await loadDashboard();
       showToast("Skill pin removed.");
+    }
+    if (target.dataset.action === "issue-api-key") {
+      const result = await submitJson(`/api/operators/${target.dataset.operatorId}/api-key`, {});
+      revealApiKey(result?.api_key, target.dataset.operatorName || "operator");
+      showToast("API key issued.");
     }
     if (target.dataset.action === "delete-integration") {
       await api(`/api/integrations/${target.dataset.integrationId}`, { method: "DELETE" });

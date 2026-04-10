@@ -136,6 +136,12 @@ class MissionService:
             if payload.project_id is not None
             else None
         )
+        if payload.project_id is not None and project is None:
+            raise ValueError(f"Unknown project {payload.project_id}")
+        if payload.task_blueprint_id is not None:
+            task = await self.database.get_task_blueprint(payload.task_blueprint_id)
+            if task is None:
+                raise ValueError(f"Unknown task blueprint {payload.task_blueprint_id}")
         runtime = await self.manager.get(payload.instance_id)
         cwd = payload.cwd or (project["path"] if project is not None else runtime.cwd)
         status = "active" if payload.start_immediately else "paused"

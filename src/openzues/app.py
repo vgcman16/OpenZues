@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
+from ipaddress import ip_address
 from pathlib import Path
 from typing import Any, Literal
 
@@ -38,23 +39,31 @@ from openzues.schemas import (
     MissionView,
     NotificationRouteCreate,
     NotificationRouteView,
+    OperatorCreate,
+    OperatorCredentialView,
     PlaybookCreate,
     PlaybookRun,
     PlaybookRunResult,
     PlaybookView,
     ProjectCreate,
     ProjectView,
+    RemoteMissionCreate,
+    RemoteRequestView,
+    RemoteTaskTrigger,
     RequestResolution,
     ReviewCreate,
     SkillPinCreate,
     SkillPinView,
     TaskBlueprintCreate,
     TaskBlueprintView,
+    TeamCreate,
+    TeamView,
     ThreadCreate,
     TurnCreate,
     VaultSecretCreate,
     VaultSecretView,
 )
+from openzues.services.access import AccessService, AuthenticatedOperator, build_access_posture
 from openzues.services.codex_desktop import CodexDesktopService
 from openzues.services.continuity import build_continuity, build_continuity_packet
 from openzues.services.cortex import (
@@ -73,6 +82,7 @@ from openzues.services.ops_mesh import OpsMeshService, build_ops_mesh
 from openzues.services.playbooks import PlaybookService
 from openzues.services.projects import ProjectService
 from openzues.services.reflexes import build_reflex_deck
+from openzues.services.remote_ops import RemoteOpsService
 from openzues.services.vault import VaultService
 from openzues.settings import Settings, settings
 
@@ -93,6 +103,18 @@ def _minutes_since(value: str | None) -> int | None:
     if parsed is None:
         return None
     return max(0, int((datetime.now(UTC) - parsed).total_seconds() // 60))
+
+
+def _is_loopback_host(host: str | None) -> bool:
+    if not host:
+        return False
+    normalized = host.split("%", 1)[0].strip().lower()
+    if normalized in {"localhost", "testclient"}:
+        return True
+    try:
+        return ip_address(normalized).is_loopback
+    except ValueError:
+        return False
 
 
 def _pick_launch_instance(
@@ -847,6 +869,8 @@ def create_app(
     mission_service: MissionService | None = None,
     ops_mesh_service: OpsMeshService | None = None,
     vault_service: VaultService | None = None,
+    access_service: AccessService | None = None,
+    remote_ops_service: RemoteOpsService | None = None,
 ) -> FastAPI:
     active_settings = app_settings or settings
     active_database = database or Database(active_settings.effective_db_path)
@@ -866,6 +890,7 @@ def create_app(
         desktop_service=active_desktop_service
     )
     active_vault_service = vault_service or VaultService(active_database, active_settings)
+    active_access_service = access_service or AccessService(active_database)
     active_mission_service = mission_service or MissionService(
         active_database,
         active_manager,
@@ -878,6 +903,13 @@ def create_app(
         active_hub,
         active_vault_service,
     )
+    active_remote_ops_service = remote_ops_service or RemoteOpsService(
+        active_database,
+        active_manager,
+        active_mission_service,
+        active_ops_mesh_service,
+        active_hub,
+    )
     active_manager.add_event_listener(active_mission_service.handle_event)
     active_manager.add_server_request_listener(active_mission_service.handle_server_request)
     active_mission_service.add_event_listener(active_ops_mesh_service.handle_mission_event)
@@ -888,6 +920,7 @@ def create_app(
         active_settings.data_dir.mkdir(parents=True, exist_ok=True)
         active_vault_service.initialize()
         await active_database.initialize()
+        await active_access_service.initialize()
         await active_manager.load()
         await active_mission_service.start()
         await active_ops_mesh_service.start()
@@ -924,6 +957,10 @@ def create_app(
         notification_routes = await active_ops_mesh_service.list_notification_route_views()
         skill_pins = await active_ops_mesh_service.list_skill_pin_views()
         lane_snapshots = await active_ops_mesh_service.list_lane_snapshot_views()
+        teams = await active_access_service.list_team_views()
+        operators = await active_access_service.list_operator_views()
+        remote_requests = await active_remote_ops_service.list_remote_request_views()
+        access_posture = build_access_posture(teams, operators, remote_requests)
         events = [
             EventView.model_validate(
                 {
@@ -950,6 +987,10 @@ def create_app(
                 integrations,
                 notification_routes,
                 lane_snapshots,
+                access_posture=access_posture,
+                teams=teams,
+                operators=operators,
+                remote_requests=remote_requests,
             ),
             continuity=build_continuity(
                 instances,
@@ -976,6 +1017,32 @@ def create_app(
             lane_snapshots=lane_snapshots,
             events=events,
         )
+
+    async def require_remote_operator(
+        request: Request,
+        permission: str,
+    ) -> AuthenticatedOperator:
+        api_key = active_access_service.extract_api_key(dict(request.headers))
+        if not api_key:
+            raise HTTPException(
+                status_code=401,
+                detail=(
+                    "Remote control requires an API key via Authorization: Bearer <key> "
+                    "or X-OpenZues-Key."
+                ),
+            )
+        try:
+            return await active_access_service.authenticate_api_key(api_key, permission=permission)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=401, detail=str(exc)) from exc
+
+    async def require_management_access(request: Request, permission: str) -> None:
+        host = request.client.host if request.client is not None else None
+        if _is_loopback_host(host):
+            return
+        await require_remote_operator(request, permission)
 
     @fastapi_app.get("/", response_class=HTMLResponse)
     async def index(request: Request) -> HTMLResponse:
@@ -1145,6 +1212,69 @@ def create_app(
         if row is None:
             raise HTTPException(status_code=500, detail="Failed to create project.")
         return ProjectView.model_validate(active_project_service.inspect(row))
+
+    @fastapi_app.post("/api/teams")
+    async def create_team(request: Request, payload: TeamCreate) -> TeamView:
+        await require_management_access(request, "team.manage")
+        try:
+            return await active_access_service.create_team(payload)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @fastapi_app.post("/api/operators")
+    async def create_operator(request: Request, payload: OperatorCreate) -> OperatorCredentialView:
+        await require_management_access(request, "operator.manage")
+        try:
+            return await active_access_service.create_operator(payload)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @fastapi_app.post("/api/operators/{operator_id}/api-key")
+    async def issue_operator_api_key(
+        operator_id: int,
+        request: Request,
+    ) -> OperatorCredentialView:
+        await require_management_access(request, "api_key.issue")
+        try:
+            return await active_access_service.issue_api_key(operator_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @fastapi_app.post("/api/remote/missions")
+    async def remote_create_mission(
+        request: Request,
+        payload: RemoteMissionCreate,
+    ) -> RemoteRequestView:
+        auth = await require_remote_operator(request, "remote.mission.create")
+        try:
+            return await active_remote_ops_service.create_mission_request(
+                payload,
+                auth=auth,
+                source_ip=request.client.host if request.client is not None else None,
+                user_agent=request.headers.get("user-agent"),
+                idempotency_key=request.headers.get("Idempotency-Key"),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @fastapi_app.post("/api/remote/tasks/{task_id}/run")
+    async def remote_run_task(
+        task_id: int,
+        request: Request,
+        payload: RemoteTaskTrigger,
+    ) -> RemoteRequestView:
+        auth = await require_remote_operator(request, "remote.task.trigger")
+        try:
+            return await active_remote_ops_service.trigger_task_request(
+                task_id,
+                payload,
+                auth=auth,
+                source_ip=request.client.host if request.client is not None else None,
+                user_agent=request.headers.get("user-agent"),
+                idempotency_key=request.headers.get("Idempotency-Key"),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @fastapi_app.get("/api/tasks")
     async def list_tasks() -> list[TaskBlueprintView]:
