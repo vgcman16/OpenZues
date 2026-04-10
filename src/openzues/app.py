@@ -18,6 +18,7 @@ from openzues.schemas import (
     DiagnosticsView,
     EventView,
     InstanceCreate,
+    MissionCreate,
     PlaybookCreate,
     PlaybookRun,
     PlaybookRunResult,
@@ -34,6 +35,7 @@ from openzues.services.environment import EnvironmentService
 from openzues.services.github import GitHubService
 from openzues.services.hub import BroadcastHub
 from openzues.services.manager import RuntimeManager
+from openzues.services.missions import MissionService
 from openzues.services.playbooks import PlaybookService
 from openzues.services.projects import ProjectService
 from openzues.settings import Settings, settings
@@ -51,6 +53,7 @@ def create_app(
     playbook_service: PlaybookService | None = None,
     environment_service: EnvironmentService | None = None,
     desktop_service: CodexDesktopService | None = None,
+    mission_service: MissionService | None = None,
 ) -> FastAPI:
     active_settings = app_settings or settings
     active_database = database or Database(active_settings.effective_db_path)
@@ -66,6 +69,13 @@ def create_app(
     active_environment_service = environment_service or EnvironmentService(
         desktop_service=active_desktop_service
     )
+    active_mission_service = mission_service or MissionService(
+        active_database,
+        active_manager,
+        active_hub,
+    )
+    active_manager.add_event_listener(active_mission_service.handle_event)
+    active_manager.add_server_request_listener(active_mission_service.handle_server_request)
     templates = Jinja2Templates(directory=str(active_settings.templates_dir))
 
     @asynccontextmanager
@@ -73,7 +83,9 @@ def create_app(
         active_settings.data_dir.mkdir(parents=True, exist_ok=True)
         await active_database.initialize()
         await active_manager.load()
+        await active_mission_service.start()
         yield
+        await active_mission_service.close()
         for runtime in active_manager.instances.values():
             if runtime.client is not None:
                 await runtime.client.close()
@@ -100,8 +112,10 @@ def create_app(
         ]
         playbooks = [PlaybookView.model_validate(row) for row in playbook_rows]
         events = [EventView.model_validate(row) for row in await active_database.list_events(250)]
+        missions = await active_mission_service.list_views()
         return DashboardView(
             instances=await active_manager.list_views(),
+            missions=missions,
             projects=projects,
             playbooks=playbooks,
             events=events,
@@ -227,6 +241,46 @@ def create_app(
         if row is None:
             raise HTTPException(status_code=500, detail="Failed to create project.")
         return ProjectView.model_validate(active_project_service.inspect(row))
+
+    @fastapi_app.post("/api/missions")
+    async def create_mission(payload: MissionCreate) -> dict:
+        try:
+            return (await active_mission_service.create(payload)).model_dump()
+        except (KeyError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @fastapi_app.post("/api/missions/{mission_id}/start")
+    async def start_mission(mission_id: int) -> dict:
+        try:
+            return (await active_mission_service.resume(mission_id)).model_dump()
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @fastapi_app.post("/api/missions/{mission_id}/pause")
+    async def pause_mission(mission_id: int) -> dict:
+        try:
+            return (await active_mission_service.pause(mission_id)).model_dump()
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @fastapi_app.post("/api/missions/{mission_id}/run-now")
+    async def run_mission_now(mission_id: int) -> dict:
+        try:
+            return (await active_mission_service.run_now(mission_id)).model_dump()
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @fastapi_app.post("/api/missions/{mission_id}/complete")
+    async def complete_mission(mission_id: int) -> dict:
+        try:
+            return (await active_mission_service.complete(mission_id)).model_dump()
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @fastapi_app.delete("/api/missions/{mission_id}")
+    async def delete_mission(mission_id: int) -> dict[str, bool]:
+        await active_mission_service.delete(mission_id)
+        return {"ok": True}
 
     @fastapi_app.get("/api/playbooks")
     async def list_playbooks() -> list[PlaybookView]:

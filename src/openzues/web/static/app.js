@@ -6,6 +6,7 @@ const state = {
 };
 
 const heroStatsEl = document.querySelector("#hero-stats");
+const missionsEl = document.querySelector("#missions");
 const instancesEl = document.querySelector("#instances");
 const diagnosticsEl = document.querySelector("#diagnostics");
 const playbooksEl = document.querySelector("#playbooks");
@@ -13,7 +14,11 @@ const projectsEl = document.querySelector("#projects");
 const eventsEl = document.querySelector("#events");
 const toastEl = document.querySelector("#toast");
 const eventFilterEl = document.querySelector("#event-filter");
+const eventHideNoiseEl = document.querySelector("#event-hide-noise");
 const instanceFormEl = document.querySelector("#instance-form");
+const missionFormEl = document.querySelector("#mission-form");
+const missionInstanceSelectEl = document.querySelector("#mission-instance-select");
+const missionProjectSelectEl = document.querySelector("#mission-project-select");
 const transportSelectEl = document.querySelector("#transport-select");
 
 function showToast(message, isError = false) {
@@ -87,30 +92,65 @@ function scheduleRefresh() {
 
 function renderHero() {
   const instances = state.dashboard?.instances ?? [];
+  const missions = state.dashboard?.missions ?? [];
   const projects = state.dashboard?.projects ?? [];
-  const playbooks = state.dashboard?.playbooks ?? [];
   const connected = instances.filter((instance) => instance.connected).length;
   const approvals = instances.reduce(
     (total, instance) => total + instance.unresolved_requests.length,
     0,
   );
+  const activeMissions = missions.filter((mission) => mission.status === "active").length;
+  const blockedMissions = missions.filter((mission) => mission.status === "blocked").length;
   heroStatsEl.innerHTML = `
     <article class="stat">
       <span class="stat-label">Connected</span>
       <span class="stat-value">${connected}</span>
     </article>
     <article class="stat">
-      <span class="stat-label">Projects</span>
-      <span class="stat-value">${projects.length}</span>
+      <span class="stat-label">Active Missions</span>
+      <span class="stat-value">${activeMissions}</span>
     </article>
     <article class="stat">
-      <span class="stat-label">Playbooks</span>
-      <span class="stat-value">${playbooks.length}</span>
+      <span class="stat-label">Blocked</span>
+      <span class="stat-value">${blockedMissions}</span>
+    </article>
+    <article class="stat">
+      <span class="stat-label">Projects</span>
+      <span class="stat-value">${projects.length}</span>
     </article>
     <article class="stat">
       <span class="stat-label">Approvals</span>
       <span class="stat-value">${approvals}</span>
     </article>
+  `;
+}
+
+function booleanBadge(enabled, label) {
+  return enabled ? pill(label, "ok") : "";
+}
+
+function syncMissionOptions() {
+  const instances = state.dashboard?.instances ?? [];
+  const projects = state.dashboard?.projects ?? [];
+  const instanceOptions = instances.length
+    ? instances
+        .map(
+          (instance) =>
+            `<option value="${instance.id}">${escapeHtml(
+              `${instance.name}${instance.connected ? " (connected)" : ""}`,
+            )}</option>`,
+        )
+        .join("")
+    : `<option value="">No connections yet</option>`;
+  missionInstanceSelectEl.innerHTML = instanceOptions;
+  missionProjectSelectEl.innerHTML = `
+    <option value="">Project (optional)</option>
+    ${projects
+      .map(
+        (project) =>
+          `<option value="${project.id}">${escapeHtml(project.label)}</option>`,
+      )
+      .join("")}
   `;
 }
 
@@ -134,6 +174,125 @@ function renderDiagnostics() {
         </article>
       `,
     )
+    .join("");
+}
+
+function renderMissions() {
+  const missions = state.dashboard?.missions ?? [];
+  if (!missions.length) {
+    missionsEl.innerHTML = `
+      <article class="mission empty-state">
+        <strong>No missions running yet.</strong>
+        <p class="small-muted">
+          Launch a goal here and OpenZues will keep nudging Codex forward, capture final-answer
+          checkpoints, and stop only when it needs approval or you pause it.
+        </p>
+      </article>
+    `;
+    return;
+  }
+
+  missionsEl.innerHTML = missions
+    .map((mission) => {
+      const progressSuffix = mission.max_turns
+        ? `${mission.turns_completed}/${mission.max_turns}`
+        : `${mission.turns_completed} complete`;
+      const checkpoints = mission.checkpoints?.length
+        ? mission.checkpoints
+            .map(
+              (checkpoint) => `
+                <article class="checkpoint stack">
+                  <div class="row">
+                    ${pill(checkpoint.kind, checkpoint.kind === "error" ? "bad" : checkpoint.kind === "approval" ? "warn" : "ok")}
+                    <span class="mono">${escapeHtml(checkpoint.created_at)}</span>
+                  </div>
+                  <pre>${escapeHtml(checkpoint.summary)}</pre>
+                </article>
+              `,
+            )
+            .join("")
+        : `<p class="mono">No checkpoints yet.</p>`;
+
+      return `
+        <article class="mission stack">
+          <div class="instance-head">
+            <div class="stack mission-head-copy">
+              <div class="row">
+                <h3>${escapeHtml(mission.name)}</h3>
+                <div class="mission-pills">
+                  ${pill(mission.status, mission.status === "active" ? "ok" : mission.status === "blocked" ? "warn" : mission.status === "failed" ? "bad" : "")}
+                  ${mission.in_progress ? pill("turn running", "ok") : pill("idle")}
+                  ${pill(`instance ${mission.instance_id}`)}
+                  ${mission.instance_name ? pill(mission.instance_name) : ""}
+                  ${mission.project_label ? pill(mission.project_label) : ""}
+                  ${pill(mission.model)}
+                </div>
+              </div>
+              <p class="small-muted">${escapeHtml(mission.objective)}</p>
+            </div>
+            <div class="actions">
+              ${
+                mission.status === "active" || mission.status === "blocked"
+                  ? `<button type="button" class="ghost" data-action="pause-mission" data-mission-id="${mission.id}">Pause</button>`
+                  : `<button type="button" data-action="resume-mission" data-mission-id="${mission.id}">Resume</button>`
+              }
+              <button type="button" class="ghost" data-action="run-mission-now" data-mission-id="${mission.id}">Run now</button>
+              <button type="button" class="ghost" data-action="complete-mission" data-mission-id="${mission.id}">Complete</button>
+              <button type="button" class="danger" data-action="delete-mission" data-mission-id="${mission.id}">Delete</button>
+            </div>
+          </div>
+
+          <div class="mission-stats">
+            <article class="mini-stat">
+              <span class="mini-stat-label">Thread</span>
+              <span class="mono">${escapeHtml(mission.thread_id || "Not created yet")}</span>
+            </article>
+            <article class="mini-stat">
+              <span class="mini-stat-label">Cycles</span>
+              <span>${escapeHtml(progressSuffix)}</span>
+            </article>
+            <article class="mini-stat">
+              <span class="mini-stat-label">Failures</span>
+              <span>${mission.failure_count}</span>
+            </article>
+            <article class="mini-stat">
+              <span class="mini-stat-label">Policies</span>
+              <div class="mission-pills">
+                ${booleanBadge(mission.use_builtin_agents, "agents")}
+                ${booleanBadge(mission.run_verification, "verify")}
+                ${booleanBadge(mission.auto_commit, "commit")}
+                ${booleanBadge(mission.pause_on_approval, "pause approvals")}
+              </div>
+            </article>
+          </div>
+
+          ${
+            mission.last_error
+              ? `<div class="mission-alert">${escapeHtml(mission.last_error)}</div>`
+              : ""
+          }
+
+          ${
+            mission.last_checkpoint
+              ? `
+                <div class="stack">
+                  <strong>Latest handoff</strong>
+                  <pre>${escapeHtml(mission.last_checkpoint)}</pre>
+                </div>
+              `
+              : ""
+          }
+
+          <div class="stack">
+            <div class="row">
+              <strong>Mission Memory</strong>
+              <span class="small-muted">${escapeHtml(mission.last_activity_at || "No activity yet")}</span>
+            </div>
+            <div class="stack checkpoint-list">${checkpoints}</div>
+          </div>
+        </article>
+      `;
+    })
     .join("");
 }
 
@@ -402,10 +561,22 @@ function renderProjects() {
     .join("");
 }
 
+function isNoiseEvent(event) {
+  return (
+    event.method === "server/stderr" ||
+    event.method === "thread/tokenUsage/updated" ||
+    event.method === "item/started" ||
+    event.method.endsWith("/delta")
+  );
+}
+
 function renderEvents() {
   const events = state.dashboard?.events ?? [];
   const filter = eventFilterEl.value.trim().toLowerCase();
   const filtered = events.filter((event) => {
+    if (eventHideNoiseEl.checked && isNoiseEvent(event)) {
+      return false;
+    }
     if (!filter) {
       return true;
     }
@@ -437,10 +608,12 @@ function renderEvents() {
 
 function render() {
   renderHero();
+  renderMissions();
   renderInstances();
   renderPlaybooks();
   renderProjects();
   renderEvents();
+  syncMissionOptions();
 }
 
 async function submitJson(url, payload, method = "POST") {
@@ -488,6 +661,7 @@ document.querySelector("#refresh-diagnostics").addEventListener("click", () => {
 });
 
 eventFilterEl.addEventListener("input", () => renderEvents());
+eventHideNoiseEl.addEventListener("input", () => renderEvents());
 
 instanceFormEl.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -505,6 +679,39 @@ instanceFormEl.addEventListener("submit", async (event) => {
     event.currentTarget.reset();
     syncTransportFields();
     showToast("Connection created.");
+  } catch (error) {
+    showToast(normalizeError(error), true);
+  }
+});
+
+missionFormEl.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = new FormData(event.currentTarget);
+  try {
+    await submitJson("/api/missions", {
+      name: form.get("name"),
+      objective: form.get("objective"),
+      instance_id: Number(form.get("instance_id")),
+      project_id: form.get("project_id") ? Number(form.get("project_id")) : null,
+      cwd: null,
+      thread_id: form.get("thread_id") || null,
+      model: form.get("model") || "gpt-5.4",
+      reasoning_effort: null,
+      collaboration_mode: null,
+      max_turns: form.get("max_turns") ? Number(form.get("max_turns")) : null,
+      use_builtin_agents: form.get("use_builtin_agents") === "on",
+      run_verification: form.get("run_verification") === "on",
+      auto_commit: form.get("auto_commit") === "on",
+      pause_on_approval: form.get("pause_on_approval") === "on",
+      start_immediately: form.get("start_immediately") === "on",
+    });
+    event.currentTarget.reset();
+    missionFormEl.querySelector('input[name="use_builtin_agents"]').checked = true;
+    missionFormEl.querySelector('input[name="run_verification"]').checked = true;
+    missionFormEl.querySelector('input[name="auto_commit"]').checked = true;
+    missionFormEl.querySelector('input[name="pause_on_approval"]').checked = true;
+    missionFormEl.querySelector('input[name="start_immediately"]').checked = true;
+    showToast("Mission launched.");
   } catch (error) {
     showToast(normalizeError(error), true);
   }
@@ -619,6 +826,32 @@ document.addEventListener("click", async (event) => {
       const result = await submitJson(`/api/playbooks/${playbookId}/run`, payload);
       const threadSuffix = result.thread_id ? ` on ${result.thread_id}` : "";
       showToast(`Playbook ran${threadSuffix}.`);
+    }
+    if (target.dataset.action === "pause-mission") {
+      const missionId = target.dataset.missionId;
+      await submitJson(`/api/missions/${missionId}/pause`, {});
+      showToast("Mission paused.");
+    }
+    if (target.dataset.action === "resume-mission") {
+      const missionId = target.dataset.missionId;
+      await submitJson(`/api/missions/${missionId}/start`, {});
+      showToast("Mission resumed.");
+    }
+    if (target.dataset.action === "run-mission-now") {
+      const missionId = target.dataset.missionId;
+      await submitJson(`/api/missions/${missionId}/run-now`, {});
+      showToast("Mission ticked.");
+    }
+    if (target.dataset.action === "complete-mission") {
+      const missionId = target.dataset.missionId;
+      await submitJson(`/api/missions/${missionId}/complete`, {});
+      showToast("Mission marked complete.");
+    }
+    if (target.dataset.action === "delete-mission") {
+      const missionId = target.dataset.missionId;
+      await api(`/api/missions/${missionId}`, { method: "DELETE" });
+      await loadDashboard();
+      showToast("Mission deleted.");
     }
   } catch (error) {
     showToast(normalizeError(error), true);

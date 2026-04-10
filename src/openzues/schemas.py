@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 TransportType = Literal["desktop", "stdio", "websocket"]
 PlaybookKind = Literal["command", "turn", "thread_turn", "review"]
 DiagnosticStatus = Literal["ok", "warn", "fail", "info"]
+MissionStatus = Literal["active", "paused", "blocked", "completed", "failed"]
 
 
 class InstanceCreate(BaseModel):
@@ -160,8 +161,69 @@ class DiagnosticsView(BaseModel):
     checked_at: str
 
 
+class MissionCreate(BaseModel):
+    name: str
+    objective: str
+    instance_id: int
+    project_id: int | None = None
+    cwd: str | None = None
+    thread_id: str | None = None
+    model: str = "gpt-5.4"
+    reasoning_effort: str | None = None
+    collaboration_mode: str | None = None
+    max_turns: int | None = Field(default=None, ge=1)
+    use_builtin_agents: bool = True
+    run_verification: bool = True
+    auto_commit: bool = True
+    pause_on_approval: bool = True
+    start_immediately: bool = True
+
+
+class MissionCheckpointView(BaseModel):
+    id: int
+    mission_id: int
+    thread_id: str | None = None
+    turn_id: str | None = None
+    kind: str
+    summary: str
+    created_at: datetime
+
+
+class MissionView(BaseModel):
+    id: int
+    name: str
+    objective: str
+    status: MissionStatus
+    instance_id: int
+    instance_name: str | None = None
+    project_id: int | None = None
+    project_label: str | None = None
+    thread_id: str | None = None
+    cwd: str | None = None
+    model: str
+    reasoning_effort: str | None = None
+    collaboration_mode: str | None = None
+    max_turns: int | None = None
+    use_builtin_agents: bool = True
+    run_verification: bool = True
+    auto_commit: bool = True
+    pause_on_approval: bool = True
+    in_progress: bool = False
+    turns_started: int = 0
+    turns_completed: int = 0
+    failure_count: int = 0
+    last_turn_id: str | None = None
+    last_error: str | None = None
+    last_checkpoint: str | None = None
+    last_activity_at: str | None = None
+    checkpoints: list[MissionCheckpointView] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: datetime
+
+
 class DashboardView(BaseModel):
     instances: list[InstanceView]
+    missions: list[MissionView]
     projects: list[ProjectView]
     playbooks: list[PlaybookView]
     events: list[EventView]

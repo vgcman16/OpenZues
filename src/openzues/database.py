@@ -71,6 +71,47 @@ class Database:
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS missions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    objective TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    instance_id INTEGER NOT NULL,
+                    project_id INTEGER,
+                    thread_id TEXT,
+                    cwd TEXT,
+                    model TEXT NOT NULL,
+                    reasoning_effort TEXT,
+                    collaboration_mode TEXT,
+                    max_turns INTEGER,
+                    use_builtin_agents INTEGER NOT NULL DEFAULT 1,
+                    run_verification INTEGER NOT NULL DEFAULT 1,
+                    auto_commit INTEGER NOT NULL DEFAULT 1,
+                    pause_on_approval INTEGER NOT NULL DEFAULT 1,
+                    in_progress INTEGER NOT NULL DEFAULT 0,
+                    turns_started INTEGER NOT NULL DEFAULT 0,
+                    turns_completed INTEGER NOT NULL DEFAULT 0,
+                    failure_count INTEGER NOT NULL DEFAULT 0,
+                    last_turn_id TEXT,
+                    last_error TEXT,
+                    last_checkpoint TEXT,
+                    last_activity_at TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_missions_status ON missions(status);
+                CREATE INDEX IF NOT EXISTS idx_missions_thread ON missions(instance_id, thread_id);
+                CREATE TABLE IF NOT EXISTS mission_checkpoints (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    mission_id INTEGER NOT NULL,
+                    thread_id TEXT,
+                    turn_id TEXT,
+                    kind TEXT NOT NULL,
+                    summary TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_mission_checkpoints_mission
+                    ON mission_checkpoints(mission_id, id DESC);
                 """
             )
             await db.commit()
@@ -127,6 +168,13 @@ class Database:
             db.row_factory = aiosqlite.Row
             rows = await db.execute_fetchall("SELECT * FROM projects ORDER BY id ASC")
             return [dict(row) for row in rows]
+
+    async def get_project(self, project_id: int) -> dict[str, Any] | None:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute("SELECT * FROM projects WHERE id = ?", (project_id,))
+            row = await cursor.fetchone()
+            return dict(row) if row else None
 
     async def list_playbooks(self) -> list[dict[str, Any]]:
         async with aiosqlite.connect(self.path) as db:
@@ -210,6 +258,167 @@ class Database:
         async with aiosqlite.connect(self.path) as db:
             await db.execute("DELETE FROM playbooks WHERE id = ?", (playbook_id,))
             await db.commit()
+
+    async def create_mission(
+        self,
+        *,
+        name: str,
+        objective: str,
+        status: str,
+        instance_id: int,
+        project_id: int | None,
+        thread_id: str | None,
+        cwd: str | None,
+        model: str,
+        reasoning_effort: str | None,
+        collaboration_mode: str | None,
+        max_turns: int | None,
+        use_builtin_agents: bool,
+        run_verification: bool,
+        auto_commit: bool,
+        pause_on_approval: bool,
+    ) -> int:
+        now = utcnow()
+        async with aiosqlite.connect(self.path) as db:
+            cursor = await db.execute(
+                """
+                INSERT INTO missions (
+                    name,
+                    objective,
+                    status,
+                    instance_id,
+                    project_id,
+                    thread_id,
+                    cwd,
+                    model,
+                    reasoning_effort,
+                    collaboration_mode,
+                    max_turns,
+                    use_builtin_agents,
+                    run_verification,
+                    auto_commit,
+                    pause_on_approval,
+                    created_at,
+                    updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    name,
+                    objective,
+                    status,
+                    instance_id,
+                    project_id,
+                    thread_id,
+                    cwd,
+                    model,
+                    reasoning_effort,
+                    collaboration_mode,
+                    max_turns,
+                    int(use_builtin_agents),
+                    int(run_verification),
+                    int(auto_commit),
+                    int(pause_on_approval),
+                    now,
+                    now,
+                ),
+            )
+            await db.commit()
+            assert cursor.lastrowid is not None
+            return int(cursor.lastrowid)
+
+    async def list_missions(self) -> list[dict[str, Any]]:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            rows = await db.execute_fetchall("SELECT * FROM missions ORDER BY id ASC")
+            return [dict(row) for row in rows]
+
+    async def get_mission(self, mission_id: int) -> dict[str, Any] | None:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute("SELECT * FROM missions WHERE id = ?", (mission_id,))
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+
+    async def get_mission_by_thread(
+        self, instance_id: int, thread_id: str
+    ) -> dict[str, Any] | None:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT * FROM missions WHERE instance_id = ? AND thread_id = ?",
+                (instance_id, thread_id),
+            )
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+
+    async def update_mission(self, mission_id: int, **fields: Any) -> None:
+        if not fields:
+            return
+        fields["updated_at"] = utcnow()
+        assignments = ", ".join(f"{key} = ?" for key in fields)
+        values = list(fields.values()) + [mission_id]
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute(
+                f"UPDATE missions SET {assignments} WHERE id = ?",
+                values,
+            )
+            await db.commit()
+
+    async def delete_mission(self, mission_id: int) -> None:
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute("DELETE FROM mission_checkpoints WHERE mission_id = ?", (mission_id,))
+            await db.execute("DELETE FROM missions WHERE id = ?", (mission_id,))
+            await db.commit()
+
+    async def append_mission_checkpoint(
+        self,
+        *,
+        mission_id: int,
+        thread_id: str | None,
+        turn_id: str | None,
+        kind: str,
+        summary: str,
+    ) -> int:
+        now = utcnow()
+        async with aiosqlite.connect(self.path) as db:
+            cursor = await db.execute(
+                """
+                INSERT INTO mission_checkpoints (
+                    mission_id,
+                    thread_id,
+                    turn_id,
+                    kind,
+                    summary,
+                    created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (mission_id, thread_id, turn_id, kind, summary, now),
+            )
+            await db.commit()
+            assert cursor.lastrowid is not None
+            return int(cursor.lastrowid)
+
+    async def list_mission_checkpoints(
+        self,
+        mission_id: int,
+        *,
+        limit: int = 5,
+    ) -> list[dict[str, Any]]:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            rows = await db.execute_fetchall(
+                """
+                SELECT *
+                FROM mission_checkpoints
+                WHERE mission_id = ?
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (mission_id, limit),
+            )
+            return [dict(row) for row in rows]
 
     async def append_event(
         self,

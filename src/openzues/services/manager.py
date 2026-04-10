@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any, Literal, cast
 
@@ -9,6 +11,9 @@ from openzues.schemas import InstanceView, TransportType
 from openzues.services.codex_desktop import CodexDesktopService
 from openzues.services.codex_rpc import CodexAppServerClient
 from openzues.services.hub import BroadcastHub
+
+logger = logging.getLogger(__name__)
+RuntimeListener = Callable[[int, dict[str, Any]], Awaitable[None]]
 
 
 @dataclass(slots=True)
@@ -89,6 +94,14 @@ class RuntimeManager:
         self.hub = hub
         self.desktop_service = desktop_service
         self.instances: dict[int, InstanceRuntime] = {}
+        self.event_listeners: list[RuntimeListener] = []
+        self.server_request_listeners: list[RuntimeListener] = []
+
+    def add_event_listener(self, listener: RuntimeListener) -> None:
+        self.event_listeners.append(listener)
+
+    def add_server_request_listener(self, listener: RuntimeListener) -> None:
+        self.server_request_listeners.append(listener)
 
     async def load(self) -> None:
         rows = await self.database.list_instances()
@@ -395,6 +408,11 @@ class RuntimeManager:
                 "method": request["method"],
             },
         )
+        for listener in self.server_request_listeners:
+            try:
+                await listener(instance_id, request)
+            except Exception:
+                logger.exception("Runtime server request listener crashed")
 
     async def handle_event(self, instance_id: int, event: dict[str, Any]) -> None:
         await self.database.append_event(
@@ -431,6 +449,11 @@ class RuntimeManager:
             "mcpServer/oauthLogin/completed",
         }:
             asyncio.create_task(self.refresh_instance(instance_id))
+        for listener in self.event_listeners:
+            try:
+                await listener(instance_id, event)
+            except Exception:
+                logger.exception("Runtime event listener crashed")
 
     async def publish_snapshot(self, event_type: str, payload: dict[str, Any]) -> None:
         await self.hub.publish({"type": event_type, **payload, "createdAt": utcnow()})

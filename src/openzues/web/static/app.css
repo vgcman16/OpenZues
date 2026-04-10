@@ -73,13 +73,14 @@ h1 {
 
 .hero-stats {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
   gap: 12px;
 }
 
 .stat,
 .panel,
 .instance,
+.mission,
 .project,
 .request,
 .event {
@@ -128,6 +129,12 @@ h1 {
   padding: 18px;
 }
 
+.panel-lede {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
 .section-callout {
   margin-bottom: 16px;
   padding: 14px 16px;
@@ -156,6 +163,10 @@ h1 {
 
 .form-grid textarea {
   grid-column: span 2;
+}
+
+.mission-form textarea {
+  grid-column: span 3;
 }
 
 input,
@@ -201,7 +212,12 @@ button.danger {
   color: var(--muted);
 }
 
+.checkbox.compact {
+  white-space: nowrap;
+}
+
 .instance,
+.mission,
 .project,
 .request,
 .event,
@@ -212,6 +228,7 @@ button.danger {
 }
 
 .instance-meta,
+.mission-pills,
 .project-meta,
 .playbook-meta,
 .pill-row,
@@ -262,7 +279,7 @@ pre {
 }
 
 .actions {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
 }
 
 .subgrid {
@@ -292,13 +309,73 @@ pre {
   border-left: 4px solid var(--accent-2);
 }
 
+.mission-panel {
+  background:
+    linear-gradient(180deg, rgba(111, 255, 210, 0.06), transparent 28%),
+    var(--panel);
+}
+
+.mission-head-copy h3 {
+  margin: 0;
+}
+
+.mission-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.mini-stat,
+.checkpoint,
+.empty-state {
+  border-radius: 16px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.03);
+  padding: 12px 14px;
+}
+
+.mini-stat {
+  display: grid;
+  gap: 6px;
+}
+
+.mini-stat-label {
+  color: var(--muted);
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.checkpoint-list {
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+
+.mission-alert {
+  border-radius: 16px;
+  border: 1px solid rgba(255, 200, 87, 0.28);
+  background: rgba(255, 200, 87, 0.08);
+  color: #ffe4a6;
+  padding: 12px 14px;
+}
+
 .action-text,
 .small-muted {
   color: var(--muted);
   font-size: 0.9rem;
 }
 
-.panel-head input {
+.event-head {
+  align-items: flex-end;
+}
+
+.event-toolbar {
+  display: grid;
+  gap: 10px;
+  justify-items: end;
+}
+
+.panel-head input,
+.event-toolbar input {
   max-width: 360px;
 }
 
@@ -323,12 +400,21 @@ pre {
   .grid,
   .form-grid,
   .actions,
-  .subgrid {
+  .subgrid,
+  .mission-stats {
     grid-template-columns: 1fr;
   }
 
   .span-2,
   .span-3 {
     grid-column: span 1;
+  }
+
+  .event-head {
+    align-items: stretch;
+  }
+
+  .event-toolbar {
+    justify-items: stretch;
   }
 }

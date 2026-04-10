@@ -13,15 +13,62 @@
           <p class="eyebrow">Codex Control Plane</p>
           <h1>OpenZues</h1>
           <p class="lede">
-            Local-first operator UX for Codex App Server, approvals, live thread telemetry,
-            project context, and GitHub workflows.
+            Local-first mission control for Codex: always-on build loops, approval-aware autonomy,
+            checkpoint memory, project context, and direct desktop connectivity.
           </p>
         </div>
         <div class="hero-stats" id="hero-stats"></div>
       </header>
 
       <main class="grid">
-        <section class="panel span-2">
+        <section class="panel span-2 mission-panel">
+          <div class="panel-head">
+            <div>
+              <h2>Mission Control</h2>
+              <p class="panel-lede">
+                Launch long-running Codex objectives, let them continue autonomously, and keep a
+                durable memory of each verified checkpoint.
+              </p>
+            </div>
+          </div>
+          <form id="mission-form" class="stack form-grid mission-form">
+            <input name="name" type="text" placeholder="Mission name" required />
+            <select name="instance_id" id="mission-instance-select" required></select>
+            <select name="project_id" id="mission-project-select"></select>
+            <input name="model" type="text" placeholder="Model (gpt-5.4)" />
+            <input name="thread_id" type="text" placeholder="Attach existing thread ID (optional)" />
+            <input name="max_turns" type="number" min="1" placeholder="Max turns (blank = unlimited)" />
+            <textarea
+              name="objective"
+              placeholder="Describe the end state. Example: Keep shipping the product until the dashboard supports durable autonomous runs, checkpoint memory, and a cleaner operator UX."
+              required
+            ></textarea>
+            <label class="checkbox">
+              <input name="use_builtin_agents" type="checkbox" checked />
+              Use built-in agents
+            </label>
+            <label class="checkbox">
+              <input name="run_verification" type="checkbox" checked />
+              Run verification
+            </label>
+            <label class="checkbox">
+              <input name="auto_commit" type="checkbox" checked />
+              Commit milestones
+            </label>
+            <label class="checkbox">
+              <input name="pause_on_approval" type="checkbox" checked />
+              Pause on approvals
+            </label>
+            <label class="checkbox">
+              <input name="start_immediately" type="checkbox" checked />
+              Start now
+            </label>
+            <button type="submit">Launch Mission</button>
+          </form>
+          <div id="missions" class="stack"></div>
+        </section>
+
+        <section class="panel">
           <div class="panel-head">
             <h2>Connections</h2>
             <button class="ghost" id="refresh-dashboard" type="button">Refresh</button>
@@ -74,6 +121,7 @@
         <section class="panel span-2">
           <div class="panel-head">
             <h2>Playbooks</h2>
+            <p class="panel-lede">Reusable operator routines for one-off commands, reviews, and thread jumps.</p>
           </div>
           <form id="playbook-form" class="stack form-grid">
             <input name="name" type="text" placeholder="Playbook name" required />
@@ -104,6 +152,7 @@
         <section class="panel">
           <div class="panel-head">
             <h2>Projects</h2>
+            <p class="panel-lede">Attach local repos so missions can target real workspaces.</p>
           </div>
           <form id="project-form" class="stack">
             <input name="path" type="text" placeholder="C:\path\to\repo" required />
@@ -114,13 +163,25 @@
         </section>
 
         <section class="panel span-3">
-          <div class="panel-head">
-            <h2>Event Timeline</h2>
-            <input
-              id="event-filter"
-              type="text"
-              placeholder="Filter by method, thread, instance, or payload"
-            />
+          <div class="panel-head event-head">
+            <div>
+              <h2>Activity Stream</h2>
+              <p class="panel-lede">
+                Checkpoints, turn milestones, and transport events. Noise filtering stays on by
+                default so the important stuff stays visible.
+              </p>
+            </div>
+            <div class="event-toolbar">
+              <label class="checkbox compact">
+                <input id="event-hide-noise" type="checkbox" checked />
+                Hide noise
+              </label>
+              <input
+                id="event-filter"
+                type="text"
+                placeholder="Filter by method, thread, instance, or payload"
+              />
+            </div>
           </div>
           <div id="events" class="events"></div>
         </section>
