@@ -1054,10 +1054,18 @@ def create_app(
 
     @fastapi_app.get("/", response_class=HTMLResponse)
     async def index(request: Request) -> HTMLResponse:
+        asset_version = max(
+            (
+                path.stat().st_mtime_ns
+                for path in active_settings.static_dir.rglob("*")
+                if path.is_file()
+            ),
+            default=0,
+        )
         return templates.TemplateResponse(
             request=request,
             name="index.html",
-            context={"settings": active_settings},
+            context={"settings": active_settings, "asset_version": asset_version},
         )
 
     @fastapi_app.get("/api/health")

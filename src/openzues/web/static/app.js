@@ -9,12 +9,20 @@ const heroStatsEl = document.querySelector("#hero-stats");
 const briefHeadlineEl = document.querySelector("#brief-headline");
 const briefSummaryEl = document.querySelector("#brief-summary");
 const briefActionsEl = document.querySelector("#brief-actions");
+const chatHeadlineEl = document.querySelector("#chat-headline");
+const chatSummaryEl = document.querySelector("#chat-summary");
+const chatPresenceEl = document.querySelector("#chat-presence");
+const opsChatEl = document.querySelector("#ops-chat");
 const launchpadHeadlineEl = document.querySelector("#launchpad-headline");
 const launchpadSummaryEl = document.querySelector("#launchpad-summary");
 const launchpadOpportunitiesEl = document.querySelector("#launchpad-opportunities");
 const radarHeadlineEl = document.querySelector("#radar-headline");
 const radarSummaryEl = document.querySelector("#radar-summary");
 const radarSignalsEl = document.querySelector("#radar-signals");
+const backstageSummaryEl = document.querySelector("#backstage-summary");
+const backstageMissionCountEl = document.querySelector("#backstage-mission-count");
+const backstageOpsCountEl = document.querySelector("#backstage-ops-count");
+const backstageEventCountEl = document.querySelector("#backstage-event-count");
 const opsShellSummaryEl = document.querySelector("#ops-shell-summary");
 const opsTaskCountEl = document.querySelector("#ops-task-count");
 const opsRouteCountEl = document.querySelector("#ops-route-count");
@@ -105,6 +113,7 @@ const missionInstanceSelectEl = document.querySelector("#mission-instance-select
 const missionProjectSelectEl = document.querySelector("#mission-project-select");
 const transportSelectEl = document.querySelector("#transport-select");
 const DISCLOSURE_SHELL_IDS = [
+  "backstage-shell",
   "ops-shell",
   "intelligence-shell",
   "library-shell",
@@ -218,6 +227,80 @@ function summarizeCount(count, singular, plural = `${singular}s`) {
   return `${count} ${count === 1 ? singular : plural}`;
 }
 
+function clipText(value, maxLength = 220) {
+  const text = String(value ?? "").trim();
+  if (!text) {
+    return "";
+  }
+  if (text.length <= maxLength) {
+    return text;
+  }
+  return `${text.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
+}
+
+function chatActionButton(label, action, dataset = {}, extraClass = "") {
+  const attrs = Object.entries(dataset)
+    .filter(([, value]) => value !== undefined && value !== null && value !== "")
+    .map(([key, value]) => `data-${key}="${escapeHtml(String(value))}"`)
+    .join(" ");
+  return `<button type="button" class="${escapeHtml(extraClass)}" data-action="${escapeHtml(action)}"${attrs ? ` ${attrs}` : ""}>${escapeHtml(label)}</button>`;
+}
+
+function renderChatCard({ title, meta = [], body = "", note = "", actions = [] }) {
+  return `
+    <article class="chat-card">
+      <div class="chat-card-head">
+        <strong>${escapeHtml(title)}</strong>
+        <div class="pill-row">${meta.filter(Boolean).join("")}</div>
+      </div>
+      ${body ? `<p>${escapeHtml(body)}</p>` : ""}
+      ${note ? `<div class="small-muted">${escapeHtml(note)}</div>` : ""}
+      ${actions.length ? `<div class="chat-actions">${actions.join("")}</div>` : ""}
+    </article>
+  `;
+}
+
+function renderChatMessage({
+  stamp = "OZ",
+  lane = "",
+  tone = "",
+  title,
+  meta = [],
+  body = "",
+  note = "",
+  code = "",
+  items = [],
+  cards = [],
+  actions = [],
+}) {
+  return `
+    <article class="chat-message ${tone ? `chat-${escapeHtml(tone)}` : ""}">
+      <div class="chat-avatar">${escapeHtml(stamp)}</div>
+      <div class="chat-bubble">
+        <div class="chat-message-head">
+          <div class="chat-heading">
+            ${lane ? `<span class="chat-lane">${escapeHtml(lane)}</span>` : ""}
+            <h3>${escapeHtml(title)}</h3>
+          </div>
+          <div class="chat-meta">${meta.filter(Boolean).join("")}</div>
+        </div>
+        ${body ? `<p class="chat-body">${escapeHtml(body)}</p>` : ""}
+        ${note ? `<div class="chat-note">${escapeHtml(note)}</div>` : ""}
+        ${code ? `<pre class="chat-code">${escapeHtml(code)}</pre>` : ""}
+        ${
+          items.length
+            ? `<div class="chat-inline-list">${items
+                .map((item) => `<span class="chat-inline-item">${escapeHtml(item)}</span>`)
+                .join("")}</div>`
+            : ""
+        }
+        ${cards.length ? `<div class="chat-card-grid">${cards.join("")}</div>` : ""}
+        ${actions.length ? `<div class="chat-actions">${actions.join("")}</div>` : ""}
+      </div>
+    </article>
+  `;
+}
+
 function disclosureKey(id) {
   return `openzues:${id}:open`;
 }
@@ -264,6 +347,58 @@ function toneForSignal(level) {
   }
   if (level === "ready") {
     return "ok";
+  }
+  return "";
+}
+
+function toneForRadarPosture(posture) {
+  if (posture === "hot") {
+    return "bad";
+  }
+  if (posture === "watch") {
+    return "warn";
+  }
+  if (posture === "steady") {
+    return "ok";
+  }
+  return "";
+}
+
+function toneForBriefStatus(status) {
+  if (status === "blocked") {
+    return "warn";
+  }
+  if (status === "active") {
+    return "ok";
+  }
+  if (status === "mixed") {
+    return "warn";
+  }
+  return "";
+}
+
+function toneForEconomyState(state) {
+  if (state === "compounding") {
+    return "ok";
+  }
+  if (state === "leaking") {
+    return "bad";
+  }
+  if (state === "speculative") {
+    return "warn";
+  }
+  return "";
+}
+
+function toneForContinuityState(state) {
+  if (state === "anchored") {
+    return "ok";
+  }
+  if (state === "fragile") {
+    return "bad";
+  }
+  if (state === "warming") {
+    return "warn";
   }
   return "";
 }
@@ -441,6 +576,513 @@ function renderLaunchpad() {
       `,
     )
     .join("");
+}
+
+function renderChat() {
+  if (!chatHeadlineEl || !chatSummaryEl || !chatPresenceEl || !opsChatEl) {
+    return;
+  }
+
+  const dashboard = state.dashboard;
+  if (!dashboard) {
+    chatHeadlineEl.textContent = "Waiting for live mission context...";
+    chatSummaryEl.textContent =
+      "OpenZues will narrate mission state, autonomy pressure, and operator choices here.";
+    chatPresenceEl.innerHTML = "";
+    opsChatEl.innerHTML = `
+      <article class="chat-empty">
+        <strong>No transcript yet.</strong>
+        <p class="small-muted">
+          Connect a Codex lane or launch a mission and the control plane will start writing the live
+          conversation here.
+        </p>
+      </article>
+    `;
+    return;
+  }
+
+  const brief = dashboard.brief;
+  const radar = dashboard.radar;
+  const launchpad = dashboard.launchpad;
+  const opsMesh = dashboard.ops_mesh;
+  const economy = dashboard.economy;
+  const interference = dashboard.interference;
+  const continuity = dashboard.continuity;
+  const dreamDeck = dashboard.dream_deck;
+  const cortex = dashboard.cortex;
+  const reflexDeck = dashboard.reflex_deck;
+  const missions = dashboard.missions ?? [];
+  const instances = dashboard.instances ?? [];
+  const events = dashboard.events ?? [];
+
+  const connectedCount = instances.filter((instance) => instance.connected).length;
+  const activeMissions = missions.filter((mission) => mission.status === "active");
+  const blockedMissions = missions.filter((mission) => mission.status === "blocked");
+  const pendingApprovals = instances.reduce(
+    (total, instance) => total + instance.unresolved_requests.length,
+    0,
+  );
+  const readyDreams = (dreamDeck?.dreams ?? []).filter((dream) => dream.status !== "forming").length;
+  const dueTasks = (opsMesh?.task_inbox?.tasks ?? []).filter((task) =>
+    ["due", "attention", "running"].includes(task.status),
+  ).length;
+
+  chatHeadlineEl.textContent = brief?.headline || "Control plane transcript";
+  chatSummaryEl.textContent =
+    radar?.summary || brief?.summary || "Mission state will condense into the transcript.";
+  chatPresenceEl.innerHTML = [
+    pill(`${connectedCount} live lanes`, connectedCount ? "ok" : ""),
+    pill(`${activeMissions.length} active loops`, activeMissions.length ? "ok" : ""),
+    blockedMissions.length ? pill(`${blockedMissions.length} blocked`, "warn") : "",
+    pendingApprovals ? pill(`${pendingApprovals} approvals`, "warn") : "",
+    dueTasks ? pill(`${dueTasks} ops cues`, dueTasks > 1 ? "warn" : "ok") : "",
+    readyDreams ? pill(`${readyDreams} memory passes`, "ok") : "",
+  ]
+    .filter(Boolean)
+    .join("");
+
+  const messages = [];
+
+  if (brief) {
+    messages.push(
+      renderChatMessage({
+        stamp: "OZ",
+        lane: "Control plane",
+        tone: toneForBriefStatus(brief.status),
+        title: brief.headline,
+        meta: [pill(brief.status, toneForBriefStatus(brief.status))],
+        body: brief.summary,
+        items: brief.next_actions.length
+          ? brief.next_actions
+          : ["No immediate operator action needed."],
+      }),
+    );
+  }
+
+  if (radar) {
+    const signalCards = (radar.signals ?? []).slice(0, 4).map((signal) =>
+      renderChatCard({
+        title: signal.title,
+        meta: [
+          pill(signal.level, toneForSignal(signal.level)),
+          pill(signal.lane),
+          signal.mission_id ? pill(`mission ${signal.mission_id}`) : "",
+          signal.instance_id ? pill(`lane ${signal.instance_id}`) : "",
+        ],
+        body: signal.detail,
+        note: signal.action
+          ? signal.action
+          : signal.freshness_minutes != null
+            ? `Freshness ${signal.freshness_minutes}m`
+            : "",
+      }),
+    );
+    messages.push(
+      renderChatMessage({
+        stamp: "RD",
+        lane: "Autonomy radar",
+        tone: toneForRadarPosture(radar.posture),
+        title: radar.posture === "steady" ? "Field is steady" : "Watch the field",
+        meta: [pill(radar.posture, toneForRadarPosture(radar.posture))],
+        body: radar.summary,
+        cards: signalCards,
+      }),
+    );
+  }
+
+  if (launchpad?.opportunities?.length) {
+    const opportunityCards = launchpad.opportunities.slice(0, 3).map((opportunity) =>
+      renderChatCard({
+        title: opportunity.title,
+        meta: [
+          pill(opportunity.impact, opportunity.impact === "high" ? "ok" : "warn"),
+          pill(opportunity.kind),
+        ],
+        body: opportunity.summary,
+        note: opportunity.why_now,
+        actions: [
+          chatActionButton("Load draft", "apply-opportunity", {
+            "opportunity-id": opportunity.id,
+          }, "ghost"),
+          chatActionButton(opportunity.action_label || "Launch now", "launch-opportunity", {
+            "opportunity-id": opportunity.id,
+          }),
+        ],
+      }),
+    );
+    messages.push(
+      renderChatMessage({
+        stamp: "GL",
+        lane: "Ghost launches",
+        tone: launchpad.opportunities.some((opportunity) => opportunity.impact === "high")
+          ? "ok"
+          : "warn",
+        title: launchpad.headline,
+        body: launchpad.summary,
+        cards: opportunityCards,
+      }),
+    );
+  }
+
+  const missionPriority = {
+    active: 0,
+    blocked: 1,
+    paused: 2,
+    failed: 3,
+    completed: 4,
+  };
+  const visibleMissions = [...missions]
+    .sort((left, right) => {
+      const priorityDelta =
+        (missionPriority[left.status] ?? 9) - (missionPriority[right.status] ?? 9);
+      if (priorityDelta !== 0) {
+        return priorityDelta;
+      }
+      return new Date(right.last_activity_at || right.updated_at).getTime() -
+        new Date(left.last_activity_at || left.updated_at).getTime();
+    })
+    .slice(0, 6);
+
+  visibleMissions.forEach((mission) => {
+    const progressSuffix = mission.max_turns
+      ? `${mission.turns_completed}/${mission.max_turns} turns`
+      : `${mission.turns_completed} turns complete`;
+    const noteSegments = [
+      mission.suggested_action ? `Operator next: ${clipText(mission.suggested_action, 180)}` : "",
+      mission.last_error ? `Error: ${clipText(mission.last_error, 180)}` : "",
+      mission.last_checkpoint ? `Handoff: ${clipText(mission.last_checkpoint, 180)}` : "",
+    ].filter(Boolean);
+    messages.push(
+      renderChatMessage({
+        stamp: `M${mission.id}`,
+        lane: mission.instance_name || `Mission ${mission.id}`,
+        tone: toneForMissionStatus(mission.status),
+        title: mission.name,
+        meta: [
+          pill(mission.status, toneForMissionStatus(mission.status)),
+          mission.phase ? pill(mission.phase) : "",
+          mission.project_label ? pill(mission.project_label) : "",
+          pill(mission.model),
+          `<span class="chat-age">${escapeHtml(formatRelativeTimestamp(mission.last_activity_at))}</span>`,
+        ],
+        body: mission.last_commentary || mission.objective,
+        note: noteSegments.join(" "),
+        code: mission.current_command || "",
+        items: [
+          progressSuffix,
+          `${formatNumber(mission.command_count)} commands`,
+          `${formatNumber(mission.total_tokens)} tokens`,
+          mission.thread_id ? `thread ${mission.thread_id}` : "thread pending",
+        ],
+        actions: [
+          mission.status === "active" || mission.status === "blocked"
+            ? chatActionButton("Pause", "pause-mission", { "mission-id": mission.id }, "ghost")
+            : chatActionButton("Resume", "resume-mission", { "mission-id": mission.id }),
+          chatActionButton("Run now", "run-mission-now", { "mission-id": mission.id }, "ghost"),
+          chatActionButton("Complete", "complete-mission", { "mission-id": mission.id }, "ghost"),
+        ],
+      }),
+    );
+  });
+
+  if (opsMesh) {
+    const taskCards = (opsMesh.task_inbox?.tasks ?? []).slice(0, 3).map((task) =>
+      renderChatCard({
+        title: task.name,
+        meta: [
+          pill(task.status, toneForTaskStatus(task.status)),
+          pill(task.cadence_label),
+          task.project_label ? pill(task.project_label) : "",
+        ],
+        body: task.summary,
+        note: task.last_result_summary
+          ? clipText(task.last_result_summary, 160)
+          : task.next_run_at
+            ? `Next run ${formatRelativeTimestamp(task.next_run_at)}`
+            : "No schedule attached",
+        actions: [
+          chatActionButton("Load draft", "apply-task", { "task-id": task.id }, "ghost"),
+          chatActionButton("Run now", "run-task", { "task-id": task.id }),
+        ],
+      }),
+    );
+    const remoteCards = (opsMesh.remote_requests ?? []).slice(-2).reverse().map((request) =>
+      renderChatCard({
+        title: request.target_label || request.kind,
+        meta: [
+          pill(request.kind),
+          pill(request.status, toneForRemoteStatus(request.status)),
+          request.operator_role ? pill(request.operator_role, toneForOperatorRole(request.operator_role)) : "",
+        ],
+        body: request.summary,
+        note: [
+          request.operator_name || "Unknown operator",
+          request.team_name ? `via ${request.team_name}` : "",
+          request.source_ip ? `from ${request.source_ip}` : "",
+        ]
+          .filter(Boolean)
+          .join(" "),
+      }),
+    );
+
+    if (taskCards.length || remoteCards.length) {
+      messages.push(
+        renderChatMessage({
+          stamp: "OP",
+          lane: "Ops mesh",
+          tone:
+            opsMesh.task_inbox.tasks.some((task) => task.status === "attention") ||
+            opsMesh.auth_posture.degraded_count
+              ? "warn"
+              : "ok",
+          title: opsMesh.headline,
+          meta: [
+            pill(
+              `${opsMesh.task_inbox.tasks.length} tasks`,
+              opsMesh.task_inbox.tasks.length ? "ok" : "",
+            ),
+            pill(
+              `${opsMesh.remote_requests.length} remote`,
+              opsMesh.remote_requests.length ? "warn" : "",
+            ),
+            pill(
+              `${opsMesh.integrations.length} integrations`,
+              opsMesh.integrations.length ? "ok" : "",
+            ),
+          ],
+          body: opsMesh.summary,
+          note: `${opsMesh.task_inbox.summary} ${opsMesh.access_posture.summary}`,
+          cards: [...taskCards, ...remoteCards],
+        }),
+      );
+    }
+  }
+
+  if (economy?.scopes?.length) {
+    const economyCards = [...economy.scopes]
+      .sort((left, right) => right.score - left.score)
+      .slice(0, 3)
+      .map((scope) =>
+        renderChatCard({
+          title: scope.scope_label,
+          meta: [
+            pill(scope.state, toneForEconomyState(scope.state)),
+            pill(`score ${scope.score}`, scope.score >= 70 ? "ok" : scope.score <= 40 ? "bad" : "warn"),
+          ],
+          body: scope.summary,
+          note: `${clipText(scope.arbitrage_edge, 110)} | ${formatNumber(scope.token_burn)} tokens | ${formatNumber(scope.command_burn)} commands`,
+        }),
+      );
+    messages.push(
+      renderChatMessage({
+        stamp: "EC",
+        lane: "Autonomy economy",
+        tone: economy.scopes.some((scope) => scope.state === "leaking")
+          ? "warn"
+          : economy.scopes.some((scope) => scope.state === "compounding")
+            ? "ok"
+            : "",
+        title: economy.headline,
+        body: economy.summary,
+        cards: economyCards,
+      }),
+    );
+  }
+
+  if (interference?.vectors?.length) {
+    const interferenceCards = interference.vectors.slice(0, 3).map((vector) =>
+      renderChatCard({
+        title: vector.scope_label,
+        meta: [
+          pill(vector.kind),
+          pill(vector.level, toneForSignal(vector.level)),
+        ],
+        body: vector.summary,
+        note: `${clipText(vector.pressure, 120)} | ${clipText(vector.treaty_prompt, 110)}`,
+      }),
+    );
+    messages.push(
+      renderChatMessage({
+        stamp: "IF",
+        lane: "Interference forecast",
+        tone: interference.vectors.some((vector) => vector.level === "critical") ? "warn" : "",
+        title: interference.headline,
+        body: interference.summary,
+        cards: interferenceCards,
+      }),
+    );
+  }
+
+  if (continuity?.packets?.length) {
+    const continuityCards = continuity.packets.slice(0, 3).map((packet) =>
+      renderChatCard({
+        title: packet.mission_name,
+        meta: [
+          pill(packet.state, toneForContinuityState(packet.state)),
+          pill(`score ${packet.score}`, packet.score >= 70 ? "ok" : packet.score <= 40 ? "bad" : "warn"),
+          packet.project_label ? pill(packet.project_label) : "",
+        ],
+        body: packet.summary,
+        note: `Anchor: ${clipText(packet.anchor, 90)} | Next handoff: ${clipText(packet.next_handoff, 90)}`,
+      }),
+    );
+    messages.push(
+      renderChatMessage({
+        stamp: "CT",
+        lane: "Continuity deck",
+        tone: continuity.packets.some((packet) => packet.state === "fragile") ? "warn" : "",
+        title: continuity.headline,
+        body: continuity.summary,
+        cards: continuityCards,
+      }),
+    );
+  }
+
+  if (dreamDeck?.dreams?.length) {
+    const dreamCards = dreamDeck.dreams.slice(0, 3).map((dream) =>
+      renderChatCard({
+        title: dream.project_label,
+        meta: [
+          pill(dream.status, toneForDreamStatus(dream.status)),
+          pill(`${dream.checkpoint_count} checkpoints`, dream.checkpoint_count ? "ok" : ""),
+        ],
+        body: dream.headline,
+        note: dream.summary,
+        actions: [
+          chatActionButton("Load dream", "apply-dream", { "dream-id": dream.id }, "ghost"),
+          chatActionButton(dream.action_label || "Launch dream", "launch-dream", {
+            "dream-id": dream.id,
+          }),
+        ],
+      }),
+    );
+    messages.push(
+      renderChatMessage({
+        stamp: "DR",
+        lane: "Dream deck",
+        tone: dreamDeck.dreams.some((dream) => dream.status === "fresh") ? "ok" : "",
+        title: dreamDeck.headline,
+        body: dreamDeck.summary,
+        cards: dreamCards,
+      }),
+    );
+  }
+
+  if ((cortex?.doctrines?.length ?? 0) || (cortex?.inoculations?.length ?? 0)) {
+    const doctrineCards = (cortex.doctrines ?? []).slice(0, 2).map((doctrine) =>
+      renderChatCard({
+        title: doctrine.project_label,
+        meta: [
+          pill(doctrine.confidence, doctrine.confidence === "strong" ? "ok" : doctrine.confidence === "solid" ? "warn" : ""),
+          pill(doctrine.recommended_model),
+        ],
+        body: doctrine.summary,
+        note: clipText(doctrine.rationale, 150),
+      }),
+    );
+    const inoculationCards = (cortex.inoculations ?? []).slice(0, 2).map((inoculation) =>
+      renderChatCard({
+        title: inoculation.title,
+        meta: [pill(inoculation.level, toneForSignal(inoculation.level)), pill("inoculation")],
+        body: inoculation.summary,
+        note: clipText(inoculation.prescription, 150),
+      }),
+    );
+    messages.push(
+      renderChatMessage({
+        stamp: "CX",
+        lane: "Autonomy cortex",
+        tone: (cortex.inoculations ?? []).some((inoculation) => inoculation.level === "critical")
+          ? "warn"
+          : "",
+        title: cortex.headline,
+        body: cortex.summary,
+        cards: [...doctrineCards, ...inoculationCards],
+      }),
+    );
+  }
+
+  if (reflexDeck?.reflexes?.length) {
+    const reflexCards = reflexDeck.reflexes.slice(0, 3).map((reflex) =>
+      renderChatCard({
+        title: reflex.title,
+        meta: [
+          pill(reflex.level, toneForSignal(reflex.level)),
+          pill(reflex.kind),
+          reflex.project_label ? pill(reflex.project_label) : "",
+        ],
+        body: reflex.summary,
+        note: `Targets ${reflex.mission_name}`,
+        actions: [
+          chatActionButton(reflex.action_label || "Fire reflex", "fire-reflex", {
+            "reflex-id": reflex.id,
+          }),
+        ],
+      }),
+    );
+    messages.push(
+      renderChatMessage({
+        stamp: "RF",
+        lane: "Reflex deck",
+        tone: reflexDeck.reflexes.some((reflex) => reflex.level === "critical") ? "warn" : "ok",
+        title: reflexDeck.headline,
+        body: reflexDeck.summary,
+        cards: reflexCards,
+      }),
+    );
+  }
+
+  if (instances.length) {
+    const instanceCards = instances.slice(0, 3).map((instance) =>
+      renderChatCard({
+        title: instance.name,
+        meta: [
+          pill(instance.connected ? "connected" : instance.error ? "error" : "idle", instance.connected ? "ok" : instance.error ? "bad" : ""),
+          pill(instance.transport),
+          instance.pid ? pill(`pid ${instance.pid}`) : "",
+        ],
+        body: instance.transport_note || "Ready for thread, turn, and command control.",
+        note: `${instance.threads.length} threads | ${instance.models.length} models | ${instance.unresolved_requests.length} approvals`,
+      }),
+    );
+    messages.push(
+      renderChatMessage({
+        stamp: "LN",
+        lane: "Lane posture",
+        tone: pendingApprovals ? "warn" : connectedCount ? "ok" : "",
+        title: connectedCount ? "Connected Codex lanes are online" : "No active Codex lanes yet",
+        body: connectedCount
+          ? `${connectedCount} lane(s) are connected and feeding the control plane.`
+          : "Use Quick Connect or create a connection in the rail to light the transcript up.",
+        note: pendingApprovals
+          ? `${pendingApprovals} approval request(s) are waiting in the connection dock.`
+          : "No pending approval requests right now.",
+        cards: instanceCards,
+      }),
+    );
+  }
+
+  const eventLines = events
+    .filter((event) => !isNoiseEvent(event))
+    .slice(-6)
+    .map(
+      (event) =>
+        `[${formatRelativeTimestamp(event.created_at)}] ${event.method}${event.thread_id ? ` | ${event.thread_id}` : ""}${event.instance_id ? ` | instance ${event.instance_id}` : ""}`,
+    );
+  if (eventLines.length) {
+    messages.push(
+      renderChatMessage({
+        stamp: "EV",
+        lane: "Transport trail",
+        tone: "",
+        title: "Recent event trail",
+        body: "The transcript stays high level, but the latest transport and thread milestones still surface here.",
+        code: eventLines.join("\n"),
+      }),
+    );
+  }
+
+  opsChatEl.innerHTML = messages.join("");
 }
 
 function renderRadar() {
@@ -1666,6 +2308,7 @@ function renderDiagnostics() {
 function renderShellChrome() {
   const opsMesh = state.dashboard?.ops_mesh;
   const tasks = opsMesh?.task_inbox?.tasks ?? [];
+  const remoteRequests = opsMesh?.remote_requests ?? [];
   const routes = opsMesh?.notification_routes ?? [];
   const meshIntegrations = opsMesh?.integrations ?? [];
   const authPosture = opsMesh?.auth_posture;
@@ -1803,6 +2446,36 @@ function renderShellChrome() {
     activityShellSummaryEl.textContent = events.length
       ? "The ledger is hidden until you need a full trail of mission, thread, and transport activity."
       : "The event stream will appear here when live activity starts landing.";
+  }
+
+  if (backstageMissionCountEl) {
+    backstageMissionCountEl.textContent = summarizeCount(missions.length, "mission");
+    backstageMissionCountEl.className = missions.some((mission) => mission.status === "blocked")
+      ? "pill warn"
+      : missions.some((mission) => mission.status === "active")
+        ? "pill ok"
+        : "pill";
+  }
+  if (backstageOpsCountEl) {
+    const opsCount = tasks.length + remoteRequests.length + meshIntegrations.length + routes.length;
+    backstageOpsCountEl.textContent = summarizeCount(opsCount, "ops item");
+    backstageOpsCountEl.className = opsCount ? "pill ok" : "pill";
+  }
+  if (backstageEventCountEl) {
+    backstageEventCountEl.textContent = summarizeCount(events.length, "event");
+    backstageEventCountEl.className = events.length ? "pill warn" : "pill";
+  }
+  if (backstageSummaryEl) {
+    if (missions.some((mission) => mission.status === "blocked")) {
+      backstageSummaryEl.textContent =
+        "A mission is blocked, so the structured lane is ready when you need full telemetry and manual controls.";
+    } else if (remoteRequests.length || events.length) {
+      backstageSummaryEl.textContent =
+        "The transcript is leading, while the full mission cards and ledgers stay one layer down for inspection.";
+    } else {
+      backstageSummaryEl.textContent =
+        "Keep the dense grid behind the transcript until you need full cards, ledgers, and admin forms.";
+    }
   }
 }
 
@@ -2337,6 +3010,7 @@ function renderEvents() {
 function render() {
   renderHero();
   renderBrief();
+  renderChat();
   renderLaunchpad();
   renderRadar();
   renderOpsMesh();

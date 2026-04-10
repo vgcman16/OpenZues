@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{{ settings.app_name }}</title>
-    <link rel="stylesheet" href="{{ url_for('static', path='app.css') }}" />
+    <link rel="stylesheet" href="{{ url_for('static', path='app.css') }}?v={{ asset_version }}" />
   </head>
   <body>
     <div class="shell">
@@ -60,142 +60,55 @@
           </div>
         </section>
 
-        <div class="workspace-grid">
+        <div class="workspace-grid chat-grid">
           <section class="primary-column">
-            <section class="deck-section launch-deck">
-              <div class="section-header">
+            <section class="deck-section transcript-shell">
+              <div class="section-header transcript-header">
                 <div>
-                  <p class="eyebrow">Launch Deck</p>
-                  <h2>Start the next long-running build loop</h2>
+                  <p class="eyebrow">Ops Transcript</p>
+                  <h2 id="chat-headline">Waiting for live mission context...</h2>
                 </div>
-                <p class="panel-lede">
-                  Turn a goal into a durable Codex run with project context, built-in agents, and
-                  milestone commits.
+                <p id="chat-summary" class="panel-lede">
+                  OpenZues will narrate mission state, autonomy pressure, and operator choices here.
                 </p>
               </div>
 
-              <div class="launch-layout">
-                <form id="mission-form" class="stack mission-form">
-                  <input name="task_blueprint_id" type="hidden" />
-                  <div class="mission-form-grid">
-                    <input name="name" type="text" placeholder="Mission name" required />
-                    <select name="instance_id" id="mission-instance-select" required></select>
-                    <select name="project_id" id="mission-project-select"></select>
-                    <textarea
-                      name="objective"
-                      placeholder="Describe the end state. Example: Keep shipping the product until the dashboard supports durable autonomous runs, checkpoint memory, and a cleaner operator UX."
-                      required
-                    ></textarea>
-                  </div>
+              <div id="chat-presence" class="transcript-presence"></div>
+              <div id="ops-chat" class="ops-chat"></div>
+            </section>
 
-                  <details id="mission-advanced" class="mission-detail">
-                    <summary>Advanced runtime controls</summary>
-                    <div class="stack detail-body">
-                      <div class="mission-form-grid advanced-grid">
-                        <input name="model" type="text" placeholder="Model (gpt-5.4)" />
-                        <input
-                          name="thread_id"
-                          type="text"
-                          placeholder="Attach existing thread ID (optional)"
-                        />
-                        <input
-                          name="max_turns"
-                          type="number"
-                          min="1"
-                          placeholder="Max turns (blank = unlimited)"
-                        />
-                        <input
-                          name="auto_recover_limit"
-                          type="number"
-                          min="0"
-                          placeholder="Auto recover limit (2)"
-                        />
-                        <input
-                          name="reflex_cooldown_seconds"
-                          type="number"
-                          min="60"
-                          placeholder="Reflex cooldown seconds (900)"
-                        />
-                      </div>
+            <details class="deck-shell backstage-shell" id="backstage-shell">
+              <summary class="shell-summary">
+                <div class="shell-copy">
+                  <p class="eyebrow">Structured View</p>
+                  <h2>Mission cards, ledgers, and full admin controls</h2>
+                  <p id="backstage-summary" class="panel-lede">
+                    Keep the dense grid one layer down while the main surface stays conversational.
+                  </p>
+                </div>
+                <div class="shell-metrics">
+                  <span id="backstage-mission-count" class="pill">0 missions</span>
+                  <span id="backstage-ops-count" class="pill">0 ops items</span>
+                  <span id="backstage-event-count" class="pill">0 events</span>
+                </div>
+              </summary>
 
-                      <div class="toggle-row">
-                        <label class="checkbox">
-                          <input name="use_builtin_agents" type="checkbox" checked />
-                          Use built-in agents
-                        </label>
-                        <label class="checkbox">
-                          <input name="run_verification" type="checkbox" checked />
-                          Run verification
-                        </label>
-                        <label class="checkbox">
-                          <input name="auto_commit" type="checkbox" checked />
-                          Commit milestones
-                        </label>
-                        <label class="checkbox">
-                          <input name="pause_on_approval" type="checkbox" checked />
-                          Pause on approvals
-                        </label>
-                        <label class="checkbox">
-                          <input name="allow_auto_reflexes" type="checkbox" checked />
-                          Auto reflexes
-                        </label>
-                        <label class="checkbox">
-                          <input name="auto_recover" type="checkbox" checked />
-                          Auto recover
-                        </label>
-                        <label class="checkbox">
-                          <input name="allow_failover" type="checkbox" checked />
-                          Lane failover
-                        </label>
-                        <label class="checkbox">
-                          <input name="start_immediately" type="checkbox" checked />
-                          Start now
-                        </label>
-                      </div>
+              <div class="shell-body stack">
+                <section class="deck-section">
+                  <div class="section-header">
+                    <div>
+                      <p class="eyebrow">Mission Fleet</p>
+                      <h2>Runs in motion, blocked, or ready for handoff</h2>
                     </div>
-                  </details>
-
-                  <div class="launch-actions">
-                    <button type="submit">Launch Mission</button>
-                  </div>
-                </form>
-
-                <aside class="launch-aside stack">
-                  <div class="aside-intro stack">
-                    <p class="eyebrow">Ghost Launches</p>
-                    <h3 id="launchpad-headline">Synthesizing next runs...</h3>
-                    <p id="launchpad-summary" class="panel-lede"></p>
-                  </div>
-                  <div id="launchpad-opportunities" class="ghost-grid"></div>
-
-                  <div class="aside-intro stack">
-                    <p class="eyebrow">Preset Runs</p>
-                    <h3>Load a proven mission shape</h3>
                     <p class="panel-lede">
-                      Start with a shipping loop, rescue pass, codebase map, or UX polish run, then
-                      let OpenZues keep Codex moving until it hits a checkpoint or needs judgment.
+                      Each mission keeps its own thread, checkpoint history, telemetry, and operator
+                      next step.
                     </p>
                   </div>
-                  <div id="mission-presets" class="preset-strip"></div>
-                </aside>
-              </div>
-            </section>
+                  <div id="missions" class="mission-list"></div>
+                </section>
 
-            <section class="deck-section">
-              <div class="section-header">
-                <div>
-                  <p class="eyebrow">Mission Fleet</p>
-                  <h2>Runs in motion, blocked, or ready for handoff</h2>
-                </div>
-                <p class="panel-lede">
-                  Each mission keeps its own thread, checkpoint history, telemetry, and operator next
-                  step.
-                </p>
-              </div>
-              <div id="missions" class="mission-list"></div>
-            </section>
-
-            <details class="deck-shell" id="ops-shell">
+                <details class="deck-shell" id="ops-shell">
               <summary class="shell-summary">
                 <div class="shell-copy">
                   <p class="eyebrow">Ops Mesh</p>
@@ -547,9 +460,9 @@
                   </div>
                 </section>
               </div>
-            </details>
+                </details>
 
-            <details class="deck-shell" id="intelligence-shell">
+                <details class="deck-shell" id="intelligence-shell">
               <summary class="shell-summary">
                 <div class="shell-copy">
                   <p class="eyebrow">Autonomy Intelligence</p>
@@ -632,9 +545,9 @@
                   <div id="reflexes" class="reflex-grid"></div>
                 </section>
               </div>
-            </details>
+                </details>
 
-            <details class="deck-shell" id="library-shell">
+                <details class="deck-shell" id="library-shell">
               <summary class="shell-summary">
                 <div class="shell-copy">
                   <p class="eyebrow">Workspace Library</p>
@@ -717,10 +630,169 @@
                   </section>
                 </div>
               </div>
+                </details>
+
+                <details class="stream-shell" id="activity-shell">
+                  <summary class="shell-summary">
+                    <div class="shell-copy">
+                      <p class="eyebrow">Activity Ledger</p>
+                      <h2>Checkpoints, turn milestones, and transport events</h2>
+                      <p id="activity-shell-summary" class="panel-lede">
+                        Keep the event stream tucked away until you need to inspect a live trail.
+                      </p>
+                    </div>
+                    <div class="shell-metrics">
+                      <span id="activity-shell-count" class="pill">0 events</span>
+                    </div>
+                  </summary>
+                  <div class="shell-body">
+                    <div class="section-header event-head">
+                      <div>
+                        <p class="panel-lede">
+                          Noise filtering stays on by default so the signal trail stays readable when
+                          Codex runs for hours.
+                        </p>
+                      </div>
+
+                      <div class="event-toolbar">
+                        <label class="checkbox compact">
+                          <input id="event-hide-noise" type="checkbox" checked />
+                          Hide noise
+                        </label>
+                        <input
+                          id="event-filter"
+                          type="text"
+                          placeholder="Filter by method, thread, instance, or payload"
+                        />
+                      </div>
+                    </div>
+                    <div id="events" class="events"></div>
+                  </div>
+                </details>
+              </div>
             </details>
           </section>
 
           <aside class="control-rail">
+            <section class="rail-section launch-console">
+              <div class="section-header">
+                <div>
+                  <p class="eyebrow">Mission Composer</p>
+                  <h2>Prompt the next long-running run</h2>
+                </div>
+                <p class="panel-lede">
+                  Launch beside the transcript so the main surface stays focused on what Zues is
+                  seeing and doing.
+                </p>
+              </div>
+
+              <form id="mission-form" class="stack mission-form">
+                <input name="task_blueprint_id" type="hidden" />
+                <div class="mission-form-grid rail-mission-grid">
+                  <input name="name" type="text" placeholder="Mission name" required />
+                  <select name="instance_id" id="mission-instance-select" required></select>
+                  <select name="project_id" id="mission-project-select"></select>
+                  <textarea
+                    name="objective"
+                    placeholder="Describe the end state. Example: Keep shipping the product until the control plane can build autonomously for days."
+                    required
+                  ></textarea>
+                </div>
+
+                <details id="mission-advanced" class="mission-detail">
+                  <summary>Advanced runtime controls</summary>
+                  <div class="stack detail-body">
+                    <div class="mission-form-grid advanced-grid rail-advanced-grid">
+                      <input name="model" type="text" placeholder="Model (gpt-5.4)" />
+                      <input
+                        name="thread_id"
+                        type="text"
+                        placeholder="Attach existing thread ID (optional)"
+                      />
+                      <input
+                        name="max_turns"
+                        type="number"
+                        min="1"
+                        placeholder="Max turns (blank = unlimited)"
+                      />
+                      <input
+                        name="auto_recover_limit"
+                        type="number"
+                        min="0"
+                        placeholder="Auto recover limit (2)"
+                      />
+                      <input
+                        name="reflex_cooldown_seconds"
+                        type="number"
+                        min="60"
+                        placeholder="Reflex cooldown seconds (900)"
+                      />
+                    </div>
+
+                    <div class="toggle-row">
+                      <label class="checkbox">
+                        <input name="use_builtin_agents" type="checkbox" checked />
+                        Use built-in agents
+                      </label>
+                      <label class="checkbox">
+                        <input name="run_verification" type="checkbox" checked />
+                        Run verification
+                      </label>
+                      <label class="checkbox">
+                        <input name="auto_commit" type="checkbox" checked />
+                        Commit milestones
+                      </label>
+                      <label class="checkbox">
+                        <input name="pause_on_approval" type="checkbox" checked />
+                        Pause on approvals
+                      </label>
+                      <label class="checkbox">
+                        <input name="allow_auto_reflexes" type="checkbox" checked />
+                        Auto reflexes
+                      </label>
+                      <label class="checkbox">
+                        <input name="auto_recover" type="checkbox" checked />
+                        Auto recover
+                      </label>
+                      <label class="checkbox">
+                        <input name="allow_failover" type="checkbox" checked />
+                        Lane failover
+                      </label>
+                      <label class="checkbox">
+                        <input name="start_immediately" type="checkbox" checked />
+                        Start now
+                      </label>
+                    </div>
+                  </div>
+                </details>
+
+                <div class="launch-actions">
+                  <button type="submit">Launch Mission</button>
+                </div>
+              </form>
+
+              <div class="stack rail-block">
+                <div class="aside-intro stack">
+                  <p class="eyebrow">Ghost Launches</p>
+                  <h3 id="launchpad-headline">Synthesizing next runs...</h3>
+                  <p id="launchpad-summary" class="panel-lede"></p>
+                </div>
+                <div id="launchpad-opportunities" class="ghost-grid"></div>
+              </div>
+
+              <div class="stack rail-block">
+                <div class="aside-intro stack">
+                  <p class="eyebrow">Preset Runs</p>
+                  <h3>Load a proven mission shape</h3>
+                  <p class="panel-lede">
+                    Start with a shipping loop, rescue pass, codebase map, or UX polish run, then let
+                    OpenZues keep Codex moving until it hits a checkpoint or needs judgment.
+                  </p>
+                </div>
+                <div id="mission-presets" class="preset-strip"></div>
+              </div>
+            </section>
+
             <section class="rail-section">
               <div class="section-header">
                 <div>
@@ -786,48 +858,10 @@
             </details>
           </aside>
         </div>
-
-        <details class="stream-shell" id="activity-shell">
-          <summary class="shell-summary">
-            <div class="shell-copy">
-              <p class="eyebrow">Activity Ledger</p>
-              <h2>Checkpoints, turn milestones, and transport events</h2>
-              <p id="activity-shell-summary" class="panel-lede">
-                Keep the event stream tucked away until you need to inspect a live trail.
-              </p>
-            </div>
-            <div class="shell-metrics">
-              <span id="activity-shell-count" class="pill">0 events</span>
-            </div>
-          </summary>
-          <div class="shell-body">
-            <div class="section-header event-head">
-              <div>
-                <p class="panel-lede">
-                  Noise filtering stays on by default so the signal trail stays readable when Codex runs
-                  for hours.
-                </p>
-              </div>
-
-              <div class="event-toolbar">
-                <label class="checkbox compact">
-                  <input id="event-hide-noise" type="checkbox" checked />
-                  Hide noise
-                </label>
-                <input
-                  id="event-filter"
-                  type="text"
-                  placeholder="Filter by method, thread, instance, or payload"
-                />
-              </div>
-            </div>
-            <div id="events" class="events"></div>
-          </div>
-        </details>
       </main>
     </div>
 
     <div id="toast" class="toast" hidden></div>
-    <script type="module" src="{{ url_for('static', path='app.js') }}"></script>
+    <script type="module" src="{{ url_for('static', path='app.js') }}?v={{ asset_version }}"></script>
   </body>
 </html>
