@@ -5,6 +5,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Any
 
 from openzues.database import Database, utcnow
 from openzues.schemas import (
@@ -22,6 +23,7 @@ from openzues.schemas import (
     MissionView,
 )
 from openzues.services.hub import BroadcastHub
+from openzues.services.manager import RuntimeManager
 from openzues.services.missions import MissionService
 
 logger = logging.getLogger(__name__)
@@ -56,6 +58,72 @@ HARDEN_PHRASES = ("harden", "harder", "checkpoint", "tighten", "verify it")
 RECOVERY_PHRASES = ("recover", "recovery", "fix the failed", "retry the failed", "rescue")
 
 IMPACT_RANK = {"high": 0, "medium": 1, "low": 2}
+SAFE_APPROVAL_COMMAND_PATTERNS = (
+    "rg ",
+    "rg.exe",
+    "get-content ",
+    "select-string ",
+    "get-childitem",
+    "git status",
+    "git diff",
+    "git show",
+    "git log",
+    "pwd",
+    "get-location",
+    "pytest",
+    "ruff check",
+    "mypy ",
+    "python -m pytest",
+    "python -m ruff",
+    "python -m mypy",
+    "uv run pytest",
+    "uv run ruff",
+    "uv run mypy",
+)
+UNSAFE_APPROVAL_COMMAND_PATTERNS = (
+    "remove-item",
+    "rm ",
+    "del ",
+    "erase ",
+    "move-item",
+    "rename-item",
+    "copy-item",
+    "new-item",
+    "set-content",
+    "add-content",
+    "out-file",
+    "mkdir ",
+    " md ",
+    "git checkout",
+    "git reset",
+    "git clean",
+    "git commit",
+    "git push",
+    "git merge",
+    "git rebase",
+    "git apply",
+    "npm install",
+    "pnpm install",
+    "yarn install",
+    "pip install",
+    "uv add",
+    "cargo add",
+    "invoke-webrequest",
+    "curl ",
+    "wget ",
+    "winget ",
+    "choco ",
+    "start-process",
+    "stop-process",
+    "shutdown",
+    "restart-computer",
+    "format-",
+    "diskpart",
+    "reg add",
+    "set-itemproperty",
+    " >",
+    " >>",
+)
 
 
 def _parse_timestamp(value: str | None) -> datetime | None:
@@ -299,6 +367,19 @@ class ControlChatPlan:
     opportunity_id: str | None = None
     target_label: str | None = None
     mission_payload: MissionCreate | None = None
+
+
+@dataclass(slots=True)
+class ApprovalAutopilotDecision:
+    instance_id: int
+    request_id: str
+    signal_id: str
+    signal_fingerprint: str
+    signal_level: str
+    result: Any
+    reply: str
+    mission_id: int | None = None
+    target_label: str | None = None
 
 
 def plan_control_chat(prompt: str, dashboard: DashboardView) -> ControlChatPlan:
@@ -672,10 +753,12 @@ class ControlChatService:
         self,
         database: Database,
         missions: MissionService,
+        manager: RuntimeManager,
         hub: BroadcastHub,
     ) -> None:
         self.database = database
         self.missions = missions
+        self.manager = manager
         self.hub = hub
         self._attention_task: asyncio.Task[None] | None = None
         self._attention_stop_event = asyncio.Event()
@@ -738,7 +821,8 @@ class ControlChatService:
             headline = "Chat steers while the attention queue keeps momentum alive"
             summary = (
                 "Zues can auto-recover failed runs, harden finished checkpoints, and escalate "
-                "approval gates into the transcript without waiting for manual launch buttons."
+                "risky approval gates while safe inspection requests auto-resolve in the "
+                "background."
             )
             placeholder = (
                 "Try: continue building, status, recover the failed run, or give me a new goal"
@@ -785,14 +869,15 @@ class ControlChatService:
         elif critical:
             headline = "Attention queue is autonomous"
             summary = (
-                f"Zues is actively auto-routing recoveries and hardening passes while leaving "
-                f"{critical} critical human-risk signal{'s' if critical != 1 else ''} explicit."
+                f"Zues is actively auto-routing recoveries, hardening passes, and safe approval "
+                f"responses while leaving {critical} critical human-risk signal"
+                f"{'s' if critical != 1 else ''} explicit."
             )
         elif actions:
             headline = "Attention queue is keeping momentum"
             summary = (
-                "Recent recoveries, hardeners, and queue nudges are being logged directly into the "
-                "transcript."
+                "Recent recoveries, hardeners, queue nudges, and approval autopilot decisions are "
+                "being logged directly into the transcript."
             )
         else:
             headline = "Attention queue is standing by"
@@ -861,7 +946,17 @@ class ControlChatService:
             executed=executed,
         )
 
+    async def handle_server_request(self, instance_id: int, request: dict[str, Any]) -> None:
+        payload = self._normalize_request_payload(request)
+        decision = await self._build_approval_autopilot_decision(instance_id, payload)
+        if decision is None:
+            return
+        await self._execute_approval_autopilot(decision)
+
     async def tick_attention_queue(self, dashboard: DashboardView) -> bool:
+        if await self._sweep_safe_approvals(dashboard):
+            return True
+
         plan = plan_attention_queue(dashboard)
         if plan is None:
             return False
@@ -920,6 +1015,222 @@ class ControlChatService:
             }
         )
         return True
+
+    async def _sweep_safe_approvals(self, dashboard: DashboardView) -> bool:
+        for instance in dashboard.instances:
+            for request in instance.unresolved_requests:
+                payload = self._normalize_request_payload(request)
+                decision = await self._build_approval_autopilot_decision(instance.id, payload)
+                if decision is None:
+                    continue
+                await self._execute_approval_autopilot(decision)
+                return True
+        return False
+
+    def _normalize_request_payload(self, request: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "request_id": self._request_id(request),
+            "thread_id": self._request_thread_id(request),
+            "method": self._request_method(request),
+            "payload": self._request_payload(request),
+        }
+
+    def _request_id(self, request: dict[str, Any]) -> str | None:
+        value = request.get("request_id")
+        if isinstance(value, str):
+            return value
+        value = request.get("requestId")
+        return value if isinstance(value, str) else None
+
+    def _request_thread_id(self, request: dict[str, Any]) -> str | None:
+        value = request.get("thread_id")
+        if isinstance(value, str):
+            return value
+        value = request.get("threadId")
+        return value if isinstance(value, str) else None
+
+    def _request_method(self, request: dict[str, Any]) -> str | None:
+        value = request.get("method")
+        return value if isinstance(value, str) else None
+
+    def _request_payload(self, request: dict[str, Any]) -> dict[str, Any]:
+        payload = request.get("payload")
+        if isinstance(payload, dict):
+            return payload
+        params = request.get("params")
+        return params if isinstance(params, dict) else {}
+
+    async def _build_approval_autopilot_decision(
+        self,
+        instance_id: int,
+        request: dict[str, Any],
+    ) -> ApprovalAutopilotDecision | None:
+        request_id = request.get("request_id")
+        method = request.get("method")
+        if not isinstance(request_id, str) or not isinstance(method, str):
+            return None
+
+        payload = request.get("payload")
+        payload = payload if isinstance(payload, dict) else {}
+        result = self._pick_safe_approval_result(method, payload)
+        if result is None:
+            return None
+
+        signal_fingerprint = self._approval_fingerprint(instance_id, request)
+        latest = await self.database.get_latest_attention_queue_action(signal_fingerprint)
+        if latest is not None:
+            return None
+
+        thread_id = request.get("thread_id")
+        thread_id = thread_id if isinstance(thread_id, str) else None
+        mission = (
+            await self.database.get_mission_by_thread(instance_id, thread_id)
+            if thread_id is not None
+            else None
+        )
+        command = self._approval_command_preview(payload)
+        target_label = (
+            str(mission["name"])
+            if mission is not None
+            else f"Instance {instance_id} request {request_id}"
+        )
+        if mission is not None:
+            reply = (
+                f"I auto-approved a safe request for `{target_label}` because it was a low-risk "
+                f"inspection or verification command: `{command}`."
+            )
+            signal_id = f"mission-{int(mission['id'])}-approval"
+            mission_id = int(mission["id"])
+        else:
+            reply = (
+                f"I auto-approved an unassigned safe request on lane {instance_id} because it was "
+                f"only a low-risk inspection or verification command: `{command}`."
+            )
+            signal_id = f"instance-{instance_id}-orphan-approval"
+            mission_id = None
+        return ApprovalAutopilotDecision(
+            instance_id=instance_id,
+            request_id=request_id,
+            signal_id=signal_id,
+            signal_fingerprint=signal_fingerprint,
+            signal_level="warn",
+            result=result,
+            reply=reply,
+            mission_id=mission_id,
+            target_label=target_label,
+        )
+
+    def _approval_fingerprint(self, instance_id: int, request: dict[str, Any]) -> str:
+        payload = request.get("payload")
+        payload = payload if isinstance(payload, dict) else {}
+        return "|".join(
+            [
+                str(instance_id),
+                str(request.get("request_id") or ""),
+                str(request.get("method") or ""),
+                str(request.get("thread_id") or ""),
+                self._approval_command_preview(payload),
+            ]
+        )
+
+    def _approval_command_preview(self, payload: dict[str, Any]) -> str:
+        commands = self._approval_command_texts(payload)
+        preview = (
+            commands[0]
+            if commands
+            else str(payload.get("reason") or payload.get("message") or "")
+        )
+        preview = " ".join(preview.split())
+        return preview[:220] if preview else "approval request"
+
+    def _approval_command_texts(self, payload: dict[str, Any]) -> list[str]:
+        texts: list[str] = []
+        command = payload.get("command")
+        if isinstance(command, str) and command.strip():
+            texts.append(command.strip())
+        actions = payload.get("commandActions")
+        if isinstance(actions, list):
+            for action in actions:
+                if not isinstance(action, dict):
+                    continue
+                action_command = action.get("command")
+                if isinstance(action_command, str) and action_command.strip():
+                    texts.append(action_command.strip())
+        return texts
+
+    def _pick_safe_approval_result(self, method: str, payload: dict[str, Any]) -> Any | None:
+        if method not in {"item/commandExecution/requestApproval", "approval/request"}:
+            return None
+
+        commands = self._approval_command_texts(payload)
+        if not commands:
+            return None
+        lowered = [text.lower() for text in commands]
+        if any(pattern in text for text in lowered for pattern in UNSAFE_APPROVAL_COMMAND_PATTERNS):
+            return None
+        if not any(
+            pattern in text
+            for text in lowered
+            for pattern in SAFE_APPROVAL_COMMAND_PATTERNS
+        ):
+            return None
+
+        available = payload.get("availableDecisions")
+        decisions = available if isinstance(available, list) else []
+        if "accept" in decisions:
+            return "accept"
+        for decision in decisions:
+            if not isinstance(decision, dict):
+                continue
+            amendment = decision.get("acceptWithExecpolicyAmendment")
+            if isinstance(amendment, dict):
+                return {"acceptWithExecpolicyAmendment": amendment}
+        return None
+
+    async def _execute_approval_autopilot(self, decision: ApprovalAutopilotDecision) -> None:
+        await self.manager.resolve_request(
+            decision.instance_id,
+            decision.request_id,
+            decision.result,
+        )
+        if decision.mission_id is not None:
+            await self.database.update_mission(
+                decision.mission_id,
+                status="active",
+                phase="thinking",
+                in_progress=1,
+                last_error=None,
+                last_activity_at=utcnow(),
+            )
+        assistant_message = await self._append_message(
+            role="assistant",
+            content=decision.reply,
+            action_kind="resolve_request",
+            mission_id=decision.mission_id,
+            target_label=decision.target_label,
+        )
+        await self.database.append_attention_queue_action(
+            signal_id=decision.signal_id,
+            signal_fingerprint=decision.signal_fingerprint,
+            signal_level=decision.signal_level,
+            mission_id=decision.mission_id,
+            target_label=decision.target_label,
+            action_kind="resolve_request",
+            status="executed",
+            summary=assistant_message.content,
+        )
+        await self.hub.publish(
+            {
+                "type": "attention-queue/acted",
+                "createdAt": utcnow(),
+                "signalId": decision.signal_id,
+                "actionKind": "resolve_request",
+                "status": "executed",
+                "missionId": decision.mission_id,
+                "executed": True,
+                "targetLabel": decision.target_label,
+            }
+        )
 
     async def _attention_queue_loop(
         self,

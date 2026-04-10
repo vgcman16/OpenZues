@@ -401,6 +401,13 @@ async def test_server_request_blocks_mission_when_approval_is_required(tmp_path)
         auto_recover_limit=2,
         reflex_cooldown_seconds=900,
     )
+    manager.instances[7].unresolved_requests = [
+        {
+            "request_id": "11",
+            "thread_id": "thread_approval",
+            "method": "approval/request",
+        }
+    ]
 
     await service.handle_server_request(
         7,
@@ -722,6 +729,67 @@ async def test_live_event_clears_stale_thread_failure_state(tmp_path) -> None:
                 "item": {
                     "type": "commandExecution",
                     "command": 'powershell.exe -Command "Get-Date"',
+                },
+            },
+        },
+    )
+
+    mission = await database.get_mission(mission_id)
+
+    assert mission is not None
+    assert mission["status"] == "active"
+    assert mission["last_error"] is None
+    assert mission["phase"] == "executing"
+    assert mission["in_progress"] == 1
+
+
+@pytest.mark.asyncio
+async def test_live_event_clears_approval_block_after_autopilot_resume(tmp_path) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    manager = FakeManager()
+    manager.instances[7].connected = True
+    service = MissionService(database, manager, BroadcastHub(), poll_interval_seconds=3600)
+
+    mission_id = await database.create_mission(
+        name="Approval resume",
+        objective="Recover immediately after a safe approval is resolved.",
+        status="blocked",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread_approval_live",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=True,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+    )
+    await database.update_mission(
+        mission_id,
+        phase="approval",
+        last_error="Waiting for approval: item/commandExecution/requestApproval",
+        in_progress=0,
+    )
+
+    await service.handle_event(
+        7,
+        {
+            "method": "item/started",
+            "threadId": "thread_approval_live",
+            "params": {
+                "threadId": "thread_approval_live",
+                "turnId": "turn_after_approval",
+                "item": {
+                    "type": "commandExecution",
+                    "command": 'powershell.exe -Command "rg -n foo src"',
                 },
             },
         },

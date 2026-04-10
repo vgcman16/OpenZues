@@ -925,12 +925,14 @@ def create_app(
     active_control_chat_service = control_chat_service or ControlChatService(
         active_database,
         active_mission_service,
+        active_manager,
         active_hub,
     )
     active_control_plane_lease = control_plane_lease or ControlPlaneLease(
         active_settings.data_dir / "control-plane.lock"
     )
     active_manager.add_event_listener(active_mission_service.handle_event)
+    active_manager.add_server_request_listener(active_control_chat_service.handle_server_request)
     active_manager.add_server_request_listener(active_mission_service.handle_server_request)
     active_mission_service.add_event_listener(active_ops_mesh_service.handle_mission_event)
     templates = Jinja2Templates(directory=str(active_settings.templates_dir))

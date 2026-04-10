@@ -286,7 +286,10 @@ class MissionService:
         params = event["params"]
         live_thread_signal = self._event_proves_thread_is_live(method, params)
 
-        if live_thread_signal and _is_thread_not_found_error(mission.get("last_error")):
+        if live_thread_signal and (
+            _is_thread_not_found_error(mission.get("last_error"))
+            or str(mission.get("last_error") or "").startswith("Waiting for approval:")
+        ):
             updates["status"] = "active"
             updates["last_error"] = None
             if method in {"turn/started", "item/started", "item/completed"}:
@@ -399,6 +402,13 @@ class MissionService:
         thread_id = request.get("threadId")
         if not isinstance(thread_id, str):
             return
+        request_id = request.get("requestId")
+        if isinstance(request_id, str):
+            runtime = await self.manager.get(instance_id)
+            if not any(
+                item.get("request_id") == request_id for item in runtime.unresolved_requests
+            ):
+                return
         mission = await self.database.get_mission_by_thread(instance_id, thread_id)
         if mission is None or not bool(mission["pause_on_approval"]):
             return
@@ -1380,7 +1390,10 @@ class MissionService:
         last_error = str(mission.get("last_error") or "")
         if str(mission.get("status")) == "blocked":
             if last_error.startswith("Waiting for approval:"):
-                return "Review the approval request and decide whether to let the mission continue."
+                return (
+                    "Zues will auto-approve safe read-only requests. Review only if this gate "
+                    "looks risky, write-capable, or irreversible."
+                )
             if last_error.startswith("Queued behind mission:"):
                 return "Finish or pause the earlier mission, then tap run now to continue this one."
             if last_error.startswith("Instance is offline"):

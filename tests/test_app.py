@@ -693,7 +693,7 @@ def test_attention_queue_plans_recovery_from_failed_signal() -> None:
     assert decision.status == "executed"
 
 
-def test_attention_queue_escalates_approval_once(tmp_path) -> None:
+def test_attention_queue_escalates_unsafe_orphan_approval_once(tmp_path) -> None:
     with make_client(tmp_path, attention_queue_enabled=False) as client:
         instance_response = client.post(
             "/api/instances",
@@ -704,47 +704,32 @@ def test_attention_queue_escalates_approval_once(tmp_path) -> None:
                 "auto_connect": False,
             },
         )
-        project_response = client.post(
-            "/api/projects",
-            json={"path": str(tmp_path), "label": "Sandbox"},
-        )
 
         assert instance_response.status_code == 200
-        project_id = project_response.json()["id"]
+        instance_id = instance_response.json()["id"]
         database = client.app.state.database
-
-        mission_id = asyncio.run(
-            database.create_mission(
-                name="Approval Bound Mission",
-                objective="Wait for approval.",
-                status="blocked",
-                instance_id=1,
-                project_id=project_id,
-                task_blueprint_id=None,
-                thread_id="thread-approval",
-                cwd=str(tmp_path),
-                model="gpt-5.4",
-                reasoning_effort=None,
-                collaboration_mode=None,
-                max_turns=2,
-                use_builtin_agents=True,
-                run_verification=True,
-                auto_commit=False,
-                pause_on_approval=True,
-                allow_auto_reflexes=True,
-                auto_recover=True,
-                auto_recover_limit=2,
-                reflex_cooldown_seconds=900,
-                allow_failover=True,
+        runtime = client.app.state.manager.instances[instance_id]
+        asyncio.run(
+            database.upsert_server_request(
+                instance_id=instance_id,
+                request_id="approval-unsafe",
+                thread_id="thread-orphan",
+                method="item/commandExecution/requestApproval",
+                payload={
+                    "command": 'powershell.exe -Command "Remove-Item -Recurse scratch"',
+                    "commandActions": [
+                        {
+                            "type": "unknown",
+                            "command": "Remove-Item -Recurse scratch",
+                        }
+                    ],
+                    "availableDecisions": ["accept", "cancel"],
+                },
+                status="pending",
             )
         )
-        asyncio.run(
-            database.update_mission(
-                mission_id,
-                phase="approval",
-                last_error="Waiting for approval: shell_command",
-                last_activity_at=datetime.now(UTC).isoformat(),
-            )
+        runtime.unresolved_requests = asyncio.run(
+            database.list_unresolved_server_requests(instance_id)
         )
 
         dashboard = DashboardView.model_validate(client.get("/api/dashboard").json())
@@ -762,8 +747,90 @@ def test_attention_queue_escalates_approval_once(tmp_path) -> None:
     assert acted_twice is False
     assert len(actions) == 1
     assert actions[0]["status"] == "escalated"
-    assert "approval gate" in actions[0]["summary"]
-    assert messages[-1]["action_kind"] == "blocked"
+    assert "surfaced it" in actions[0]["summary"]
+    assert messages[-1]["action_kind"] == "observe"
+
+
+def test_attention_queue_auto_approves_safe_orphan_request(tmp_path, monkeypatch) -> None:
+    with make_client(tmp_path, attention_queue_enabled=False) as client:
+        instance_response = client.post(
+            "/api/instances",
+            json={
+                "name": "Local Codex Desktop",
+                "transport": "desktop",
+                "cwd": str(tmp_path),
+                "auto_connect": False,
+            },
+        )
+
+        assert instance_response.status_code == 200
+        instance_id = instance_response.json()["id"]
+        database = client.app.state.database
+        manager = client.app.state.manager
+        runtime = manager.instances[instance_id]
+        asyncio.run(
+            database.upsert_server_request(
+                instance_id=instance_id,
+                request_id="approval-safe",
+                thread_id="thread-orphan",
+                method="item/commandExecution/requestApproval",
+                payload={
+                    "command": 'powershell.exe -Command "rg -n \\"ForumForge\\" src"',
+                    "commandActions": [
+                        {
+                            "type": "unknown",
+                            "command": 'rg -n "ForumForge" src',
+                        }
+                    ],
+                    "availableDecisions": ["accept", "cancel"],
+                },
+                status="pending",
+            )
+        )
+        runtime.unresolved_requests = asyncio.run(
+            database.list_unresolved_server_requests(instance_id)
+        )
+        resolved: list[dict[str, object]] = []
+
+        async def fake_resolve(instance_id: int, request_id: str, result: object) -> None:
+            resolved.append(
+                {
+                    "instance_id": instance_id,
+                    "request_id": request_id,
+                    "result": result,
+                }
+            )
+            await database.resolve_server_request(
+                instance_id=instance_id,
+                request_id=request_id,
+                status="resolved",
+            )
+            runtime.unresolved_requests = await database.list_unresolved_server_requests(
+                instance_id
+            )
+
+        monkeypatch.setattr(manager, "resolve_request", fake_resolve)
+
+        dashboard = DashboardView.model_validate(client.get("/api/dashboard").json())
+        acted = asyncio.run(
+            client.app.state.control_chat_service.tick_attention_queue(dashboard)
+        )
+        actions = asyncio.run(database.list_attention_queue_actions())
+        messages = asyncio.run(database.list_control_chat_messages())
+
+    assert acted is True
+    assert resolved == [
+        {
+            "instance_id": instance_id,
+            "request_id": "approval-safe",
+            "result": "accept",
+        }
+    ]
+    assert len(actions) == 1
+    assert actions[0]["action_kind"] == "resolve_request"
+    assert actions[0]["status"] == "executed"
+    assert "auto-approved" in (actions[0]["summary"] or "")
+    assert messages[-1]["action_kind"] == "resolve_request"
 
 
 def test_control_chat_endpoint_persists_wait_messages(tmp_path) -> None:
