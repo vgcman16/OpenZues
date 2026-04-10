@@ -25,9 +25,18 @@ async def test_database_round_trip(tmp_path) -> None:
         method="thread/started",
         payload={"ok": True},
     )
+    playbook_id = await database.create_playbook(
+        name="Quick status",
+        description=None,
+        kind="command",
+        instance_id=instance_id,
+        payload={"template": "git status", "cwd": str(tmp_path)},
+    )
 
     instances = await database.list_instances()
     events = await database.list_events()
+    playbooks = await database.list_playbooks()
 
     assert instances[0]["name"] == "Local Codex"
     assert events[0]["payload"]["ok"] is True
+    assert playbook_id == playbooks[0]["id"]

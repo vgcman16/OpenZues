@@ -10,6 +10,8 @@ OpenZues is optimized to beat "assistant wrapper" products on operator UX:
 
 - live thread and turn telemetry
 - approval inbox for command and file-change prompts
+- reusable playbooks with variable interpolation for recurring operator flows
+- environment diagnostics for Codex, GitHub CLI, Python, and workspace health
 - project-aware Codex launches with cwd targeting
 - local Git and GitHub visibility beside each workspace
 - transport flexibility for `codex app-server` over stdio or a WebSocket endpoint
@@ -21,6 +23,8 @@ OpenZues is optimized to beat "assistant wrapper" products on operator UX:
 - initialize the Codex transport and stream notifications in real time
 - create threads, start turns, interrupt turns, run standalone commands, and start reviews
 - collect unresolved server requests and resolve them from the UI
+- save and run command, turn, thread+turn, and review playbooks
+- inspect live diagnostics before debugging connection failures by hand
 - browse models, apps, plugins, skills, MCP status, config, and thread history
 - register local projects and inspect git status, branches, commits, and PRs through `gh`
 - persist connection configs, projects, events, and pending requests in SQLite
@@ -74,4 +78,3 @@ behavior is resolved in your environment.
 - `src/openzues/services/github.py`: local git and GitHub CLI integration
 - `src/openzues/app.py`: FastAPI app and API surface
 - `src/openzues/web/`: operator UI
-

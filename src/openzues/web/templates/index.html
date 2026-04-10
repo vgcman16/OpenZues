@@ -47,6 +47,44 @@
 
         <section class="panel">
           <div class="panel-head">
+            <h2>Environment</h2>
+            <button class="ghost" id="refresh-diagnostics" type="button">Check</button>
+          </div>
+          <div id="diagnostics" class="stack"></div>
+        </section>
+
+        <section class="panel span-2">
+          <div class="panel-head">
+            <h2>Playbooks</h2>
+          </div>
+          <form id="playbook-form" class="stack form-grid">
+            <input name="name" type="text" placeholder="Playbook name" required />
+            <select name="kind">
+              <option value="command">Command</option>
+              <option value="turn">Turn</option>
+              <option value="thread_turn">Thread + Turn</option>
+              <option value="review">Review</option>
+            </select>
+            <input name="instance_id" type="number" min="1" placeholder="Instance ID (optional)" />
+            <input name="cwd" type="text" placeholder="CWD template (optional)" />
+            <input name="model" type="text" placeholder="Model (thread-turn only)" />
+            <input name="thread_id" type="text" placeholder="Thread ID template (turn/review)" />
+            <textarea
+              name="description"
+              placeholder="What this playbook is for"
+            ></textarea>
+            <textarea
+              name="template"
+              placeholder="Template. Supports {date}, {datetime}, {cwd}, {thread_id}, and custom variables."
+              required
+            ></textarea>
+            <button type="submit">Save Playbook</button>
+          </form>
+          <div id="playbooks" class="stack"></div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
             <h2>Projects</h2>
           </div>
           <form id="project-form" class="stack">
@@ -60,6 +98,11 @@
         <section class="panel span-3">
           <div class="panel-head">
             <h2>Event Timeline</h2>
+            <input
+              id="event-filter"
+              type="text"
+              placeholder="Filter by method, thread, instance, or payload"
+            />
           </div>
           <div id="events" class="events"></div>
         </section>

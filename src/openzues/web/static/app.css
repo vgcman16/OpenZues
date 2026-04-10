@@ -146,6 +146,10 @@ h1 {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
+.form-grid textarea {
+  grid-column: span 2;
+}
+
 input,
 select,
 textarea {
@@ -192,13 +196,16 @@ button.danger {
 .instance,
 .project,
 .request,
-.event {
+.event,
+.diagnostic,
+.playbook {
   border-radius: 18px;
   padding: 16px;
 }
 
 .instance-meta,
 .project-meta,
+.playbook-meta,
 .pill-row,
 .event-meta {
   display: flex;
@@ -259,6 +266,32 @@ pre {
   gap: 10px;
   max-height: 540px;
   overflow: auto;
+}
+
+.diagnostic {
+  border-left: 4px solid var(--warning);
+}
+
+.diagnostic.ok {
+  border-left-color: var(--accent);
+}
+
+.diagnostic.fail {
+  border-left-color: var(--danger);
+}
+
+.playbook {
+  border-left: 4px solid var(--accent-2);
+}
+
+.action-text,
+.small-muted {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.panel-head input {
+  max-width: 360px;
 }
 
 .event {

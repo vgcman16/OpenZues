@@ -61,6 +61,16 @@ class Database:
                     resolved_at TEXT,
                     UNIQUE(instance_id, request_id)
                 );
+                CREATE TABLE IF NOT EXISTS playbooks (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    description TEXT,
+                    kind TEXT NOT NULL,
+                    instance_id INTEGER,
+                    payload_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
                 """
             )
             await db.commit()
@@ -118,6 +128,28 @@ class Database:
             rows = await db.execute_fetchall("SELECT * FROM projects ORDER BY id ASC")
             return [dict(row) for row in rows]
 
+    async def list_playbooks(self) -> list[dict[str, Any]]:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            rows = await db.execute_fetchall("SELECT * FROM playbooks ORDER BY id ASC")
+            output = []
+            for row in rows:
+                item = dict(row)
+                payload = json.loads(item.pop("payload_json"))
+                output.append({**item, **payload})
+            return output
+
+    async def get_playbook(self, playbook_id: int) -> dict[str, Any] | None:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute("SELECT * FROM playbooks WHERE id = ?", (playbook_id,))
+            row = await cursor.fetchone()
+            if row is None:
+                return None
+            item = dict(row)
+            payload = json.loads(item.pop("payload_json"))
+            return {**item, **payload}
+
     async def create_project(self, *, path: str, label: str) -> int:
         now = utcnow()
         async with aiosqlite.connect(self.path) as db:
@@ -135,6 +167,49 @@ class Database:
             row = await cursor.fetchone()
             assert row is not None
             return int(row[0])
+
+    async def create_playbook(
+        self,
+        *,
+        name: str,
+        description: str | None,
+        kind: str,
+        instance_id: int | None,
+        payload: dict[str, Any],
+    ) -> int:
+        now = utcnow()
+        async with aiosqlite.connect(self.path) as db:
+            cursor = await db.execute(
+                """
+                INSERT INTO playbooks (
+                    name,
+                    description,
+                    kind,
+                    instance_id,
+                    payload_json,
+                    created_at,
+                    updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    name,
+                    description,
+                    kind,
+                    instance_id,
+                    json.dumps(payload),
+                    now,
+                    now,
+                ),
+            )
+            await db.commit()
+            assert cursor.lastrowid is not None
+            return int(cursor.lastrowid)
+
+    async def delete_playbook(self, playbook_id: int) -> None:
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute("DELETE FROM playbooks WHERE id = ?", (playbook_id,))
+            await db.commit()
 
     async def append_event(
         self,

@@ -1,14 +1,18 @@
 const state = {
   dashboard: null,
+  diagnostics: null,
   socket: null,
   refreshTimer: null,
 };
 
 const heroStatsEl = document.querySelector("#hero-stats");
 const instancesEl = document.querySelector("#instances");
+const diagnosticsEl = document.querySelector("#diagnostics");
+const playbooksEl = document.querySelector("#playbooks");
 const projectsEl = document.querySelector("#projects");
 const eventsEl = document.querySelector("#events");
 const toastEl = document.querySelector("#toast");
+const eventFilterEl = document.querySelector("#event-filter");
 
 function showToast(message, isError = false) {
   toastEl.hidden = false;
@@ -35,6 +39,10 @@ function summarize(value) {
   return escapeHtml(JSON.stringify(value, null, 2));
 }
 
+function normalizeError(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+
 async function api(path, options = {}) {
   const response = await fetch(path, {
     headers: {
@@ -45,7 +53,12 @@ async function api(path, options = {}) {
   });
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(text || `${response.status} ${response.statusText}`);
+    try {
+      const parsed = JSON.parse(text);
+      throw new Error(parsed.detail || text);
+    } catch {
+      throw new Error(text || `${response.status} ${response.statusText}`);
+    }
   }
   if (response.status === 204) {
     return null;
@@ -58,16 +71,22 @@ async function loadDashboard() {
   render();
 }
 
+async function loadDiagnostics() {
+  state.diagnostics = await api("/api/diagnostics");
+  renderDiagnostics();
+}
+
 function scheduleRefresh() {
   clearTimeout(state.refreshTimer);
   state.refreshTimer = setTimeout(() => {
-    loadDashboard().catch((error) => showToast(error.message, true));
+    loadDashboard().catch((error) => showToast(normalizeError(error), true));
   }, 250);
 }
 
 function renderHero() {
   const instances = state.dashboard?.instances ?? [];
   const projects = state.dashboard?.projects ?? [];
+  const playbooks = state.dashboard?.playbooks ?? [];
   const connected = instances.filter((instance) => instance.connected).length;
   const approvals = instances.reduce(
     (total, instance) => total + instance.unresolved_requests.length,
@@ -83,10 +102,37 @@ function renderHero() {
       <span class="stat-value">${projects.length}</span>
     </article>
     <article class="stat">
+      <span class="stat-label">Playbooks</span>
+      <span class="stat-value">${playbooks.length}</span>
+    </article>
+    <article class="stat">
       <span class="stat-label">Approvals</span>
       <span class="stat-value">${approvals}</span>
     </article>
   `;
+}
+
+function renderDiagnostics() {
+  const diagnostics = state.diagnostics?.checks ?? [];
+  if (!diagnostics.length) {
+    diagnosticsEl.innerHTML = `<article class="diagnostic"><p>No diagnostics yet.</p></article>`;
+    return;
+  }
+  diagnosticsEl.innerHTML = diagnostics
+    .map(
+      (check) => `
+        <article class="diagnostic ${escapeHtml(check.status)} stack">
+          <div class="row">
+            <strong>${escapeHtml(check.label)}</strong>
+            ${pill(check.status, check.status === "ok" ? "ok" : check.status === "fail" ? "bad" : "warn")}
+          </div>
+          <div class="small-muted">${escapeHtml(check.detail)}</div>
+          ${check.value ? `<div class="mono">${escapeHtml(check.value)}</div>` : ""}
+          ${check.action ? `<div class="action-text">${escapeHtml(check.action)}</div>` : ""}
+        </article>
+      `,
+    )
+    .join("");
 }
 
 function renderInstances() {
@@ -138,7 +184,10 @@ function renderInstances() {
         : `<p class="mono">No threads loaded.</p>`;
 
       const modelOptions = (instance.models.length ? instance.models : [{ id: "gpt-5.4" }])
-        .map((model) => `<option value="${escapeHtml(model.id || model.slug || "gpt-5.4")}">${escapeHtml(model.id || model.slug || "gpt-5.4")}</option>`)
+        .map((model) => {
+          const identifier = model.id || model.slug || "gpt-5.4";
+          return `<option value="${escapeHtml(identifier)}">${escapeHtml(identifier)}</option>`;
+        })
         .join("");
 
       return `
@@ -235,6 +284,63 @@ function renderInstances() {
     .join("");
 }
 
+function renderPlaybooks() {
+  const playbooks = state.dashboard?.playbooks ?? [];
+  if (!playbooks.length) {
+    playbooksEl.innerHTML = `<article class="playbook"><p>No playbooks yet.</p></article>`;
+    return;
+  }
+
+  playbooksEl.innerHTML = playbooks
+    .map(
+      (playbook) => `
+        <article class="playbook stack">
+          <div class="row">
+            <strong>${escapeHtml(playbook.name)}</strong>
+            <div class="playbook-meta">
+              ${pill(playbook.kind)}
+              ${playbook.instance_id ? pill(`instance ${playbook.instance_id}`) : pill("instance at run time", "warn")}
+              ${playbook.thread_id ? pill(`thread ${playbook.thread_id}`) : ""}
+            </div>
+          </div>
+          ${playbook.description ? `<div class="small-muted">${escapeHtml(playbook.description)}</div>` : ""}
+          <pre>${escapeHtml(playbook.template)}</pre>
+          <div class="subgrid">
+            <input
+              data-playbook-instance="${playbook.id}"
+              type="number"
+              min="1"
+              placeholder="Override instance ID"
+            />
+            <input
+              data-playbook-thread="${playbook.id}"
+              type="text"
+              placeholder="Override thread ID"
+            />
+          </div>
+          <input
+            data-playbook-cwd="${playbook.id}"
+            type="text"
+            placeholder="Override cwd"
+          />
+          <textarea
+            data-playbook-vars="${playbook.id}"
+            placeholder='Variables as JSON, e.g. {"branch":"main","goal":"triage failing tests"}'
+          >{}</textarea>
+          <div class="actions">
+            <button type="button" data-action="run-playbook" data-playbook-id="${playbook.id}">
+              Run
+            </button>
+            <button type="button" class="danger" data-action="delete-playbook" data-playbook-id="${playbook.id}">
+              Delete
+            </button>
+          </div>
+        </article>
+      `,
+    )
+    .join("");
+}
+
 function renderProjects() {
   const projects = state.dashboard?.projects ?? [];
   if (!projects.length) {
@@ -285,11 +391,19 @@ function renderProjects() {
 
 function renderEvents() {
   const events = state.dashboard?.events ?? [];
-  if (!events.length) {
-    eventsEl.innerHTML = `<article class="event"><p>No events yet.</p></article>`;
+  const filter = eventFilterEl.value.trim().toLowerCase();
+  const filtered = events.filter((event) => {
+    if (!filter) {
+      return true;
+    }
+    const haystack = JSON.stringify(event).toLowerCase();
+    return haystack.includes(filter);
+  });
+  if (!filtered.length) {
+    eventsEl.innerHTML = `<article class="event"><p>No events match the current filter.</p></article>`;
     return;
   }
-  eventsEl.innerHTML = events
+  eventsEl.innerHTML = filtered
     .slice(-80)
     .reverse()
     .map(
@@ -311,16 +425,18 @@ function renderEvents() {
 function render() {
   renderHero();
   renderInstances();
+  renderPlaybooks();
   renderProjects();
   renderEvents();
 }
 
-async function submitJson(url, payload) {
-  await api(url, {
-    method: "POST",
+async function submitJson(url, payload, method = "POST") {
+  const result = await api(url, {
+    method,
     body: JSON.stringify(payload),
   });
   await loadDashboard();
+  return result;
 }
 
 function parseCommandLine(input) {
@@ -330,9 +446,27 @@ function parseCommandLine(input) {
     .filter(Boolean);
 }
 
+function parseVariables(text) {
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return {};
+  }
+  return JSON.parse(trimmed);
+}
+
+async function refreshAll() {
+  await Promise.all([loadDashboard(), loadDiagnostics()]);
+}
+
 document.querySelector("#refresh-dashboard").addEventListener("click", () => {
-  loadDashboard().catch((error) => showToast(error.message, true));
+  loadDashboard().catch((error) => showToast(normalizeError(error), true));
 });
+
+document.querySelector("#refresh-diagnostics").addEventListener("click", () => {
+  loadDiagnostics().catch((error) => showToast(normalizeError(error), true));
+});
+
+eventFilterEl.addEventListener("input", () => renderEvents());
 
 document.querySelector("#instance-form").addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -350,7 +484,31 @@ document.querySelector("#instance-form").addEventListener("submit", async (event
     event.currentTarget.reset();
     showToast("Connection created.");
   } catch (error) {
-    showToast(error.message, true);
+    showToast(normalizeError(error), true);
+  }
+});
+
+document.querySelector("#playbook-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = new FormData(event.currentTarget);
+  try {
+    await submitJson("/api/playbooks", {
+      name: form.get("name"),
+      description: form.get("description") || null,
+      kind: form.get("kind"),
+      template: form.get("template"),
+      instance_id: form.get("instance_id") ? Number(form.get("instance_id")) : null,
+      cwd: form.get("cwd") || null,
+      model: form.get("model") || null,
+      thread_id: form.get("thread_id") || null,
+      reasoning_effort: null,
+      collaboration_mode: null,
+      timeout_ms: 10000,
+    });
+    event.currentTarget.reset();
+    showToast("Playbook saved.");
+  } catch (error) {
+    showToast(normalizeError(error), true);
   }
 });
 
@@ -365,7 +523,7 @@ document.querySelector("#project-form").addEventListener("submit", async (event)
     event.currentTarget.reset();
     showToast("Project added.");
   } catch (error) {
-    showToast(error.message, true);
+    showToast(normalizeError(error), true);
   }
 });
 
@@ -404,8 +562,31 @@ document.addEventListener("click", async (event) => {
       await submitJson(`/api/instances/${instanceId}/turns/${threadId}/interrupt`, {});
       showToast("Interrupt sent.");
     }
+    if (target.dataset.action === "delete-playbook") {
+      const playbookId = target.dataset.playbookId;
+      await api(`/api/playbooks/${playbookId}`, { method: "DELETE" });
+      await loadDashboard();
+      showToast("Playbook deleted.");
+    }
+    if (target.dataset.action === "run-playbook") {
+      const playbookId = target.dataset.playbookId;
+      const variables = parseVariables(
+        document.querySelector(`[data-playbook-vars="${playbookId}"]`).value,
+      );
+      const payload = {
+        instance_id: document.querySelector(`[data-playbook-instance="${playbookId}"]`).value
+          ? Number(document.querySelector(`[data-playbook-instance="${playbookId}"]`).value)
+          : null,
+        thread_id: document.querySelector(`[data-playbook-thread="${playbookId}"]`).value || null,
+        cwd: document.querySelector(`[data-playbook-cwd="${playbookId}"]`).value || null,
+        variables,
+      };
+      const result = await submitJson(`/api/playbooks/${playbookId}/run`, payload);
+      const threadSuffix = result.thread_id ? ` on ${result.thread_id}` : "";
+      showToast(`Playbook ran${threadSuffix}.`);
+    }
   } catch (error) {
-    showToast(error.message, true);
+    showToast(normalizeError(error), true);
   }
 });
 
@@ -437,13 +618,16 @@ document.addEventListener("submit", async (event) => {
       showToast("Turn started.");
     }
     if (action === "command") {
-      await submitJson(`/api/instances/${instanceId}/commands`, {
+      const result = await submitJson(`/api/instances/${instanceId}/commands`, {
         command: parseCommandLine(form.get("command")),
         cwd: form.get("cwd") || null,
         timeout_ms: 10000,
         tty: false,
       });
-      showToast("Command executed.");
+      const exitCode = result.exitCode ?? result.exit_code;
+      showToast(
+        typeof exitCode === "number" ? `Command finished with exit code ${exitCode}.` : "Command executed.",
+      );
     }
     if (action === "review") {
       await submitJson(`/api/instances/${instanceId}/reviews`, {
@@ -453,7 +637,7 @@ document.addEventListener("submit", async (event) => {
     }
     formEl.reset();
   } catch (error) {
-    showToast(error.message, true);
+    showToast(normalizeError(error), true);
   }
 });
 
@@ -466,5 +650,5 @@ function connectSocket() {
   };
 }
 
-loadDashboard().catch((error) => showToast(error.message, true));
+refreshAll().catch((error) => showToast(normalizeError(error), true));
 connectSocket();

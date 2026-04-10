@@ -15,8 +15,13 @@ from openzues.logging_utils import configure_logging
 from openzues.schemas import (
     CommandCreate,
     DashboardView,
+    DiagnosticsView,
     EventView,
     InstanceCreate,
+    PlaybookCreate,
+    PlaybookRun,
+    PlaybookRunResult,
+    PlaybookView,
     ProjectCreate,
     ProjectView,
     RequestResolution,
@@ -24,9 +29,11 @@ from openzues.schemas import (
     ThreadCreate,
     TurnCreate,
 )
+from openzues.services.environment import EnvironmentService
 from openzues.services.github import GitHubService
 from openzues.services.hub import BroadcastHub
 from openzues.services.manager import RuntimeManager
+from openzues.services.playbooks import PlaybookService
 from openzues.services.projects import ProjectService
 from openzues.settings import Settings, settings
 
@@ -40,12 +47,16 @@ def create_app(
     hub: BroadcastHub | None = None,
     manager: RuntimeManager | None = None,
     project_service: ProjectService | None = None,
+    playbook_service: PlaybookService | None = None,
+    environment_service: EnvironmentService | None = None,
 ) -> FastAPI:
     active_settings = app_settings or settings
     active_database = database or Database(active_settings.effective_db_path)
     active_hub = hub or BroadcastHub()
     active_manager = manager or RuntimeManager(active_database, active_hub)
     active_project_service = project_service or ProjectService(GitHubService())
+    active_playbook_service = playbook_service or PlaybookService()
+    active_environment_service = environment_service or EnvironmentService()
     templates = Jinja2Templates(directory=str(active_settings.templates_dir))
 
     @asynccontextmanager
@@ -73,14 +84,17 @@ def create_app(
 
     async def build_dashboard() -> DashboardView:
         project_rows = await active_database.list_projects()
+        playbook_rows = await active_database.list_playbooks()
         projects = [
             ProjectView.model_validate(active_project_service.inspect(row))
             for row in project_rows
         ]
+        playbooks = [PlaybookView.model_validate(row) for row in playbook_rows]
         events = [EventView.model_validate(row) for row in await active_database.list_events(250)]
         return DashboardView(
             instances=await active_manager.list_views(),
             projects=projects,
+            playbooks=playbooks,
             events=events,
         )
 
@@ -99,6 +113,10 @@ def create_app(
     @fastapi_app.get("/api/dashboard")
     async def dashboard() -> DashboardView:
         return await build_dashboard()
+
+    @fastapi_app.get("/api/diagnostics")
+    async def diagnostics() -> DiagnosticsView:
+        return active_environment_service.collect()
 
     @fastapi_app.post("/api/instances")
     async def create_instance(payload: InstanceCreate) -> dict:
@@ -188,6 +206,40 @@ def create_app(
         if row is None:
             raise HTTPException(status_code=500, detail="Failed to create project.")
         return ProjectView.model_validate(active_project_service.inspect(row))
+
+    @fastapi_app.get("/api/playbooks")
+    async def list_playbooks() -> list[PlaybookView]:
+        rows = await active_database.list_playbooks()
+        return [PlaybookView.model_validate(row) for row in rows]
+
+    @fastapi_app.post("/api/playbooks")
+    async def create_playbook(payload: PlaybookCreate) -> PlaybookView:
+        playbook_id = await active_database.create_playbook(
+            name=payload.name,
+            description=payload.description,
+            kind=payload.kind,
+            instance_id=payload.instance_id,
+            payload=payload.model_dump(exclude={"name", "description", "kind", "instance_id"}),
+        )
+        row = await active_database.get_playbook(playbook_id)
+        if row is None:
+            raise HTTPException(status_code=500, detail="Failed to create playbook.")
+        return PlaybookView.model_validate(row)
+
+    @fastapi_app.delete("/api/playbooks/{playbook_id}")
+    async def delete_playbook(playbook_id: int) -> dict[str, bool]:
+        await active_database.delete_playbook(playbook_id)
+        return {"ok": True}
+
+    @fastapi_app.post("/api/playbooks/{playbook_id}/run")
+    async def run_playbook(playbook_id: int, payload: PlaybookRun) -> PlaybookRunResult:
+        playbook = await active_database.get_playbook(playbook_id)
+        if playbook is None:
+            raise HTTPException(status_code=404, detail="Playbook not found.")
+        try:
+            return await active_playbook_service.execute(playbook, payload, active_manager)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @fastapi_app.websocket("/ws")
     async def websocket_events(websocket: WebSocket) -> None:

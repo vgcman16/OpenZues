@@ -6,6 +6,8 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 TransportType = Literal["stdio", "websocket"]
+PlaybookKind = Literal["command", "turn", "thread_turn", "review"]
+DiagnosticStatus = Literal["ok", "warn", "fail", "info"]
 
 
 class InstanceCreate(BaseModel):
@@ -104,7 +106,58 @@ class EventView(BaseModel):
     created_at: datetime
 
 
+class PlaybookCreate(BaseModel):
+    name: str
+    description: str | None = None
+    kind: PlaybookKind
+    template: str
+    instance_id: int | None = None
+    cwd: str | None = None
+    model: str | None = None
+    reasoning_effort: str | None = None
+    collaboration_mode: str | None = None
+    timeout_ms: int | None = 10000
+    thread_id: str | None = None
+
+
+class PlaybookView(PlaybookCreate):
+    id: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class PlaybookRun(BaseModel):
+    instance_id: int | None = None
+    cwd: str | None = None
+    thread_id: str | None = None
+    variables: dict[str, str] = Field(default_factory=dict)
+
+
+class PlaybookRunResult(BaseModel):
+    kind: PlaybookKind
+    rendered_template: str
+    resolved_instance_id: int
+    resolved_cwd: str | None = None
+    thread_id: str | None = None
+    result: dict[str, Any] = Field(default_factory=dict)
+
+
+class DiagnosticCheck(BaseModel):
+    key: str
+    label: str
+    status: DiagnosticStatus
+    detail: str
+    value: str | None = None
+    action: str | None = None
+
+
+class DiagnosticsView(BaseModel):
+    checks: list[DiagnosticCheck]
+    checked_at: str
+
+
 class DashboardView(BaseModel):
     instances: list[InstanceView]
     projects: list[ProjectView]
+    playbooks: list[PlaybookView]
     events: list[EventView]
