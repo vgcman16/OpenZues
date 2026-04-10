@@ -5,14 +5,14 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-TransportType = Literal["stdio", "websocket"]
+TransportType = Literal["desktop", "stdio", "websocket"]
 PlaybookKind = Literal["command", "turn", "thread_turn", "review"]
 DiagnosticStatus = Literal["ok", "warn", "fail", "info"]
 
 
 class InstanceCreate(BaseModel):
     name: str
-    transport: TransportType = "stdio"
+    transport: TransportType = "desktop"
     command: str | None = None
     args: str | None = None
     websocket_url: str | None = None
@@ -30,6 +30,10 @@ class InstanceView(BaseModel):
     cwd: str | None
     auto_connect: bool
     connected: bool
+    resolved_transport: Literal["stdio", "websocket"] | None = None
+    resolved_command: str | None = None
+    resolved_args: str | None = None
+    transport_note: str | None = None
     pid: int | None = None
     error: str | None = None
     initialized: bool = False

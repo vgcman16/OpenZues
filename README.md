@@ -12,13 +12,15 @@ OpenZues is optimized to beat "assistant wrapper" products on operator UX:
 - approval inbox for command and file-change prompts
 - reusable playbooks with variable interpolation for recurring operator flows
 - environment diagnostics for Codex, GitHub CLI, Python, and workspace health
+- one-click Codex Desktop bridge that stages a runnable local App Server binary on Windows
 - project-aware Codex launches with cwd targeting
 - local Git and GitHub visibility beside each workspace
-- transport flexibility for `codex app-server` over stdio or a WebSocket endpoint
+- transport flexibility for desktop bridge, `codex app-server` over stdio, or a WebSocket endpoint
 
 ## Current capabilities
 
 - register one or more Codex App Server connections
+- quick-connect to the local Codex Desktop install from the dashboard
 - launch App Server subprocesses or connect to a WebSocket endpoint
 - initialize the Codex transport and stream notifications in real time
 - create threads, start turns, interrupt turns, run standalone commands, and start reviews
@@ -47,26 +49,35 @@ OpenZues is optimized to beat "assistant wrapper" products on operator UX:
 3. Run the app:
 
    ```powershell
-   openzues serve --reload
+   openzues --reload
    ```
 
 4. Open [http://127.0.0.1:8765](http://127.0.0.1:8765).
 
 ## Default connection strategy
 
-OpenZues defaults to the official stdio launch path:
+OpenZues now defaults to `Desktop (Recommended)`:
+
+```text
+Codex Desktop bridge -> staged local codex.exe -> app-server
+```
+
+This is specifically designed for Windows Store Codex installs where direct subprocess execution can fail
+with `Access is denied`. OpenZues detects the installed desktop package, stages a runnable local copy of
+`codex.exe` under `%LOCALAPPDATA%\OpenZues\runtime`, verifies it with `--version`, and then launches
+`app-server` from that staged path.
+
+If you prefer, you can still use raw stdio:
 
 ```text
 codex app-server
 ```
 
-On some Windows Store Codex installs, direct subprocess execution can fail with `Access is denied`.
-If that happens, keep the connection config but switch the transport to WebSocket until the local launcher
-behavior is resolved in your environment.
+Or connect to a WebSocket endpoint when you have one available.
 
 ## Developer commands
 
-- `openzues serve --reload`
+- `openzues --reload`
 - `pytest`
 - `ruff check .`
 - `mypy src`

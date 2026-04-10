@@ -8,6 +8,7 @@ from pathlib import Path
 
 from openzues.database import utcnow
 from openzues.schemas import DiagnosticCheck, DiagnosticStatus, DiagnosticsView
+from openzues.services.codex_desktop import CodexDesktopService
 
 
 @dataclass(slots=True)
@@ -19,6 +20,9 @@ class CommandProbe:
 
 
 class EnvironmentService:
+    def __init__(self, desktop_service: CodexDesktopService | None = None) -> None:
+        self.desktop_service = desktop_service or CodexDesktopService()
+
     def _run(self, args: list[str], timeout: int = 10) -> CommandProbe:
         try:
             result = subprocess.run(
@@ -43,6 +47,7 @@ class EnvironmentService:
 
     def collect(self) -> DiagnosticsView:
         checks: list[DiagnosticCheck] = []
+        desktop = self.desktop_service.discover()
 
         python_exe = shutil.which("python")
         checks.append(
@@ -92,17 +97,27 @@ class EnvironmentService:
         codex_exe = shutil.which("codex")
         codex_probe = self._run(["codex", "--version"]) if codex_exe else None
         if codex_probe is None:
-            codex_status: DiagnosticStatus = "fail"
+            codex_status: DiagnosticStatus = "warn" if desktop.source_path else "fail"
             codex_detail = "Codex executable not found on PATH."
-            codex_action = "Install or expose Codex CLI before using stdio transport."
+            codex_action = (
+                "Use Desktop transport to stage a runnable Codex binary "
+                "from the local desktop install."
+                if desktop.source_path
+                else "Install or expose Codex CLI before using stdio transport."
+            )
         elif codex_probe.returncode == 0:
             codex_status = "ok"
             codex_detail = codex_probe.stdout or codex_probe.stderr or "Codex CLI is available."
             codex_action = None
-        elif codex_probe.error and "Access is denied" in codex_probe.error:
+        elif "Access is denied" in (
+            codex_probe.stderr or codex_probe.error or codex_probe.stdout
+        ):
             codex_status = "warn"
-            codex_detail = codex_probe.error
-            codex_action = "This Windows install may need WebSocket transport instead of stdio."
+            codex_detail = codex_probe.stderr or codex_probe.error or "Codex CLI launch is blocked."
+            codex_action = (
+                "Use Desktop transport. OpenZues can stage a local runnable "
+                "copy from the installed Codex desktop package."
+            )
         else:
             codex_status = "warn"
             codex_detail = codex_probe.stderr or codex_probe.error or "Codex probe did not succeed."
@@ -115,6 +130,90 @@ class EnvironmentService:
                 detail=codex_detail,
                 value=codex_exe,
                 action=codex_action,
+            )
+        )
+
+        if desktop.source_path is None:
+            desktop_status: DiagnosticStatus = "fail"
+            desktop_detail = "Codex Desktop package was not found in WindowsApps."
+            desktop_action = "Install the Codex desktop app to use one-click desktop transport."
+            desktop_value = None
+        else:
+            desktop_status = "ok"
+            desktop_detail = f"Found desktop runtime at {desktop.source_path}"
+            desktop_action = "Use Desktop transport or Quick Connect to attach the site to Codex."
+            desktop_value = desktop.session.app_server_version
+        checks.append(
+            DiagnosticCheck(
+                key="codex_desktop_install",
+                label="Codex Desktop install",
+                status=desktop_status,
+                detail=desktop_detail,
+                value=desktop_value,
+                action=desktop_action,
+            )
+        )
+
+        if desktop.source_path is None:
+            bridge_status: DiagnosticStatus = "fail"
+            bridge_detail = "Desktop bridge is unavailable because Codex Desktop is not installed."
+            bridge_value = None
+            bridge_action = None
+        elif desktop.staged_path is None or not desktop.staged_ready:
+            bridge_status = "info"
+            bridge_detail = (
+                "OpenZues will stage a local runnable Codex binary on first desktop connection."
+            )
+            bridge_value = None
+            bridge_action = "Press Quick Connect in the site to create the bridge automatically."
+        else:
+            try:
+                bridge_value = self.desktop_service.probe_executable(desktop.staged_path)
+                bridge_status = "ok"
+                bridge_detail = f"Staged runtime ready at {desktop.staged_path}"
+                bridge_action = None
+            except RuntimeError as exc:
+                bridge_status = "warn"
+                bridge_detail = str(exc)
+                bridge_value = str(desktop.staged_path)
+                bridge_action = "Reconnect the desktop instance to refresh the staged runtime."
+        checks.append(
+            DiagnosticCheck(
+                key="codex_desktop_bridge",
+                label="Codex Desktop bridge",
+                status=bridge_status,
+                detail=bridge_detail,
+                value=bridge_value,
+                action=bridge_action,
+            )
+        )
+
+        if desktop.session.log_path is None:
+            session_status: DiagnosticStatus = "warn"
+            session_detail = "No recent Codex Desktop session logs were found."
+            session_value = None
+            session_action = (
+                "Open Codex Desktop once if you want OpenZues "
+                "to verify the latest desktop session."
+            )
+        else:
+            session_status = "ok" if desktop.session.initialized else "info"
+            transport = desktop.session.transport or "unknown"
+            version = desktop.session.app_server_version or "unknown"
+            session_detail = (
+                f"Last desktop session used {transport} transport and "
+                f"reported app-server {version}."
+            )
+            session_value = desktop.session.last_seen_at
+            session_action = None
+        checks.append(
+            DiagnosticCheck(
+                key="codex_desktop_session",
+                label="Latest desktop session",
+                status=session_status,
+                detail=session_detail,
+                value=session_value,
+                action=session_action,
             )
         )
 

@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from openzues.database import Database, utcnow
 from openzues.schemas import InstanceView, TransportType
+from openzues.services.codex_desktop import CodexDesktopService
 from openzues.services.codex_rpc import CodexAppServerClient
 from openzues.services.hub import BroadcastHub
 
@@ -23,6 +24,10 @@ class InstanceRuntime:
     client: CodexAppServerClient | None = None
     connected: bool = False
     initialized: bool = False
+    resolved_transport: str | None = None
+    resolved_command: str | None = None
+    resolved_args: str | None = None
+    transport_note: str | None = None
     pid: int | None = None
     error: str | None = None
     client_user_agent: str | None = None
@@ -50,6 +55,10 @@ class InstanceRuntime:
             cwd=self.cwd,
             auto_connect=self.auto_connect,
             connected=self.connected,
+            resolved_transport=cast(Literal["stdio", "websocket"] | None, self.resolved_transport),
+            resolved_command=self.resolved_command,
+            resolved_args=self.resolved_args,
+            transport_note=self.transport_note,
             initialized=self.initialized,
             pid=self.pid,
             error=self.error,
@@ -70,9 +79,15 @@ class InstanceRuntime:
 
 
 class RuntimeManager:
-    def __init__(self, database: Database, hub: BroadcastHub) -> None:
+    def __init__(
+        self,
+        database: Database,
+        hub: BroadcastHub,
+        desktop_service: CodexDesktopService | None = None,
+    ) -> None:
         self.database = database
         self.hub = hub
+        self.desktop_service = desktop_service
         self.instances: dict[int, InstanceRuntime] = {}
 
     async def load(self) -> None:
@@ -88,6 +103,7 @@ class RuntimeManager:
                 cwd=row["cwd"],
                 auto_connect=bool(row["auto_connect"]),
             )
+            self._apply_static_resolution(runtime)
             runtime.unresolved_requests = await self.database.list_unresolved_server_requests(
                 runtime.instance_id
             )
@@ -126,6 +142,7 @@ class RuntimeManager:
             cwd=cwd,
             auto_connect=auto_connect,
         )
+        self._apply_static_resolution(runtime)
         self.instances[instance_id] = runtime
         await self.publish_snapshot("instance/created", {"instanceId": instance_id})
         if auto_connect:
@@ -143,12 +160,23 @@ class RuntimeManager:
 
     async def connect_instance(self, instance_id: int) -> InstanceRuntime:
         runtime = await self.get(instance_id)
+        (
+            resolved_transport,
+            resolved_command,
+            resolved_args,
+            resolved_websocket_url,
+            transport_note,
+        ) = self._resolve_connection(runtime)
+        runtime.resolved_transport = resolved_transport
+        runtime.resolved_command = resolved_command
+        runtime.resolved_args = resolved_args
+        runtime.transport_note = transport_note
         if runtime.client is None:
             runtime.client = CodexAppServerClient(
-                transport=runtime.transport,
-                command=runtime.command,
-                args=runtime.args,
-                websocket_url=runtime.websocket_url,
+                transport=resolved_transport,
+                command=resolved_command,
+                args=resolved_args,
+                websocket_url=resolved_websocket_url,
                 cwd=runtime.cwd,
                 event_callback=lambda event: self.handle_event(runtime.instance_id, event),
                 server_request_callback=lambda request: self.handle_server_request(
@@ -156,6 +184,11 @@ class RuntimeManager:
                     request,
                 ),
             )
+        else:
+            runtime.client.transport = resolved_transport
+            runtime.client.command = resolved_command
+            runtime.client.args = resolved_args
+            runtime.client.websocket_url = resolved_websocket_url
         try:
             await runtime.client.connect()
             runtime.connected = runtime.client.info.connected
@@ -182,6 +215,30 @@ class RuntimeManager:
         runtime.initialized = False
         runtime.pid = None
         await self.publish_snapshot("instance/disconnected", {"instanceId": instance_id})
+
+    async def quick_connect_desktop(
+        self,
+        *,
+        name: str = "Local Codex Desktop",
+        cwd: str | None = None,
+    ) -> InstanceRuntime:
+        runtime = next(
+            (instance for instance in self.instances.values() if instance.transport == "desktop"),
+            None,
+        )
+        if runtime is None:
+            runtime = await self.create_instance(
+                name=name,
+                transport="desktop",
+                command=None,
+                args=None,
+                websocket_url=None,
+                cwd=cwd,
+                auto_connect=False,
+            )
+        elif cwd and not runtime.cwd:
+            runtime.cwd = cwd
+        return await self.connect_instance(runtime.instance_id)
 
     async def refresh_instance(self, instance_id: int) -> InstanceRuntime:
         runtime = await self.get(instance_id)
@@ -377,3 +434,33 @@ class RuntimeManager:
 
     async def publish_snapshot(self, event_type: str, payload: dict[str, Any]) -> None:
         await self.hub.publish({"type": event_type, **payload, "createdAt": utcnow()})
+
+    def _apply_static_resolution(self, runtime: InstanceRuntime) -> None:
+        if runtime.transport == "stdio":
+            runtime.resolved_transport = "stdio"
+            runtime.resolved_command = runtime.command
+            runtime.resolved_args = runtime.args
+            runtime.transport_note = None
+        elif runtime.transport == "websocket":
+            runtime.resolved_transport = "websocket"
+            runtime.resolved_command = None
+            runtime.resolved_args = None
+            runtime.transport_note = runtime.websocket_url
+
+    def _resolve_connection(
+        self,
+        runtime: InstanceRuntime,
+    ) -> tuple[str, str | None, str | None, str | None, str | None]:
+        if runtime.transport == "desktop":
+            if self.desktop_service is None:
+                raise RuntimeError("Desktop transport is not configured.")
+            launch = self.desktop_service.resolve_launch()
+            note = launch.note if launch.version is None else f"{launch.note} ({launch.version})"
+            return ("stdio", launch.command, launch.args, None, note)
+        return (
+            runtime.transport,
+            runtime.command,
+            runtime.args,
+            runtime.websocket_url,
+            runtime.transport_note,
+        )

@@ -13,6 +13,8 @@ const projectsEl = document.querySelector("#projects");
 const eventsEl = document.querySelector("#events");
 const toastEl = document.querySelector("#toast");
 const eventFilterEl = document.querySelector("#event-filter");
+const instanceFormEl = document.querySelector("#instance-form");
+const transportSelectEl = document.querySelector("#transport-select");
 
 function showToast(message, isError = false) {
   toastEl.hidden = false;
@@ -198,6 +200,7 @@ function renderInstances() {
               <div class="instance-meta">
                 ${pill(statusText, statusTone)}
                 ${pill(instance.transport)}
+                ${instance.resolved_transport ? pill(`via ${instance.resolved_transport}`) : ""}
                 ${instance.pid ? pill(`pid ${instance.pid}`) : ""}
                 ${instance.client_user_agent ? pill(instance.client_user_agent) : ""}
               </div>
@@ -215,6 +218,16 @@ function renderInstances() {
           ${
             instance.error
               ? `<div class="pill-row">${pill(instance.error, "bad")}</div>`
+              : ""
+          }
+          ${
+            instance.transport_note
+              ? `<div class="small-muted">${escapeHtml(instance.transport_note)}</div>`
+              : ""
+          }
+          ${
+            instance.resolved_command
+              ? `<div class="mono">launcher: ${escapeHtml(instance.resolved_command)}${instance.resolved_args ? ` ${escapeHtml(instance.resolved_args)}` : ""}</div>`
               : ""
           }
 
@@ -454,6 +467,14 @@ function parseVariables(text) {
   return JSON.parse(trimmed);
 }
 
+function syncTransportFields() {
+  const transport = transportSelectEl.value;
+  document.querySelectorAll("[data-transport-visible]").forEach((element) => {
+    const visibleValues = element.dataset.transportVisible.split(/\s+/);
+    element.hidden = !visibleValues.includes(transport);
+  });
+}
+
 async function refreshAll() {
   await Promise.all([loadDashboard(), loadDiagnostics()]);
 }
@@ -468,7 +489,7 @@ document.querySelector("#refresh-diagnostics").addEventListener("click", () => {
 
 eventFilterEl.addEventListener("input", () => renderEvents());
 
-document.querySelector("#instance-form").addEventListener("submit", async (event) => {
+instanceFormEl.addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = new FormData(event.currentTarget);
   try {
@@ -482,10 +503,24 @@ document.querySelector("#instance-form").addEventListener("submit", async (event
       auto_connect: form.get("auto_connect") === "on",
     });
     event.currentTarget.reset();
+    syncTransportFields();
     showToast("Connection created.");
   } catch (error) {
     showToast(normalizeError(error), true);
   }
+});
+
+document.querySelector("#quick-connect-desktop").addEventListener("click", async () => {
+  try {
+    await submitJson("/api/instances/quick-connect/desktop", {});
+    showToast("Codex Desktop connected.");
+  } catch (error) {
+    showToast(normalizeError(error), true);
+  }
+});
+
+transportSelectEl.addEventListener("change", () => {
+  syncTransportFields();
 });
 
 document.querySelector("#playbook-form").addEventListener("submit", async (event) => {
@@ -651,4 +686,5 @@ function connectSocket() {
 }
 
 refreshAll().catch((error) => showToast(normalizeError(error), true));
+syncTransportFields();
 connectSocket();

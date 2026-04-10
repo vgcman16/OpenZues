@@ -7,7 +7,7 @@ import shlex
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import websockets
 from websockets.asyncio.client import ClientConnection
@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 JsonDict = dict[str, Any]
 EventCallback = Callable[[JsonDict], Awaitable[None]]
 ServerRequestCallback = Callable[[JsonDict], Awaitable[None]]
+STREAM_LIMIT_BYTES = 8 * 1024 * 1024
 
 
 def split_args(raw_args: str | None) -> list[str]:
@@ -90,6 +91,8 @@ class CodexAppServerClient:
             self.info.pid = self.process.pid
             assert self.process.stdout is not None
             assert self.process.stderr is not None
+            self._raise_stream_limit(self.process.stdout)
+            self._raise_stream_limit(self.process.stderr)
             self._reader_task = asyncio.create_task(self._stdio_reader_loop())
             self._stderr_task = asyncio.create_task(self._stderr_reader_loop())
         else:
@@ -116,7 +119,7 @@ class CodexAppServerClient:
                 },
             },
         )
-        self.info.client_user_agent = result.get("clientUserAgent")
+        self.info.client_user_agent = result.get("clientUserAgent") or result.get("userAgent")
         self.info.initialized = True
         await self.notify("initialized", {})
 
@@ -325,3 +328,8 @@ class CodexAppServerClient:
             self.info.error = str(exc)
         finally:
             self.info.connected = False
+
+    def _raise_stream_limit(self, stream: asyncio.StreamReader) -> None:
+        limit = getattr(stream, "_limit", None)
+        if isinstance(limit, int) and limit < STREAM_LIMIT_BYTES:
+            cast(Any, stream)._limit = STREAM_LIMIT_BYTES

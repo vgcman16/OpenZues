@@ -67,3 +67,23 @@ def test_playbook_creation_and_diagnostics_endpoint(tmp_path) -> None:
     assert dashboard["playbooks"][0]["name"] == "Status check"
     diagnostics = diagnostics_response.json()
     assert diagnostics["checks"]
+
+
+def test_desktop_instance_creation_is_supported(tmp_path) -> None:
+    with make_client(tmp_path) as client:
+        response = client.post(
+            "/api/instances",
+            json={
+                "name": "Local Codex Desktop",
+                "transport": "desktop",
+                "cwd": str(tmp_path),
+                "auto_connect": False,
+            },
+        )
+
+    assert response.status_code == 200
+    created = response.json()
+    assert created["transport"] == "desktop"
+    assert created["command"] is None
+    assert created["args"] is None
+    assert created["resolved_transport"] is None

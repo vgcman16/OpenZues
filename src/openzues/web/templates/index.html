@@ -26,15 +26,33 @@
             <h2>Connections</h2>
             <button class="ghost" id="refresh-dashboard" type="button">Refresh</button>
           </div>
+          <div class="stack section-callout">
+            <div class="row">
+              <strong>Use Codex Desktop</strong>
+              <button id="quick-connect-desktop" type="button">Quick Connect</button>
+            </div>
+            <p class="small-muted">
+              Recommended on Windows. OpenZues stages a local runnable Codex bridge from the
+              installed desktop app so you can use the site without fighting the blocked
+              `codex` alias.
+            </p>
+          </div>
           <form id="instance-form" class="stack form-grid">
             <input name="name" type="text" placeholder="Name" required />
-            <select name="transport">
+            <select name="transport" id="transport-select">
+              <option value="desktop">Desktop (Recommended)</option>
               <option value="stdio">Stdio</option>
               <option value="websocket">WebSocket</option>
             </select>
-            <input name="command" type="text" placeholder="Command (codex)" />
-            <input name="args" type="text" placeholder="Args (app-server)" />
-            <input name="websocket_url" type="text" placeholder="ws://127.0.0.1:8787" />
+            <div data-transport-visible="stdio">
+              <input name="command" type="text" placeholder="Command (codex)" />
+            </div>
+            <div data-transport-visible="stdio">
+              <input name="args" type="text" placeholder="Args (app-server)" />
+            </div>
+            <div data-transport-visible="websocket">
+              <input name="websocket_url" type="text" placeholder="ws://127.0.0.1:8787" />
+            </div>
             <input name="cwd" type="text" placeholder="Working directory" />
             <label class="checkbox">
               <input name="auto_connect" type="checkbox" />

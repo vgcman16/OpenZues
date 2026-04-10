@@ -29,6 +29,7 @@ from openzues.schemas import (
     ThreadCreate,
     TurnCreate,
 )
+from openzues.services.codex_desktop import CodexDesktopService
 from openzues.services.environment import EnvironmentService
 from openzues.services.github import GitHubService
 from openzues.services.hub import BroadcastHub
@@ -49,14 +50,22 @@ def create_app(
     project_service: ProjectService | None = None,
     playbook_service: PlaybookService | None = None,
     environment_service: EnvironmentService | None = None,
+    desktop_service: CodexDesktopService | None = None,
 ) -> FastAPI:
     active_settings = app_settings or settings
     active_database = database or Database(active_settings.effective_db_path)
     active_hub = hub or BroadcastHub()
-    active_manager = manager or RuntimeManager(active_database, active_hub)
+    active_desktop_service = desktop_service or CodexDesktopService()
+    active_manager = manager or RuntimeManager(
+        active_database,
+        active_hub,
+        desktop_service=active_desktop_service,
+    )
     active_project_service = project_service or ProjectService(GitHubService())
     active_playbook_service = playbook_service or PlaybookService()
-    active_environment_service = environment_service or EnvironmentService()
+    active_environment_service = environment_service or EnvironmentService(
+        desktop_service=active_desktop_service
+    )
     templates = Jinja2Templates(directory=str(active_settings.templates_dir))
 
     @asynccontextmanager
@@ -120,15 +129,27 @@ def create_app(
 
     @fastapi_app.post("/api/instances")
     async def create_instance(payload: InstanceCreate) -> dict:
+        command = None if payload.transport == "desktop" else (
+            payload.command or active_settings.default_codex_command
+        )
+        args = None if payload.transport == "desktop" else (
+            payload.args or active_settings.default_codex_args
+        )
+        websocket_url = payload.websocket_url if payload.transport == "websocket" else None
         runtime = await active_manager.create_instance(
             name=payload.name,
             transport=payload.transport,
-            command=payload.command or active_settings.default_codex_command,
-            args=payload.args or active_settings.default_codex_args,
-            websocket_url=payload.websocket_url,
+            command=command,
+            args=args,
+            websocket_url=websocket_url,
             cwd=payload.cwd,
             auto_connect=payload.auto_connect,
         )
+        return runtime.view().model_dump()
+
+    @fastapi_app.post("/api/instances/quick-connect/desktop")
+    async def quick_connect_desktop() -> dict:
+        runtime = await active_manager.quick_connect_desktop(cwd=str(Path.cwd()))
         return runtime.view().model_dump()
 
     @fastapi_app.post("/api/instances/{instance_id}/connect")

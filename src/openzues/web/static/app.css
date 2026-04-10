@@ -73,7 +73,7 @@ h1 {
 
 .hero-stats {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
 }
 
@@ -126,6 +126,14 @@ h1 {
 .panel {
   border-radius: 26px;
   padding: 18px;
+}
+
+.section-callout {
+  margin-bottom: 16px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--line);
 }
 
 .panel-head,
