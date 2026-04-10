@@ -870,6 +870,110 @@ button.danger {
   padding: 0 12px 12px;
 }
 
+.dream-section {
+  background:
+    radial-gradient(circle at top right, rgba(255, 197, 106, 0.08), transparent 24%),
+    linear-gradient(180deg, rgba(93, 168, 255, 0.06), transparent 42%),
+    var(--surface);
+}
+
+.dream-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 12px;
+}
+
+.dream-card {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border-radius: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.dream-card h4 {
+  margin: 0;
+  font-size: 1.04rem;
+  line-height: 1.22;
+}
+
+.dream-card p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.dream-fresh {
+  border-color: rgba(139, 255, 202, 0.14);
+  background:
+    linear-gradient(180deg, rgba(139, 255, 202, 0.08), rgba(255, 255, 255, 0.03)),
+    rgba(255, 255, 255, 0.03);
+}
+
+.dream-ready {
+  border-color: rgba(255, 197, 106, 0.16);
+  background:
+    linear-gradient(180deg, rgba(255, 197, 106, 0.1), rgba(255, 255, 255, 0.03)),
+    rgba(255, 255, 255, 0.03);
+}
+
+.dream-forming {
+  background:
+    linear-gradient(180deg, rgba(93, 168, 255, 0.08), rgba(255, 255, 255, 0.03)),
+    rgba(255, 255, 255, 0.03);
+}
+
+.dream-rail {
+  display: grid;
+  gap: 8px;
+}
+
+.dream-rail strong {
+  display: block;
+  color: #dff3ff;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.dream-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding-left: 18px;
+  color: var(--muted);
+}
+
+.dream-detail {
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.02);
+  overflow: hidden;
+}
+
+.dream-detail summary {
+  cursor: pointer;
+  padding: 10px 12px;
+  color: var(--muted);
+  font-weight: 600;
+  list-style: none;
+}
+
+.dream-detail summary::-webkit-details-marker {
+  display: none;
+}
+
+.dream-detail pre {
+  padding: 0 12px 12px;
+}
+
+.dream-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
 .cortex-section {
   background:
     radial-gradient(circle at top right, rgba(139, 255, 202, 0.08), transparent 24%),
@@ -1593,6 +1697,10 @@ pre {
   }
 
   .ghost-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .dream-actions {
     grid-template-columns: 1fr;
   }
 

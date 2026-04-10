@@ -13,6 +13,7 @@ from openzues.app import (
     create_app,
 )
 from openzues.schemas import InstanceView, MissionView, ProjectView
+from openzues.services.dreams import build_dream_deck
 from openzues.settings import Settings
 
 
@@ -162,6 +163,7 @@ def test_project_creation_appears_on_dashboard(tmp_path) -> None:
     assert project["exists"] is True
     dashboard = dashboard_response.json()
     assert dashboard["brief"]["headline"]
+    assert dashboard["dream_deck"]["headline"]
     assert dashboard["missions"] == []
     assert dashboard["projects"][0]["label"] == "Sandbox"
     assert dashboard["playbooks"] == []
@@ -552,3 +554,47 @@ def test_build_reflex_deck_offers_resume_reflex_for_paused_checkpoint() -> None:
     reflex_deck = build_reflex_deck([make_instance_view()], [mission], [project])
 
     assert any(reflex.kind == "resume_handoff" for reflex in reflex_deck.reflexes)
+
+
+def test_build_dream_deck_surfaces_ready_project_memory_pass() -> None:
+    project = make_project_view(project_id=8, label="OpenZues")
+    missions = [
+        make_mission_view(
+            mission_id=31,
+            name="Ship OpenZues",
+            status="completed",
+            phase="completed",
+            project_id=8,
+            project_label="OpenZues",
+            last_checkpoint="Mission control shipped a stable relay lane.",
+            max_turns=4,
+            model="gpt-5.4",
+        ),
+        make_mission_view(
+            mission_id=32,
+            name="Harden OpenZues",
+            status="paused",
+            phase="paused",
+            project_id=8,
+            project_label="OpenZues",
+            last_checkpoint="Autonomy radar now highlights operator risks earlier.",
+            max_turns=4,
+            model="gpt-5.4",
+        ),
+    ]
+
+    deck = build_dream_deck([make_instance_view()], missions, [project])
+
+    assert deck.dreams
+    dream = deck.dreams[0]
+    assert dream.project_id == 8
+    assert dream.status == "ready"
+    assert dream.mission_draft.project_id == 8
+    assert dream.memory_prompt.startswith("# Dream: OpenZues Project Consolidation")
+
+
+def test_build_dream_deck_stays_empty_without_project_signal() -> None:
+    deck = build_dream_deck([make_instance_view()], [], [make_project_view()])
+
+    assert deck.dreams == []
+    assert deck.headline == "No dream candidates yet"

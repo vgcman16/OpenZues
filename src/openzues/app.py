@@ -19,6 +19,7 @@ from openzues.schemas import (
     DashboardBriefView,
     DashboardContinuityPacketView,
     DashboardDoctrineView,
+    DashboardDreamView,
     DashboardLaunchpadView,
     DashboardOpportunityView,
     DashboardRadarView,
@@ -51,6 +52,7 @@ from openzues.services.cortex import (
     doctrine_index,
     tune_draft_with_doctrine,
 )
+from openzues.services.dreams import build_dream_deck
 from openzues.services.environment import EnvironmentService
 from openzues.services.github import GitHubService
 from openzues.services.hub import BroadcastHub
@@ -911,6 +913,12 @@ def create_app(
                 projects,
                 doctrines=doctrines,
             ),
+            dream_deck=build_dream_deck(
+                instances,
+                missions,
+                projects,
+                doctrines=doctrines,
+            ),
             cortex=build_cortex(instances, missions, projects, doctrines=doctrines),
             reflex_deck=build_reflex_deck(instances, missions, projects, doctrines=doctrines),
             instances=instances,
@@ -960,6 +968,25 @@ def create_app(
             checkpoints=mission.checkpoints,
             doctrine=doctrine,
         )
+
+    @fastapi_app.get("/api/projects/{project_id}/dream")
+    async def project_dream(project_id: int) -> DashboardDreamView:
+        project_rows = await active_database.list_projects()
+        projects = [
+            ProjectView.model_validate(active_project_service.inspect(row)) for row in project_rows
+        ]
+        project = next((item for item in projects if item.id == project_id), None)
+        if project is None:
+            raise HTTPException(status_code=404, detail="Project not found.")
+
+        instances = await active_manager.list_views()
+        missions = await active_mission_service.list_views()
+        doctrines = build_doctrines(missions, projects)
+        deck = build_dream_deck(instances, missions, projects, doctrines=doctrines)
+        dream = next((item for item in deck.dreams if item.project_id == project_id), None)
+        if dream is None:
+            raise HTTPException(status_code=404, detail="Dream candidate not available yet.")
+        return dream
 
     @fastapi_app.get("/api/diagnostics")
     async def diagnostics() -> DiagnosticsView:

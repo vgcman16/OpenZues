@@ -18,6 +18,9 @@ const radarSignalsEl = document.querySelector("#radar-signals");
 const continuityHeadlineEl = document.querySelector("#continuity-headline");
 const continuitySummaryEl = document.querySelector("#continuity-summary");
 const continuityPacketsEl = document.querySelector("#continuity-packets");
+const dreamHeadlineEl = document.querySelector("#dream-headline");
+const dreamSummaryEl = document.querySelector("#dream-summary");
+const dreamsEl = document.querySelector("#dreams");
 const cortexHeadlineEl = document.querySelector("#cortex-headline");
 const cortexSummaryEl = document.querySelector("#cortex-summary");
 const cortexDoctrinesEl = document.querySelector("#cortex-doctrines");
@@ -28,6 +31,7 @@ const reflexesEl = document.querySelector("#reflexes");
 const intelligenceShellEl = document.querySelector("#intelligence-shell");
 const intelligenceShellSummaryEl = document.querySelector("#intelligence-shell-summary");
 const intelligenceContinuityCountEl = document.querySelector("#intelligence-continuity-count");
+const intelligenceDreamCountEl = document.querySelector("#intelligence-dream-count");
 const intelligenceDoctrineCountEl = document.querySelector("#intelligence-doctrine-count");
 const intelligenceInoculationCountEl = document.querySelector("#intelligence-inoculation-count");
 const intelligenceReflexCountEl = document.querySelector("#intelligence-reflex-count");
@@ -500,6 +504,111 @@ function renderContinuity() {
       `;
 }
 
+function getDreamById(dreamId) {
+  return (state.dashboard?.dream_deck?.dreams ?? []).find((dream) => dream.id === dreamId);
+}
+
+function toneForDreamStatus(status) {
+  if (status === "fresh") {
+    return "ok";
+  }
+  if (status === "ready") {
+    return "warn";
+  }
+  return "";
+}
+
+function renderDreams() {
+  const dreamDeck = state.dashboard?.dream_deck;
+  if (!dreamDeck) {
+    dreamHeadlineEl.textContent = "Distilling project memory...";
+    dreamSummaryEl.textContent = "";
+    dreamsEl.innerHTML = "";
+    return;
+  }
+
+  dreamHeadlineEl.textContent = dreamDeck.headline;
+  dreamSummaryEl.textContent = dreamDeck.summary;
+
+  dreamsEl.innerHTML = dreamDeck.dreams.length
+    ? dreamDeck.dreams
+        .map(
+          (dream) => `
+            <article class="dream-card dream-${escapeHtml(dream.status)}">
+              <div class="signal-meta">
+                ${pill(dream.status, toneForDreamStatus(dream.status))}
+                ${pill(dream.project_label)}
+                ${pill(`${dream.mission_count} runs`)}
+                ${pill(`${dream.checkpoint_count} checkpoints`, "ok")}
+                ${
+                  dream.freshness_hours != null
+                    ? `<span class="signal-fresh">${escapeHtml(
+                        formatRelativeTimestamp(Date.now() - dream.freshness_hours * 3600000),
+                      )}</span>`
+                    : ""
+                }
+              </div>
+              <h4>${escapeHtml(dream.headline)}</h4>
+              <p>${escapeHtml(dream.summary)}</p>
+              ${
+                dream.anchors?.length
+                  ? `
+                    <div class="dream-rail">
+                      <strong>Anchor Signal</strong>
+                      <ul class="dream-list">
+                        ${dream.anchors.map((anchor) => `<li>${escapeHtml(anchor)}</li>`).join("")}
+                      </ul>
+                    </div>
+                  `
+                  : ""
+              }
+              ${
+                dream.prune_notes?.length
+                  ? `
+                    <div class="dream-rail">
+                      <strong>Prune Notes</strong>
+                      <ul class="dream-list">
+                        ${dream.prune_notes.map((note) => `<li>${escapeHtml(note)}</li>`).join("")}
+                      </ul>
+                    </div>
+                  `
+                  : ""
+              }
+              <details class="dream-detail">
+                <summary>Memory prompt</summary>
+                <pre>${escapeHtml(dream.memory_prompt)}</pre>
+              </details>
+              <div class="dream-actions">
+                <button
+                  type="button"
+                  class="ghost"
+                  data-action="apply-dream"
+                  data-dream-id="${escapeHtml(dream.id)}"
+                >
+                  ${escapeHtml(dream.action_label || "Load dream")}
+                </button>
+                <button
+                  type="button"
+                  data-action="launch-dream"
+                  data-dream-id="${escapeHtml(dream.id)}"
+                >
+                  Launch dream
+                </button>
+              </div>
+            </article>
+          `,
+        )
+        .join("")
+    : `
+        <article class="dream-card empty-state">
+          <strong>No dream candidates yet.</strong>
+          <p class="small-muted">
+            Once a workspace accumulates enough checkpointed mission history, OpenZues will synthesize a consolidation run here.
+          </p>
+        </article>
+      `;
+}
+
 function renderCortex() {
   const cortex = state.dashboard?.cortex;
   if (!cortex) {
@@ -811,6 +920,7 @@ function renderDiagnostics() {
 
 function renderShellChrome() {
   const continuityPackets = state.dashboard?.continuity?.packets ?? [];
+  const dreams = state.dashboard?.dream_deck?.dreams ?? [];
   const doctrines = state.dashboard?.cortex?.doctrines ?? [];
   const inoculations = state.dashboard?.cortex?.inoculations ?? [];
   const reflexes = state.dashboard?.reflex_deck?.reflexes ?? [];
@@ -821,6 +931,10 @@ function renderShellChrome() {
   if (intelligenceContinuityCountEl) {
     intelligenceContinuityCountEl.textContent = summarizeCount(continuityPackets.length, "packet");
     intelligenceContinuityCountEl.className = continuityPackets.length ? "pill warn" : "pill";
+  }
+  if (intelligenceDreamCountEl) {
+    intelligenceDreamCountEl.textContent = summarizeCount(dreams.length, "dream");
+    intelligenceDreamCountEl.className = dreams.length ? "pill ok" : "pill";
   }
   if (intelligenceDoctrineCountEl) {
     intelligenceDoctrineCountEl.textContent = summarizeCount(doctrines.length, "doctrine");
@@ -836,13 +950,17 @@ function renderShellChrome() {
   }
   if (intelligenceShellSummaryEl) {
     const fragilePackets = continuityPackets.filter((packet) => packet.state === "fragile").length;
+    const readyDreams = dreams.filter((dream) => dream.status !== "forming").length;
     if (fragilePackets) {
       intelligenceShellSummaryEl.textContent =
         "Relay packets are flagging fragile mission memory. Expand this layer before a long unattended run.";
+    } else if (readyDreams) {
+      intelligenceShellSummaryEl.textContent =
+        "Project memory is ripe for consolidation. Expand this layer to load or launch a dream pass.";
     } else if (reflexes.length) {
       intelligenceShellSummaryEl.textContent =
         "Intervention cues are armed. Expand this layer when you want to steer a live mission.";
-    } else if (continuityPackets.length || doctrines.length || inoculations.length) {
+    } else if (continuityPackets.length || dreams.length || doctrines.length || inoculations.length) {
       intelligenceShellSummaryEl.textContent =
         "Continuity, doctrine, and hardening signals are available, but they stay tucked away until you need guidance.";
     } else {
@@ -1413,6 +1531,7 @@ function render() {
   renderLaunchpad();
   renderRadar();
   renderContinuity();
+  renderDreams();
   renderCortex();
   renderReflexes();
   renderPresets();
@@ -1600,6 +1719,14 @@ document.addEventListener("click", async (event) => {
       applyMissionDraft(opportunity.mission_draft);
       showToast(`Loaded ghost launch: ${opportunity.title}`);
     }
+    if (target.dataset.action === "apply-dream") {
+      const dream = getDreamById(target.dataset.dreamId);
+      if (!dream) {
+        throw new Error("That dream pass is no longer available.");
+      }
+      applyMissionDraft(dream.mission_draft);
+      showToast(`Loaded dream: ${dream.project_label}`);
+    }
     if (target.dataset.action === "launch-opportunity") {
       const opportunity = getOpportunityById(target.dataset.opportunityId);
       if (!opportunity) {
@@ -1607,6 +1734,15 @@ document.addEventListener("click", async (event) => {
       }
       await submitJson("/api/missions", opportunity.mission_draft);
       showToast(`Launched: ${opportunity.title}`);
+      resetMissionForm();
+    }
+    if (target.dataset.action === "launch-dream") {
+      const dream = getDreamById(target.dataset.dreamId);
+      if (!dream) {
+        throw new Error("That dream pass is no longer available.");
+      }
+      await submitJson("/api/missions", dream.mission_draft);
+      showToast(`Dream launched for ${dream.project_label}.`);
       resetMissionForm();
     }
     if (target.dataset.action === "fire-reflex") {

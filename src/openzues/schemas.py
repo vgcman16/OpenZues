@@ -13,6 +13,7 @@ SignalLevel = Literal["critical", "warn", "ready", "info"]
 SignalLane = Literal["attention", "throughput", "reliability", "capacity"]
 LaunchImpact = Literal["high", "medium", "low"]
 ContinuityState = Literal["anchored", "warming", "fragile"]
+DreamStatus = Literal["forming", "ready", "fresh"]
 LaunchKind = Literal[
     "workspace_scout",
     "ship_slice",
@@ -335,6 +336,29 @@ class DashboardContinuityView(BaseModel):
     packets: list[DashboardContinuityPacketView] = Field(default_factory=list)
 
 
+class DashboardDreamView(BaseModel):
+    id: str
+    project_id: int
+    project_label: str
+    status: DreamStatus
+    freshness_hours: int | None = None
+    mission_count: int = 0
+    checkpoint_count: int = 0
+    headline: str
+    summary: str
+    anchors: list[str] = Field(default_factory=list)
+    prune_notes: list[str] = Field(default_factory=list)
+    memory_prompt: str
+    action_label: str = "Load dream"
+    mission_draft: MissionDraftView
+
+
+class DashboardDreamDeckView(BaseModel):
+    headline: str
+    summary: str
+    dreams: list[DashboardDreamView] = Field(default_factory=list)
+
+
 class DashboardDoctrineView(BaseModel):
     id: str
     project_id: int | None = None
@@ -394,6 +418,7 @@ class DashboardView(BaseModel):
     launchpad: DashboardLaunchpadView
     radar: DashboardRadarView
     continuity: DashboardContinuityView
+    dream_deck: DashboardDreamDeckView
     cortex: DashboardCortexView
     reflex_deck: DashboardReflexDeckView
     instances: list[InstanceView]
