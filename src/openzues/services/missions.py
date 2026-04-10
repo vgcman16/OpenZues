@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections import defaultdict
+from datetime import UTC, datetime
 from typing import Any
 
 from openzues.database import Database, utcnow
@@ -11,6 +12,22 @@ from openzues.services.hub import BroadcastHub
 from openzues.services.manager import RuntimeManager
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_timestamp(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _seconds_since(value: str | None) -> int | None:
+    parsed = _parse_timestamp(value)
+    if parsed is None:
+        return None
+    return max(0, int((datetime.now(UTC) - parsed).total_seconds()))
 
 
 def extract_thread_id(payload: dict[str, Any]) -> str | None:
@@ -100,6 +117,10 @@ class MissionService:
             run_verification=payload.run_verification,
             auto_commit=payload.auto_commit,
             pause_on_approval=payload.pause_on_approval,
+            allow_auto_reflexes=payload.allow_auto_reflexes,
+            auto_recover=payload.auto_recover,
+            auto_recover_limit=payload.auto_recover_limit,
+            reflex_cooldown_seconds=payload.reflex_cooldown_seconds,
         )
         await self.database.update_mission(
             mission_id,
@@ -163,49 +184,13 @@ class MissionService:
         if not runtime.connected:
             raise RuntimeError("Instance is offline.")
 
-        await self.database.append_mission_checkpoint(
-            mission_id=mission_id,
-            thread_id=thread_id,
-            turn_id=None,
-            kind="reflex",
-            summary=payload.title,
-        )
-        try:
-            turn_result = await self.manager.start_turn(
-                int(mission["instance_id"]),
-                thread_id=thread_id,
-                text=payload.prompt,
-                cwd=mission["cwd"],
-                model=None,
-                reasoning_effort=mission["reasoning_effort"],
-                collaboration_mode=mission["collaboration_mode"],
-            )
-        except Exception as exc:
-            await self.database.update_mission(
-                mission_id,
-                last_error=str(exc),
-                last_activity_at=utcnow(),
-            )
-            raise
-
-        await self.database.update_mission(
+        await self._start_turn_with_prompt(
             mission_id,
-            status="active",
-            in_progress=1,
-            phase="thinking",
-            turns_started=int(mission["turns_started"]) + 1,
-            last_turn_id=extract_turn_id(turn_result),
-            last_error=None,
-            last_activity_at=utcnow(),
-        )
-        await self._publish_snapshot(
-            "mission/reflex-fired",
-            {
-                "missionId": mission_id,
-                "threadId": thread_id,
-                "kind": payload.kind,
-                "title": payload.title,
-            },
+            mission,
+            thread_id=thread_id,
+            prompt=payload.prompt,
+            event_type="mission/reflex-fired",
+            reflex=payload,
         )
         return await self.get_view(mission_id)
 
@@ -360,12 +345,193 @@ class MissionService:
             raise ValueError(f"Unknown mission {mission_id}")
         return mission
 
+    def _orbit_threshold(self, mission: dict[str, Any]) -> int:
+        return max(6, int(mission["turns_completed"]) * 4 + 4)
+
+    def _reflex_ready(self, mission: dict[str, Any]) -> bool:
+        if not bool(mission.get("allow_auto_reflexes")):
+            return False
+        elapsed = _seconds_since(mission.get("last_reflex_at"))
+        if elapsed is None:
+            return True
+        return elapsed >= int(mission.get("reflex_cooldown_seconds") or 900)
+
+    def _build_governor_reflex(self, mission: dict[str, Any]) -> MissionReflexRun | None:
+        if not self._reflex_ready(mission):
+            return None
+
+        last_checkpoint = bool(mission.get("last_checkpoint"))
+        last_activity_seconds = _seconds_since(mission.get("last_activity_at"))
+        status = str(mission.get("status") or "")
+
+        if (
+            status == "failed"
+            and bool(mission.get("auto_recover"))
+            and last_checkpoint
+            and int(mission.get("failure_count") or 0)
+            <= int(mission.get("auto_recover_limit") or 0)
+        ):
+            return MissionReflexRun(
+                kind="recovery_triangle",
+                title=f"Auto-recover {mission['name']}",
+                prompt="\n".join(
+                    [
+                        f"You are resuming the OpenZues mission '{mission['name']}'.",
+                        (
+                            "A self-healing governor has re-armed this thread because "
+                            "recovery is still within budget."
+                        ),
+                        "Read the most recent checkpoint and the latest failure context first.",
+                        (
+                            "Choose the safest recovery path, execute only the "
+                            "highest-leverage repair, verify it, and end with a "
+                            "concise recovery checkpoint."
+                        ),
+                        "Do not restart the project from scratch.",
+                    ]
+                ),
+            )
+
+        if status != "active" or mission.get("in_progress"):
+            return None
+
+        if (
+            int(mission.get("command_count") or 0) >= self._orbit_threshold(mission)
+            and not last_checkpoint
+        ):
+            return MissionReflexRun(
+                kind="checkpoint_now",
+                title=f"Force landing for {mission['name']}",
+                prompt="\n".join(
+                    [
+                        f"You are still inside the OpenZues mission '{mission['name']}'.",
+                        "The self-healing governor detected scope expansion without a checkpoint.",
+                        "Stop broadening the task.",
+                        (
+                            "Use this turn to verify the most important completed work, "
+                            "finish only one small missing piece if necessary, and end "
+                            "with a checkpoint: completed, verified, next smallest "
+                            "step, blockers."
+                        ),
+                    ]
+                ),
+            )
+
+        if int(mission.get("total_tokens") or 0) >= 40000 and not last_checkpoint:
+            return MissionReflexRun(
+                kind="verification_spike",
+                title=f"Verification spike for {mission['name']}",
+                prompt="\n".join(
+                    [
+                        f"You are still inside the OpenZues mission '{mission['name']}'.",
+                        "The self-healing governor wants proof before more exploration.",
+                        (
+                            "Pause new feature expansion for this turn, run the "
+                            "highest-value verification you can, summarize what is "
+                            "confirmed, what remains uncertain, and what the smallest "
+                            "safe next move should be."
+                        ),
+                    ]
+                ),
+            )
+
+        if last_activity_seconds is not None and last_activity_seconds >= 8 * 60:
+            return MissionReflexRun(
+                kind="heartbeat_nudge",
+                title=f"Heartbeat nudge for {mission['name']}",
+                prompt="\n".join(
+                    [
+                        f"You are still inside the OpenZues mission '{mission['name']}'.",
+                        "The self-healing governor detected a quiet lane.",
+                        (
+                            "Re-orient from the current thread state, choose the "
+                            "smallest high-leverage next step, complete it if feasible, "
+                            "and leave a tight checkpoint."
+                        ),
+                    ]
+                ),
+            )
+
+        return None
+
+    async def _start_turn_with_prompt(
+        self,
+        mission_id: int,
+        mission: dict[str, Any],
+        *,
+        thread_id: str,
+        prompt: str,
+        event_type: str,
+        reflex: MissionReflexRun | None = None,
+        checkpoint_kind: str = "reflex",
+    ) -> None:
+        if reflex is not None:
+            await self.database.append_mission_checkpoint(
+                mission_id=mission_id,
+                thread_id=thread_id,
+                turn_id=None,
+                kind=checkpoint_kind,
+                summary=reflex.title,
+            )
+        try:
+            turn_result = await self.manager.start_turn(
+                int(mission["instance_id"]),
+                thread_id=thread_id,
+                text=prompt,
+                cwd=mission["cwd"],
+                model=None,
+                reasoning_effort=mission["reasoning_effort"],
+                collaboration_mode=mission["collaboration_mode"],
+            )
+        except Exception as exc:
+            await self.database.update_mission(
+                mission_id,
+                status="failed",
+                phase="failed",
+                failure_count=int(mission["failure_count"]) + 1,
+                last_error=str(exc),
+                in_progress=0,
+                last_activity_at=utcnow(),
+            )
+            await self.database.append_mission_checkpoint(
+                mission_id=mission_id,
+                thread_id=thread_id,
+                turn_id=None,
+                kind="error",
+                summary=str(exc),
+            )
+            await self._publish_snapshot(
+                "mission/failed",
+                {"missionId": mission_id, "threadId": thread_id, "error": str(exc)},
+            )
+            return
+
+        updates: dict[str, Any] = {
+            "status": "active",
+            "in_progress": 1,
+            "phase": "thinking",
+            "turns_started": int(mission["turns_started"]) + 1,
+            "last_turn_id": extract_turn_id(turn_result),
+            "last_error": None,
+            "last_activity_at": utcnow(),
+        }
+        if reflex is not None:
+            updates["last_reflex_kind"] = reflex.kind
+            updates["last_reflex_at"] = utcnow()
+        await self.database.update_mission(mission_id, **updates)
+
+        payload: dict[str, Any] = {"missionId": mission_id, "threadId": thread_id}
+        if reflex is not None:
+            payload["kind"] = reflex.kind
+            payload["title"] = reflex.title
+        await self._publish_snapshot(event_type, payload)
+
     async def _runner_loop(self) -> None:
         while not self._stop_event.is_set():
             try:
                 missions = await self.database.list_missions()
                 for mission in missions:
-                    if mission["status"] in {"active", "blocked"}:
+                    if mission["status"] in {"active", "blocked", "failed"}:
                         await self._reconcile_mission(int(mission["id"]))
             except asyncio.CancelledError:
                 raise
@@ -384,7 +550,16 @@ class MissionService:
         lock = self._locks[mission_id]
         async with lock:
             mission = await self.require_mission(mission_id)
-            if mission["status"] not in {"active", "blocked"} and not force:
+            allow_failed_recovery = (
+                mission["status"] == "failed"
+                and bool(mission.get("auto_recover"))
+                and bool(mission.get("thread_id"))
+            )
+            if (
+                mission["status"] not in {"active", "blocked"}
+                and not allow_failed_recovery
+                and not force
+            ):
                 return
 
             runtime = await self.manager.get(int(mission["instance_id"]))
@@ -518,52 +693,34 @@ class MissionService:
                 )
                 mission["thread_id"] = thread_id
 
-            prompt = self._build_turn_prompt(mission)
-            try:
-                turn_result = await self.manager.start_turn(
-                    int(mission["instance_id"]),
-                    thread_id=thread_id,
-                    text=prompt,
-                    cwd=mission["cwd"],
-                    model=None,
-                    reasoning_effort=mission["reasoning_effort"],
-                    collaboration_mode=mission["collaboration_mode"],
+            reflex = None if force else self._build_governor_reflex(mission)
+            if reflex is not None:
+                checkpoint_kind = (
+                    "recovery" if reflex.kind == "recovery_triangle" else "reflex_auto"
                 )
-            except Exception as exc:
-                await self.database.update_mission(
+                event_type = (
+                    "mission/auto-recovered"
+                    if reflex.kind == "recovery_triangle"
+                    else "mission/auto-reflex-fired"
+                )
+                await self._start_turn_with_prompt(
                     mission_id,
-                    status="failed",
-                    phase="failed",
-                    failure_count=int(mission["failure_count"]) + 1,
-                    last_error=str(exc),
-                    in_progress=0,
-                )
-                await self.database.append_mission_checkpoint(
-                    mission_id=mission_id,
+                    mission,
                     thread_id=thread_id,
-                    turn_id=None,
-                    kind="error",
-                    summary=str(exc),
-                )
-                await self._publish_snapshot(
-                    "mission/failed",
-                    {"missionId": mission_id, "threadId": thread_id, "error": str(exc)},
+                    prompt=reflex.prompt,
+                    event_type=event_type,
+                    reflex=reflex,
+                    checkpoint_kind=checkpoint_kind,
                 )
                 return
 
-            await self.database.update_mission(
+            prompt = self._build_turn_prompt(mission)
+            await self._start_turn_with_prompt(
                 mission_id,
-                status="active",
-                in_progress=1,
-                phase="thinking",
-                turns_started=int(mission["turns_started"]) + 1,
-                last_turn_id=extract_turn_id(turn_result),
-                last_error=None,
-                last_activity_at=utcnow(),
-            )
-            await self._publish_snapshot(
-                "mission/cycle-started",
-                {"missionId": mission_id, "threadId": thread_id},
+                mission,
+                thread_id=thread_id,
+                prompt=prompt,
+                event_type="mission/cycle-started",
             )
 
     async def _build_view(self, mission: dict[str, Any]) -> MissionView:

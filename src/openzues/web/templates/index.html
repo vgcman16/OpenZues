@@ -103,6 +103,18 @@
                           min="1"
                           placeholder="Max turns (blank = unlimited)"
                         />
+                        <input
+                          name="auto_recover_limit"
+                          type="number"
+                          min="0"
+                          placeholder="Auto recover limit (2)"
+                        />
+                        <input
+                          name="reflex_cooldown_seconds"
+                          type="number"
+                          min="60"
+                          placeholder="Reflex cooldown seconds (900)"
+                        />
                       </div>
 
                       <div class="toggle-row">
@@ -121,6 +133,14 @@
                         <label class="checkbox">
                           <input name="pause_on_approval" type="checkbox" checked />
                           Pause on approvals
+                        </label>
+                        <label class="checkbox">
+                          <input name="allow_auto_reflexes" type="checkbox" checked />
+                          Auto reflexes
+                        </label>
+                        <label class="checkbox">
+                          <input name="auto_recover" type="checkbox" checked />
+                          Auto recover
                         </label>
                         <label class="checkbox">
                           <input name="start_immediately" type="checkbox" checked />

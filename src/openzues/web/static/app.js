@@ -547,6 +547,10 @@ function applyMissionPreset(presetId) {
   missionFormEl.querySelector('input[name="run_verification"]').checked = preset.runVerification;
   missionFormEl.querySelector('input[name="auto_commit"]').checked = preset.autoCommit;
   missionFormEl.querySelector('input[name="pause_on_approval"]').checked = preset.pauseOnApproval;
+  missionFormEl.querySelector('input[name="allow_auto_reflexes"]').checked = true;
+  missionFormEl.querySelector('input[name="auto_recover"]').checked = true;
+  missionFormEl.querySelector('input[name="auto_recover_limit"]').value = 2;
+  missionFormEl.querySelector('input[name="reflex_cooldown_seconds"]').value = 900;
   missionFormEl.querySelector('input[name="start_immediately"]').checked = true;
   missionAdvancedEl.open = true;
   showToast(`Loaded preset: ${preset.name}`);
@@ -558,6 +562,10 @@ function resetMissionForm() {
   missionFormEl.querySelector('input[name="run_verification"]').checked = true;
   missionFormEl.querySelector('input[name="auto_commit"]').checked = true;
   missionFormEl.querySelector('input[name="pause_on_approval"]').checked = true;
+  missionFormEl.querySelector('input[name="allow_auto_reflexes"]').checked = true;
+  missionFormEl.querySelector('input[name="auto_recover"]').checked = true;
+  missionFormEl.querySelector('input[name="auto_recover_limit"]').value = 2;
+  missionFormEl.querySelector('input[name="reflex_cooldown_seconds"]').value = 900;
   missionFormEl.querySelector('input[name="start_immediately"]').checked = true;
   missionAdvancedEl.open = false;
 }
@@ -574,10 +582,15 @@ function applyMissionDraft(draft) {
   missionFormEl.querySelector('input[name="model"]').value = draft.model || "gpt-5.4";
   missionFormEl.querySelector('input[name="thread_id"]').value = draft.thread_id || "";
   missionFormEl.querySelector('input[name="max_turns"]').value = draft.max_turns || "";
+  missionFormEl.querySelector('input[name="auto_recover_limit"]').value = draft.auto_recover_limit || 2;
+  missionFormEl.querySelector('input[name="reflex_cooldown_seconds"]').value =
+    draft.reflex_cooldown_seconds || 900;
   missionFormEl.querySelector('input[name="use_builtin_agents"]').checked = !!draft.use_builtin_agents;
   missionFormEl.querySelector('input[name="run_verification"]').checked = !!draft.run_verification;
   missionFormEl.querySelector('input[name="auto_commit"]').checked = !!draft.auto_commit;
   missionFormEl.querySelector('input[name="pause_on_approval"]').checked = !!draft.pause_on_approval;
+  missionFormEl.querySelector('input[name="allow_auto_reflexes"]').checked = !!draft.allow_auto_reflexes;
+  missionFormEl.querySelector('input[name="auto_recover"]').checked = !!draft.auto_recover;
   missionFormEl.querySelector('input[name="start_immediately"]').checked = !!draft.start_immediately;
   if (draft.instance_id != null) {
     missionInstanceSelectEl.value = String(draft.instance_id);
@@ -815,6 +828,24 @@ function renderMissions() {
                   ${booleanBadge(mission.run_verification, "verify")}
                   ${booleanBadge(mission.auto_commit, "commit")}
                   ${booleanBadge(mission.pause_on_approval, "pause approvals")}
+                  ${booleanBadge(mission.allow_auto_reflexes, "auto reflex")}
+                  ${booleanBadge(mission.auto_recover, "auto recover")}
+                  ${mission.last_reflex_kind ? pill(`last ${mission.last_reflex_kind}`, "warn") : ""}
+                </div>
+              </article>
+
+              <article class="mini-stat">
+                <span class="mini-stat-label">Governor</span>
+                <div class="telemetry-grid">
+                  <span>recover limit: ${formatNumber(mission.auto_recover_limit)}</span>
+                  <span>reflex cooldown: ${formatNumber(mission.reflex_cooldown_seconds)}s</span>
+                  <span>
+                    ${escapeHtml(
+                      mission.last_reflex_at
+                        ? `last reflex ${formatRelativeTimestamp(mission.last_reflex_at)}`
+                        : "no reflex fired yet",
+                    )}
+                  </span>
                 </div>
               </article>
             </aside>
@@ -1257,6 +1288,14 @@ missionFormEl.addEventListener("submit", async (event) => {
       run_verification: form.get("run_verification") === "on",
       auto_commit: form.get("auto_commit") === "on",
       pause_on_approval: form.get("pause_on_approval") === "on",
+      allow_auto_reflexes: form.get("allow_auto_reflexes") === "on",
+      auto_recover: form.get("auto_recover") === "on",
+      auto_recover_limit: form.get("auto_recover_limit")
+        ? Number(form.get("auto_recover_limit"))
+        : 2,
+      reflex_cooldown_seconds: form.get("reflex_cooldown_seconds")
+        ? Number(form.get("reflex_cooldown_seconds"))
+        : 900,
       start_immediately: form.get("start_immediately") === "on",
     });
     resetMissionForm();

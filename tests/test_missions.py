@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import pytest
 
 from openzues.database import Database
@@ -133,6 +135,10 @@ async def test_final_answer_event_creates_checkpoint(tmp_path) -> None:
         run_verification=True,
         auto_commit=True,
         pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
     )
 
     await service.handle_event(
@@ -183,6 +189,10 @@ async def test_token_and_commentary_events_update_mission_telemetry(tmp_path) ->
         run_verification=True,
         auto_commit=True,
         pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
     )
 
     await service.handle_event(
@@ -252,6 +262,10 @@ async def test_server_request_blocks_mission_when_approval_is_required(tmp_path)
         run_verification=True,
         auto_commit=True,
         pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
     )
 
     await service.handle_server_request(
@@ -295,6 +309,10 @@ async def test_second_mission_waits_behind_in_progress_instance_work(tmp_path) -
         run_verification=True,
         auto_commit=True,
         pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
     )
     await database.update_mission(active_id, in_progress=1)
 
@@ -341,6 +359,10 @@ async def test_fire_reflex_injects_turn_into_existing_thread(tmp_path) -> None:
         run_verification=True,
         auto_commit=True,
         pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
     )
 
     await service.fire_reflex(
@@ -362,3 +384,144 @@ async def test_fire_reflex_injects_turn_into_existing_thread(tmp_path) -> None:
     assert "next smallest verified slice" in manager.turn_calls[0]["text"]
     assert checkpoints[0]["kind"] == "reflex"
     assert checkpoints[0]["summary"] == "Resume from handoff"
+
+
+@pytest.mark.asyncio
+async def test_reconcile_uses_auto_reflex_for_orbiting_mission(tmp_path) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    manager = FakeManager()
+    manager.instances[7].connected = True
+    manager.instances[7].threads = [{"id": "thread_auto_reflex", "status": {"type": "idle"}}]
+    service = MissionService(database, manager, BroadcastHub(), poll_interval_seconds=3600)
+
+    mission_id = await database.create_mission(
+        name="Orbiting mission",
+        objective="Keep shipping.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread_auto_reflex",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=True,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+    )
+    await database.update_mission(
+        mission_id,
+        command_count=12,
+        turns_completed=1,
+        last_checkpoint=None,
+    )
+
+    await service._reconcile_mission(mission_id)
+    mission = await database.get_mission(mission_id)
+    checkpoints = await database.list_mission_checkpoints(mission_id)
+
+    assert mission is not None
+    assert mission["last_reflex_kind"] == "checkpoint_now"
+    assert manager.turn_calls[0]["thread_id"] == "thread_auto_reflex"
+    assert "Stop broadening the task." in manager.turn_calls[0]["text"]
+    assert checkpoints[0]["kind"] == "reflex_auto"
+
+
+@pytest.mark.asyncio
+async def test_reconcile_auto_recovers_failed_mission_with_checkpoint(tmp_path) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    manager = FakeManager()
+    manager.instances[7].connected = True
+    manager.instances[7].threads = [{"id": "thread_recover", "status": {"type": "idle"}}]
+    service = MissionService(database, manager, BroadcastHub(), poll_interval_seconds=3600)
+
+    mission_id = await database.create_mission(
+        name="Recoverable mission",
+        objective="Keep moving.",
+        status="failed",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread_recover",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=True,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+    )
+    await database.update_mission(
+        mission_id,
+        failure_count=1,
+        last_checkpoint="The previous milestone mostly landed.",
+        last_error="tests failed",
+    )
+
+    await service._reconcile_mission(mission_id)
+    mission = await database.get_mission(mission_id)
+    checkpoints = await database.list_mission_checkpoints(mission_id)
+
+    assert mission is not None
+    assert mission["status"] == "active"
+    assert mission["last_reflex_kind"] == "recovery_triangle"
+    assert "recovery is still within budget" in manager.turn_calls[0]["text"]
+    assert checkpoints[0]["kind"] == "recovery"
+
+
+@pytest.mark.asyncio
+async def test_recent_reflex_cooldown_prevents_immediate_repeat(tmp_path) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    manager = FakeManager()
+    manager.instances[7].connected = True
+    manager.instances[7].threads = [{"id": "thread_cooldown", "status": {"type": "idle"}}]
+    service = MissionService(database, manager, BroadcastHub(), poll_interval_seconds=3600)
+
+    mission_id = await database.create_mission(
+        name="Cooling mission",
+        objective="Keep moving.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread_cooldown",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=True,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+    )
+    await database.update_mission(
+        mission_id,
+        command_count=12,
+        turns_completed=1,
+        last_reflex_kind="checkpoint_now",
+        last_reflex_at=datetime.now(UTC).isoformat(),
+    )
+
+    await service._reconcile_mission(mission_id)
+
+    assert manager.turn_calls[0]["text"].startswith(
+        "You are running inside an OpenZues autonomous mission."
+    )

@@ -88,6 +88,10 @@ class Database:
                     run_verification INTEGER NOT NULL DEFAULT 1,
                     auto_commit INTEGER NOT NULL DEFAULT 1,
                     pause_on_approval INTEGER NOT NULL DEFAULT 1,
+                    allow_auto_reflexes INTEGER NOT NULL DEFAULT 1,
+                    auto_recover INTEGER NOT NULL DEFAULT 1,
+                    auto_recover_limit INTEGER NOT NULL DEFAULT 2,
+                    reflex_cooldown_seconds INTEGER NOT NULL DEFAULT 900,
                     in_progress INTEGER NOT NULL DEFAULT 0,
                     phase TEXT,
                     current_command TEXT,
@@ -102,6 +106,8 @@ class Database:
                     last_turn_id TEXT,
                     last_error TEXT,
                     last_checkpoint TEXT,
+                    last_reflex_kind TEXT,
+                    last_reflex_at TEXT,
                     last_activity_at TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
@@ -141,6 +147,24 @@ class Database:
             )
             await self._ensure_column(
                 db, "missions", "last_commentary", "TEXT"
+            )
+            await self._ensure_column(
+                db, "missions", "allow_auto_reflexes", "INTEGER NOT NULL DEFAULT 1"
+            )
+            await self._ensure_column(
+                db, "missions", "auto_recover", "INTEGER NOT NULL DEFAULT 1"
+            )
+            await self._ensure_column(
+                db, "missions", "auto_recover_limit", "INTEGER NOT NULL DEFAULT 2"
+            )
+            await self._ensure_column(
+                db, "missions", "reflex_cooldown_seconds", "INTEGER NOT NULL DEFAULT 900"
+            )
+            await self._ensure_column(
+                db, "missions", "last_reflex_kind", "TEXT"
+            )
+            await self._ensure_column(
+                db, "missions", "last_reflex_at", "TEXT"
             )
             await db.commit()
 
@@ -321,6 +345,10 @@ class Database:
         run_verification: bool,
         auto_commit: bool,
         pause_on_approval: bool,
+        allow_auto_reflexes: bool,
+        auto_recover: bool,
+        auto_recover_limit: int,
+        reflex_cooldown_seconds: int,
     ) -> int:
         now = utcnow()
         async with aiosqlite.connect(self.path) as db:
@@ -342,10 +370,14 @@ class Database:
                     run_verification,
                     auto_commit,
                     pause_on_approval,
+                    allow_auto_reflexes,
+                    auto_recover,
+                    auto_recover_limit,
+                    reflex_cooldown_seconds,
                     created_at,
                     updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     name,
@@ -363,6 +395,10 @@ class Database:
                     int(run_verification),
                     int(auto_commit),
                     int(pause_on_approval),
+                    int(allow_auto_reflexes),
+                    int(auto_recover),
+                    auto_recover_limit,
+                    reflex_cooldown_seconds,
                     now,
                     now,
                 ),

@@ -48,6 +48,10 @@ async def test_database_round_trip(tmp_path) -> None:
         run_verification=True,
         auto_commit=True,
         pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
     )
     await database.append_mission_checkpoint(
         mission_id=mission_id,

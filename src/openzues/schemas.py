@@ -194,6 +194,10 @@ class MissionCreate(BaseModel):
     run_verification: bool = True
     auto_commit: bool = True
     pause_on_approval: bool = True
+    allow_auto_reflexes: bool = True
+    auto_recover: bool = True
+    auto_recover_limit: int = Field(default=2, ge=0)
+    reflex_cooldown_seconds: int = Field(default=900, ge=60)
     start_immediately: bool = True
 
 
@@ -236,6 +240,10 @@ class MissionView(BaseModel):
     run_verification: bool = True
     auto_commit: bool = True
     pause_on_approval: bool = True
+    allow_auto_reflexes: bool = True
+    auto_recover: bool = True
+    auto_recover_limit: int = 2
+    reflex_cooldown_seconds: int = 900
     in_progress: bool = False
     phase: str | None = None
     current_command: str | None = None
@@ -251,6 +259,8 @@ class MissionView(BaseModel):
     last_turn_id: str | None = None
     last_error: str | None = None
     last_checkpoint: str | None = None
+    last_reflex_kind: str | None = None
+    last_reflex_at: str | None = None
     last_activity_at: str | None = None
     checkpoints: list[MissionCheckpointView] = Field(default_factory=list)
     created_at: datetime
