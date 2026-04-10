@@ -71,6 +71,60 @@ class Database:
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS task_blueprints (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    summary TEXT,
+                    project_id INTEGER,
+                    instance_id INTEGER,
+                    cadence_minutes INTEGER,
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    payload_json TEXT NOT NULL,
+                    last_launched_at TEXT,
+                    last_status TEXT,
+                    last_result_summary TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS notification_routes (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    kind TEXT NOT NULL,
+                    target TEXT NOT NULL,
+                    events_json TEXT NOT NULL,
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    secret_header_name TEXT,
+                    secret_token TEXT,
+                    last_delivery_at TEXT,
+                    last_result TEXT,
+                    last_error TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS integrations (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    kind TEXT NOT NULL,
+                    project_id INTEGER,
+                    base_url TEXT,
+                    auth_scheme TEXT NOT NULL,
+                    secret_label TEXT,
+                    secret_value TEXT,
+                    notes TEXT,
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS skill_pins (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    project_id INTEGER NOT NULL,
+                    name TEXT NOT NULL,
+                    prompt_hint TEXT NOT NULL,
+                    source TEXT,
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
                 CREATE TABLE IF NOT EXISTS missions (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     name TEXT NOT NULL,
@@ -78,6 +132,7 @@ class Database:
                     status TEXT NOT NULL,
                     instance_id INTEGER NOT NULL,
                     project_id INTEGER,
+                    task_blueprint_id INTEGER,
                     thread_id TEXT,
                     cwd TEXT,
                     model TEXT NOT NULL,
@@ -114,7 +169,8 @@ class Database:
                     updated_at TEXT NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS idx_missions_status ON missions(status);
-                CREATE INDEX IF NOT EXISTS idx_missions_thread ON missions(instance_id, thread_id);
+                CREATE INDEX IF NOT EXISTS idx_missions_thread
+                    ON missions(instance_id, thread_id);
                 CREATE TABLE IF NOT EXISTS mission_checkpoints (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     mission_id INTEGER NOT NULL,
@@ -126,6 +182,15 @@ class Database:
                 );
                 CREATE INDEX IF NOT EXISTS idx_mission_checkpoints_mission
                     ON mission_checkpoints(mission_id, id DESC);
+                CREATE TABLE IF NOT EXISTS lane_snapshots (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    instance_id INTEGER NOT NULL,
+                    snapshot_kind TEXT NOT NULL,
+                    summary_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_lane_snapshots_instance
+                    ON lane_snapshots(instance_id, id DESC);
                 """
             )
             await self._ensure_column(db, "missions", "phase", "TEXT")
@@ -152,6 +217,13 @@ class Database:
             )
             await self._ensure_column(db, "missions", "last_reflex_kind", "TEXT")
             await self._ensure_column(db, "missions", "last_reflex_at", "TEXT")
+            await self._ensure_column(db, "missions", "task_blueprint_id", "INTEGER")
+            await db.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_missions_task
+                ON missions(task_blueprint_id, id DESC)
+                """
+            )
             await db.commit()
 
     async def _ensure_column(
@@ -306,6 +378,272 @@ class Database:
             assert cursor.lastrowid is not None
             return int(cursor.lastrowid)
 
+    async def list_task_blueprints(self) -> list[dict[str, Any]]:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            rows = await db.execute_fetchall("SELECT * FROM task_blueprints ORDER BY id ASC")
+            output = []
+            for row in rows:
+                item = dict(row)
+                payload = json.loads(item.pop("payload_json"))
+                output.append({**item, **payload})
+            return output
+
+    async def get_task_blueprint(self, task_id: int) -> dict[str, Any] | None:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT * FROM task_blueprints WHERE id = ?",
+                (task_id,),
+            )
+            row = await cursor.fetchone()
+            if row is None:
+                return None
+            item = dict(row)
+            payload = json.loads(item.pop("payload_json"))
+            return {**item, **payload}
+
+    async def create_task_blueprint(
+        self,
+        *,
+        name: str,
+        summary: str | None,
+        project_id: int | None,
+        instance_id: int | None,
+        cadence_minutes: int | None,
+        enabled: bool,
+        payload: dict[str, Any],
+    ) -> int:
+        now = utcnow()
+        async with aiosqlite.connect(self.path) as db:
+            cursor = await db.execute(
+                """
+                INSERT INTO task_blueprints (
+                    name,
+                    summary,
+                    project_id,
+                    instance_id,
+                    cadence_minutes,
+                    enabled,
+                    payload_json,
+                    created_at,
+                    updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    name,
+                    summary,
+                    project_id,
+                    instance_id,
+                    cadence_minutes,
+                    int(enabled),
+                    json.dumps(payload),
+                    now,
+                    now,
+                ),
+            )
+            await db.commit()
+            assert cursor.lastrowid is not None
+            return int(cursor.lastrowid)
+
+    async def update_task_blueprint(self, task_id: int, **fields: Any) -> None:
+        if not fields:
+            return
+        fields["updated_at"] = utcnow()
+        assignments = ", ".join(f"{key} = ?" for key in fields)
+        values = list(fields.values()) + [task_id]
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute(
+                f"UPDATE task_blueprints SET {assignments} WHERE id = ?",
+                values,
+            )
+            await db.commit()
+
+    async def delete_task_blueprint(self, task_id: int) -> None:
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute("DELETE FROM task_blueprints WHERE id = ?", (task_id,))
+            await db.commit()
+
+    async def list_notification_routes(self) -> list[dict[str, Any]]:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            rows = await db.execute_fetchall(
+                "SELECT * FROM notification_routes ORDER BY id ASC"
+            )
+            output = []
+            for row in rows:
+                item = dict(row)
+                item["events"] = json.loads(item.pop("events_json"))
+                output.append(item)
+            return output
+
+    async def create_notification_route(
+        self,
+        *,
+        name: str,
+        kind: str,
+        target: str,
+        events: list[str],
+        enabled: bool,
+        secret_header_name: str | None,
+        secret_token: str | None,
+    ) -> int:
+        now = utcnow()
+        async with aiosqlite.connect(self.path) as db:
+            cursor = await db.execute(
+                """
+                INSERT INTO notification_routes (
+                    name,
+                    kind,
+                    target,
+                    events_json,
+                    enabled,
+                    secret_header_name,
+                    secret_token,
+                    created_at,
+                    updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    name,
+                    kind,
+                    target,
+                    json.dumps(events),
+                    int(enabled),
+                    secret_header_name,
+                    secret_token,
+                    now,
+                    now,
+                ),
+            )
+            await db.commit()
+            assert cursor.lastrowid is not None
+            return int(cursor.lastrowid)
+
+    async def update_notification_route(self, route_id: int, **fields: Any) -> None:
+        if "events" in fields:
+            fields["events_json"] = json.dumps(fields.pop("events"))
+        if not fields:
+            return
+        fields["updated_at"] = utcnow()
+        assignments = ", ".join(f"{key} = ?" for key in fields)
+        values = list(fields.values()) + [route_id]
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute(
+                f"UPDATE notification_routes SET {assignments} WHERE id = ?",
+                values,
+            )
+            await db.commit()
+
+    async def delete_notification_route(self, route_id: int) -> None:
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute("DELETE FROM notification_routes WHERE id = ?", (route_id,))
+            await db.commit()
+
+    async def list_integrations(self) -> list[dict[str, Any]]:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            rows = await db.execute_fetchall("SELECT * FROM integrations ORDER BY id ASC")
+            return [dict(row) for row in rows]
+
+    async def create_integration(
+        self,
+        *,
+        name: str,
+        kind: str,
+        project_id: int | None,
+        base_url: str | None,
+        auth_scheme: str,
+        secret_label: str | None,
+        secret_value: str | None,
+        notes: str | None,
+        enabled: bool,
+    ) -> int:
+        now = utcnow()
+        async with aiosqlite.connect(self.path) as db:
+            cursor = await db.execute(
+                """
+                INSERT INTO integrations (
+                    name,
+                    kind,
+                    project_id,
+                    base_url,
+                    auth_scheme,
+                    secret_label,
+                    secret_value,
+                    notes,
+                    enabled,
+                    created_at,
+                    updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    name,
+                    kind,
+                    project_id,
+                    base_url,
+                    auth_scheme,
+                    secret_label,
+                    secret_value,
+                    notes,
+                    int(enabled),
+                    now,
+                    now,
+                ),
+            )
+            await db.commit()
+            assert cursor.lastrowid is not None
+            return int(cursor.lastrowid)
+
+    async def delete_integration(self, integration_id: int) -> None:
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute("DELETE FROM integrations WHERE id = ?", (integration_id,))
+            await db.commit()
+
+    async def list_skill_pins(self) -> list[dict[str, Any]]:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            rows = await db.execute_fetchall("SELECT * FROM skill_pins ORDER BY id ASC")
+            return [dict(row) for row in rows]
+
+    async def create_skill_pin(
+        self,
+        *,
+        project_id: int,
+        name: str,
+        prompt_hint: str,
+        source: str | None,
+        enabled: bool,
+    ) -> int:
+        now = utcnow()
+        async with aiosqlite.connect(self.path) as db:
+            cursor = await db.execute(
+                """
+                INSERT INTO skill_pins (
+                    project_id,
+                    name,
+                    prompt_hint,
+                    source,
+                    enabled,
+                    created_at,
+                    updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (project_id, name, prompt_hint, source, int(enabled), now, now),
+            )
+            await db.commit()
+            assert cursor.lastrowid is not None
+            return int(cursor.lastrowid)
+
+    async def delete_skill_pin(self, skill_pin_id: int) -> None:
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute("DELETE FROM skill_pins WHERE id = ?", (skill_pin_id,))
+            await db.commit()
+
     async def delete_playbook(self, playbook_id: int) -> None:
         async with aiosqlite.connect(self.path) as db:
             await db.execute("DELETE FROM playbooks WHERE id = ?", (playbook_id,))
@@ -334,6 +672,7 @@ class Database:
         auto_recover_limit: int,
         reflex_cooldown_seconds: int,
         allow_failover: bool = True,
+        task_blueprint_id: int | None = None,
     ) -> int:
         now = utcnow()
         async with aiosqlite.connect(self.path) as db:
@@ -345,6 +684,7 @@ class Database:
                     status,
                     instance_id,
                     project_id,
+                    task_blueprint_id,
                     thread_id,
                     cwd,
                     model,
@@ -363,7 +703,9 @@ class Database:
                     created_at,
                     updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                )
                 """,
                 (
                     name,
@@ -371,6 +713,7 @@ class Database:
                     status,
                     instance_id,
                     project_id,
+                    task_blueprint_id,
                     thread_id,
                     cwd,
                     model,
@@ -406,6 +749,45 @@ class Database:
             cursor = await db.execute("SELECT * FROM missions WHERE id = ?", (mission_id,))
             row = await cursor.fetchone()
             return dict(row) if row else None
+
+    async def list_lane_snapshots(self, *, limit: int = 24) -> list[dict[str, Any]]:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            rows = await db.execute_fetchall(
+                "SELECT * FROM lane_snapshots ORDER BY id DESC LIMIT ?",
+                (limit,),
+            )
+            output = []
+            for row in rows:
+                item = dict(row)
+                item["summary"] = json.loads(item.pop("summary_json"))
+                output.append(item)
+            return list(reversed(output))
+
+    async def append_lane_snapshot(
+        self,
+        *,
+        instance_id: int,
+        snapshot_kind: str,
+        summary: dict[str, Any],
+    ) -> int:
+        now = utcnow()
+        async with aiosqlite.connect(self.path) as db:
+            cursor = await db.execute(
+                """
+                INSERT INTO lane_snapshots (
+                    instance_id,
+                    snapshot_kind,
+                    summary_json,
+                    created_at
+                )
+                VALUES (?, ?, ?, ?)
+                """,
+                (instance_id, snapshot_kind, json.dumps(summary), now),
+            )
+            await db.commit()
+            assert cursor.lastrowid is not None
+            return int(cursor.lastrowid)
 
     async def get_mission_by_thread(
         self, instance_id: int, thread_id: str

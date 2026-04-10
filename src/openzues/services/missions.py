@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 from collections import defaultdict
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any
 
@@ -67,6 +69,15 @@ class MissionService:
         self._task: asyncio.Task[None] | None = None
         self._stop_event = asyncio.Event()
         self._locks: defaultdict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
+        self._event_listeners: list[
+            Callable[[str, dict[str, Any]], Awaitable[None] | None]
+        ] = []
+
+    def add_event_listener(
+        self,
+        listener: Callable[[str, dict[str, Any]], Awaitable[None] | None],
+    ) -> None:
+        self._event_listeners.append(listener)
 
     async def start(self) -> None:
         if self._task is not None:
@@ -108,6 +119,7 @@ class MissionService:
             status=status,
             instance_id=payload.instance_id,
             project_id=payload.project_id,
+            task_blueprint_id=payload.task_blueprint_id,
             thread_id=payload.thread_id,
             cwd=cwd,
             model=payload.model,
@@ -1059,7 +1071,15 @@ class MissionService:
         return "\n".join(instructions)
 
     async def _publish_snapshot(self, event_type: str, payload: dict[str, Any]) -> None:
-        await self.hub.publish({"type": event_type, **payload, "createdAt": utcnow()})
+        event = {"type": event_type, **payload, "createdAt": utcnow()}
+        await self.hub.publish(event)
+        for listener in self._event_listeners:
+            try:
+                result = listener(event_type, event)
+                if inspect.isawaitable(result):
+                    await result
+            except Exception:
+                logger.exception("Mission event listener failed for %s", event_type)
 
     def _suggested_action(self, mission: dict[str, Any]) -> str:
         last_error = str(mission.get("last_error") or "")

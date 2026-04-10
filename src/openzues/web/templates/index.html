@@ -76,6 +76,7 @@
 
               <div class="launch-layout">
                 <form id="mission-form" class="stack mission-form">
+                  <input name="task_blueprint_id" type="hidden" />
                   <div class="mission-form-grid">
                     <input name="name" type="text" placeholder="Mission name" required />
                     <select name="instance_id" id="mission-instance-select" required></select>
@@ -193,6 +194,209 @@
               </div>
               <div id="missions" class="mission-list"></div>
             </section>
+
+            <details class="deck-shell" id="ops-shell">
+              <summary class="shell-summary">
+                <div class="shell-copy">
+                  <p class="eyebrow">Ops Mesh</p>
+                  <h2>Recurring workflows, routes, and lane history</h2>
+                  <p id="ops-shell-summary" class="panel-lede">
+                    Scheduled work, notifications, integrations, and skillbooks live here.
+                  </p>
+                </div>
+                <div class="shell-metrics">
+                  <span id="ops-task-count" class="pill">0 tasks</span>
+                  <span id="ops-route-count" class="pill">0 routes</span>
+                  <span id="ops-integration-count" class="pill">0 integrations</span>
+                  <span id="ops-snapshot-count" class="pill">0 snapshots</span>
+                </div>
+              </summary>
+
+              <div class="shell-body stack">
+                <section class="subsection-panel ops-section">
+                  <div class="section-header">
+                    <div>
+                      <p class="eyebrow">Task Inbox</p>
+                      <h2 id="task-inbox-headline">No task blueprints yet</h2>
+                    </div>
+                    <p id="task-inbox-summary" class="panel-lede"></p>
+                  </div>
+
+                  <form id="task-form" class="stack form-grid">
+                    <input name="name" type="text" placeholder="Task name" required />
+                    <select name="instance_id" id="task-instance-select"></select>
+                    <select name="project_id" id="task-project-select"></select>
+                    <input
+                      name="cadence_minutes"
+                      type="number"
+                      min="1"
+                      placeholder="Cadence minutes (blank = manual)"
+                    />
+                    <textarea
+                      name="summary"
+                      placeholder="Short summary of what this workflow is for"
+                    ></textarea>
+                    <textarea
+                      name="objective_template"
+                      placeholder="Objective template. Example: Check the repo, ship the next verified slice, and leave a concise checkpoint."
+                      required
+                    ></textarea>
+                    <input name="model" type="text" placeholder="Model (gpt-5.4)" />
+                    <input
+                      name="max_turns"
+                      type="number"
+                      min="1"
+                      placeholder="Max turns (optional)"
+                    />
+                    <div class="toggle-row">
+                      <label class="checkbox">
+                        <input name="enabled" type="checkbox" checked />
+                        Enabled
+                      </label>
+                      <label class="checkbox">
+                        <input name="use_builtin_agents" type="checkbox" checked />
+                        Use built-in agents
+                      </label>
+                      <label class="checkbox">
+                        <input name="run_verification" type="checkbox" checked />
+                        Run verification
+                      </label>
+                      <label class="checkbox">
+                        <input name="auto_commit" type="checkbox" />
+                        Commit milestones
+                      </label>
+                      <label class="checkbox">
+                        <input name="pause_on_approval" type="checkbox" checked />
+                        Pause on approvals
+                      </label>
+                    </div>
+                    <button type="submit">Save Task Blueprint</button>
+                  </form>
+
+                  <div id="task-blueprints" class="stack library-list"></div>
+                </section>
+
+                <section class="subsection-panel ops-section">
+                  <div class="ops-grid">
+                    <section class="stack">
+                      <div class="section-header">
+                        <div>
+                          <p class="eyebrow">Skillbooks</p>
+                          <h2>Pin project-specific skills</h2>
+                        </div>
+                        <p class="panel-lede">
+                          These hints are woven into scheduled task drafts automatically.
+                        </p>
+                      </div>
+
+                      <form id="skill-pin-form" class="stack compact-form">
+                        <select name="project_id" id="skill-project-select" required></select>
+                        <input name="name" type="text" placeholder="Skill name" required />
+                        <input
+                          name="source"
+                          type="text"
+                          placeholder="Optional source or path"
+                        />
+                        <textarea
+                          name="prompt_hint"
+                          placeholder="Why this skill matters and how missions should use it"
+                          required
+                        ></textarea>
+                        <button type="submit">Pin Skill</button>
+                      </form>
+
+                      <div id="skillbooks" class="stack library-list"></div>
+                    </section>
+
+                    <section class="stack">
+                      <div class="section-header">
+                        <div>
+                          <p class="eyebrow">Integrations</p>
+                          <h2>Inventory the external systems around each repo</h2>
+                        </div>
+                        <p class="panel-lede">
+                          Connections are masked in the UI and can be referenced in task prompts.
+                        </p>
+                      </div>
+
+                      <form id="integration-form" class="stack compact-form">
+                        <input name="name" type="text" placeholder="Integration name" required />
+                        <input name="kind" type="text" placeholder="Kind (github, slack, db)" required />
+                        <select name="project_id" id="integration-project-select"></select>
+                        <input name="base_url" type="text" placeholder="Base URL (optional)" />
+                        <input name="secret_label" type="text" placeholder="Secret label" />
+                        <input name="secret_value" type="password" placeholder="Secret value (masked after save)" />
+                        <textarea name="notes" placeholder="Notes for operators and missions"></textarea>
+                        <label class="checkbox">
+                          <input name="enabled" type="checkbox" checked />
+                          Enabled
+                        </label>
+                        <button type="submit">Save Integration</button>
+                      </form>
+
+                      <div id="integrations-list" class="stack library-list"></div>
+                    </section>
+                  </div>
+                </section>
+
+                <section class="subsection-panel ops-section">
+                  <div class="ops-grid">
+                    <section class="stack">
+                      <div class="section-header">
+                        <div>
+                          <p class="eyebrow">Notification Routes</p>
+                          <h2>Push mission and task events outward</h2>
+                        </div>
+                        <p class="panel-lede">
+                          Webhook routes can receive mission lifecycle and task launch events.
+                        </p>
+                      </div>
+
+                      <form id="notification-route-form" class="stack compact-form">
+                        <input name="name" type="text" placeholder="Route name" required />
+                        <input name="target" type="text" placeholder="Webhook URL" required />
+                        <input
+                          name="events"
+                          type="text"
+                          placeholder="mission/completed, mission/failed, task/*"
+                        />
+                        <input
+                          name="secret_header_name"
+                          type="text"
+                          placeholder="Optional secret header name"
+                        />
+                        <input
+                          name="secret_token"
+                          type="password"
+                          placeholder="Optional secret token"
+                        />
+                        <label class="checkbox">
+                          <input name="enabled" type="checkbox" checked />
+                          Enabled
+                        </label>
+                        <button type="submit">Save Route</button>
+                      </form>
+
+                      <div id="notification-routes" class="stack library-list"></div>
+                    </section>
+
+                    <section class="stack">
+                      <div class="section-header">
+                        <div>
+                          <p class="eyebrow">Lane Vault</p>
+                          <h2>Capture lane state over time</h2>
+                        </div>
+                        <p class="panel-lede">
+                          Snapshots record capability counts, connectivity, and lane posture.
+                        </p>
+                      </div>
+
+                      <div id="lane-snapshots" class="stack library-list"></div>
+                    </section>
+                  </div>
+                </section>
+              </div>
+            </details>
 
             <details class="deck-shell" id="intelligence-shell">
               <summary class="shell-summary">

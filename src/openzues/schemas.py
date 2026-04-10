@@ -14,6 +14,8 @@ SignalLane = Literal["attention", "throughput", "reliability", "capacity"]
 LaunchImpact = Literal["high", "medium", "low"]
 ContinuityState = Literal["anchored", "warming", "fragile"]
 DreamStatus = Literal["forming", "ready", "fresh"]
+TaskStatus = Literal["idle", "due", "running", "attention", "completed", "disabled"]
+NotificationRouteKind = Literal["webhook"]
 LaunchKind = Literal[
     "workspace_scout",
     "ship_slice",
@@ -181,11 +183,128 @@ class DiagnosticsView(BaseModel):
     checked_at: str
 
 
+class TaskBlueprintCreate(BaseModel):
+    name: str
+    summary: str | None = None
+    objective_template: str
+    instance_id: int | None = None
+    project_id: int | None = None
+    cadence_minutes: int | None = Field(default=None, ge=1)
+    cwd: str | None = None
+    model: str = "gpt-5.4"
+    reasoning_effort: str | None = None
+    collaboration_mode: str | None = None
+    max_turns: int | None = Field(default=None, ge=1)
+    use_builtin_agents: bool = True
+    run_verification: bool = True
+    auto_commit: bool = False
+    pause_on_approval: bool = True
+    allow_auto_reflexes: bool = True
+    auto_recover: bool = True
+    auto_recover_limit: int = Field(default=2, ge=0)
+    reflex_cooldown_seconds: int = Field(default=900, ge=60)
+    allow_failover: bool = True
+    enabled: bool = True
+
+
+class TaskBlueprintView(TaskBlueprintCreate):
+    id: int
+    last_launched_at: str | None = None
+    last_status: str | None = None
+    last_result_summary: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class NotificationRouteCreate(BaseModel):
+    name: str
+    kind: NotificationRouteKind = "webhook"
+    target: str
+    events: list[str] = Field(default_factory=lambda: ["mission/completed", "mission/failed"])
+    enabled: bool = True
+    secret_header_name: str | None = None
+    secret_token: str | None = None
+
+
+class NotificationRouteView(BaseModel):
+    id: int
+    name: str
+    kind: NotificationRouteKind
+    target: str
+    events: list[str] = Field(default_factory=list)
+    enabled: bool = True
+    secret_header_name: str | None = None
+    has_secret: bool = False
+    secret_preview: str | None = None
+    last_delivery_at: str | None = None
+    last_result: str | None = None
+    last_error: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class IntegrationCreate(BaseModel):
+    name: str
+    kind: str
+    project_id: int | None = None
+    base_url: str | None = None
+    auth_scheme: str = "token"
+    secret_label: str | None = None
+    secret_value: str | None = None
+    notes: str | None = None
+    enabled: bool = True
+
+
+class IntegrationView(BaseModel):
+    id: int
+    name: str
+    kind: str
+    project_id: int | None = None
+    base_url: str | None = None
+    auth_scheme: str = "token"
+    secret_label: str | None = None
+    has_secret: bool = False
+    secret_preview: str | None = None
+    notes: str | None = None
+    enabled: bool = True
+    created_at: datetime
+    updated_at: datetime
+
+
+class SkillPinCreate(BaseModel):
+    project_id: int
+    name: str
+    prompt_hint: str
+    source: str | None = None
+    enabled: bool = True
+
+
+class SkillPinView(SkillPinCreate):
+    id: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class LaneSnapshotView(BaseModel):
+    id: int
+    instance_id: int
+    instance_name: str | None = None
+    snapshot_kind: str
+    connected: bool
+    transport: str | None = None
+    model_count: int = 0
+    skill_count: int = 0
+    thread_count: int = 0
+    note: str | None = None
+    created_at: datetime
+
+
 class MissionCreate(BaseModel):
     name: str
     objective: str
     instance_id: int
     project_id: int | None = None
+    task_blueprint_id: int | None = None
     cwd: str | None = None
     thread_id: str | None = None
     model: str = "gpt-5.4"
@@ -233,6 +352,7 @@ class MissionView(BaseModel):
     instance_name: str | None = None
     project_id: int | None = None
     project_label: str | None = None
+    task_blueprint_id: int | None = None
     thread_id: str | None = None
     cwd: str | None = None
     model: str
@@ -359,6 +479,45 @@ class DashboardDreamDeckView(BaseModel):
     dreams: list[DashboardDreamView] = Field(default_factory=list)
 
 
+class DashboardTaskView(BaseModel):
+    id: int
+    name: str
+    summary: str
+    status: TaskStatus
+    cadence_label: str
+    next_run_at: str | None = None
+    project_label: str | None = None
+    instance_name: str | None = None
+    mission_id: int | None = None
+    mission_name: str | None = None
+    skill_count: int = 0
+    integration_count: int = 0
+    last_result_summary: str | None = None
+    mission_draft: MissionDraftView
+
+
+class DashboardTaskInboxView(BaseModel):
+    headline: str
+    summary: str
+    tasks: list[DashboardTaskView] = Field(default_factory=list)
+
+
+class DashboardSkillbookView(BaseModel):
+    project_id: int
+    project_label: str
+    skills: list[SkillPinView] = Field(default_factory=list)
+
+
+class DashboardOpsMeshView(BaseModel):
+    headline: str
+    summary: str
+    task_inbox: DashboardTaskInboxView
+    skillbooks: list[DashboardSkillbookView] = Field(default_factory=list)
+    integrations: list[IntegrationView] = Field(default_factory=list)
+    notification_routes: list[NotificationRouteView] = Field(default_factory=list)
+    lane_snapshots: list[LaneSnapshotView] = Field(default_factory=list)
+
+
 class DashboardDoctrineView(BaseModel):
     id: str
     project_id: int | None = None
@@ -417,6 +576,7 @@ class DashboardView(BaseModel):
     brief: DashboardBriefView
     launchpad: DashboardLaunchpadView
     radar: DashboardRadarView
+    ops_mesh: DashboardOpsMeshView
     continuity: DashboardContinuityView
     dream_deck: DashboardDreamDeckView
     cortex: DashboardCortexView
@@ -425,4 +585,9 @@ class DashboardView(BaseModel):
     missions: list[MissionView]
     projects: list[ProjectView]
     playbooks: list[PlaybookView]
+    task_blueprints: list[TaskBlueprintView]
+    integrations: list[IntegrationView]
+    notification_routes: list[NotificationRouteView]
+    skill_pins: list[SkillPinView]
+    lane_snapshots: list[LaneSnapshotView]
     events: list[EventView]

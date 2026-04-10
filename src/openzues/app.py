@@ -4,7 +4,7 @@ import json
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -29,10 +29,15 @@ from openzues.schemas import (
     EventView,
     InstanceCreate,
     InstanceView,
+    IntegrationCreate,
+    IntegrationView,
+    LaneSnapshotView,
     MissionCreate,
     MissionDraftView,
     MissionReflexRun,
     MissionView,
+    NotificationRouteCreate,
+    NotificationRouteView,
     PlaybookCreate,
     PlaybookRun,
     PlaybookRunResult,
@@ -41,6 +46,10 @@ from openzues.schemas import (
     ProjectView,
     RequestResolution,
     ReviewCreate,
+    SkillPinCreate,
+    SkillPinView,
+    TaskBlueprintCreate,
+    TaskBlueprintView,
     ThreadCreate,
     TurnCreate,
 )
@@ -58,6 +67,7 @@ from openzues.services.github import GitHubService
 from openzues.services.hub import BroadcastHub
 from openzues.services.manager import RuntimeManager, compact_event_payload
 from openzues.services.missions import MissionService
+from openzues.services.ops_mesh import OpsMeshService, build_ops_mesh
 from openzues.services.playbooks import PlaybookService
 from openzues.services.projects import ProjectService
 from openzues.services.reflexes import build_reflex_deck
@@ -832,6 +842,7 @@ def create_app(
     environment_service: EnvironmentService | None = None,
     desktop_service: CodexDesktopService | None = None,
     mission_service: MissionService | None = None,
+    ops_mesh_service: OpsMeshService | None = None,
 ) -> FastAPI:
     active_settings = app_settings or settings
     active_database = database or Database(active_settings.effective_db_path)
@@ -855,8 +866,15 @@ def create_app(
         active_manager,
         active_hub,
     )
+    active_ops_mesh_service = ops_mesh_service or OpsMeshService(
+        active_database,
+        active_manager,
+        active_mission_service,
+        active_hub,
+    )
     active_manager.add_event_listener(active_mission_service.handle_event)
     active_manager.add_server_request_listener(active_mission_service.handle_server_request)
+    active_mission_service.add_event_listener(active_ops_mesh_service.handle_mission_event)
     templates = Jinja2Templates(directory=str(active_settings.templates_dir))
 
     @asynccontextmanager
@@ -865,7 +883,9 @@ def create_app(
         await active_database.initialize()
         await active_manager.load()
         await active_mission_service.start()
+        await active_ops_mesh_service.start()
         yield
+        await active_ops_mesh_service.close()
         await active_mission_service.close()
         for runtime in active_manager.instances.values():
             if runtime.client is not None:
@@ -891,6 +911,11 @@ def create_app(
             ProjectView.model_validate(active_project_service.inspect(row)) for row in project_rows
         ]
         playbooks = [PlaybookView.model_validate(row) for row in playbook_rows]
+        task_blueprints = await active_ops_mesh_service.list_task_blueprint_views()
+        integrations = await active_ops_mesh_service.list_integration_views()
+        notification_routes = await active_ops_mesh_service.list_notification_route_views()
+        skill_pins = await active_ops_mesh_service.list_skill_pin_views()
+        lane_snapshots = await active_ops_mesh_service.list_lane_snapshot_views()
         events = [
             EventView.model_validate(
                 {
@@ -907,6 +932,16 @@ def create_app(
             brief=build_brief(instances, missions, projects),
             launchpad=build_launchpad(instances, missions, projects, doctrines=doctrines),
             radar=build_radar(instances, missions, projects),
+            ops_mesh=build_ops_mesh(
+                instances,
+                missions,
+                projects,
+                task_blueprints,
+                skill_pins,
+                integrations,
+                notification_routes,
+                lane_snapshots,
+            ),
             continuity=build_continuity(
                 instances,
                 missions,
@@ -925,6 +960,11 @@ def create_app(
             missions=missions,
             projects=projects,
             playbooks=playbooks,
+            task_blueprints=task_blueprints,
+            integrations=integrations,
+            notification_routes=notification_routes,
+            skill_pins=skill_pins,
+            lane_snapshots=lane_snapshots,
             events=events,
         )
 
@@ -1096,6 +1136,60 @@ def create_app(
         if row is None:
             raise HTTPException(status_code=500, detail="Failed to create project.")
         return ProjectView.model_validate(active_project_service.inspect(row))
+
+    @fastapi_app.get("/api/tasks")
+    async def list_tasks() -> list[TaskBlueprintView]:
+        return await active_ops_mesh_service.list_task_blueprint_views()
+
+    @fastapi_app.post("/api/tasks")
+    async def create_task(payload: TaskBlueprintCreate) -> TaskBlueprintView:
+        return await active_ops_mesh_service.create_task_blueprint(payload)
+
+    @fastapi_app.post("/api/tasks/{task_id}/run")
+    async def run_task(task_id: int) -> dict[str, Any]:
+        try:
+            return (await active_ops_mesh_service.run_task_blueprint_now(task_id)).model_dump()
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @fastapi_app.delete("/api/tasks/{task_id}")
+    async def delete_task(task_id: int) -> dict[str, bool]:
+        await active_ops_mesh_service.delete_task_blueprint(task_id)
+        return {"ok": True}
+
+    @fastapi_app.post("/api/notification-routes")
+    async def create_notification_route(payload: NotificationRouteCreate) -> NotificationRouteView:
+        return await active_ops_mesh_service.create_notification_route(payload)
+
+    @fastapi_app.delete("/api/notification-routes/{route_id}")
+    async def delete_notification_route(route_id: int) -> dict[str, bool]:
+        await active_ops_mesh_service.delete_notification_route(route_id)
+        return {"ok": True}
+
+    @fastapi_app.post("/api/integrations")
+    async def create_integration(payload: IntegrationCreate) -> IntegrationView:
+        return await active_ops_mesh_service.create_integration(payload)
+
+    @fastapi_app.delete("/api/integrations/{integration_id}")
+    async def delete_integration(integration_id: int) -> dict[str, bool]:
+        await active_ops_mesh_service.delete_integration(integration_id)
+        return {"ok": True}
+
+    @fastapi_app.post("/api/skill-pins")
+    async def create_skill_pin(payload: SkillPinCreate) -> SkillPinView:
+        return await active_ops_mesh_service.create_skill_pin(payload)
+
+    @fastapi_app.delete("/api/skill-pins/{skill_pin_id}")
+    async def delete_skill_pin(skill_pin_id: int) -> dict[str, bool]:
+        await active_ops_mesh_service.delete_skill_pin(skill_pin_id)
+        return {"ok": True}
+
+    @fastapi_app.post("/api/instances/{instance_id}/snapshots")
+    async def capture_lane_snapshot(instance_id: int) -> LaneSnapshotView:
+        try:
+            return await active_ops_mesh_service.capture_lane_snapshot(instance_id)
+        except (KeyError, ValueError) as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     @fastapi_app.post("/api/missions")
     async def create_mission(payload: MissionCreate) -> dict:

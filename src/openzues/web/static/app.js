@@ -15,6 +15,18 @@ const launchpadOpportunitiesEl = document.querySelector("#launchpad-opportunitie
 const radarHeadlineEl = document.querySelector("#radar-headline");
 const radarSummaryEl = document.querySelector("#radar-summary");
 const radarSignalsEl = document.querySelector("#radar-signals");
+const opsShellSummaryEl = document.querySelector("#ops-shell-summary");
+const opsTaskCountEl = document.querySelector("#ops-task-count");
+const opsRouteCountEl = document.querySelector("#ops-route-count");
+const opsIntegrationCountEl = document.querySelector("#ops-integration-count");
+const opsSnapshotCountEl = document.querySelector("#ops-snapshot-count");
+const taskInboxHeadlineEl = document.querySelector("#task-inbox-headline");
+const taskInboxSummaryEl = document.querySelector("#task-inbox-summary");
+const taskBlueprintsEl = document.querySelector("#task-blueprints");
+const skillbooksEl = document.querySelector("#skillbooks");
+const integrationsListEl = document.querySelector("#integrations-list");
+const notificationRoutesEl = document.querySelector("#notification-routes");
+const laneSnapshotsEl = document.querySelector("#lane-snapshots");
 const continuityHeadlineEl = document.querySelector("#continuity-headline");
 const continuitySummaryEl = document.querySelector("#continuity-summary");
 const continuityPacketsEl = document.querySelector("#continuity-packets");
@@ -38,6 +50,14 @@ const intelligenceReflexCountEl = document.querySelector("#intelligence-reflex-c
 const missionsEl = document.querySelector("#missions");
 const missionPresetsEl = document.querySelector("#mission-presets");
 const instancesEl = document.querySelector("#instances");
+const taskFormEl = document.querySelector("#task-form");
+const taskInstanceSelectEl = document.querySelector("#task-instance-select");
+const taskProjectSelectEl = document.querySelector("#task-project-select");
+const skillPinFormEl = document.querySelector("#skill-pin-form");
+const skillProjectSelectEl = document.querySelector("#skill-project-select");
+const integrationFormEl = document.querySelector("#integration-form");
+const integrationProjectSelectEl = document.querySelector("#integration-project-select");
+const notificationRouteFormEl = document.querySelector("#notification-route-form");
 const libraryShellEl = document.querySelector("#library-shell");
 const libraryShellSummaryEl = document.querySelector("#library-shell-summary");
 const libraryPlaybookCountEl = document.querySelector("#library-playbook-count");
@@ -61,7 +81,13 @@ const missionAdvancedEl = document.querySelector("#mission-advanced");
 const missionInstanceSelectEl = document.querySelector("#mission-instance-select");
 const missionProjectSelectEl = document.querySelector("#mission-project-select");
 const transportSelectEl = document.querySelector("#transport-select");
-const DISCLOSURE_SHELL_IDS = ["intelligence-shell", "library-shell", "health-shell", "activity-shell"];
+const DISCLOSURE_SHELL_IDS = [
+  "ops-shell",
+  "intelligence-shell",
+  "library-shell",
+  "health-shell",
+  "activity-shell",
+];
 
 const MISSION_PRESETS = [
   {
@@ -436,6 +462,278 @@ function renderRadar() {
     .join("");
 }
 
+function getTaskById(taskId) {
+  return (state.dashboard?.ops_mesh?.task_inbox?.tasks ?? []).find(
+    (task) => String(task.id) === String(taskId),
+  );
+}
+
+function toneForTaskStatus(status) {
+  if (status === "running" || status === "completed") {
+    return "ok";
+  }
+  if (status === "attention") {
+    return "bad";
+  }
+  if (status === "due") {
+    return "warn";
+  }
+  return "";
+}
+
+function renderOpsMesh() {
+  const opsMesh = state.dashboard?.ops_mesh;
+  if (!opsMesh) {
+    taskInboxHeadlineEl.textContent = "No task blueprints yet";
+    taskInboxSummaryEl.textContent = "";
+    taskBlueprintsEl.innerHTML = "";
+    skillbooksEl.innerHTML = "";
+    integrationsListEl.innerHTML = "";
+    notificationRoutesEl.innerHTML = "";
+    laneSnapshotsEl.innerHTML = "";
+    return;
+  }
+
+  taskInboxHeadlineEl.textContent = opsMesh.task_inbox.headline;
+  taskInboxSummaryEl.textContent = opsMesh.task_inbox.summary;
+
+  taskBlueprintsEl.innerHTML = opsMesh.task_inbox.tasks.length
+    ? opsMesh.task_inbox.tasks
+        .map(
+          (task) => `
+            <article class="task-card task-${escapeHtml(task.status)}">
+              <div class="row">
+                <strong>${escapeHtml(task.name)}</strong>
+                <div class="pill-row">
+                  ${pill(task.status, toneForTaskStatus(task.status))}
+                  ${pill(task.cadence_label)}
+                  ${task.project_label ? pill(task.project_label) : ""}
+                </div>
+              </div>
+              <p>${escapeHtml(task.summary)}</p>
+              <div class="small-muted">
+                ${
+                  task.next_run_at
+                    ? `Next run ${escapeHtml(formatRelativeTimestamp(task.next_run_at))}.`
+                    : "No schedule attached."
+                }
+                ${task.instance_name ? ` Lane: ${escapeHtml(task.instance_name)}.` : ""}
+                ${task.skill_count ? ` ${task.skill_count} skill hint(s).` : ""}
+                ${task.integration_count ? ` ${task.integration_count} integration note(s).` : ""}
+              </div>
+              ${
+                task.last_result_summary
+                  ? `<div class="ops-note">${escapeHtml(task.last_result_summary)}</div>`
+                  : ""
+              }
+              <div class="actions">
+                <button type="button" class="ghost" data-action="apply-task" data-task-id="${task.id}">
+                  Load draft
+                </button>
+                <button type="button" data-action="run-task" data-task-id="${task.id}">
+                  Run now
+                </button>
+                <button type="button" class="danger" data-action="delete-task" data-task-id="${task.id}">
+                  Delete
+                </button>
+              </div>
+            </article>
+          `,
+        )
+        .join("")
+    : `
+        <article class="task-card empty-state">
+          <strong>No task blueprints yet.</strong>
+          <p class="small-muted">
+            Save a repeated objective once and let OpenZues turn it into scheduled missions.
+          </p>
+        </article>
+      `;
+
+  skillbooksEl.innerHTML = opsMesh.skillbooks.length
+    ? opsMesh.skillbooks
+        .map(
+          (skillbook) => `
+            <article class="library-card">
+              <div class="row">
+                <strong>${escapeHtml(skillbook.project_label)}</strong>
+                ${pill(`${skillbook.skills.length} skills`, "ok")}
+              </div>
+              <div class="stack">
+                ${skillbook.skills
+                  .map(
+                    (skill) => `
+                      <div class="ops-chip">
+                        <div>
+                          <strong>${escapeHtml(skill.name)}</strong>
+                          <div class="small-muted">${escapeHtml(skill.prompt_hint)}</div>
+                          ${
+                            skill.source
+                              ? `<div class="small-muted">${escapeHtml(skill.source)}</div>`
+                              : ""
+                          }
+                        </div>
+                        <button
+                          type="button"
+                          class="danger"
+                          data-action="delete-skill-pin"
+                          data-skill-pin-id="${skill.id}"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    `,
+                  )
+                  .join("")}
+              </div>
+            </article>
+          `,
+        )
+        .join("")
+    : `
+        <article class="library-card empty-state">
+          <strong>No skillbooks yet.</strong>
+          <p class="small-muted">
+            Pin the skills you trust for each project and OpenZues will weave them into task drafts.
+          </p>
+        </article>
+      `;
+
+  integrationsListEl.innerHTML = opsMesh.integrations.length
+    ? opsMesh.integrations
+        .map(
+          (integration) => `
+            <article class="library-card">
+              <div class="row">
+                <strong>${escapeHtml(integration.name)}</strong>
+                <div class="pill-row">
+                  ${pill(integration.kind)}
+                  ${integration.project_id ? pill(`project ${integration.project_id}`) : pill("global")}
+                  ${integration.has_secret ? pill(integration.secret_preview || "secret", "warn") : ""}
+                </div>
+              </div>
+              <div class="small-muted">
+                ${
+                  integration.base_url
+                    ? escapeHtml(integration.base_url)
+                    : "No base URL recorded."
+                }
+              </div>
+              ${
+                integration.notes
+                  ? `<div class="ops-note">${escapeHtml(integration.notes)}</div>`
+                  : ""
+              }
+              <div class="actions">
+                <button
+                  type="button"
+                  class="danger"
+                  data-action="delete-integration"
+                  data-integration-id="${integration.id}"
+                >
+                  Delete
+                </button>
+              </div>
+            </article>
+          `,
+        )
+        .join("")
+    : `
+        <article class="library-card empty-state">
+          <strong>No integrations recorded yet.</strong>
+          <p class="small-muted">
+            Track the systems around each repo so tasks and operators inherit the surrounding context.
+          </p>
+        </article>
+      `;
+
+  notificationRoutesEl.innerHTML = opsMesh.notification_routes.length
+    ? opsMesh.notification_routes
+        .map(
+          (route) => `
+            <article class="library-card">
+              <div class="row">
+                <strong>${escapeHtml(route.name)}</strong>
+                <div class="pill-row">
+                  ${pill(route.kind)}
+                  ${route.enabled ? pill("enabled", "ok") : pill("disabled")}
+                </div>
+              </div>
+              <div class="small-muted">${escapeHtml(route.target)}</div>
+              <div class="pill-row">
+                ${route.events.map((eventName) => pill(eventName)).join("")}
+              </div>
+              ${
+                route.last_result
+                  ? `<div class="ops-note">${escapeHtml(route.last_result)}</div>`
+                  : ""
+              }
+              ${
+                route.last_error
+                  ? `<div class="mission-alert">${escapeHtml(route.last_error)}</div>`
+                  : ""
+              }
+              <div class="actions">
+                <button
+                  type="button"
+                  class="danger"
+                  data-action="delete-route"
+                  data-route-id="${route.id}"
+                >
+                  Delete
+                </button>
+              </div>
+            </article>
+          `,
+        )
+        .join("")
+    : `
+        <article class="library-card empty-state">
+          <strong>No notification routes yet.</strong>
+          <p class="small-muted">
+            Add a webhook route to push task and mission events into Slack, Discord, or your own gateway.
+          </p>
+        </article>
+      `;
+
+  laneSnapshotsEl.innerHTML = opsMesh.lane_snapshots.length
+    ? opsMesh.lane_snapshots
+        .map(
+          (snapshot) => `
+            <article class="library-card">
+              <div class="row">
+                <strong>${escapeHtml(snapshot.instance_name || `Instance ${snapshot.instance_id}`)}</strong>
+                <div class="pill-row">
+                  ${pill(snapshot.snapshot_kind)}
+                  ${snapshot.connected ? pill("connected", "ok") : pill("offline", "bad")}
+                </div>
+              </div>
+              <div class="small-muted">
+                ${escapeHtml(formatRelativeTimestamp(snapshot.created_at))}
+                ${snapshot.transport ? ` • ${escapeHtml(snapshot.transport)}` : ""}
+              </div>
+              <div class="pill-row">
+                ${pill(`${snapshot.model_count} models`)}
+                ${pill(`${snapshot.skill_count} skills`)}
+                ${pill(`${snapshot.thread_count} threads`)}
+              </div>
+              ${
+                snapshot.note ? `<div class="ops-note">${escapeHtml(snapshot.note)}</div>` : ""
+              }
+            </article>
+          `,
+        )
+        .join("")
+    : `
+        <article class="library-card empty-state">
+          <strong>No lane snapshots yet.</strong>
+          <p class="small-muted">
+            OpenZues will capture lane history over time, and you can also force a snapshot from the connection card.
+          </p>
+        </article>
+      `;
+}
+
 function renderContinuity() {
   const continuity = state.dashboard?.continuity;
   if (!continuity) {
@@ -760,6 +1058,7 @@ function applyMissionPreset(presetId) {
   if (!preset) {
     return;
   }
+  missionFormEl.querySelector('input[name="task_blueprint_id"]').value = "";
   missionFormEl.querySelector('input[name="name"]').value = preset.name;
   missionFormEl.querySelector('textarea[name="objective"]').value = preset.objective;
   missionFormEl.querySelector('input[name="model"]').value = preset.model;
@@ -780,6 +1079,7 @@ function applyMissionPreset(presetId) {
 
 function resetMissionForm() {
   missionFormEl.reset();
+  missionFormEl.querySelector('input[name="task_blueprint_id"]').value = "";
   missionFormEl.querySelector('input[name="use_builtin_agents"]').checked = true;
   missionFormEl.querySelector('input[name="run_verification"]').checked = true;
   missionFormEl.querySelector('input[name="auto_commit"]').checked = true;
@@ -802,6 +1102,8 @@ function getOpportunityById(opportunityId) {
 function applyMissionDraft(draft) {
   missionFormEl.querySelector('input[name="name"]').value = draft.name || "";
   missionFormEl.querySelector('textarea[name="objective"]').value = draft.objective || "";
+  missionFormEl.querySelector('input[name="task_blueprint_id"]').value =
+    draft.task_blueprint_id || "";
   missionFormEl.querySelector('input[name="model"]').value = draft.model || "gpt-5.4";
   missionFormEl.querySelector('input[name="thread_id"]').value = draft.thread_id || "";
   missionFormEl.querySelector('input[name="max_turns"]').value = draft.max_turns || "";
@@ -830,6 +1132,10 @@ function syncMissionOptions() {
   const projects = state.dashboard?.projects ?? [];
   const selectedInstance = missionInstanceSelectEl.value;
   const selectedProject = missionProjectSelectEl.value;
+  const selectedTaskInstance = taskInstanceSelectEl.value;
+  const selectedTaskProject = taskProjectSelectEl.value;
+  const selectedSkillProject = skillProjectSelectEl.value;
+  const selectedIntegrationProject = integrationProjectSelectEl.value;
   const instanceOptions = instances.length
     ? instances
         .map(
@@ -844,6 +1150,23 @@ function syncMissionOptions() {
   if (selectedInstance && instances.some((instance) => String(instance.id) === selectedInstance)) {
     missionInstanceSelectEl.value = selectedInstance;
   }
+  taskInstanceSelectEl.innerHTML = `
+    <option value="">Auto-select connected lane</option>
+    ${instances
+      .map(
+        (instance) =>
+          `<option value="${instance.id}">${escapeHtml(
+            `${instance.name}${instance.connected ? " (connected)" : ""}`,
+          )}</option>`,
+      )
+      .join("")}
+  `;
+  if (
+    selectedTaskInstance &&
+    instances.some((instance) => String(instance.id) === selectedTaskInstance)
+  ) {
+    taskInstanceSelectEl.value = selectedTaskInstance;
+  }
   missionProjectSelectEl.innerHTML = `
     <option value="">Project (optional)</option>
     ${projects
@@ -855,6 +1178,38 @@ function syncMissionOptions() {
   `;
   if (selectedProject && projects.some((project) => String(project.id) === selectedProject)) {
     missionProjectSelectEl.value = selectedProject;
+  }
+  const projectOptions = projects
+    .map(
+      (project) => `<option value="${project.id}">${escapeHtml(project.label)}</option>`,
+    )
+    .join("");
+  taskProjectSelectEl.innerHTML = `
+    <option value="">Project (optional)</option>
+    ${projectOptions}
+  `;
+  if (selectedTaskProject && projects.some((project) => String(project.id) === selectedTaskProject)) {
+    taskProjectSelectEl.value = selectedTaskProject;
+  }
+  skillProjectSelectEl.innerHTML = `
+    <option value="">Select project</option>
+    ${projectOptions}
+  `;
+  if (
+    selectedSkillProject &&
+    projects.some((project) => String(project.id) === selectedSkillProject)
+  ) {
+    skillProjectSelectEl.value = selectedSkillProject;
+  }
+  integrationProjectSelectEl.innerHTML = `
+    <option value="">Global integration</option>
+    ${projectOptions}
+  `;
+  if (
+    selectedIntegrationProject &&
+    projects.some((project) => String(project.id) === selectedIntegrationProject)
+  ) {
+    integrationProjectSelectEl.value = selectedIntegrationProject;
   }
 }
 
@@ -919,6 +1274,11 @@ function renderDiagnostics() {
 }
 
 function renderShellChrome() {
+  const opsMesh = state.dashboard?.ops_mesh;
+  const tasks = opsMesh?.task_inbox?.tasks ?? [];
+  const routes = opsMesh?.notification_routes ?? [];
+  const meshIntegrations = opsMesh?.integrations ?? [];
+  const snapshots = opsMesh?.lane_snapshots ?? [];
   const continuityPackets = state.dashboard?.continuity?.packets ?? [];
   const dreams = state.dashboard?.dream_deck?.dreams ?? [];
   const doctrines = state.dashboard?.cortex?.doctrines ?? [];
@@ -927,6 +1287,44 @@ function renderShellChrome() {
   const playbooks = state.dashboard?.playbooks ?? [];
   const projects = state.dashboard?.projects ?? [];
   const events = state.dashboard?.events ?? [];
+
+  if (opsTaskCountEl) {
+    opsTaskCountEl.textContent = summarizeCount(tasks.length, "task");
+    opsTaskCountEl.className = tasks.some((task) => task.status === "attention")
+      ? "pill bad"
+      : tasks.some((task) => task.status === "due")
+        ? "pill warn"
+        : tasks.length
+          ? "pill ok"
+          : "pill";
+  }
+  if (opsRouteCountEl) {
+    opsRouteCountEl.textContent = summarizeCount(routes.length, "route");
+    opsRouteCountEl.className = routes.length ? "pill ok" : "pill";
+  }
+  if (opsIntegrationCountEl) {
+    opsIntegrationCountEl.textContent = summarizeCount(meshIntegrations.length, "integration");
+    opsIntegrationCountEl.className = meshIntegrations.length ? "pill ok" : "pill";
+  }
+  if (opsSnapshotCountEl) {
+    opsSnapshotCountEl.textContent = summarizeCount(snapshots.length, "snapshot");
+    opsSnapshotCountEl.className = snapshots.length ? "pill warn" : "pill";
+  }
+  if (opsShellSummaryEl) {
+    if (tasks.some((task) => task.status === "attention")) {
+      opsShellSummaryEl.textContent =
+        "A recurring workflow needs attention before the always-on layer can be trusted again.";
+    } else if (tasks.some((task) => task.status === "due" || task.status === "running")) {
+      opsShellSummaryEl.textContent =
+        "Scheduled work is in motion. This layer now owns repeated objectives, outward alerts, and lane memory.";
+    } else if (tasks.length || routes.length || meshIntegrations.length || snapshots.length) {
+      opsShellSummaryEl.textContent =
+        "The operational mesh is configured and ready, but it stays tucked away until you need to steer it.";
+    } else {
+      opsShellSummaryEl.textContent =
+        "Add recurring work, notification routes, integrations, and lane history here without cluttering the main launch deck.";
+    }
+  }
 
   if (intelligenceContinuityCountEl) {
     intelligenceContinuityCountEl.textContent = summarizeCount(continuityPackets.length, "packet");
@@ -1274,6 +1672,7 @@ function renderInstances() {
                   ? `<button type="button" class="ghost" data-action="disconnect" data-instance-id="${instance.id}">Disconnect</button>`
                   : `<button type="button" data-action="connect" data-instance-id="${instance.id}">Connect</button>`
               }
+              <button type="button" class="ghost" data-action="capture-snapshot" data-instance-id="${instance.id}">Snapshot</button>
               <button type="button" class="ghost" data-action="refresh-instance" data-instance-id="${instance.id}">Refresh</button>
             </div>
           </div>
@@ -1530,6 +1929,7 @@ function render() {
   renderBrief();
   renderLaunchpad();
   renderRadar();
+  renderOpsMesh();
   renderContinuity();
   renderDreams();
   renderCortex();
@@ -1566,6 +1966,13 @@ function parseVariables(text) {
     return {};
   }
   return JSON.parse(trimmed);
+}
+
+function parseCsvList(text) {
+  return String(text || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
 }
 
 function syncTransportFields() {
@@ -1621,6 +2028,9 @@ missionFormEl.addEventListener("submit", async (event) => {
       objective: form.get("objective"),
       instance_id: Number(form.get("instance_id")),
       project_id: form.get("project_id") ? Number(form.get("project_id")) : null,
+      task_blueprint_id: form.get("task_blueprint_id")
+        ? Number(form.get("task_blueprint_id"))
+        : null,
       cwd: null,
       thread_id: form.get("thread_id") || null,
       model: form.get("model") || "gpt-5.4",
@@ -1701,6 +2111,101 @@ document.querySelector("#project-form").addEventListener("submit", async (event)
   }
 });
 
+taskFormEl.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = new FormData(event.currentTarget);
+  try {
+    await submitJson("/api/tasks", {
+      name: form.get("name"),
+      summary: form.get("summary") || null,
+      objective_template: form.get("objective_template"),
+      instance_id: form.get("instance_id") ? Number(form.get("instance_id")) : null,
+      project_id: form.get("project_id") ? Number(form.get("project_id")) : null,
+      cadence_minutes: form.get("cadence_minutes") ? Number(form.get("cadence_minutes")) : null,
+      cwd: null,
+      model: form.get("model") || "gpt-5.4",
+      reasoning_effort: null,
+      collaboration_mode: null,
+      max_turns: form.get("max_turns") ? Number(form.get("max_turns")) : null,
+      use_builtin_agents: form.get("use_builtin_agents") === "on",
+      run_verification: form.get("run_verification") === "on",
+      auto_commit: form.get("auto_commit") === "on",
+      pause_on_approval: form.get("pause_on_approval") === "on",
+      allow_auto_reflexes: true,
+      auto_recover: true,
+      auto_recover_limit: 2,
+      reflex_cooldown_seconds: 900,
+      allow_failover: true,
+      enabled: form.get("enabled") === "on",
+    });
+    event.currentTarget.reset();
+    showToast("Task blueprint saved.");
+  } catch (error) {
+    showToast(normalizeError(error), true);
+  }
+});
+
+skillPinFormEl.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = new FormData(event.currentTarget);
+  try {
+    await submitJson("/api/skill-pins", {
+      project_id: Number(form.get("project_id")),
+      name: form.get("name"),
+      prompt_hint: form.get("prompt_hint"),
+      source: form.get("source") || null,
+      enabled: true,
+    });
+    event.currentTarget.reset();
+    showToast("Skill pinned.");
+  } catch (error) {
+    showToast(normalizeError(error), true);
+  }
+});
+
+integrationFormEl.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = new FormData(event.currentTarget);
+  try {
+    await submitJson("/api/integrations", {
+      name: form.get("name"),
+      kind: form.get("kind"),
+      project_id: form.get("project_id") ? Number(form.get("project_id")) : null,
+      base_url: form.get("base_url") || null,
+      auth_scheme: "token",
+      secret_label: form.get("secret_label") || null,
+      secret_value: form.get("secret_value") || null,
+      notes: form.get("notes") || null,
+      enabled: form.get("enabled") === "on",
+    });
+    event.currentTarget.reset();
+    showToast("Integration saved.");
+  } catch (error) {
+    showToast(normalizeError(error), true);
+  }
+});
+
+notificationRouteFormEl.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = new FormData(event.currentTarget);
+  try {
+    const events = parseCsvList(form.get("events"));
+    await submitJson("/api/notification-routes", {
+      name: form.get("name"),
+      kind: "webhook",
+      target: form.get("target"),
+      events: events.length ? events : ["mission/completed", "mission/failed", "task/*"],
+      enabled: form.get("enabled") === "on",
+      secret_header_name: form.get("secret_header_name") || null,
+      secret_token: form.get("secret_token") || null,
+    });
+    event.currentTarget.reset();
+    showToast("Notification route saved.");
+  } catch (error) {
+    showToast(normalizeError(error), true);
+  }
+});
+
 document.addEventListener("click", async (event) => {
   const target = event.target.closest("[data-action]");
   if (!target) {
@@ -1710,6 +2215,24 @@ document.addEventListener("click", async (event) => {
   try {
     if (target.dataset.action === "apply-mission-preset") {
       applyMissionPreset(target.dataset.presetId);
+    }
+    if (target.dataset.action === "apply-task") {
+      const task = getTaskById(target.dataset.taskId);
+      if (!task) {
+        throw new Error("That task blueprint is no longer available.");
+      }
+      applyMissionDraft(task.mission_draft);
+      showToast(`Loaded task draft: ${task.name}`);
+    }
+    if (target.dataset.action === "run-task") {
+      await submitJson(`/api/tasks/${target.dataset.taskId}/run`, {});
+      showToast("Task launched.");
+      resetMissionForm();
+    }
+    if (target.dataset.action === "delete-task") {
+      await api(`/api/tasks/${target.dataset.taskId}`, { method: "DELETE" });
+      await loadDashboard();
+      showToast("Task blueprint deleted.");
     }
     if (target.dataset.action === "apply-opportunity") {
       const opportunity = getOpportunityById(target.dataset.opportunityId);
@@ -1769,6 +2292,10 @@ document.addEventListener("click", async (event) => {
       await submitJson(`/api/instances/${instanceId}/refresh`, {});
       showToast("Instance refreshed.");
     }
+    if (target.dataset.action === "capture-snapshot") {
+      await submitJson(`/api/instances/${instanceId}/snapshots`, {});
+      showToast("Lane snapshot captured.");
+    }
     if (target.dataset.action === "resolve-request") {
       const requestId = target.dataset.requestId;
       const editor = document.querySelector(`[data-request-editor="${instanceId}:${requestId}"]`);
@@ -1790,6 +2317,21 @@ document.addEventListener("click", async (event) => {
       await api(`/api/playbooks/${playbookId}`, { method: "DELETE" });
       await loadDashboard();
       showToast("Playbook deleted.");
+    }
+    if (target.dataset.action === "delete-skill-pin") {
+      await api(`/api/skill-pins/${target.dataset.skillPinId}`, { method: "DELETE" });
+      await loadDashboard();
+      showToast("Skill pin removed.");
+    }
+    if (target.dataset.action === "delete-integration") {
+      await api(`/api/integrations/${target.dataset.integrationId}`, { method: "DELETE" });
+      await loadDashboard();
+      showToast("Integration deleted.");
+    }
+    if (target.dataset.action === "delete-route") {
+      await api(`/api/notification-routes/${target.dataset.routeId}`, { method: "DELETE" });
+      await loadDashboard();
+      showToast("Notification route deleted.");
     }
     if (target.dataset.action === "run-playbook") {
       const playbookId = target.dataset.playbookId;
