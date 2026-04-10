@@ -9,6 +9,8 @@ TransportType = Literal["desktop", "stdio", "websocket"]
 PlaybookKind = Literal["command", "turn", "thread_turn", "review"]
 DiagnosticStatus = Literal["ok", "warn", "fail", "info"]
 MissionStatus = Literal["active", "paused", "blocked", "completed", "failed"]
+SignalLevel = Literal["critical", "warn", "ready", "info"]
+SignalLane = Literal["attention", "throughput", "reliability", "capacity"]
 
 
 class InstanceCreate(BaseModel):
@@ -237,8 +239,27 @@ class DashboardBriefView(BaseModel):
     next_actions: list[str] = Field(default_factory=list)
 
 
+class DashboardSignalView(BaseModel):
+    id: str
+    lane: SignalLane
+    level: SignalLevel
+    title: str
+    detail: str
+    action: str | None = None
+    mission_id: int | None = None
+    instance_id: int | None = None
+    freshness_minutes: int | None = None
+
+
+class DashboardRadarView(BaseModel):
+    posture: Literal["steady", "watch", "hot"]
+    summary: str
+    signals: list[DashboardSignalView] = Field(default_factory=list)
+
+
 class DashboardView(BaseModel):
     brief: DashboardBriefView
+    radar: DashboardRadarView
     instances: list[InstanceView]
     missions: list[MissionView]
     projects: list[ProjectView]

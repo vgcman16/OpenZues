@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 from fastapi.testclient import TestClient
 
-from openzues.app import create_app
+from openzues.app import build_radar, create_app
+from openzues.schemas import InstanceView, MissionView, ProjectView
 from openzues.settings import Settings
 
 
@@ -13,6 +16,99 @@ def make_client(tmp_path):
     )
     app = create_app(app_settings)
     return TestClient(app)
+
+
+def make_instance_view(
+    *,
+    instance_id: int = 1,
+    name: str = "Local Codex Desktop",
+    connected: bool = True,
+) -> InstanceView:
+    return InstanceView(
+        id=instance_id,
+        name=name,
+        transport="desktop",
+        command=None,
+        args=None,
+        websocket_url=None,
+        cwd="C:/workspace",
+        auto_connect=False,
+        connected=connected,
+        unresolved_requests=[],
+    )
+
+
+def make_project_view(*, project_id: int = 1, label: str = "Sandbox") -> ProjectView:
+    now = datetime.now(UTC)
+    return ProjectView(
+        id=project_id,
+        path="C:/workspace",
+        label=label,
+        exists=True,
+        is_git_repo=True,
+        branch="main",
+        git_status="clean",
+        recent_commits=[],
+        pull_requests=[],
+        last_scan_at=now.isoformat(),
+    )
+
+
+def make_mission_view(
+    *,
+    mission_id: int,
+    name: str,
+    status: str = "active",
+    phase: str | None = "ready",
+    instance_id: int = 1,
+    in_progress: bool = False,
+    total_tokens: int = 0,
+    command_count: int = 0,
+    last_checkpoint: str | None = None,
+    last_error: str | None = None,
+    last_activity_at: str | None = None,
+    suggested_action: str | None = "Inspect the mission and keep it moving.",
+) -> MissionView:
+    now = datetime.now(UTC)
+    return MissionView(
+        id=mission_id,
+        name=name,
+        objective="Keep shipping.",
+        status=status,  # type: ignore[arg-type]
+        instance_id=instance_id,
+        instance_name="Local Codex Desktop",
+        project_id=None,
+        project_label=None,
+        thread_id=f"thread_{mission_id}",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=True,
+        pause_on_approval=True,
+        in_progress=in_progress,
+        phase=phase,
+        current_command=None,
+        command_count=command_count,
+        total_tokens=total_tokens,
+        output_tokens=0,
+        reasoning_tokens=0,
+        last_commentary=None,
+        suggested_action=suggested_action,
+        turns_started=0,
+        turns_completed=0,
+        failure_count=0,
+        last_turn_id=None,
+        last_error=last_error,
+        last_checkpoint=last_checkpoint,
+        last_activity_at=last_activity_at or now.isoformat(),
+        checkpoints=[],
+        created_at=now,
+        updated_at=now,
+    )
 
 
 def test_health_endpoint(tmp_path) -> None:
@@ -133,3 +229,45 @@ def test_mission_creation_appears_on_dashboard(tmp_path) -> None:
     dashboard = dashboard_response.json()
     assert dashboard["missions"][0]["name"] == "Ship autonomy loop"
     assert dashboard["brief"]["focus_mission_id"] == created["id"]
+
+
+def test_build_radar_prioritizes_operator_risks() -> None:
+    now = datetime.now(UTC)
+    instance = make_instance_view()
+    approval_mission = make_mission_view(
+        mission_id=1,
+        name="Approval aware",
+        status="blocked",
+        phase="approval",
+        last_error="Waiting for approval: approval/request",
+        last_activity_at=(now - timedelta(minutes=2)).isoformat(),
+        suggested_action=(
+            "Review the approval request and decide whether to let the mission "
+            "continue."
+        ),
+    )
+    burn_mission = make_mission_view(
+        mission_id=2,
+        name="Long runner",
+        status="active",
+        phase="thinking",
+        in_progress=True,
+        total_tokens=72000,
+        last_checkpoint=None,
+        last_activity_at=(now - timedelta(minutes=1)).isoformat(),
+    )
+
+    radar = build_radar([instance], [approval_mission, burn_mission], [make_project_view()])
+
+    assert radar.posture == "hot"
+    signal_ids = [signal.id for signal in radar.signals]
+    assert "mission-1-approval" in signal_ids
+    assert "mission-2-burn" in signal_ids
+    assert radar.signals[0].level == "critical"
+
+
+def test_build_radar_reports_ready_capacity_when_lane_is_clear() -> None:
+    radar = build_radar([make_instance_view()], [], [make_project_view()])
+
+    assert radar.posture == "steady"
+    assert any(signal.id == "capacity/idle-connected" for signal in radar.signals)

@@ -9,6 +9,9 @@ const heroStatsEl = document.querySelector("#hero-stats");
 const briefHeadlineEl = document.querySelector("#brief-headline");
 const briefSummaryEl = document.querySelector("#brief-summary");
 const briefActionsEl = document.querySelector("#brief-actions");
+const radarHeadlineEl = document.querySelector("#radar-headline");
+const radarSummaryEl = document.querySelector("#radar-summary");
+const radarSignalsEl = document.querySelector("#radar-signals");
 const missionsEl = document.querySelector("#missions");
 const missionPresetsEl = document.querySelector("#mission-presets");
 const instancesEl = document.querySelector("#instances");
@@ -101,6 +104,62 @@ function pill(label, tone = "") {
   return `<span class="pill ${tone}">${escapeHtml(label)}</span>`;
 }
 
+function formatNumber(value) {
+  return Number(value || 0).toLocaleString();
+}
+
+function formatRelativeTimestamp(value) {
+  if (!value) {
+    return "No activity yet";
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return String(value);
+  }
+  const diffMinutes = Math.max(0, Math.floor((Date.now() - parsed.getTime()) / 60000));
+  if (diffMinutes < 1) {
+    return "just now";
+  }
+  if (diffMinutes < 60) {
+    return `${diffMinutes}m ago`;
+  }
+  const diffHours = Math.floor(diffMinutes / 60);
+  if (diffHours < 24) {
+    return `${diffHours}h ago`;
+  }
+  return `${Math.floor(diffHours / 24)}d ago`;
+}
+
+function summarizeCount(count, singular, plural = `${singular}s`) {
+  return `${count} ${count === 1 ? singular : plural}`;
+}
+
+function toneForMissionStatus(status) {
+  if (status === "active" || status === "completed") {
+    return "ok";
+  }
+  if (status === "blocked" || status === "paused") {
+    return "warn";
+  }
+  if (status === "failed") {
+    return "bad";
+  }
+  return "";
+}
+
+function toneForSignal(level) {
+  if (level === "critical") {
+    return "bad";
+  }
+  if (level === "warn") {
+    return "warn";
+  }
+  if (level === "ready") {
+    return "ok";
+  }
+  return "";
+}
+
 function summarize(value) {
   return escapeHtml(JSON.stringify(value, null, 2));
 }
@@ -153,6 +212,7 @@ function renderHero() {
   const instances = state.dashboard?.instances ?? [];
   const missions = state.dashboard?.missions ?? [];
   const projects = state.dashboard?.projects ?? [];
+  const radarSignals = state.dashboard?.radar?.signals ?? [];
   const connected = instances.filter((instance) => instance.connected).length;
   const approvals = instances.reduce(
     (total, instance) => total + instance.unresolved_requests.length,
@@ -160,28 +220,41 @@ function renderHero() {
   );
   const activeMissions = missions.filter((mission) => mission.status === "active").length;
   const blockedMissions = missions.filter((mission) => mission.status === "blocked").length;
-  heroStatsEl.innerHTML = `
-    <article class="stat">
-      <span class="stat-label">Connected</span>
-      <span class="stat-value">${connected}</span>
-    </article>
-    <article class="stat">
-      <span class="stat-label">Active Missions</span>
-      <span class="stat-value">${activeMissions}</span>
-    </article>
-    <article class="stat">
-      <span class="stat-label">Blocked</span>
-      <span class="stat-value">${blockedMissions}</span>
-    </article>
-    <article class="stat">
-      <span class="stat-label">Projects</span>
-      <span class="stat-value">${projects.length}</span>
-    </article>
-    <article class="stat">
-      <span class="stat-label">Approvals</span>
-      <span class="stat-value">${approvals}</span>
-    </article>
-  `;
+  const readySignals = radarSignals.filter((signal) => signal.level === "ready").length;
+  const stats = [
+    {
+      label: "Live Lanes",
+      value: connected,
+      note: `${summarizeCount(instances.length, "instance")} registered`,
+    },
+    {
+      label: "Active Loops",
+      value: activeMissions,
+      note: `${summarizeCount(readySignals, "ready cue")} in reserve`,
+    },
+    {
+      label: "Attention",
+      value: blockedMissions,
+      note: `${summarizeCount(approvals, "approval")} pending`,
+    },
+    {
+      label: "Projects",
+      value: projects.length,
+      note: `${summarizeCount(missions.length, "mission")} tracked`,
+    },
+  ];
+
+  heroStatsEl.innerHTML = stats
+    .map(
+      (stat) => `
+        <article class="stat">
+          <span class="stat-label">${escapeHtml(stat.label)}</span>
+          <span class="stat-value">${escapeHtml(stat.value)}</span>
+          <span class="stat-note">${escapeHtml(stat.note)}</span>
+        </article>
+      `,
+    )
+    .join("");
 }
 
 function booleanBadge(enabled, label) {
@@ -201,6 +274,48 @@ function renderBrief() {
   briefActionsEl.innerHTML = brief.next_actions.length
     ? brief.next_actions.map((action) => `<span class="brief-action">${escapeHtml(action)}</span>`).join("")
     : `<span class="brief-action">No immediate operator action needed.</span>`;
+}
+
+function renderRadar() {
+  const radar = state.dashboard?.radar;
+  if (!radar) {
+    radarHeadlineEl.textContent = "Scanning the mission field...";
+    radarSummaryEl.textContent = "";
+    radarSignalsEl.innerHTML = "";
+    return;
+  }
+
+  const titles = {
+    hot: "Attention queue is active",
+    watch: "A few loops need steering",
+    steady: "Autonomy lanes are stable",
+  };
+  radarHeadlineEl.textContent = titles[radar.posture] || "Autonomy Radar";
+  radarSummaryEl.textContent = radar.summary;
+  radarSignalsEl.innerHTML = radar.signals
+    .map(
+      (signal) => `
+        <article class="signal signal-${escapeHtml(signal.level)}">
+          <div class="signal-meta">
+            ${pill(signal.level, toneForSignal(signal.level))}
+            ${pill(signal.lane)}
+            ${
+              signal.freshness_minutes != null
+                ? `<span class="signal-fresh">${escapeHtml(formatRelativeTimestamp(Date.now() - signal.freshness_minutes * 60000))}</span>`
+                : ""
+            }
+          </div>
+          <h4>${escapeHtml(signal.title)}</h4>
+          <p>${escapeHtml(signal.detail)}</p>
+          ${
+            signal.action
+              ? `<div class="signal-action">${escapeHtml(signal.action)}</div>`
+              : `<div class="signal-action">No immediate action required.</div>`
+          }
+        </article>
+      `,
+    )
+    .join("");
 }
 
 function renderPresets() {
@@ -264,19 +379,21 @@ function syncMissionOptions() {
 function renderDiagnostics() {
   const diagnostics = state.diagnostics?.checks ?? [];
   if (!diagnostics.length) {
-    diagnosticsEl.innerHTML = `<article class="diagnostic"><p>No diagnostics yet.</p></article>`;
+    diagnosticsEl.innerHTML = `<article class="diagnostic empty-state"><p>No diagnostics yet.</p></article>`;
     return;
   }
   diagnosticsEl.innerHTML = diagnostics
     .map(
       (check) => `
-        <article class="diagnostic ${escapeHtml(check.status)} stack">
-          <div class="row">
-            <strong>${escapeHtml(check.label)}</strong>
+        <article class="diagnostic diagnostic-row ${escapeHtml(check.status)}">
+          <div class="diagnostic-core">
+            <div>
+              <strong>${escapeHtml(check.label)}</strong>
+              <div class="small-muted">${escapeHtml(check.detail)}</div>
+              ${check.value ? `<div class="rail-code">${escapeHtml(check.value)}</div>` : ""}
+            </div>
             ${pill(check.status, check.status === "ok" ? "ok" : check.status === "fail" ? "bad" : "warn")}
           </div>
-          <div class="small-muted">${escapeHtml(check.detail)}</div>
-          ${check.value ? `<div class="mono">${escapeHtml(check.value)}</div>` : ""}
           ${check.action ? `<div class="action-text">${escapeHtml(check.action)}</div>` : ""}
         </article>
       `,
@@ -291,8 +408,8 @@ function renderMissions() {
       <article class="mission empty-state">
         <strong>No missions running yet.</strong>
         <p class="small-muted">
-          Launch a goal here and OpenZues will keep nudging Codex forward, capture final-answer
-          checkpoints, and stop only when it needs approval or you pause it.
+          Launch a goal from the deck and OpenZues will keep nudging Codex forward, capture
+          checkpoint handoffs, and surface the next operator decision in the radar band.
         </p>
       </article>
     `;
@@ -316,7 +433,7 @@ function renderMissions() {
                 <article class="checkpoint stack">
                   <div class="row">
                     ${pill(checkpoint.kind, checkpoint.kind === "error" ? "bad" : checkpoint.kind === "approval" ? "warn" : "ok")}
-                    <span class="mono">${escapeHtml(checkpoint.created_at)}</span>
+                    <span class="mission-freshness">${escapeHtml(formatRelativeTimestamp(checkpoint.created_at))}</span>
                   </div>
                   <pre>${escapeHtml(checkpoint.summary)}</pre>
                 </article>
@@ -327,23 +444,22 @@ function renderMissions() {
 
       return `
         <article class="mission stack phase-${escapeHtml(mission.phase || "ready")}">
-          <div class="instance-head">
-            <div class="stack mission-head-copy">
-              <div class="row">
-                <h3>${escapeHtml(mission.name)}</h3>
-                <div class="mission-pills">
-                  ${pill(mission.status, mission.status === "active" ? "ok" : mission.status === "blocked" ? "warn" : mission.status === "failed" ? "bad" : "")}
-                  ${mission.phase ? pill(mission.phase) : ""}
-                  ${mission.in_progress ? pill("turn running", "ok") : pill("idle")}
-                  ${pill(`instance ${mission.instance_id}`)}
-                  ${mission.instance_name ? pill(mission.instance_name) : ""}
-                  ${mission.project_label ? pill(mission.project_label) : ""}
-                  ${pill(mission.model)}
-                </div>
-              </div>
-              <p class="small-muted">${escapeHtml(mission.objective)}</p>
+          <div class="mission-kicker">
+            ${pill(mission.status, toneForMissionStatus(mission.status))}
+            ${mission.phase ? pill(mission.phase) : ""}
+            ${mission.in_progress ? pill("turn running", "ok") : pill("idle")}
+            ${mission.instance_name ? pill(mission.instance_name) : pill(`instance ${mission.instance_id}`)}
+            ${mission.project_label ? pill(mission.project_label) : ""}
+            ${pill(mission.model)}
+            <span class="mission-freshness">${escapeHtml(formatRelativeTimestamp(mission.last_activity_at))}</span>
+          </div>
+
+          <div class="mission-title-row">
+            <div class="stack">
+              <h3>${escapeHtml(mission.name)}</h3>
+              <p class="mission-objective">${escapeHtml(mission.objective)}</p>
             </div>
-            <div class="actions">
+            <div class="actions mission-actions">
               ${
                 mission.status === "active" || mission.status === "blocked"
                   ? `<button type="button" class="ghost" data-action="pause-mission" data-mission-id="${mission.id}">Pause</button>`
@@ -359,84 +475,104 @@ function renderMissions() {
             <div class="mission-progress-bar" style="width:${progressPercent}%"></div>
           </div>
 
-          <div class="mission-stats">
-            <article class="mini-stat">
-              <span class="mini-stat-label">Thread</span>
-              <span class="mono">${escapeHtml(mission.thread_id || "Not created yet")}</span>
-            </article>
-            <article class="mini-stat">
-              <span class="mini-stat-label">Cycles</span>
-              <span>${escapeHtml(progressSuffix)}</span>
-            </article>
-            <article class="mini-stat">
-              <span class="mini-stat-label">Mission Telemetry</span>
-              <div class="telemetry-grid">
-                <span>${mission.command_count} commands</span>
-                <span>${mission.total_tokens.toLocaleString()} tokens</span>
-                <span>${mission.output_tokens.toLocaleString()} output</span>
-                <span>${mission.reasoning_tokens.toLocaleString()} reasoning</span>
-              </div>
-            </article>
-            <article class="mini-stat">
-              <span class="mini-stat-label">Policies</span>
-              <div class="mission-pills">
-                ${booleanBadge(mission.use_builtin_agents, "agents")}
-                ${booleanBadge(mission.run_verification, "verify")}
-                ${booleanBadge(mission.auto_commit, "commit")}
-                ${booleanBadge(mission.pause_on_approval, "pause approvals")}
-              </div>
-            </article>
-            <article class="mini-stat">
-              <span class="mini-stat-label">Operator Next</span>
-              <span>${escapeHtml(mission.suggested_action || "No action needed right now.")}</span>
-            </article>
-          </div>
-
-          ${
-            mission.last_error
-              ? `<div class="mission-alert">${escapeHtml(mission.last_error)}</div>`
-              : ""
-          }
-
-          ${
-            mission.last_checkpoint
-              ? `
-                <div class="stack">
-                  <strong>Latest handoff</strong>
-                  <pre>${escapeHtml(mission.last_checkpoint)}</pre>
+          <div class="mission-body">
+            <div class="mission-column-main">
+              <article class="mission-focus stack">
+                <div class="row">
+                  <strong>Operator next</strong>
+                  <span class="mission-freshness">${escapeHtml(progressSuffix)}</span>
                 </div>
-              `
-              : ""
-          }
+                <div>${escapeHtml(mission.suggested_action || "No action needed right now.")}</div>
+              </article>
 
-          ${
-            mission.current_command
-              ? `
-                <div class="stack">
-                  <strong>Current Command</strong>
-                  <pre>${escapeHtml(mission.current_command)}</pre>
+              ${
+                mission.last_error
+                  ? `<div class="mission-alert">${escapeHtml(mission.last_error)}</div>`
+                  : ""
+              }
+
+              ${
+                mission.current_command
+                  ? `
+                    <article class="mission-focus stack">
+                      <div class="row">
+                        <strong>Current command</strong>
+                        <span class="mission-freshness">live</span>
+                      </div>
+                      <pre>${escapeHtml(mission.current_command)}</pre>
+                    </article>
+                  `
+                  : ""
+              }
+
+              ${
+                mission.last_commentary
+                  ? `
+                    <article class="mission-focus stack">
+                      <div class="row">
+                        <strong>Live commentary</strong>
+                        <span class="mission-freshness">${escapeHtml(formatRelativeTimestamp(mission.last_activity_at))}</span>
+                      </div>
+                      <div class="mission-commentary">${escapeHtml(mission.last_commentary)}</div>
+                    </article>
+                  `
+                  : ""
+              }
+
+              ${
+                mission.last_checkpoint
+                  ? `
+                    <article class="mission-focus stack">
+                      <div class="row">
+                        <strong>Latest handoff</strong>
+                        <span class="mission-freshness">${escapeHtml(formatRelativeTimestamp(mission.last_activity_at))}</span>
+                      </div>
+                      <pre>${escapeHtml(mission.last_checkpoint)}</pre>
+                    </article>
+                  `
+                  : ""
+              }
+
+              <article class="mission-focus stack">
+                <div class="row">
+                  <strong>Mission memory</strong>
+                  <span class="mission-freshness">${escapeHtml(formatRelativeTimestamp(mission.last_activity_at))}</span>
                 </div>
-              `
-              : ""
-          }
-
-          ${
-            mission.last_commentary
-              ? `
-                <div class="stack">
-                  <strong>Live Commentary</strong>
-                  <div class="mission-commentary">${escapeHtml(mission.last_commentary)}</div>
-                </div>
-              `
-              : ""
-          }
-
-          <div class="stack">
-            <div class="row">
-              <strong>Mission Memory</strong>
-              <span class="small-muted">${escapeHtml(mission.last_activity_at || "No activity yet")}</span>
+                <div class="checkpoint-list">${checkpoints}</div>
+              </article>
             </div>
-            <div class="stack checkpoint-list">${checkpoints}</div>
+
+            <aside class="mission-column-side">
+              <article class="mini-stat">
+                <span class="mini-stat-label">Thread</span>
+                <span class="mono">${escapeHtml(mission.thread_id || "Not created yet")}</span>
+              </article>
+
+              <article class="mini-stat">
+                <span class="mini-stat-label">Cycles</span>
+                <span>${escapeHtml(progressSuffix)}</span>
+              </article>
+
+              <article class="mini-stat">
+                <span class="mini-stat-label">Mission telemetry</span>
+                <div class="telemetry-grid">
+                  <span>${formatNumber(mission.command_count)} commands</span>
+                  <span>${formatNumber(mission.total_tokens)} tokens</span>
+                  <span>${formatNumber(mission.output_tokens)} output</span>
+                  <span>${formatNumber(mission.reasoning_tokens)} reasoning</span>
+                </div>
+              </article>
+
+              <article class="mini-stat">
+                <span class="mini-stat-label">Policies</span>
+                <div class="mission-pills">
+                  ${booleanBadge(mission.use_builtin_agents, "agents")}
+                  ${booleanBadge(mission.run_verification, "verify")}
+                  ${booleanBadge(mission.auto_commit, "commit")}
+                  ${booleanBadge(mission.pause_on_approval, "pause approvals")}
+                </div>
+              </article>
+            </aside>
           </div>
         </article>
       `;
@@ -447,7 +583,7 @@ function renderMissions() {
 function renderInstances() {
   const instances = state.dashboard?.instances ?? [];
   if (!instances.length) {
-    instancesEl.innerHTML = `<article class="instance"><p>No connections yet.</p></article>`;
+    instancesEl.innerHTML = `<article class="instance empty-state"><p>No connections yet.</p></article>`;
     return;
   }
 
@@ -501,15 +637,20 @@ function renderInstances() {
 
       return `
         <article class="instance stack">
-          <div class="instance-head">
+          <div class="instance-top">
             <div>
-              <h3>${escapeHtml(instance.name)}</h3>
               <div class="instance-meta">
                 ${pill(statusText, statusTone)}
                 ${pill(instance.transport)}
                 ${instance.resolved_transport ? pill(`via ${instance.resolved_transport}`) : ""}
                 ${instance.pid ? pill(`pid ${instance.pid}`) : ""}
               </div>
+              <h3>${escapeHtml(instance.name)}</h3>
+              ${
+                instance.transport_note
+                  ? `<div class="small-muted wrap-text">${escapeHtml(instance.transport_note)}</div>`
+                  : `<div class="small-muted">Ready for direct thread, turn, and command control.</div>`
+              }
             </div>
             <div class="actions">
               ${
@@ -521,19 +662,22 @@ function renderInstances() {
             </div>
           </div>
 
+          <div class="instance-ribbon">
+            <span class="ribbon-item">${summarizeCount(instance.models.length, "model")}</span>
+            <span class="ribbon-item">${summarizeCount(instance.skills.length, "skill")}</span>
+            <span class="ribbon-item">${summarizeCount(instance.apps.length, "app")}</span>
+            <span class="ribbon-item">${summarizeCount(instance.plugins.length, "plugin")}</span>
+            <span class="ribbon-item">${summarizeCount(instance.unresolved_requests.length, "approval")}</span>
+          </div>
+
           ${
             instance.error
               ? `<div class="pill-row">${pill(instance.error, "bad")}</div>`
               : ""
           }
           ${
-            instance.transport_note
-              ? `<div class="small-muted wrap-text">${escapeHtml(instance.transport_note)}</div>`
-              : ""
-          }
-          ${
             instance.resolved_command
-              ? `<div class="mono mono-wrap">launcher: ${escapeHtml(instance.resolved_command)}${instance.resolved_args ? ` ${escapeHtml(instance.resolved_args)}` : ""}</div>`
+              ? `<div class="rail-code mono-wrap">launcher: ${escapeHtml(instance.resolved_command)}${instance.resolved_args ? ` ${escapeHtml(instance.resolved_args)}` : ""}</div>`
               : ""
           }
 
@@ -603,7 +747,7 @@ function renderInstances() {
             </div>
           </details>
 
-          <div class="stack">
+          <div class="request-band">
             <strong>Pending Requests</strong>
             ${requestCards}
           </div>
@@ -616,14 +760,14 @@ function renderInstances() {
 function renderPlaybooks() {
   const playbooks = state.dashboard?.playbooks ?? [];
   if (!playbooks.length) {
-    playbooksEl.innerHTML = `<article class="playbook"><p>No playbooks yet.</p></article>`;
+    playbooksEl.innerHTML = `<article class="playbook empty-state"><p>No playbooks yet.</p></article>`;
     return;
   }
 
   playbooksEl.innerHTML = playbooks
     .map(
       (playbook) => `
-        <article class="playbook stack">
+        <article class="playbook library-card">
           <div class="row">
             <strong>${escapeHtml(playbook.name)}</strong>
             <div class="playbook-meta">
@@ -673,14 +817,14 @@ function renderPlaybooks() {
 function renderProjects() {
   const projects = state.dashboard?.projects ?? [];
   if (!projects.length) {
-    projectsEl.innerHTML = `<article class="project"><p>No projects registered yet.</p></article>`;
+    projectsEl.innerHTML = `<article class="project empty-state"><p>No projects registered yet.</p></article>`;
     return;
   }
 
   projectsEl.innerHTML = projects
     .map(
       (project) => `
-        <article class="project stack">
+        <article class="project library-card">
           <div class="row">
             <strong>${escapeHtml(project.label)}</strong>
             <div class="project-meta">
@@ -741,7 +885,7 @@ function renderEvents() {
     return haystack.includes(filter);
   });
   if (!filtered.length) {
-    eventsEl.innerHTML = `<article class="event"><p>No events match the current filter.</p></article>`;
+    eventsEl.innerHTML = `<article class="event empty-state"><p>No events match the current filter.</p></article>`;
     return;
   }
   eventsEl.innerHTML = filtered
@@ -749,14 +893,16 @@ function renderEvents() {
     .reverse()
     .map(
       (event) => `
-        <article class="event stack">
-          <div class="event-meta">
-            ${pill(event.method, "ok")}
-            ${event.thread_id ? pill(event.thread_id) : ""}
-            ${event.instance_id ? pill(`instance ${event.instance_id}`) : ""}
+        <article class="event">
+          <div class="event-top">
+            <div class="event-meta">
+              ${pill(event.method, "ok")}
+              ${event.thread_id ? pill(event.thread_id) : ""}
+              ${event.instance_id ? pill(`instance ${event.instance_id}`) : ""}
+            </div>
+            <span class="event-time">${escapeHtml(formatRelativeTimestamp(event.created_at))}</span>
           </div>
           <pre>${summarize(event.payload)}</pre>
-          <small class="mono">${escapeHtml(event.created_at)}</small>
         </article>
       `,
     )
@@ -766,6 +912,7 @@ function renderEvents() {
 function render() {
   renderHero();
   renderBrief();
+  renderRadar();
   renderPresets();
   renderMissions();
   renderInstances();

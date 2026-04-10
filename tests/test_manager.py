@@ -94,3 +94,9 @@ def test_compact_event_payload_truncates_long_server_logs() -> None:
 
     assert compact["line"].endswith("... [truncated]")
     assert compact["lineLength"] == len(line)
+
+
+def test_compact_event_payload_drops_empty_catalog_items() -> None:
+    compact = compact_event_payload("skill/list/updated", {"data": [{"name": "Checks"}, {}]})
+
+    assert compact["data"] == [{"name": "Checks"}]

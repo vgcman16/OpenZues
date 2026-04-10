@@ -66,7 +66,11 @@ def _summarize_named_items(
     *,
     keys: tuple[str, ...],
 ) -> list[dict[str, Any]]:
-    return [_pick_fields(item, keys) for item in items]
+    return [
+        summary
+        for item in items
+        if (summary := _pick_fields(item, keys))
+    ]
 
 
 def compact_event_payload(method: str, payload: dict[str, Any]) -> dict[str, Any]:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
@@ -16,11 +17,15 @@ from openzues.logging_utils import configure_logging
 from openzues.schemas import (
     CommandCreate,
     DashboardBriefView,
+    DashboardRadarView,
+    DashboardSignalView,
     DashboardView,
     DiagnosticsView,
     EventView,
     InstanceCreate,
+    InstanceView,
     MissionCreate,
+    MissionView,
     PlaybookCreate,
     PlaybookRun,
     PlaybookRunResult,
@@ -43,6 +48,373 @@ from openzues.services.projects import ProjectService
 from openzues.settings import Settings, settings
 
 configure_logging()
+
+
+def _parse_timestamp(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _minutes_since(value: str | None) -> int | None:
+    parsed = _parse_timestamp(value)
+    if parsed is None:
+        return None
+    return max(0, int((datetime.now(UTC) - parsed).total_seconds() // 60))
+
+
+def build_brief(
+    instances: list[InstanceView],
+    missions: list[MissionView],
+    projects: list[ProjectView],
+) -> DashboardBriefView:
+    connected = sum(1 for instance in instances if instance.connected)
+    blocked = [mission for mission in missions if mission.status == "blocked"]
+    active = [mission for mission in missions if mission.status == "active"]
+    paused = [mission for mission in missions if mission.status == "paused"]
+    focus = blocked[0] if blocked else active[0] if active else paused[0] if paused else None
+
+    next_actions: list[str] = []
+    if focus is not None and focus.suggested_action:
+        next_actions.append(focus.suggested_action)
+    if connected == 0 and instances:
+        next_actions.append("Reconnect a Codex Desktop instance to resume autonomous work.")
+    if not instances:
+        next_actions.append("Create or quick-connect a Codex instance before launching missions.")
+    if not projects:
+        next_actions.append("Register a project so missions can target a real workspace.")
+    if not missions:
+        next_actions.append("Launch a mission from a preset to start a durable build loop.")
+
+    status: Literal["idle", "active", "blocked", "mixed"]
+    if blocked:
+        status = "blocked"
+        mission_word = "missions" if len(blocked) != 1 else "mission"
+        headline = f"{len(blocked)} {mission_word} need operator attention"
+        summary = "Approvals, queueing, or runtime blockers are pausing autonomous progress."
+    elif active:
+        status = "active"
+        mission_word = "missions" if len(active) != 1 else "mission"
+        headline = f"{len(active)} {mission_word} currently running"
+        summary = "Autonomous cycles are live. Let them work or jump in at the recommended moment."
+    elif connected:
+        status = "idle"
+        headline = "Control plane is connected and ready"
+        summary = (
+            "Launch a mission, start a thread manually, or prepare the workspace "
+            "for the next run."
+        )
+    else:
+        status = "mixed"
+        headline = "OpenZues is ready to reconnect"
+        summary = "The UI is live, but Codex is not currently attached to the control plane."
+
+    return DashboardBriefView(
+        status=status,
+        headline=headline,
+        summary=summary,
+        focus_mission_id=focus.id if focus is not None else None,
+        next_actions=next_actions[:3],
+    )
+
+
+def build_radar(
+    instances: list[InstanceView],
+    missions: list[MissionView],
+    projects: list[ProjectView],
+) -> DashboardRadarView:
+    signals: list[DashboardSignalView] = []
+    missions_by_instance: dict[int, list[MissionView]] = {}
+    for mission in missions:
+        missions_by_instance.setdefault(mission.instance_id, []).append(mission)
+
+    def add_signal(
+        signal_id: str,
+        *,
+        lane: Literal["attention", "throughput", "reliability", "capacity"],
+        level: Literal["critical", "warn", "ready", "info"],
+        title: str,
+        detail: str,
+        action: str | None = None,
+        mission_id: int | None = None,
+        instance_id: int | None = None,
+        freshness_minutes: int | None = None,
+    ) -> None:
+        signals.append(
+            DashboardSignalView(
+                id=signal_id,
+                lane=lane,
+                level=level,
+                title=title,
+                detail=detail,
+                action=action,
+                mission_id=mission_id,
+                instance_id=instance_id,
+                freshness_minutes=freshness_minutes,
+            )
+        )
+
+    if not instances:
+        add_signal(
+            "capacity/no-instance",
+            lane="capacity",
+            level="warn",
+            title="No Codex lane attached",
+            detail=(
+                "Create or quick-connect a desktop bridge so the site can run "
+                "durable autonomous work."
+            ),
+            action="Use Quick Connect to attach Codex Desktop.",
+        )
+    if not projects:
+        add_signal(
+            "capacity/no-project",
+            lane="capacity",
+            level="info",
+            title="No workspace registered",
+            detail=(
+                "Missions can run without a project, but attaching a repo gives "
+                "Codex a stable build target."
+            ),
+            action="Add a local project path in the workspace section.",
+        )
+
+    for mission in missions:
+        age_minutes = _minutes_since(mission.last_activity_at)
+        last_error = str(mission.last_error or "")
+
+        if mission.status == "blocked" and mission.phase == "approval":
+            add_signal(
+                f"mission-{mission.id}-approval",
+                lane="attention",
+                level="critical",
+                title=f"Approval gate open for {mission.name}",
+                detail=last_error or "Codex is waiting for a decision before it continues.",
+                action=mission.suggested_action,
+                mission_id=mission.id,
+                instance_id=mission.instance_id,
+                freshness_minutes=age_minutes,
+            )
+            continue
+
+        if mission.phase == "offline" or last_error.startswith("Instance is offline"):
+            add_signal(
+                f"mission-{mission.id}-offline",
+                lane="reliability",
+                level="critical",
+                title=f"{mission.name} lost its Codex connection",
+                detail=last_error or "The mission cannot progress until its instance reconnects.",
+                action="Reconnect the instance, then run the mission again.",
+                mission_id=mission.id,
+                instance_id=mission.instance_id,
+                freshness_minutes=age_minutes,
+            )
+            continue
+
+        if mission.status == "failed":
+            add_signal(
+                f"mission-{mission.id}-failed",
+                lane="reliability",
+                level="critical",
+                title=f"{mission.name} failed its last cycle",
+                detail=last_error or "The last mission cycle exited with an unrecovered error.",
+                action=mission.suggested_action,
+                mission_id=mission.id,
+                instance_id=mission.instance_id,
+                freshness_minutes=age_minutes,
+            )
+            continue
+
+        if mission.status == "blocked" and mission.phase == "queued":
+            add_signal(
+                f"mission-{mission.id}-queued",
+                lane="throughput",
+                level="warn",
+                title=f"{mission.name} is queued behind another run",
+                detail=last_error
+                or (
+                    "This mission is waiting for another in-progress mission on "
+                    "the same instance."
+                ),
+                action=mission.suggested_action,
+                mission_id=mission.id,
+                instance_id=mission.instance_id,
+                freshness_minutes=age_minutes,
+            )
+            continue
+
+        if (
+            mission.status == "active"
+            and not mission.in_progress
+            and age_minutes is not None
+            and age_minutes >= 8
+        ):
+            add_signal(
+                f"mission-{mission.id}-quiet",
+                lane="reliability",
+                level="warn",
+                title=f"{mission.name} went quiet",
+                detail=f"No mission activity has landed for {age_minutes} minutes.",
+                action="Inspect the last checkpoint or nudge the mission with Run now.",
+                mission_id=mission.id,
+                instance_id=mission.instance_id,
+                freshness_minutes=age_minutes,
+            )
+            continue
+
+        if (
+            mission.status == "active"
+            and mission.total_tokens >= 60000
+            and not mission.last_checkpoint
+        ):
+            add_signal(
+                f"mission-{mission.id}-burn",
+                lane="throughput",
+                level="warn",
+                title=f"{mission.name} is burning hot without a handoff",
+                detail=(
+                    f"The mission has consumed {mission.total_tokens:,} tokens "
+                    "without producing a durable checkpoint yet."
+                ),
+                action=(
+                    "Review the live commentary and checkpoint strategy before it "
+                    "keeps looping."
+                ),
+                mission_id=mission.id,
+                instance_id=mission.instance_id,
+                freshness_minutes=age_minutes,
+            )
+            continue
+
+        orbit_threshold = max(6, mission.turns_completed * 4 + 4)
+        if (
+            mission.status == "active"
+            and mission.command_count >= orbit_threshold
+            and not mission.last_checkpoint
+        ):
+            add_signal(
+                f"mission-{mission.id}-orbit",
+                lane="throughput",
+                level="warn",
+                title=f"{mission.name} is orbiting without landing",
+                detail=(
+                    f"{mission.command_count} commands have run without a checkpointed handoff."
+                ),
+                action="Check whether the objective is too broad and tighten the next cycle.",
+                mission_id=mission.id,
+                instance_id=mission.instance_id,
+                freshness_minutes=age_minutes,
+            )
+            continue
+
+        if mission.status in {"paused", "completed"} and mission.last_checkpoint:
+            add_signal(
+                f"mission-{mission.id}-handoff",
+                lane="attention",
+                level="ready",
+                title=f"Handoff ready from {mission.name}",
+                detail="A fresh checkpoint is available for review or continuation.",
+                action=mission.suggested_action,
+                mission_id=mission.id,
+                instance_id=mission.instance_id,
+                freshness_minutes=age_minutes,
+            )
+
+    idle_connected = [
+        instance
+        for instance in instances
+        if instance.connected
+        and not any(
+            mission.status in {"active", "blocked"}
+            for mission in missions_by_instance.get(instance.id, [])
+        )
+    ]
+    if idle_connected:
+        idle_names = ", ".join(instance.name for instance in idle_connected[:2])
+        remainder = len(idle_connected) - 2
+        suffix = f" and {remainder} more" if remainder > 0 else ""
+        add_signal(
+            "capacity/idle-connected",
+            lane="capacity",
+            level="ready",
+            title="Connected capacity is available",
+            detail=f"{idle_names}{suffix} can start a new mission immediately.",
+            action="Load a preset or launch the next build objective.",
+        )
+
+    for instance in instances:
+        mission_threads = {
+            mission.thread_id
+            for mission in missions_by_instance.get(instance.id, [])
+            if mission.thread_id
+        }
+        orphan_requests = [
+            request
+            for request in instance.unresolved_requests
+            if request.get("thread_id") not in mission_threads
+        ]
+        if orphan_requests:
+            add_signal(
+                f"instance-{instance.id}-orphan-approval",
+                lane="attention",
+                level="warn",
+                title=f"{instance.name} has unassigned approvals",
+                detail=(
+                    f"{len(orphan_requests)} approval request(s) are waiting "
+                    "outside the tracked mission set."
+                ),
+                action="Resolve the request or attach the related thread to a mission.",
+                instance_id=instance.id,
+            )
+
+    level_rank = {"critical": 0, "warn": 1, "ready": 2, "info": 3}
+    lane_rank = {"attention": 0, "reliability": 1, "throughput": 2, "capacity": 3}
+    sorted_signals = sorted(
+        signals,
+        key=lambda signal: (
+            level_rank[signal.level],
+            lane_rank[signal.lane],
+            signal.freshness_minutes if signal.freshness_minutes is not None else 9999,
+            signal.title.lower(),
+        ),
+    )[:8]
+
+    critical_count = sum(signal.level == "critical" for signal in sorted_signals)
+    warn_count = sum(signal.level == "warn" for signal in sorted_signals)
+
+    posture: Literal["steady", "watch", "hot"]
+    if critical_count:
+        posture = "hot"
+        summary = (
+            f"{critical_count} live risk signal{'s' if critical_count != 1 else ''} "
+            "need operator action now."
+        )
+    elif warn_count:
+        posture = "watch"
+        summary = (
+            f"{warn_count} autonomy signal{'s' if warn_count != 1 else ''} "
+            "should be watched before throughput slips."
+        )
+    else:
+        posture = "steady"
+        summary = "Autonomy lanes are clear. Use the ready signals to keep momentum up."
+
+    if not sorted_signals:
+        sorted_signals = [
+            DashboardSignalView(
+                id="steady/all-clear",
+                lane="capacity",
+                level="ready",
+                title="Autonomy corridor is clear",
+                detail="Connections, missions, and handoffs are in a healthy state.",
+                action="Launch the next mission when you are ready.",
+            )
+        ]
+
+    return DashboardRadarView(posture=posture, summary=summary, signals=sorted_signals)
 
 
 def create_app(
@@ -79,68 +451,6 @@ def create_app(
     active_manager.add_event_listener(active_mission_service.handle_event)
     active_manager.add_server_request_listener(active_mission_service.handle_server_request)
     templates = Jinja2Templates(directory=str(active_settings.templates_dir))
-
-    def build_brief(instances: list, missions: list, projects: list) -> DashboardBriefView:
-        connected = sum(1 for instance in instances if instance.connected)
-        blocked = [mission for mission in missions if mission.status == "blocked"]
-        active = [mission for mission in missions if mission.status == "active"]
-        paused = [mission for mission in missions if mission.status == "paused"]
-        focus = blocked[0] if blocked else active[0] if active else paused[0] if paused else None
-
-        next_actions: list[str] = []
-        if focus is not None and focus.suggested_action:
-            next_actions.append(focus.suggested_action)
-        if connected == 0 and instances:
-            next_actions.append(
-                "Reconnect a Codex Desktop instance to resume autonomous work."
-            )
-        if not instances:
-            next_actions.append(
-                "Create or quick-connect a Codex instance before launching missions."
-            )
-        if not projects:
-            next_actions.append("Register a project so missions can target a real workspace.")
-        if not missions:
-            next_actions.append("Launch a mission from a preset to start a durable build loop.")
-
-        status: Literal["idle", "active", "blocked", "mixed"]
-        if blocked:
-            status = "blocked"
-            mission_word = "missions" if len(blocked) != 1 else "mission"
-            headline = f"{len(blocked)} {mission_word} need operator attention"
-            summary = (
-                "Approvals, queueing, or runtime blockers are pausing autonomous progress."
-            )
-        elif active:
-            status = "active"
-            mission_word = "missions" if len(active) != 1 else "mission"
-            headline = f"{len(active)} {mission_word} currently running"
-            summary = (
-                "Autonomous cycles are live. Let them work or jump in at the "
-                "recommended moment."
-            )
-        elif connected:
-            status = "idle"
-            headline = "Control plane is connected and ready"
-            summary = (
-                "Launch a mission, start a thread manually, or prepare the "
-                "workspace for the next run."
-            )
-        else:
-            status = "mixed"
-            headline = "OpenZues is ready to reconnect"
-            summary = (
-                "The UI is live, but Codex is not currently attached to the "
-                "control plane."
-            )
-
-        return DashboardBriefView(
-            status=status,
-            headline=headline,
-            summary=summary,
-            focus_mission_id=focus.id if focus is not None else None,
-            next_actions=next_actions[:3],
-        )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -188,6 +498,7 @@ def create_app(
         missions = await active_mission_service.list_views()
         return DashboardView(
             brief=build_brief(instances, missions, projects),
+            radar=build_radar(instances, missions, projects),
             instances=instances,
             missions=missions,
             projects=projects,
