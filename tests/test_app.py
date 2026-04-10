@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta
 
 from fastapi.testclient import TestClient
 
-from openzues.app import build_cortex, build_launchpad, build_radar, create_app
+from openzues.app import build_cortex, build_launchpad, build_radar, build_reflex_deck, create_app
 from openzues.schemas import InstanceView, MissionView, ProjectView
 from openzues.settings import Settings
 
@@ -411,3 +411,43 @@ def test_build_launchpad_applies_learned_doctrine_to_ship_slice() -> None:
     assert ship_slice.mission_draft.model == "gpt-5.4-mini"
     assert ship_slice.mission_draft.max_turns == 3
     assert ship_slice.mission_draft.auto_commit is False
+
+
+def test_build_reflex_deck_creates_checkpoint_reflex_for_orbiting_mission() -> None:
+    mission = make_mission_view(
+        mission_id=12,
+        name="Orbiting builder",
+        status="active",
+        phase="thinking",
+        in_progress=True,
+        command_count=11,
+        turns_completed=1,
+        project_id=2,
+        project_label="Atlas",
+    )
+    project = make_project_view(project_id=2, label="Atlas")
+
+    reflex_deck = build_reflex_deck([make_instance_view()], [mission], [project])
+
+    assert reflex_deck.reflexes
+    reflex = reflex_deck.reflexes[0]
+    assert reflex.kind == "checkpoint_now"
+    assert reflex.mission_id == 12
+    assert "Stop expanding scope." in reflex.prompt
+
+
+def test_build_reflex_deck_offers_resume_reflex_for_paused_checkpoint() -> None:
+    mission = make_mission_view(
+        mission_id=13,
+        name="Paused hardener",
+        status="paused",
+        phase="paused",
+        project_id=5,
+        project_label="Beacon",
+        last_checkpoint="Verified the first slice.",
+    )
+    project = make_project_view(project_id=5, label="Beacon")
+
+    reflex_deck = build_reflex_deck([make_instance_view()], [mission], [project])
+
+    assert any(reflex.kind == "resume_handoff" for reflex in reflex_deck.reflexes)

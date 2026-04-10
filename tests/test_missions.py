@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from openzues.database import Database
-from openzues.schemas import MissionCreate
+from openzues.schemas import MissionCreate, MissionReflexRun
 from openzues.services.hub import BroadcastHub
 from openzues.services.missions import MissionService
 
@@ -314,3 +314,51 @@ async def test_second_mission_waits_behind_in_progress_instance_work(tmp_path) -
     assert mission is not None
     assert mission["status"] == "blocked"
     assert mission["last_error"] == "Queued behind mission: Already running"
+
+
+@pytest.mark.asyncio
+async def test_fire_reflex_injects_turn_into_existing_thread(tmp_path) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    manager = FakeManager()
+    manager.instances[7].connected = True
+    manager.instances[7].threads = [{"id": "thread_reflex", "status": {"type": "idle"}}]
+    service = MissionService(database, manager, BroadcastHub(), poll_interval_seconds=3600)
+
+    mission_id = await database.create_mission(
+        name="Reflex target",
+        objective="Keep the run moving.",
+        status="paused",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread_reflex",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=True,
+        pause_on_approval=True,
+    )
+
+    await service.fire_reflex(
+        mission_id,
+        MissionReflexRun(
+            kind="resume_handoff",
+            title="Resume from handoff",
+            prompt="Pick up from the checkpoint and land the next smallest verified slice.",
+        ),
+    )
+
+    mission = await database.get_mission(mission_id)
+    checkpoints = await database.list_mission_checkpoints(mission_id)
+
+    assert mission is not None
+    assert mission["status"] == "active"
+    assert mission["in_progress"] == 1
+    assert manager.turn_calls[0]["thread_id"] == "thread_reflex"
+    assert "next smallest verified slice" in manager.turn_calls[0]["text"]
+    assert checkpoints[0]["kind"] == "reflex"
+    assert checkpoints[0]["summary"] == "Resume from handoff"

@@ -20,6 +20,13 @@ LaunchKind = Literal[
     "recovery_run",
     "shadow_scout",
 ]
+ReflexKind = Literal[
+    "checkpoint_now",
+    "verification_spike",
+    "heartbeat_nudge",
+    "recovery_triangle",
+    "resume_handoff",
+]
 
 
 class InstanceCreate(BaseModel):
@@ -194,6 +201,12 @@ class MissionDraftView(MissionCreate):
     pass
 
 
+class MissionReflexRun(BaseModel):
+    kind: ReflexKind
+    title: str
+    prompt: str
+
+
 class MissionCheckpointView(BaseModel):
     id: int
     mission_id: int
@@ -322,11 +335,31 @@ class DashboardCortexView(BaseModel):
     inoculations: list[DashboardInoculationView] = Field(default_factory=list)
 
 
+class DashboardReflexView(BaseModel):
+    id: str
+    kind: ReflexKind
+    level: SignalLevel
+    mission_id: int
+    mission_name: str
+    project_label: str | None = None
+    title: str
+    summary: str
+    prompt: str
+    action_label: str = "Fire reflex"
+
+
+class DashboardReflexDeckView(BaseModel):
+    headline: str
+    summary: str
+    reflexes: list[DashboardReflexView] = Field(default_factory=list)
+
+
 class DashboardView(BaseModel):
     brief: DashboardBriefView
     launchpad: DashboardLaunchpadView
     radar: DashboardRadarView
     cortex: DashboardCortexView
+    reflex_deck: DashboardReflexDeckView
     instances: list[InstanceView]
     missions: list[MissionView]
     projects: list[ProjectView]

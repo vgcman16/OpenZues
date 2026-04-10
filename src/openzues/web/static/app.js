@@ -19,6 +19,9 @@ const cortexHeadlineEl = document.querySelector("#cortex-headline");
 const cortexSummaryEl = document.querySelector("#cortex-summary");
 const cortexDoctrinesEl = document.querySelector("#cortex-doctrines");
 const cortexInoculationsEl = document.querySelector("#cortex-inoculations");
+const reflexHeadlineEl = document.querySelector("#reflex-headline");
+const reflexSummaryEl = document.querySelector("#reflex-summary");
+const reflexesEl = document.querySelector("#reflexes");
 const missionsEl = document.querySelector("#missions");
 const missionPresetsEl = document.querySelector("#mission-presets");
 const instancesEl = document.querySelector("#instances");
@@ -456,6 +459,60 @@ function renderCortex() {
           <strong>No inoculations yet.</strong>
           <p class="small-muted">
             Once OpenZues sees a few real autonomy patterns, it will start hardening future runs here.
+          </p>
+        </article>
+      `;
+}
+
+function getReflexById(reflexId) {
+  return (state.dashboard?.reflex_deck?.reflexes ?? []).find((reflex) => reflex.id === reflexId);
+}
+
+function renderReflexes() {
+  const reflexDeck = state.dashboard?.reflex_deck;
+  if (!reflexDeck) {
+    reflexHeadlineEl.textContent = "Synthesizing intervention prompts...";
+    reflexSummaryEl.textContent = "";
+    reflexesEl.innerHTML = "";
+    return;
+  }
+
+  reflexHeadlineEl.textContent = reflexDeck.headline;
+  reflexSummaryEl.textContent = reflexDeck.summary;
+
+  reflexesEl.innerHTML = reflexDeck.reflexes.length
+    ? reflexDeck.reflexes
+        .map(
+          (reflex) => `
+            <article class="reflex-card reflex-${escapeHtml(reflex.level)}">
+              <div class="signal-meta">
+                ${pill(reflex.level, toneForSignal(reflex.level))}
+                ${pill(reflex.kind)}
+                ${reflex.project_label ? pill(reflex.project_label) : ""}
+              </div>
+              <h4>${escapeHtml(reflex.title)}</h4>
+              <p>${escapeHtml(reflex.summary)}</p>
+              <div class="small-muted">
+                Targets mission: <strong>${escapeHtml(reflex.mission_name)}</strong>
+              </div>
+              <div class="reflex-actions">
+                <button
+                  type="button"
+                  data-action="fire-reflex"
+                  data-reflex-id="${escapeHtml(reflex.id)}"
+                >
+                  ${escapeHtml(reflex.action_label || "Fire reflex")}
+                </button>
+              </div>
+            </article>
+          `,
+        )
+        .join("")
+    : `
+        <article class="reflex-card empty-state">
+          <strong>No reflexes armed yet.</strong>
+          <p class="small-muted">
+            Once a connected mission starts drifting or stalling, OpenZues will synthesize corrective prompts here.
           </p>
         </article>
       `;
@@ -1103,6 +1160,7 @@ function render() {
   renderLaunchpad();
   renderRadar();
   renderCortex();
+  renderReflexes();
   renderPresets();
   renderMissions();
   renderInstances();
@@ -1286,6 +1344,18 @@ document.addEventListener("click", async (event) => {
       await submitJson("/api/missions", opportunity.mission_draft);
       showToast(`Launched: ${opportunity.title}`);
       resetMissionForm();
+    }
+    if (target.dataset.action === "fire-reflex") {
+      const reflex = getReflexById(target.dataset.reflexId);
+      if (!reflex) {
+        throw new Error("That reflex is no longer available.");
+      }
+      await submitJson(`/api/missions/${reflex.mission_id}/reflex`, {
+        kind: reflex.kind,
+        title: reflex.title,
+        prompt: reflex.prompt,
+      });
+      showToast(`Reflex fired into ${reflex.mission_name}.`);
     }
     if (target.dataset.action === "connect") {
       await submitJson(`/api/instances/${instanceId}/connect`, {});

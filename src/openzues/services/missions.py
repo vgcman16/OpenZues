@@ -6,7 +6,7 @@ from collections import defaultdict
 from typing import Any
 
 from openzues.database import Database, utcnow
-from openzues.schemas import MissionCheckpointView, MissionCreate, MissionView
+from openzues.schemas import MissionCheckpointView, MissionCreate, MissionReflexRun, MissionView
 from openzues.services.hub import BroadcastHub
 from openzues.services.manager import RuntimeManager
 
@@ -139,6 +139,75 @@ class MissionService:
     async def delete(self, mission_id: int) -> None:
         await self.database.delete_mission(mission_id)
         await self._publish_snapshot("mission/deleted", {"missionId": mission_id})
+
+    async def fire_reflex(self, mission_id: int, payload: MissionReflexRun) -> MissionView:
+        mission = await self.require_mission(mission_id)
+        thread_id = mission.get("thread_id")
+        if not isinstance(thread_id, str) or not thread_id:
+            raise ValueError("Mission needs an attached thread before you can fire a reflex.")
+
+        if (
+            mission["status"] == "blocked"
+            and str(mission.get("last_error") or "").startswith("Waiting for approval:")
+        ):
+            raise ValueError(
+                "Resolve the approval request before firing a reflex into this mission."
+            )
+
+        runtime = await self.manager.get(int(mission["instance_id"]))
+        if not runtime.connected:
+            try:
+                runtime = await self.manager.connect_instance(int(mission["instance_id"]))
+            except Exception as exc:
+                raise RuntimeError(f"Instance is offline: {exc}") from exc
+        if not runtime.connected:
+            raise RuntimeError("Instance is offline.")
+
+        await self.database.append_mission_checkpoint(
+            mission_id=mission_id,
+            thread_id=thread_id,
+            turn_id=None,
+            kind="reflex",
+            summary=payload.title,
+        )
+        try:
+            turn_result = await self.manager.start_turn(
+                int(mission["instance_id"]),
+                thread_id=thread_id,
+                text=payload.prompt,
+                cwd=mission["cwd"],
+                model=None,
+                reasoning_effort=mission["reasoning_effort"],
+                collaboration_mode=mission["collaboration_mode"],
+            )
+        except Exception as exc:
+            await self.database.update_mission(
+                mission_id,
+                last_error=str(exc),
+                last_activity_at=utcnow(),
+            )
+            raise
+
+        await self.database.update_mission(
+            mission_id,
+            status="active",
+            in_progress=1,
+            phase="thinking",
+            turns_started=int(mission["turns_started"]) + 1,
+            last_turn_id=extract_turn_id(turn_result),
+            last_error=None,
+            last_activity_at=utcnow(),
+        )
+        await self._publish_snapshot(
+            "mission/reflex-fired",
+            {
+                "missionId": mission_id,
+                "threadId": thread_id,
+                "kind": payload.kind,
+                "title": payload.title,
+            },
+        )
+        return await self.get_view(mission_id)
 
     async def run_now(self, mission_id: int) -> MissionView:
         mission = await self.require_mission(mission_id)

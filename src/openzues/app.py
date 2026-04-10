@@ -29,6 +29,7 @@ from openzues.schemas import (
     InstanceView,
     MissionCreate,
     MissionDraftView,
+    MissionReflexRun,
     MissionView,
     PlaybookCreate,
     PlaybookRun,
@@ -55,6 +56,7 @@ from openzues.services.manager import RuntimeManager, compact_event_payload
 from openzues.services.missions import MissionService
 from openzues.services.playbooks import PlaybookService
 from openzues.services.projects import ProjectService
+from openzues.services.reflexes import build_reflex_deck
 from openzues.settings import Settings, settings
 
 configure_logging()
@@ -904,6 +906,7 @@ def create_app(
             launchpad=build_launchpad(instances, missions, projects, doctrines=doctrines),
             radar=build_radar(instances, missions, projects),
             cortex=build_cortex(instances, missions, projects, doctrines=doctrines),
+            reflex_deck=build_reflex_deck(instances, missions, projects, doctrines=doctrines),
             instances=instances,
             missions=missions,
             projects=projects,
@@ -1059,6 +1062,15 @@ def create_app(
             return (await active_mission_service.run_now(mission_id)).model_dump()
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @fastapi_app.post("/api/missions/{mission_id}/reflex")
+    async def fire_mission_reflex(mission_id: int, payload: MissionReflexRun) -> dict:
+        try:
+            return (await active_mission_service.fire_reflex(mission_id, payload)).model_dump()
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @fastapi_app.post("/api/missions/{mission_id}/complete")
     async def complete_mission(mission_id: int) -> dict:

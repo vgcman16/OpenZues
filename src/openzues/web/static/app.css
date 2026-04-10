@@ -776,6 +776,66 @@ button.danger {
   line-height: 1.5;
 }
 
+.reflex-section {
+  background:
+    radial-gradient(circle at top left, rgba(255, 197, 106, 0.08), transparent 24%),
+    linear-gradient(180deg, rgba(139, 255, 202, 0.05), transparent 42%),
+    var(--surface);
+}
+
+.reflex-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
+}
+
+.reflex-card {
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+  border-radius: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.reflex-card h4 {
+  margin: 0;
+  font-size: 1.04rem;
+  line-height: 1.22;
+}
+
+.reflex-card p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.reflex-critical {
+  border-color: rgba(255, 122, 140, 0.18);
+  background:
+    linear-gradient(180deg, rgba(255, 122, 140, 0.11), rgba(255, 255, 255, 0.03)),
+    rgba(255, 255, 255, 0.03);
+}
+
+.reflex-warn {
+  border-color: rgba(255, 197, 106, 0.16);
+  background:
+    linear-gradient(180deg, rgba(255, 197, 106, 0.09), rgba(255, 255, 255, 0.03)),
+    rgba(255, 255, 255, 0.03);
+}
+
+.reflex-ready {
+  border-color: rgba(139, 255, 202, 0.14);
+  background:
+    linear-gradient(180deg, rgba(139, 255, 202, 0.08), rgba(255, 255, 255, 0.03)),
+    rgba(255, 255, 255, 0.03);
+}
+
+.reflex-actions {
+  display: flex;
+  justify-content: flex-start;
+}
+
 .preset-strip {
   display: flex;
   flex-wrap: wrap;
