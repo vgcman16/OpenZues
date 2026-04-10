@@ -52,6 +52,8 @@ from openzues.schemas import (
     TaskBlueprintView,
     ThreadCreate,
     TurnCreate,
+    VaultSecretCreate,
+    VaultSecretView,
 )
 from openzues.services.codex_desktop import CodexDesktopService
 from openzues.services.continuity import build_continuity, build_continuity_packet
@@ -71,6 +73,7 @@ from openzues.services.ops_mesh import OpsMeshService, build_ops_mesh
 from openzues.services.playbooks import PlaybookService
 from openzues.services.projects import ProjectService
 from openzues.services.reflexes import build_reflex_deck
+from openzues.services.vault import VaultService
 from openzues.settings import Settings, settings
 
 configure_logging()
@@ -843,6 +846,7 @@ def create_app(
     desktop_service: CodexDesktopService | None = None,
     mission_service: MissionService | None = None,
     ops_mesh_service: OpsMeshService | None = None,
+    vault_service: VaultService | None = None,
 ) -> FastAPI:
     active_settings = app_settings or settings
     active_database = database or Database(active_settings.effective_db_path)
@@ -861,6 +865,7 @@ def create_app(
     active_environment_service = environment_service or EnvironmentService(
         desktop_service=active_desktop_service
     )
+    active_vault_service = vault_service or VaultService(active_database, active_settings)
     active_mission_service = mission_service or MissionService(
         active_database,
         active_manager,
@@ -871,6 +876,7 @@ def create_app(
         active_manager,
         active_mission_service,
         active_hub,
+        active_vault_service,
     )
     active_manager.add_event_listener(active_mission_service.handle_event)
     active_manager.add_server_request_listener(active_mission_service.handle_server_request)
@@ -880,6 +886,7 @@ def create_app(
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         active_settings.data_dir.mkdir(parents=True, exist_ok=True)
+        active_vault_service.initialize()
         await active_database.initialize()
         await active_manager.load()
         await active_mission_service.start()
@@ -912,6 +919,7 @@ def create_app(
         ]
         playbooks = [PlaybookView.model_validate(row) for row in playbook_rows]
         task_blueprints = await active_ops_mesh_service.list_task_blueprint_views()
+        vault_secrets = await active_ops_mesh_service.list_vault_secret_views()
         integrations = await active_ops_mesh_service.list_integration_views()
         notification_routes = await active_ops_mesh_service.list_notification_route_views()
         skill_pins = await active_ops_mesh_service.list_skill_pin_views()
@@ -938,6 +946,7 @@ def create_app(
                 projects,
                 task_blueprints,
                 skill_pins,
+                vault_secrets,
                 integrations,
                 notification_routes,
                 lane_snapshots,
@@ -1157,9 +1166,26 @@ def create_app(
         await active_ops_mesh_service.delete_task_blueprint(task_id)
         return {"ok": True}
 
+    @fastapi_app.post("/api/vault-secrets")
+    async def create_vault_secret(payload: VaultSecretCreate) -> VaultSecretView:
+        return await active_ops_mesh_service.create_vault_secret(payload)
+
+    @fastapi_app.delete("/api/vault-secrets/{secret_id}")
+    async def delete_vault_secret(secret_id: int) -> dict[str, bool]:
+        try:
+            await active_ops_mesh_service.delete_vault_secret(secret_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return {"ok": True}
+
     @fastapi_app.post("/api/notification-routes")
     async def create_notification_route(payload: NotificationRouteCreate) -> NotificationRouteView:
-        return await active_ops_mesh_service.create_notification_route(payload)
+        try:
+            return await active_ops_mesh_service.create_notification_route(payload)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @fastapi_app.delete("/api/notification-routes/{route_id}")
     async def delete_notification_route(route_id: int) -> dict[str, bool]:
@@ -1168,7 +1194,10 @@ def create_app(
 
     @fastapi_app.post("/api/integrations")
     async def create_integration(payload: IntegrationCreate) -> IntegrationView:
-        return await active_ops_mesh_service.create_integration(payload)
+        try:
+            return await active_ops_mesh_service.create_integration(payload)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @fastapi_app.delete("/api/integrations/{integration_id}")
     async def delete_integration(integration_id: int) -> dict[str, bool]:

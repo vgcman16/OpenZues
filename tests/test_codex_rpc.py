@@ -55,6 +55,58 @@ async def test_start_thread_uses_enum_sandbox_and_approval_policy(monkeypatch) -
         "approvalPolicy": "never",
         "sandbox": "workspace-write",
     }
+    assert recorded["timeout"] == 60.0
+
+
+@pytest.mark.asyncio
+async def test_start_thread_uses_danger_full_access_on_windows(monkeypatch) -> None:
+    client = CodexAppServerClient(
+        transport="stdio",
+        command="codex",
+        args="-a never -s workspace-write app-server",
+        websocket_url=None,
+        cwd="C:/workspace",
+        event_callback=_noop_callback,
+        server_request_callback=_noop_callback,
+    )
+    recorded: dict[str, object] = {}
+
+    async def fake_prepare(
+        self: CodexAppServerClient,
+        *,
+        cwd: str | None = None,
+        sandbox_mode: str | None = None,
+    ) -> None:
+        recorded["prepare_cwd"] = cwd
+        recorded["prepare_sandbox_mode"] = sandbox_mode
+
+    async def fake_call(
+        self: CodexAppServerClient,
+        method: str,
+        params: dict | None = None,
+        timeout: float = 30.0,
+    ) -> dict:
+        recorded["method"] = method
+        recorded["params"] = params or {}
+        recorded["timeout"] = timeout
+        return {"thread": {"id": "thread_123"}}
+
+    monkeypatch.setattr(codex_rpc.sys, "platform", "win32")
+    monkeypatch.setattr(CodexAppServerClient, "prepare_windows_sandbox", fake_prepare)
+    monkeypatch.setattr(CodexAppServerClient, "call", fake_call)
+
+    await client.start_thread(model="gpt-5.4", cwd="C:/workspace")
+
+    assert recorded["prepare_cwd"] == "C:/workspace"
+    assert recorded["prepare_sandbox_mode"] == "danger-full-access"
+    assert recorded["method"] == "thread/start"
+    assert recorded["params"] == {
+        "model": "gpt-5.4",
+        "cwd": "C:/workspace",
+        "approvalPolicy": "never",
+        "sandbox": "danger-full-access",
+    }
+    assert recorded["timeout"] == 60.0
 
 
 @pytest.mark.asyncio
@@ -142,6 +194,39 @@ async def test_prepare_windows_sandbox_uses_elevated_mode(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_prepare_windows_sandbox_skips_danger_full_access(monkeypatch) -> None:
+    client = CodexAppServerClient(
+        transport="stdio",
+        command="codex",
+        args="-a never -s workspace-write app-server",
+        websocket_url=None,
+        cwd="C:/workspace",
+        event_callback=_noop_callback,
+        server_request_callback=_noop_callback,
+    )
+    calls: list[tuple[str, dict | None]] = []
+
+    async def fake_call(
+        self: CodexAppServerClient,
+        method: str,
+        params: dict | None = None,
+        timeout: float = 30.0,
+    ) -> dict:
+        calls.append((method, params))
+        return {}
+
+    monkeypatch.setattr(codex_rpc.sys, "platform", "win32")
+    monkeypatch.setattr(CodexAppServerClient, "call", fake_call)
+
+    await client.prepare_windows_sandbox(
+        cwd="C:/workspace",
+        sandbox_mode="danger-full-access",
+    )
+
+    assert calls == []
+
+
+@pytest.mark.asyncio
 async def test_start_turn_uses_danger_full_access_on_windows(monkeypatch) -> None:
     client = CodexAppServerClient(
         transport="stdio",
@@ -154,7 +239,12 @@ async def test_start_turn_uses_danger_full_access_on_windows(monkeypatch) -> Non
     )
     recorded: dict[str, object] = {}
 
-    async def fake_prepare(self: CodexAppServerClient, *, cwd: str | None = None) -> None:
+    async def fake_prepare(
+        self: CodexAppServerClient,
+        *,
+        cwd: str | None = None,
+        sandbox_mode: str | None = None,
+    ) -> None:
         return None
 
     async def fake_call(

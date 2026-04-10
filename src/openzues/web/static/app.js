@@ -22,8 +22,14 @@ const opsIntegrationCountEl = document.querySelector("#ops-integration-count");
 const opsSnapshotCountEl = document.querySelector("#ops-snapshot-count");
 const taskInboxHeadlineEl = document.querySelector("#task-inbox-headline");
 const taskInboxSummaryEl = document.querySelector("#task-inbox-summary");
+const authPostureHeadlineEl = document.querySelector("#auth-posture-headline");
+const authPostureSummaryEl = document.querySelector("#auth-posture-summary");
+const authSatisfiedCountEl = document.querySelector("#auth-satisfied-count");
+const authMissingCountEl = document.querySelector("#auth-missing-count");
+const authDegradedCountEl = document.querySelector("#auth-degraded-count");
 const taskBlueprintsEl = document.querySelector("#task-blueprints");
 const skillbooksEl = document.querySelector("#skillbooks");
+const vaultSecretsEl = document.querySelector("#vault-secrets");
 const integrationsListEl = document.querySelector("#integrations-list");
 const notificationRoutesEl = document.querySelector("#notification-routes");
 const laneSnapshotsEl = document.querySelector("#lane-snapshots");
@@ -55,9 +61,14 @@ const taskInstanceSelectEl = document.querySelector("#task-instance-select");
 const taskProjectSelectEl = document.querySelector("#task-project-select");
 const skillPinFormEl = document.querySelector("#skill-pin-form");
 const skillProjectSelectEl = document.querySelector("#skill-project-select");
+const vaultSecretFormEl = document.querySelector("#vault-secret-form");
 const integrationFormEl = document.querySelector("#integration-form");
 const integrationProjectSelectEl = document.querySelector("#integration-project-select");
+const integrationVaultSecretSelectEl = document.querySelector("#integration-vault-secret-select");
 const notificationRouteFormEl = document.querySelector("#notification-route-form");
+const notificationRouteVaultSecretSelectEl = document.querySelector(
+  "#notification-route-vault-secret-select",
+);
 const libraryShellEl = document.querySelector("#library-shell");
 const libraryShellSummaryEl = document.querySelector("#library-shell-summary");
 const libraryPlaybookCountEl = document.querySelector("#library-playbook-count");
@@ -481,21 +492,100 @@ function toneForTaskStatus(status) {
   return "";
 }
 
+function toneForAuthStatus(status) {
+  if (status === "satisfied") {
+    return "ok";
+  }
+  if (status === "missing") {
+    return "warn";
+  }
+  if (status === "degraded") {
+    return "bad";
+  }
+  return "";
+}
+
+function syncVaultSecretOptions(opsMesh) {
+  const secrets = opsMesh?.vault_secrets ?? [];
+  const options = secrets
+    .map((secret) => {
+      const refs = secret.usage_count ? `, ${secret.usage_count} ref${secret.usage_count === 1 ? "" : "s"}` : "";
+      const preview = secret.secret_preview ? ` ${secret.secret_preview}` : "";
+      return `<option value="${secret.id}">${escapeHtml(`${secret.label}${preview}${refs}`)}</option>`;
+    })
+    .join("");
+  const optionSets = [
+    [integrationVaultSecretSelectEl, "Use an existing vault secret (optional)"],
+    [notificationRouteVaultSecretSelectEl, "Use an existing vault secret (optional)"],
+  ];
+  optionSets.forEach(([element, placeholder]) => {
+    if (!element) {
+      return;
+    }
+    const selectedValue = element.value;
+    element.innerHTML = `<option value="">${escapeHtml(placeholder)}</option>${options}`;
+    if (selectedValue && secrets.some((secret) => String(secret.id) === selectedValue)) {
+      element.value = selectedValue;
+    }
+  });
+}
+
 function renderOpsMesh() {
   const opsMesh = state.dashboard?.ops_mesh;
   if (!opsMesh) {
     taskInboxHeadlineEl.textContent = "No task blueprints yet";
     taskInboxSummaryEl.textContent = "";
+    if (authPostureHeadlineEl) {
+      authPostureHeadlineEl.textContent = "Integration auth is idle";
+    }
+    if (authPostureSummaryEl) {
+      authPostureSummaryEl.textContent = "Add integrations to start tracking credential posture.";
+    }
+    if (authSatisfiedCountEl) {
+      authSatisfiedCountEl.textContent = "0 satisfied";
+      authSatisfiedCountEl.className = "pill";
+    }
+    if (authMissingCountEl) {
+      authMissingCountEl.textContent = "0 missing";
+      authMissingCountEl.className = "pill";
+    }
+    if (authDegradedCountEl) {
+      authDegradedCountEl.textContent = "0 degraded";
+      authDegradedCountEl.className = "pill";
+    }
     taskBlueprintsEl.innerHTML = "";
     skillbooksEl.innerHTML = "";
+    if (vaultSecretsEl) {
+      vaultSecretsEl.innerHTML = "";
+    }
     integrationsListEl.innerHTML = "";
     notificationRoutesEl.innerHTML = "";
     laneSnapshotsEl.innerHTML = "";
+    syncVaultSecretOptions(null);
     return;
   }
 
   taskInboxHeadlineEl.textContent = opsMesh.task_inbox.headline;
   taskInboxSummaryEl.textContent = opsMesh.task_inbox.summary;
+  if (authPostureHeadlineEl) {
+    authPostureHeadlineEl.textContent = opsMesh.auth_posture.headline;
+  }
+  if (authPostureSummaryEl) {
+    authPostureSummaryEl.textContent = opsMesh.auth_posture.summary;
+  }
+  if (authSatisfiedCountEl) {
+    authSatisfiedCountEl.textContent = `${opsMesh.auth_posture.satisfied_count} satisfied`;
+    authSatisfiedCountEl.className = opsMesh.auth_posture.satisfied_count ? "pill ok" : "pill";
+  }
+  if (authMissingCountEl) {
+    authMissingCountEl.textContent = `${opsMesh.auth_posture.missing_count} missing`;
+    authMissingCountEl.className = opsMesh.auth_posture.missing_count ? "pill warn" : "pill";
+  }
+  if (authDegradedCountEl) {
+    authDegradedCountEl.textContent = `${opsMesh.auth_posture.degraded_count} degraded`;
+    authDegradedCountEl.className = opsMesh.auth_posture.degraded_count ? "pill bad" : "pill";
+  }
+  syncVaultSecretOptions(opsMesh);
 
   taskBlueprintsEl.innerHTML = opsMesh.task_inbox.tasks.length
     ? opsMesh.task_inbox.tasks
@@ -599,6 +689,52 @@ function renderOpsMesh() {
         </article>
       `;
 
+  if (vaultSecretsEl) {
+    vaultSecretsEl.innerHTML = opsMesh.vault_secrets.length
+      ? opsMesh.vault_secrets
+          .map(
+            (secret) => `
+              <article class="library-card">
+                <div class="row">
+                  <strong>${escapeHtml(secret.label)}</strong>
+                  <div class="pill-row">
+                    ${pill(secret.kind)}
+                    ${secret.secret_preview ? pill(secret.secret_preview, "warn") : ""}
+                    ${pill(
+                      summarizeCount(secret.usage_count, "reference"),
+                      secret.usage_count ? "ok" : "",
+                    )}
+                  </div>
+                </div>
+                ${
+                  secret.notes
+                    ? `<div class="ops-note">${escapeHtml(secret.notes)}</div>`
+                    : `<div class="small-muted">Ready to attach anywhere a vault-backed credential is needed.</div>`
+                }
+                <div class="actions">
+                  <button
+                    type="button"
+                    class="danger"
+                    data-action="delete-vault-secret"
+                    data-vault-secret-id="${secret.id}"
+                  >
+                    Delete
+                  </button>
+                </div>
+              </article>
+            `,
+          )
+          .join("")
+      : `
+          <article class="library-card empty-state">
+            <strong>No vault secrets saved yet.</strong>
+            <p class="small-muted">
+              Create a reusable secret here, then attach it to integrations and notification routes.
+            </p>
+          </article>
+        `;
+  }
+
   integrationsListEl.innerHTML = opsMesh.integrations.length
     ? opsMesh.integrations
         .map(
@@ -608,7 +744,9 @@ function renderOpsMesh() {
                 <strong>${escapeHtml(integration.name)}</strong>
                 <div class="pill-row">
                   ${pill(integration.kind)}
+                  ${pill(integration.auth_scheme)}
                   ${integration.project_id ? pill(`project ${integration.project_id}`) : pill("global")}
+                  ${pill(integration.auth_status, toneForAuthStatus(integration.auth_status))}
                   ${integration.has_secret ? pill(integration.secret_preview || "secret", "warn") : ""}
                 </div>
               </div>
@@ -619,6 +757,18 @@ function renderOpsMesh() {
                     : "No base URL recorded."
                 }
               </div>
+              ${
+                integration.vault_secret_label
+                  ? `<div class="small-muted">Vault secret: ${escapeHtml(integration.vault_secret_label)}</div>`
+                  : integration.secret_label
+                    ? `<div class="small-muted">Secret label: ${escapeHtml(integration.secret_label)}</div>`
+                    : ""
+              }
+              ${
+                integration.auth_detail
+                  ? `<div class="ops-note">${escapeHtml(integration.auth_detail)}</div>`
+                  : ""
+              }
               ${
                 integration.notes
                   ? `<div class="ops-note">${escapeHtml(integration.notes)}</div>`
@@ -657,9 +807,20 @@ function renderOpsMesh() {
                 <div class="pill-row">
                   ${pill(route.kind)}
                   ${route.enabled ? pill("enabled", "ok") : pill("disabled")}
+                  ${route.has_secret ? pill(route.secret_preview || "secret", "warn") : ""}
                 </div>
               </div>
               <div class="small-muted">${escapeHtml(route.target)}</div>
+              ${
+                route.secret_header_name
+                  ? `<div class="small-muted">Header: ${escapeHtml(route.secret_header_name)}</div>`
+                  : ""
+              }
+              ${
+                route.vault_secret_label
+                  ? `<div class="small-muted">Vault secret: ${escapeHtml(route.vault_secret_label)}</div>`
+                  : ""
+              }
               <div class="pill-row">
                 ${route.events.map((eventName) => pill(eventName)).join("")}
               </div>
@@ -1278,6 +1439,7 @@ function renderShellChrome() {
   const tasks = opsMesh?.task_inbox?.tasks ?? [];
   const routes = opsMesh?.notification_routes ?? [];
   const meshIntegrations = opsMesh?.integrations ?? [];
+  const authPosture = opsMesh?.auth_posture;
   const snapshots = opsMesh?.lane_snapshots ?? [];
   const continuityPackets = state.dashboard?.continuity?.packets ?? [];
   const dreams = state.dashboard?.dream_deck?.dreams ?? [];
@@ -1304,7 +1466,13 @@ function renderShellChrome() {
   }
   if (opsIntegrationCountEl) {
     opsIntegrationCountEl.textContent = summarizeCount(meshIntegrations.length, "integration");
-    opsIntegrationCountEl.className = meshIntegrations.length ? "pill ok" : "pill";
+    opsIntegrationCountEl.className = authPosture?.degraded_count
+      ? "pill bad"
+      : authPosture?.missing_count
+        ? "pill warn"
+        : meshIntegrations.length
+          ? "pill ok"
+          : "pill";
   }
   if (opsSnapshotCountEl) {
     opsSnapshotCountEl.textContent = summarizeCount(snapshots.length, "snapshot");
@@ -1317,6 +1485,12 @@ function renderShellChrome() {
     } else if (tasks.some((task) => task.status === "due" || task.status === "running")) {
       opsShellSummaryEl.textContent =
         "Scheduled work is in motion. This layer now owns repeated objectives, outward alerts, and lane memory.";
+    } else if (authPosture?.degraded_count) {
+      opsShellSummaryEl.textContent =
+        "At least one integration points at a broken vault credential and needs operator repair.";
+    } else if (authPosture?.missing_count) {
+      opsShellSummaryEl.textContent =
+        "Integration inventory exists, but some entries still need credentials attached from the vault.";
     } else if (tasks.length || routes.length || meshIntegrations.length || snapshots.length) {
       opsShellSummaryEl.textContent =
         "The operational mesh is configured and ready, but it stays tucked away until you need to steer it.";
@@ -2163,6 +2337,23 @@ skillPinFormEl.addEventListener("submit", async (event) => {
   }
 });
 
+vaultSecretFormEl.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = new FormData(event.currentTarget);
+  try {
+    await submitJson("/api/vault-secrets", {
+      label: form.get("label"),
+      kind: form.get("kind") || "token",
+      value: form.get("value"),
+      notes: form.get("notes") || null,
+    });
+    event.currentTarget.reset();
+    showToast("Vault secret saved.");
+  } catch (error) {
+    showToast(normalizeError(error), true);
+  }
+});
+
 integrationFormEl.addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = new FormData(event.currentTarget);
@@ -2172,7 +2363,8 @@ integrationFormEl.addEventListener("submit", async (event) => {
       kind: form.get("kind"),
       project_id: form.get("project_id") ? Number(form.get("project_id")) : null,
       base_url: form.get("base_url") || null,
-      auth_scheme: "token",
+      auth_scheme: form.get("auth_scheme") || "token",
+      vault_secret_id: form.get("vault_secret_id") ? Number(form.get("vault_secret_id")) : null,
       secret_label: form.get("secret_label") || null,
       secret_value: form.get("secret_value") || null,
       notes: form.get("notes") || null,
@@ -2197,6 +2389,7 @@ notificationRouteFormEl.addEventListener("submit", async (event) => {
       events: events.length ? events : ["mission/completed", "mission/failed", "task/*"],
       enabled: form.get("enabled") === "on",
       secret_header_name: form.get("secret_header_name") || null,
+      vault_secret_id: form.get("vault_secret_id") ? Number(form.get("vault_secret_id")) : null,
       secret_token: form.get("secret_token") || null,
     });
     event.currentTarget.reset();
@@ -2233,6 +2426,11 @@ document.addEventListener("click", async (event) => {
       await api(`/api/tasks/${target.dataset.taskId}`, { method: "DELETE" });
       await loadDashboard();
       showToast("Task blueprint deleted.");
+    }
+    if (target.dataset.action === "delete-vault-secret") {
+      await api(`/api/vault-secrets/${target.dataset.vaultSecretId}`, { method: "DELETE" });
+      await loadDashboard();
+      showToast("Vault secret deleted.");
     }
     if (target.dataset.action === "apply-opportunity") {
       const opportunity = getOpportunityById(target.dataset.opportunityId);

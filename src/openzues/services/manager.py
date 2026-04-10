@@ -439,6 +439,70 @@ class RuntimeManager:
         await self.publish_snapshot("instance/refreshed", {"instanceId": instance_id})
         return runtime
 
+    async def _refresh_instance_safely(self, instance_id: int) -> InstanceRuntime:
+        runtime = await self.get(instance_id)
+        try:
+            return await self.refresh_instance(instance_id)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning("Instance refresh failed for %s", instance_id, exc_info=True)
+            return runtime
+
+    def _schedule_refresh_instance(self, instance_id: int) -> None:
+        asyncio.create_task(self._refresh_instance_safely(instance_id))
+
+    async def _wait_for_thread_visibility(
+        self,
+        runtime: InstanceRuntime,
+        thread_id: str,
+        *,
+        timeout_seconds: float = 12.0,
+    ) -> bool:
+        client = runtime.client
+        if client is None:
+            return False
+
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout_seconds
+        while loop.time() < deadline:
+            try:
+                raw_threads = (await client.call("thread/list", {"limit": 30})).get("data", [])
+            except Exception:
+                logger.debug(
+                    "Thread visibility poll failed for %s on instance %s",
+                    thread_id,
+                    runtime.instance_id,
+                    exc_info=True,
+                )
+                await asyncio.sleep(0.4)
+                continue
+
+            runtime.threads = _summarize_threads(
+                [item for item in raw_threads if isinstance(item, dict)]
+            )
+            if any(thread.get("id") == thread_id for thread in runtime.threads):
+                return True
+            await asyncio.sleep(0.4)
+        return False
+
+    async def _refresh_runtime_threads(self, runtime: InstanceRuntime) -> None:
+        client = runtime.client
+        if client is None:
+            return
+        try:
+            raw_threads = (await client.call("thread/list", {"limit": 30})).get("data", [])
+        except Exception:
+            logger.debug(
+                "Live thread refresh failed for instance %s",
+                runtime.instance_id,
+                exc_info=True,
+            )
+            return
+        runtime.threads = _summarize_threads(
+            [item for item in raw_threads if isinstance(item, dict)]
+        )
+
     async def start_thread(
         self,
         instance_id: int,
@@ -457,7 +521,16 @@ class RuntimeManager:
             reasoning_effort=reasoning_effort,
             collaboration_mode=collaboration_mode,
         )
-        await self.refresh_instance(instance_id)
+        thread_id = None
+        thread = result.get("thread") if isinstance(result, dict) else None
+        if isinstance(thread, dict) and isinstance(thread.get("id"), str):
+            thread_id = thread["id"]
+        elif isinstance(result, dict) and isinstance(result.get("threadId"), str):
+            thread_id = result["threadId"]
+        if thread_id is not None:
+            runtime.threads = [{"id": thread_id, "status": {"type": "idle"}}]
+            await self._wait_for_thread_visibility(runtime, thread_id)
+        self._schedule_refresh_instance(instance_id)
         return result
 
     async def start_turn(
@@ -474,28 +547,70 @@ class RuntimeManager:
         runtime = await self.get(instance_id)
         if runtime.client is None:
             raise RuntimeError("Instance is not connected.")
-        result = await runtime.client.start_turn(
-            thread_id=thread_id,
-            text=text,
-            cwd=cwd,
-            model=model,
-            reasoning_effort=reasoning_effort,
-            collaboration_mode=collaboration_mode,
-        )
-        await self.refresh_instance(instance_id)
+        attempts = 3
+        last_error: Exception | None = None
+        result: dict[str, Any] | None = None
+        for attempt in range(attempts):
+            try:
+                result = await runtime.client.start_turn(
+                    thread_id=thread_id,
+                    text=text,
+                    cwd=cwd,
+                    model=model,
+                    reasoning_effort=reasoning_effort,
+                    collaboration_mode=collaboration_mode,
+                )
+                break
+            except Exception as exc:
+                last_error = exc
+                if "thread not found" not in str(exc).lower() or attempt == attempts - 1:
+                    raise
+                await self._wait_for_thread_visibility(runtime, thread_id)
+                await asyncio.sleep(0.5 * (attempt + 1))
+        if result is None:
+            assert last_error is not None
+            raise last_error
+        self._schedule_refresh_instance(instance_id)
         return result
 
     async def interrupt_turn(self, instance_id: int, thread_id: str) -> dict[str, Any]:
         runtime = await self.get(instance_id)
         if runtime.client is None:
             raise RuntimeError("Instance is not connected.")
+        await self._refresh_runtime_threads(runtime)
         turn_id = self._turn_id_from_runtime(runtime, thread_id)
+        thread_status = self._thread_status_from_runtime(runtime, thread_id)
+        if thread_status == "idle" and turn_id is None:
+            return {"ok": False, "reason": "no_active_turn", "threadId": thread_id}
         if turn_id is None:
             turn_id = await self._turn_id_from_events(instance_id, thread_id)
         if turn_id is None:
-            raise RuntimeError(f"No active turn ID found for thread {thread_id}.")
-        result = await runtime.client.interrupt_turn(thread_id=thread_id, turn_id=turn_id)
-        await self.refresh_instance(instance_id)
+            return {"ok": False, "reason": "no_active_turn", "threadId": thread_id}
+        try:
+            result = await runtime.client.interrupt_turn(thread_id=thread_id, turn_id=turn_id)
+        except TimeoutError:
+            await self._refresh_runtime_threads(runtime)
+            refreshed_turn_id = self._turn_id_from_runtime(runtime, thread_id)
+            refreshed_status = self._thread_status_from_runtime(runtime, thread_id)
+            if refreshed_status == "idle" or refreshed_turn_id is None:
+                return {"ok": False, "reason": "no_active_turn", "threadId": thread_id}
+            logger.warning(
+                "Interrupt timed out for thread %s on instance %s",
+                thread_id,
+                instance_id,
+                exc_info=True,
+            )
+            return {
+                "ok": False,
+                "reason": "interrupt_timeout",
+                "threadId": thread_id,
+                "turnId": turn_id,
+            }
+        except RuntimeError as exc:
+            if "thread not found" in str(exc).lower():
+                return {"ok": False, "reason": "no_active_turn", "threadId": thread_id}
+            raise
+        self._schedule_refresh_instance(instance_id)
         return result
 
     async def start_review(self, instance_id: int, thread_id: str) -> dict[str, Any]:
@@ -503,7 +618,7 @@ class RuntimeManager:
         if runtime.client is None:
             raise RuntimeError("Instance is not connected.")
         result = await runtime.client.start_review(thread_id=thread_id)
-        await self.refresh_instance(instance_id)
+        self._schedule_refresh_instance(instance_id)
         return result
 
     async def exec_command(
@@ -605,7 +720,7 @@ class RuntimeManager:
             "account/updated",
             "mcpServer/oauthLogin/completed",
         }:
-            asyncio.create_task(self.refresh_instance(instance_id))
+            self._schedule_refresh_instance(instance_id)
         for listener in self.event_listeners:
             try:
                 await listener(instance_id, event)
@@ -656,6 +771,15 @@ class RuntimeManager:
                 value = status.get(key)
                 if isinstance(value, str):
                     return value
+        return None
+
+    def _thread_status_from_runtime(self, runtime: InstanceRuntime, thread_id: str) -> str | None:
+        for thread in runtime.threads:
+            if thread.get("id") != thread_id:
+                continue
+            status = thread.get("status")
+            if isinstance(status, dict) and isinstance(status.get("type"), str):
+                return status["type"]
         return None
 
     async def _turn_id_from_events(self, instance_id: int, thread_id: str) -> str | None:

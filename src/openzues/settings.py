@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 from pydantic import Field
@@ -12,10 +13,16 @@ class Settings(BaseSettings):
     port: int = 8765
     data_dir: Path = Field(default_factory=lambda: Path.cwd() / ".openzues")
     db_path: Path | None = None
+    master_key: str | None = None
+    master_key_path: Path | None = None
     default_codex_command: str = "codex"
     default_codex_args: str = "app-server"
     desktop_approval_policy: str | None = "never"
-    desktop_sandbox_mode: str | None = "workspace-write"
+    desktop_sandbox_mode: str | None = Field(
+        default_factory=lambda: "danger-full-access"
+        if sys.platform.startswith("win")
+        else "workspace-write"
+    )
     websocket_ping_interval_seconds: int = 20
     model_config = SettingsConfigDict(env_prefix="OPENZUES_", env_file=".env", extra="ignore")
 
@@ -24,6 +31,12 @@ class Settings(BaseSettings):
         if self.db_path is not None:
             return self.db_path
         return self.data_dir / "openzues.db"
+
+    @property
+    def effective_master_key_path(self) -> Path:
+        if self.master_key_path is not None:
+            return self.master_key_path
+        return self.data_dir / "master.key"
 
     @property
     def templates_dir(self) -> Path:

@@ -31,6 +31,7 @@ ReflexKind = Literal[
     "recovery_triangle",
     "resume_handoff",
 ]
+IntegrationAuthStatus = Literal["satisfied", "missing", "degraded"]
 
 
 class InstanceCreate(BaseModel):
@@ -224,6 +225,7 @@ class NotificationRouteCreate(BaseModel):
     enabled: bool = True
     secret_header_name: str | None = None
     secret_token: str | None = None
+    vault_secret_id: int | None = None
 
 
 class NotificationRouteView(BaseModel):
@@ -234,6 +236,8 @@ class NotificationRouteView(BaseModel):
     events: list[str] = Field(default_factory=list)
     enabled: bool = True
     secret_header_name: str | None = None
+    vault_secret_id: int | None = None
+    vault_secret_label: str | None = None
     has_secret: bool = False
     secret_preview: str | None = None
     last_delivery_at: str | None = None
@@ -249,6 +253,7 @@ class IntegrationCreate(BaseModel):
     project_id: int | None = None
     base_url: str | None = None
     auth_scheme: str = "token"
+    vault_secret_id: int | None = None
     secret_label: str | None = None
     secret_value: str | None = None
     notes: str | None = None
@@ -262,11 +267,33 @@ class IntegrationView(BaseModel):
     project_id: int | None = None
     base_url: str | None = None
     auth_scheme: str = "token"
+    vault_secret_id: int | None = None
+    vault_secret_label: str | None = None
     secret_label: str | None = None
     has_secret: bool = False
     secret_preview: str | None = None
+    auth_status: IntegrationAuthStatus = "missing"
+    auth_detail: str | None = None
     notes: str | None = None
     enabled: bool = True
+    created_at: datetime
+    updated_at: datetime
+
+
+class VaultSecretCreate(BaseModel):
+    label: str
+    value: str = Field(min_length=1)
+    kind: str = "token"
+    notes: str | None = None
+
+
+class VaultSecretView(BaseModel):
+    id: int
+    label: str
+    kind: str
+    notes: str | None = None
+    secret_preview: str | None = None
+    usage_count: int = 0
     created_at: datetime
     updated_at: datetime
 
@@ -508,11 +535,21 @@ class DashboardSkillbookView(BaseModel):
     skills: list[SkillPinView] = Field(default_factory=list)
 
 
+class DashboardAuthPostureView(BaseModel):
+    headline: str
+    summary: str
+    satisfied_count: int = 0
+    missing_count: int = 0
+    degraded_count: int = 0
+
+
 class DashboardOpsMeshView(BaseModel):
     headline: str
     summary: str
     task_inbox: DashboardTaskInboxView
+    auth_posture: DashboardAuthPostureView
     skillbooks: list[DashboardSkillbookView] = Field(default_factory=list)
+    vault_secrets: list[VaultSecretView] = Field(default_factory=list)
     integrations: list[IntegrationView] = Field(default_factory=list)
     notification_routes: list[NotificationRouteView] = Field(default_factory=list)
     lane_snapshots: list[LaneSnapshotView] = Field(default_factory=list)

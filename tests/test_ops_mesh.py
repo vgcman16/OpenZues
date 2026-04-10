@@ -11,6 +11,7 @@ from openzues.database import Database
 from openzues.schemas import InstanceView, MissionView, ProjectView
 from openzues.services.hub import BroadcastHub
 from openzues.services.ops_mesh import OpsMeshService, _serialize_task, build_ops_mesh
+from openzues.services.vault import VaultService
 from openzues.settings import Settings
 
 
@@ -108,6 +109,16 @@ def make_client(tmp_path: Path) -> TestClient:
     return TestClient(create_app(app_settings))
 
 
+def make_vault(database: Database, tmp_path: Path) -> VaultService:
+    return VaultService(
+        database,
+        Settings(
+            data_dir=tmp_path / "data",
+            db_path=tmp_path / "data" / "openzues-test.db",
+        ),
+    )
+
+
 def test_build_ops_mesh_surfaces_due_task_inventory() -> None:
     now = datetime.now(UTC)
     task_blueprints = [
@@ -153,11 +164,13 @@ def test_build_ops_mesh_surfaces_due_task_inventory() -> None:
         [],
         [],
         [],
+        [],
     )
 
     assert ops_mesh.task_inbox.tasks
     assert ops_mesh.task_inbox.tasks[0].status == "due"
     assert ops_mesh.task_inbox.tasks[0].cadence_label == "Every 1h"
+    assert ops_mesh.auth_posture.headline == "Integration auth is idle"
 
 
 class FakeManager:
@@ -231,6 +244,7 @@ async def test_ops_mesh_service_launches_due_task(tmp_path: Path) -> None:
         FakeManager(),  # type: ignore[arg-type]
         fake_missions,  # type: ignore[arg-type]
         BroadcastHub(),
+        make_vault(database, tmp_path),
         poll_interval_seconds=999,
         snapshot_interval_seconds=999999,
     )
@@ -260,6 +274,16 @@ def test_dashboard_ops_mesh_crud_round_trip(tmp_path: Path) -> None:
             "/api/projects",
             json={"path": str(tmp_path), "label": "OpenZues Workspace"},
         ).json()
+        vault_secret_response = client.post(
+            "/api/vault-secrets",
+            json={
+                "label": "Shared automation token",
+                "kind": "token",
+                "value": "super-secret-token",
+                "notes": "Reusable across GitHub and webhook delivery.",
+            },
+        )
+        vault_secret = vault_secret_response.json()
 
         task_response = client.post(
             "/api/tasks",
@@ -296,7 +320,7 @@ def test_dashboard_ops_mesh_crud_round_trip(tmp_path: Path) -> None:
                 "events": ["task/*", "mission/completed"],
                 "enabled": True,
                 "secret_header_name": "X-OpenZues-Key",
-                "secret_token": "super-secret-token",
+                "vault_secret_id": vault_secret["id"],
             },
         )
         integration_response = client.post(
@@ -307,8 +331,8 @@ def test_dashboard_ops_mesh_crud_round_trip(tmp_path: Path) -> None:
                 "project_id": project["id"],
                 "base_url": "https://api.github.com",
                 "auth_scheme": "token",
+                "vault_secret_id": vault_secret["id"],
                 "secret_label": "GITHUB_TOKEN",
-                "secret_value": "ghp_1234567890",
                 "notes": "Primary repo automation token.",
                 "enabled": True,
             },
@@ -324,15 +348,87 @@ def test_dashboard_ops_mesh_crud_round_trip(tmp_path: Path) -> None:
             },
         )
         snapshot_response = client.post(f"/api/instances/{instance['id']}/snapshots")
+        delete_secret_response = client.delete(f"/api/vault-secrets/{vault_secret['id']}")
         dashboard = client.get("/api/dashboard").json()
 
+    assert vault_secret_response.status_code == 200
     assert task_response.status_code == 200
     assert route_response.status_code == 200
     assert integration_response.status_code == 200
     assert skill_response.status_code == 200
     assert snapshot_response.status_code == 200
+    assert delete_secret_response.status_code == 409
     assert dashboard["ops_mesh"]["task_inbox"]["tasks"]
     assert dashboard["ops_mesh"]["notification_routes"][0]["has_secret"] is True
+    assert dashboard["ops_mesh"]["notification_routes"][0]["vault_secret_label"] == (
+        "Shared automation token"
+    )
     assert dashboard["ops_mesh"]["integrations"][0]["secret_preview"]
+    assert dashboard["ops_mesh"]["integrations"][0]["vault_secret_label"] == (
+        "Shared automation token"
+    )
+    assert dashboard["ops_mesh"]["integrations"][0]["auth_status"] == "satisfied"
+    assert dashboard["ops_mesh"]["auth_posture"]["satisfied_count"] == 1
+    assert dashboard["ops_mesh"]["vault_secrets"][0]["usage_count"] == 2
     assert dashboard["ops_mesh"]["skillbooks"][0]["skills"][0]["name"] == "Browser Verify"
     assert dashboard["ops_mesh"]["lane_snapshots"]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_migrates_legacy_secret_records(tmp_path: Path) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    vault = make_vault(database, tmp_path)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        vault,
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    integration_id = await database.create_integration(
+        name="Legacy GitHub",
+        kind="github",
+        project_id=None,
+        base_url="https://api.github.com",
+        auth_scheme="token",
+        vault_secret_id=None,
+        secret_label="LEGACY_GITHUB_TOKEN",
+        secret_value="ghp_legacy_1234",
+        notes="Migrated legacy record.",
+        enabled=True,
+    )
+    route_id = await database.create_notification_route(
+        name="Legacy Hook",
+        kind="webhook",
+        target="https://example.invalid/legacy",
+        events=["task/*"],
+        enabled=True,
+        secret_header_name="X-Legacy-Key",
+        secret_token="legacy-route-token",
+        vault_secret_id=None,
+    )
+
+    integrations = await service.list_integration_views()
+    routes = await service.list_notification_route_views()
+    integration_row = await database.get_integration(integration_id)
+    route_row = next(
+        row for row in await database.list_notification_routes() if int(row["id"]) == route_id
+    )
+
+    assert integrations[0].vault_secret_label == "LEGACY_GITHUB_TOKEN"
+    assert integrations[0].auth_status == "satisfied"
+    assert routes[0].vault_secret_label == "Legacy Hook webhook secret"
+    assert integration_row is not None
+    assert integration_row["secret_value"] is None
+    assert integration_row["vault_secret_id"] is not None
+    assert route_row["secret_token"] is None
+    assert route_row["vault_secret_id"] is not None
+    assert (
+        await vault.get_secret_value(int(integration_row["vault_secret_id"]))
+        == "ghp_legacy_1234"
+    )
+    assert await vault.get_secret_value(int(route_row["vault_secret_id"])) == "legacy-route-token"

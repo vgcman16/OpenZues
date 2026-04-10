@@ -119,9 +119,20 @@ class CodexAppServerClient:
                 sandbox_policy = _sandbox_policy_from_mode(next_value)
         return approval_policy, sandbox_mode, sandbox_policy
 
+    def _effective_sandbox_mode(self, *, force_windows_full_access: bool) -> str | None:
+        _approval_policy, sandbox_mode, _sandbox_policy = self._execution_defaults()
+        if (
+            force_windows_full_access
+            and sys.platform.startswith("win")
+            and sandbox_mode != "danger-full-access"
+        ):
+            return "danger-full-access"
+        return sandbox_mode
+
     def _execution_policy_for_turns(self) -> JsonDict | None:
-        _approval_policy, sandbox_mode, sandbox_policy = self._execution_defaults()
-        if sys.platform.startswith("win") and sandbox_mode != "danger-full-access":
+        sandbox_mode = self._effective_sandbox_mode(force_windows_full_access=True)
+        sandbox_policy = _sandbox_policy_from_mode(sandbox_mode)
+        if sys.platform.startswith("win") and sandbox_mode == "danger-full-access":
             return _danger_full_access_policy()
         return sandbox_policy
 
@@ -176,7 +187,10 @@ class CodexAppServerClient:
         self.info.initialized = True
         await self.notify("initialized", {})
         try:
-            await self.prepare_windows_sandbox(cwd=self.cwd)
+            await self.prepare_windows_sandbox(
+                cwd=self.cwd,
+                sandbox_mode=self._effective_sandbox_mode(force_windows_full_access=True),
+            )
         except Exception:
             logger.warning("Windows sandbox preparation failed", exc_info=True)
 
@@ -234,11 +248,20 @@ class CodexAppServerClient:
     async def respond(self, request_id: str, result: Any) -> None:
         await self._send_json({"jsonrpc": "2.0", "id": int(request_id), "result": result})
 
-    async def prepare_windows_sandbox(self, *, cwd: str | None = None) -> None:
+    async def prepare_windows_sandbox(
+        self,
+        *,
+        cwd: str | None = None,
+        sandbox_mode: str | None = None,
+    ) -> None:
         if not sys.platform.startswith("win"):
             return
-        _approval_policy, sandbox_mode, _sandbox_policy = self._execution_defaults()
-        if sandbox_mode in {None, "danger-full-access"}:
+        effective_sandbox_mode = (
+            sandbox_mode
+            if sandbox_mode is not None
+            else self._effective_sandbox_mode(force_windows_full_access=False)
+        )
+        if effective_sandbox_mode in {None, "danger-full-access"}:
             return
         for mode in ("elevated",):
             waiter = self._windows_sandbox_waiters.get(mode)
@@ -262,15 +285,19 @@ class CodexAppServerClient:
         collaboration_mode: str | None = None,
     ) -> Any:
         params: JsonDict = {"model": model}
-        approval_policy, sandbox_mode, _sandbox_policy = self._execution_defaults()
-        await self.prepare_windows_sandbox(cwd=cwd or self.cwd)
+        approval_policy, _sandbox_mode, _sandbox_policy = self._execution_defaults()
+        effective_sandbox_mode = self._effective_sandbox_mode(force_windows_full_access=True)
+        await self.prepare_windows_sandbox(
+            cwd=cwd or self.cwd,
+            sandbox_mode=effective_sandbox_mode,
+        )
         if cwd:
             params["cwd"] = cwd
         if approval_policy:
             params["approvalPolicy"] = approval_policy
-        if sandbox_mode:
-            params["sandbox"] = sandbox_mode
-        return await self.call("thread/start", params)
+        if effective_sandbox_mode:
+            params["sandbox"] = effective_sandbox_mode
+        return await self.call("thread/start", params, timeout=60.0)
 
     async def start_turn(
         self,
@@ -287,7 +314,10 @@ class CodexAppServerClient:
             "input": [{"type": "text", "text": text}],
         }
         approval_policy, _sandbox_mode, _sandbox_policy = self._execution_defaults()
-        await self.prepare_windows_sandbox(cwd=cwd or self.cwd)
+        await self.prepare_windows_sandbox(
+            cwd=cwd or self.cwd,
+            sandbox_mode=self._effective_sandbox_mode(force_windows_full_access=True),
+        )
         sandbox_policy = self._execution_policy_for_turns()
         if cwd:
             params["cwd"] = cwd
@@ -323,7 +353,10 @@ class CodexAppServerClient:
             params["cwd"] = cwd
         if timeout_ms is not None:
             params["timeoutMs"] = timeout_ms
-        await self.prepare_windows_sandbox(cwd=cwd or self.cwd)
+        await self.prepare_windows_sandbox(
+            cwd=cwd or self.cwd,
+            sandbox_mode=self._effective_sandbox_mode(force_windows_full_access=True),
+        )
         sandbox_policy = self._execution_policy_for_turns()
         if sandbox_policy:
             params["sandboxPolicy"] = sandbox_policy

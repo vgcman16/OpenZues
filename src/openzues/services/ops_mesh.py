@@ -11,6 +11,7 @@ from urllib.request import Request, urlopen
 
 from openzues.database import Database, utcnow
 from openzues.schemas import (
+    DashboardAuthPostureView,
     DashboardOpsMeshView,
     DashboardSkillbookView,
     DashboardTaskInboxView,
@@ -30,10 +31,13 @@ from openzues.schemas import (
     TaskBlueprintCreate,
     TaskBlueprintView,
     TaskStatus,
+    VaultSecretCreate,
+    VaultSecretView,
 )
 from openzues.services.hub import BroadcastHub
 from openzues.services.manager import RuntimeManager
 from openzues.services.missions import MissionService
+from openzues.services.vault import VaultService, mask_secret
 
 logger = logging.getLogger(__name__)
 
@@ -47,12 +51,8 @@ def _parse_timestamp(value: str | None) -> datetime | None:
         return None
 
 
-def _mask_secret(value: str | None) -> tuple[bool, str | None]:
-    if not value:
-        return False, None
-    if len(value) <= 4:
-        return True, "••••"
-    return True, f"••••{value[-4:]}"
+def _requires_secret(auth_scheme: str) -> bool:
+    return auth_scheme.strip().lower() not in {"", "none", "anonymous"}
 
 
 def _format_cadence(cadence_minutes: int | None) -> str:
@@ -83,30 +83,86 @@ def _serialize_task(row: dict[str, Any]) -> TaskBlueprintView:
     return TaskBlueprintView.model_validate(row)
 
 
-def _serialize_route(row: dict[str, Any]) -> NotificationRouteView:
-    has_secret, secret_preview = _mask_secret(str(row.get("secret_token") or ""))
+def _serialize_route(
+    row: dict[str, Any],
+    *,
+    vault_secret_label: str | None = None,
+    secret_preview: str | None = None,
+    has_secret: bool | None = None,
+) -> NotificationRouteView:
+    if has_secret is None:
+        has_secret, secret_preview = mask_secret(str(row.get("secret_token") or ""))
     return NotificationRouteView.model_validate(
         {
             **row,
+            "vault_secret_label": vault_secret_label,
             "has_secret": has_secret,
             "secret_preview": secret_preview,
         }
     )
 
 
-def _serialize_integration(row: dict[str, Any]) -> IntegrationView:
-    has_secret, secret_preview = _mask_secret(str(row.get("secret_value") or ""))
+def _serialize_integration(
+    row: dict[str, Any],
+    *,
+    vault_secret_label: str | None = None,
+    secret_preview: str | None = None,
+    has_secret: bool | None = None,
+    auth_status: str = "missing",
+    auth_detail: str | None = None,
+) -> IntegrationView:
+    if has_secret is None:
+        has_secret, secret_preview = mask_secret(str(row.get("secret_value") or ""))
     return IntegrationView.model_validate(
         {
             **row,
+            "vault_secret_label": vault_secret_label,
             "has_secret": has_secret,
             "secret_preview": secret_preview,
+            "auth_status": auth_status,
+            "auth_detail": auth_detail,
         }
     )
 
 
 def _serialize_skill_pin(row: dict[str, Any]) -> SkillPinView:
     return SkillPinView.model_validate(row)
+
+
+def _build_auth_posture(integrations: list[IntegrationView]) -> DashboardAuthPostureView:
+    enabled_integrations = [integration for integration in integrations if integration.enabled]
+    satisfied_count = sum(
+        integration.auth_status == "satisfied" for integration in enabled_integrations
+    )
+    missing_count = sum(
+        integration.auth_status == "missing" for integration in enabled_integrations
+    )
+    degraded_count = sum(
+        integration.auth_status == "degraded" for integration in enabled_integrations
+    )
+
+    if degraded_count:
+        headline = "Integration auth is degraded"
+        summary = (
+            f"{degraded_count} integration(s) have broken vault references or unreadable secrets."
+        )
+    elif missing_count:
+        headline = "Integration auth has gaps"
+        summary = f"{missing_count} integration(s) still need credentials attached."
+    elif enabled_integrations:
+        headline = "Integration auth is satisfied"
+        summary = "Enabled integrations have usable credentials or explicitly require none."
+    else:
+        headline = "Integration auth is idle"
+        summary = "Add integrations to start tracking credential posture."
+
+    return DashboardAuthPostureView(
+        headline=headline,
+        summary=summary,
+        satisfied_count=satisfied_count,
+        missing_count=missing_count,
+        degraded_count=degraded_count,
+    )
 
 
 def _build_lane_snapshot_view(
@@ -196,6 +252,11 @@ def _build_task_objective(
                     f"- {integration.name} ({integration.kind})"
                     + (f" at {integration.base_url}" if integration.base_url else "")
                     + (
+                        f". Auth: {integration.auth_status}. {integration.auth_detail}"
+                        if integration.auth_detail
+                        else ""
+                    )
+                    + (
                         f". Notes: {integration.notes}"
                         if integration.notes
                         else ". Credentials are managed by the operator."
@@ -216,6 +277,7 @@ def build_ops_mesh(
     projects: list[ProjectView],
     task_blueprints: list[TaskBlueprintView],
     skill_pins: list[SkillPinView],
+    vault_secrets: list[VaultSecretView],
     integrations: list[IntegrationView],
     notification_routes: list[NotificationRouteView],
     lane_snapshots: list[LaneSnapshotView],
@@ -356,6 +418,7 @@ def build_ops_mesh(
         for project in projects
         if skills_by_project.get(project.id)
     ]
+    auth_posture = _build_auth_posture(integrations)
 
     return DashboardOpsMeshView(
         headline=headline,
@@ -365,7 +428,9 @@ def build_ops_mesh(
             summary=task_summary,
             tasks=tasks,
         ),
+        auth_posture=auth_posture,
         skillbooks=skillbooks,
+        vault_secrets=vault_secrets,
         integrations=integrations,
         notification_routes=notification_routes,
         lane_snapshots=sorted(
@@ -382,6 +447,7 @@ class OpsMeshService:
     manager: RuntimeManager
     missions: MissionService
     hub: BroadcastHub
+    vault: VaultService
     poll_interval_seconds: float = 20.0
     snapshot_interval_seconds: float = 1800.0
     _task: asyncio.Task[None] | None = field(init=False, default=None)
@@ -390,6 +456,7 @@ class OpsMeshService:
     async def start(self) -> None:
         if self._task is not None:
             return
+        await self._migrate_legacy_secret_refs()
         self._stop_event.clear()
         self._task = asyncio.create_task(self._runner_loop(), name="openzues-ops-mesh")
 
@@ -406,13 +473,85 @@ class OpsMeshService:
     async def list_task_blueprint_views(self) -> list[TaskBlueprintView]:
         return [_serialize_task(row) for row in await self.database.list_task_blueprints()]
 
+    async def list_vault_secret_views(self) -> list[VaultSecretView]:
+        return await self.vault.list_secret_views()
+
+    async def create_vault_secret(self, payload: VaultSecretCreate) -> VaultSecretView:
+        return await self.vault.create_secret(payload)
+
+    async def delete_vault_secret(self, secret_id: int) -> None:
+        await self.vault.delete_secret(secret_id)
+
     async def list_notification_route_views(self) -> list[NotificationRouteView]:
-        return [
-            _serialize_route(row) for row in await self.database.list_notification_routes()
-        ]
+        await self._migrate_legacy_secret_refs()
+        secrets_by_id = {
+            secret.id: secret for secret in await self.vault.list_secret_views()
+        }
+        routes: list[NotificationRouteView] = []
+        for row in await self.database.list_notification_routes():
+            secret_id = row.get("vault_secret_id")
+            secret = secrets_by_id.get(int(secret_id)) if secret_id is not None else None
+            has_secret = bool(secret) or bool(row.get("secret_token"))
+            secret_preview = (
+                secret.secret_preview
+                if secret is not None
+                else mask_secret(str(row.get("secret_token") or ""))[1]
+            )
+            routes.append(
+                _serialize_route(
+                    row,
+                    vault_secret_label=secret.label if secret is not None else None,
+                    secret_preview=secret_preview,
+                    has_secret=has_secret,
+                )
+            )
+        return routes
 
     async def list_integration_views(self) -> list[IntegrationView]:
-        return [_serialize_integration(row) for row in await self.database.list_integrations()]
+        await self._migrate_legacy_secret_refs()
+        secrets_by_id = {
+            secret.id: secret for secret in await self.vault.list_secret_views()
+        }
+        secret_probe: dict[int, str | None] = {}
+        integrations: list[IntegrationView] = []
+        for row in await self.database.list_integrations():
+            auth_scheme = str(row.get("auth_scheme") or "token")
+            secret_id = row.get("vault_secret_id")
+            secret = secrets_by_id.get(int(secret_id)) if secret_id is not None else None
+            secret_error: str | None = None
+            if secret_id is not None:
+                cache_key = int(secret_id)
+                if cache_key not in secret_probe:
+                    secret_probe[cache_key] = await self.vault.probe_secret(cache_key)
+                secret_error = secret_probe[cache_key]
+
+            auth_status = "satisfied"
+            auth_detail = "No credentials required."
+            if _requires_secret(auth_scheme):
+                if secret is None and secret_id is not None:
+                    auth_status = "degraded"
+                    auth_detail = "Referenced vault secret is missing."
+                elif secret_error:
+                    auth_status = "degraded"
+                    auth_detail = secret_error
+                elif secret is None:
+                    auth_status = "missing"
+                    auth_detail = "Attach a vault secret before using this integration."
+                else:
+                    auth_status = "satisfied"
+                    auth_detail = f"Vault secret '{secret.label}' is attached."
+
+            integrations.append(
+                _serialize_integration(
+                    row,
+                    vault_secret_label=secret.label if secret is not None else None,
+                    secret_preview=secret.secret_preview if secret is not None else None,
+                    has_secret=secret is not None,
+                    auth_status=auth_status,
+                    auth_detail=auth_detail,
+                )
+            )
+        return integrations
 
     async def list_skill_pin_views(self) -> list[SkillPinView]:
         return [_serialize_skill_pin(row) for row in await self.database.list_skill_pins()]
@@ -456,6 +595,22 @@ class OpsMeshService:
         self,
         payload: NotificationRouteCreate,
     ) -> NotificationRouteView:
+        await self._migrate_legacy_secret_refs()
+        if payload.vault_secret_id is not None and payload.secret_token:
+            raise ValueError("Provide either vault_secret_id or secret_token, not both.")
+        vault_secret_id = payload.vault_secret_id
+        if payload.secret_token:
+            created_secret = await self.vault.create_secret_value(
+                label=f"{payload.name} webhook secret",
+                value=payload.secret_token,
+                kind="webhook-token",
+                notes=payload.target,
+            )
+            vault_secret_id = created_secret.id
+        elif payload.vault_secret_id is not None:
+            existing_secret = await self.vault.get_secret_view(payload.vault_secret_id)
+            if existing_secret is None:
+                raise ValueError(f"Unknown vault secret {payload.vault_secret_id}")
         route_id = await self.database.create_notification_route(
             name=payload.name,
             kind=payload.kind,
@@ -463,36 +618,55 @@ class OpsMeshService:
             events=payload.events,
             enabled=payload.enabled,
             secret_header_name=payload.secret_header_name,
-            secret_token=payload.secret_token,
+            secret_token=None,
+            vault_secret_id=vault_secret_id,
         )
-        row = next(
-            route
-            for route in await self.database.list_notification_routes()
-            if int(route["id"]) == route_id
+        route = next(
+            route for route in await self.list_notification_route_views() if route.id == route_id
         )
-        return _serialize_route(row)
+        return route
 
     async def delete_notification_route(self, route_id: int) -> None:
         await self.database.delete_notification_route(route_id)
 
     async def create_integration(self, payload: IntegrationCreate) -> IntegrationView:
+        await self._migrate_legacy_secret_refs()
+        if payload.vault_secret_id is not None and payload.secret_value:
+            raise ValueError("Provide either vault_secret_id or secret_value, not both.")
+
+        vault_secret_id = payload.vault_secret_id
+        secret_label = payload.secret_label
+        if payload.secret_value:
+            created_secret = await self.vault.create_secret_value(
+                label=payload.secret_label or f"{payload.name} credential",
+                value=payload.secret_value,
+                kind=payload.auth_scheme,
+                notes=payload.notes,
+            )
+            vault_secret_id = created_secret.id
+            secret_label = created_secret.label
+        elif payload.vault_secret_id is not None:
+            existing_secret = await self.vault.get_secret_view(payload.vault_secret_id)
+            if existing_secret is None:
+                raise ValueError(f"Unknown vault secret {payload.vault_secret_id}")
+            secret_label = existing_secret.label
+
         integration_id = await self.database.create_integration(
             name=payload.name,
             kind=payload.kind,
             project_id=payload.project_id,
             base_url=payload.base_url,
             auth_scheme=payload.auth_scheme,
-            secret_label=payload.secret_label,
-            secret_value=payload.secret_value,
+            vault_secret_id=vault_secret_id,
+            secret_label=secret_label,
+            secret_value=None,
             notes=payload.notes,
             enabled=payload.enabled,
         )
-        row = next(
-            integration
-            for integration in await self.database.list_integrations()
-            if int(integration["id"]) == integration_id
+        integration = next(
+            item for item in await self.list_integration_views() if item.id == integration_id
         )
-        return _serialize_integration(row)
+        return integration
 
     async def delete_integration(self, integration_id: int) -> None:
         await self.database.delete_integration(integration_id)
@@ -542,6 +716,54 @@ class OpsMeshService:
             if int(snapshot["id"]) == snapshot_id
         )
         return _build_lane_snapshot_view(row, {view.id: view.name})
+
+    async def _migrate_legacy_secret_refs(self) -> None:
+        for integration in await self.database.list_integrations():
+            legacy_secret = str(integration.get("secret_value") or "")
+            vault_secret_id = integration.get("vault_secret_id")
+            if vault_secret_id is not None and legacy_secret:
+                await self.database.update_integration(
+                    int(integration["id"]),
+                    secret_value=None,
+                )
+                continue
+            if vault_secret_id is not None or not legacy_secret:
+                continue
+            secret = await self.vault.create_secret_value(
+                label=str(integration.get("secret_label") or f"{integration['name']} credential"),
+                value=legacy_secret,
+                kind=str(integration.get("auth_scheme") or "token"),
+                notes=str(integration.get("notes") or "") or None,
+            )
+            await self.database.update_integration(
+                int(integration["id"]),
+                vault_secret_id=secret.id,
+                secret_label=secret.label,
+                secret_value=None,
+            )
+
+        for route in await self.database.list_notification_routes():
+            legacy_secret = str(route.get("secret_token") or "")
+            vault_secret_id = route.get("vault_secret_id")
+            if vault_secret_id is not None and legacy_secret:
+                await self.database.update_notification_route(
+                    int(route["id"]),
+                    secret_token=None,
+                )
+                continue
+            if vault_secret_id is not None or not legacy_secret:
+                continue
+            secret = await self.vault.create_secret_value(
+                label=f"{route['name']} webhook secret",
+                value=legacy_secret,
+                kind="webhook-token",
+                notes=str(route.get("target") or "") or None,
+            )
+            await self.database.update_notification_route(
+                int(route["id"]),
+                vault_secret_id=secret.id,
+                secret_token=None,
+            )
 
     async def run_task_blueprint_now(
         self,
@@ -688,6 +910,7 @@ class OpsMeshService:
         )
 
     async def _deliver_notifications(self, event_type: str, event: dict[str, Any]) -> None:
+        await self._migrate_legacy_secret_refs()
         routes = await self.database.list_notification_routes()
         for route in routes:
             if not bool(route.get("enabled")):
@@ -698,7 +921,13 @@ class OpsMeshService:
             ):
                 continue
             try:
-                await asyncio.to_thread(self._post_webhook, route, event_type, event)
+                secret_id = route.get("vault_secret_id")
+                secret_token = (
+                    await self.vault.get_secret_value(int(secret_id))
+                    if secret_id is not None
+                    else (str(route.get("secret_token")) if route.get("secret_token") else None)
+                )
+                await asyncio.to_thread(self._post_webhook, route, event_type, event, secret_token)
                 await self.database.update_notification_route(
                     int(route["id"]),
                     last_delivery_at=utcnow(),
@@ -718,11 +947,11 @@ class OpsMeshService:
         route: dict[str, Any],
         event_type: str,
         event: dict[str, Any],
+        secret_token: str | None,
     ) -> None:
         body = json.dumps({"eventType": event_type, "payload": event}).encode("utf-8")
         headers = {"Content-Type": "application/json"}
         secret_header_name = route.get("secret_header_name")
-        secret_token = route.get("secret_token")
         if secret_header_name and secret_token:
             headers[str(secret_header_name)] = str(secret_token)
         request = Request(

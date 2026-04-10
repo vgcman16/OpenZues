@@ -95,6 +95,7 @@ class Database:
                     enabled INTEGER NOT NULL DEFAULT 1,
                     secret_header_name TEXT,
                     secret_token TEXT,
+                    vault_secret_id INTEGER,
                     last_delivery_at TEXT,
                     last_result TEXT,
                     last_error TEXT,
@@ -108,10 +109,21 @@ class Database:
                     project_id INTEGER,
                     base_url TEXT,
                     auth_scheme TEXT NOT NULL,
+                    vault_secret_id INTEGER,
                     secret_label TEXT,
                     secret_value TEXT,
                     notes TEXT,
                     enabled INTEGER NOT NULL DEFAULT 1,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS vault_secrets (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    label TEXT NOT NULL,
+                    kind TEXT NOT NULL,
+                    ciphertext TEXT NOT NULL,
+                    preview TEXT,
+                    notes TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );
@@ -218,10 +230,24 @@ class Database:
             await self._ensure_column(db, "missions", "last_reflex_kind", "TEXT")
             await self._ensure_column(db, "missions", "last_reflex_at", "TEXT")
             await self._ensure_column(db, "missions", "task_blueprint_id", "INTEGER")
+            await self._ensure_column(db, "notification_routes", "vault_secret_id", "INTEGER")
+            await self._ensure_column(db, "integrations", "vault_secret_id", "INTEGER")
             await db.execute(
                 """
                 CREATE INDEX IF NOT EXISTS idx_missions_task
                 ON missions(task_blueprint_id, id DESC)
+                """
+            )
+            await db.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_notification_routes_vault_secret
+                ON notification_routes(vault_secret_id)
+                """
+            )
+            await db.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_integrations_vault_secret
+                ON integrations(vault_secret_id)
                 """
             )
             await db.commit()
@@ -488,6 +514,7 @@ class Database:
         enabled: bool,
         secret_header_name: str | None,
         secret_token: str | None,
+        vault_secret_id: int | None,
     ) -> int:
         now = utcnow()
         async with aiosqlite.connect(self.path) as db:
@@ -501,10 +528,11 @@ class Database:
                     enabled,
                     secret_header_name,
                     secret_token,
+                    vault_secret_id,
                     created_at,
                     updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     name,
@@ -514,6 +542,7 @@ class Database:
                     int(enabled),
                     secret_header_name,
                     secret_token,
+                    vault_secret_id,
                     now,
                     now,
                 ),
@@ -548,6 +577,13 @@ class Database:
             rows = await db.execute_fetchall("SELECT * FROM integrations ORDER BY id ASC")
             return [dict(row) for row in rows]
 
+    async def get_integration(self, integration_id: int) -> dict[str, Any] | None:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute("SELECT * FROM integrations WHERE id = ?", (integration_id,))
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+
     async def create_integration(
         self,
         *,
@@ -556,6 +592,7 @@ class Database:
         project_id: int | None,
         base_url: str | None,
         auth_scheme: str,
+        vault_secret_id: int | None,
         secret_label: str | None,
         secret_value: str | None,
         notes: str | None,
@@ -571,6 +608,7 @@ class Database:
                     project_id,
                     base_url,
                     auth_scheme,
+                    vault_secret_id,
                     secret_label,
                     secret_value,
                     notes,
@@ -578,7 +616,7 @@ class Database:
                     created_at,
                     updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     name,
@@ -586,6 +624,7 @@ class Database:
                     project_id,
                     base_url,
                     auth_scheme,
+                    vault_secret_id,
                     secret_label,
                     secret_value,
                     notes,
@@ -598,9 +637,70 @@ class Database:
             assert cursor.lastrowid is not None
             return int(cursor.lastrowid)
 
+    async def update_integration(self, integration_id: int, **fields: Any) -> None:
+        if not fields:
+            return
+        fields["updated_at"] = utcnow()
+        assignments = ", ".join(f"{key} = ?" for key in fields)
+        values = list(fields.values()) + [integration_id]
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute(
+                f"UPDATE integrations SET {assignments} WHERE id = ?",
+                values,
+            )
+            await db.commit()
+
     async def delete_integration(self, integration_id: int) -> None:
         async with aiosqlite.connect(self.path) as db:
             await db.execute("DELETE FROM integrations WHERE id = ?", (integration_id,))
+            await db.commit()
+
+    async def list_vault_secrets(self) -> list[dict[str, Any]]:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            rows = await db.execute_fetchall("SELECT * FROM vault_secrets ORDER BY id ASC")
+            return [dict(row) for row in rows]
+
+    async def get_vault_secret(self, secret_id: int) -> dict[str, Any] | None:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute("SELECT * FROM vault_secrets WHERE id = ?", (secret_id,))
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+
+    async def create_vault_secret(
+        self,
+        *,
+        label: str,
+        kind: str,
+        ciphertext: str,
+        preview: str | None,
+        notes: str | None,
+    ) -> int:
+        now = utcnow()
+        async with aiosqlite.connect(self.path) as db:
+            cursor = await db.execute(
+                """
+                INSERT INTO vault_secrets (
+                    label,
+                    kind,
+                    ciphertext,
+                    preview,
+                    notes,
+                    created_at,
+                    updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (label, kind, ciphertext, preview, notes, now, now),
+            )
+            await db.commit()
+            assert cursor.lastrowid is not None
+            return int(cursor.lastrowid)
+
+    async def delete_vault_secret(self, secret_id: int) -> None:
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute("DELETE FROM vault_secrets WHERE id = ?", (secret_id,))
             await db.commit()
 
     async def list_skill_pins(self) -> list[dict[str, Any]]:

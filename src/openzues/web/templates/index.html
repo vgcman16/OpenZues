@@ -319,13 +319,43 @@
                         </p>
                       </div>
 
+                      <article class="library-card">
+                        <div class="row">
+                          <strong id="auth-posture-headline">Integration auth is idle</strong>
+                          <div class="pill-row">
+                            <span id="auth-satisfied-count" class="pill">0 satisfied</span>
+                            <span id="auth-missing-count" class="pill">0 missing</span>
+                            <span id="auth-degraded-count" class="pill">0 degraded</span>
+                          </div>
+                        </div>
+                        <div id="auth-posture-summary" class="small-muted">
+                          Add integrations to start tracking credential posture.
+                        </div>
+                      </article>
+
                       <form id="integration-form" class="stack compact-form">
                         <input name="name" type="text" placeholder="Integration name" required />
                         <input name="kind" type="text" placeholder="Kind (github, slack, db)" required />
                         <select name="project_id" id="integration-project-select"></select>
                         <input name="base_url" type="text" placeholder="Base URL (optional)" />
-                        <input name="secret_label" type="text" placeholder="Secret label" />
-                        <input name="secret_value" type="password" placeholder="Secret value (masked after save)" />
+                        <select name="auth_scheme">
+                          <option value="token">Token auth</option>
+                          <option value="basic">Basic auth</option>
+                          <option value="oauth">OAuth</option>
+                          <option value="none">No auth</option>
+                        </select>
+                        <input name="secret_label" type="text" placeholder="New secret label (optional)" />
+                        <select
+                          name="vault_secret_id"
+                          id="integration-vault-secret-select"
+                        >
+                          <option value="">Use an existing vault secret (optional)</option>
+                        </select>
+                        <input
+                          name="secret_value"
+                          type="password"
+                          placeholder="New secret value (leave blank to attach existing or none)"
+                        />
                         <textarea name="notes" placeholder="Notes for operators and missions"></textarea>
                         <label class="checkbox">
                           <input name="enabled" type="checkbox" checked />
@@ -342,42 +372,80 @@
                 <section class="subsection-panel ops-section">
                   <div class="ops-grid">
                     <section class="stack">
-                      <div class="section-header">
-                        <div>
-                          <p class="eyebrow">Notification Routes</p>
-                          <h2>Push mission and task events outward</h2>
+                      <section class="stack">
+                        <div class="section-header">
+                          <div>
+                            <p class="eyebrow">Secrets Vault</p>
+                            <h2>Store reusable credentials once</h2>
+                          </div>
+                          <p class="panel-lede">
+                            Attach these records to integrations and routes without retyping secrets.
+                          </p>
                         </div>
-                        <p class="panel-lede">
-                          Webhook routes can receive mission lifecycle and task launch events.
-                        </p>
-                      </div>
 
-                      <form id="notification-route-form" class="stack compact-form">
-                        <input name="name" type="text" placeholder="Route name" required />
-                        <input name="target" type="text" placeholder="Webhook URL" required />
-                        <input
-                          name="events"
-                          type="text"
-                          placeholder="mission/completed, mission/failed, task/*"
-                        />
-                        <input
-                          name="secret_header_name"
-                          type="text"
-                          placeholder="Optional secret header name"
-                        />
-                        <input
-                          name="secret_token"
-                          type="password"
-                          placeholder="Optional secret token"
-                        />
-                        <label class="checkbox">
-                          <input name="enabled" type="checkbox" checked />
-                          Enabled
-                        </label>
-                        <button type="submit">Save Route</button>
-                      </form>
+                        <form id="vault-secret-form" class="stack compact-form">
+                          <input name="label" type="text" placeholder="Vault secret label" required />
+                          <select name="kind">
+                            <option value="token">Token</option>
+                            <option value="api-key">API key</option>
+                            <option value="webhook-token">Webhook token</option>
+                            <option value="password">Password</option>
+                          </select>
+                          <input name="value" type="password" placeholder="Secret value" required />
+                          <textarea
+                            name="notes"
+                            placeholder="Notes for operators and future attachments"
+                          ></textarea>
+                          <button type="submit">Save Vault Secret</button>
+                        </form>
 
-                      <div id="notification-routes" class="stack library-list"></div>
+                        <div id="vault-secrets" class="stack library-list"></div>
+                      </section>
+
+                      <section class="stack">
+                        <div class="section-header">
+                          <div>
+                            <p class="eyebrow">Notification Routes</p>
+                            <h2>Push mission and task events outward</h2>
+                          </div>
+                          <p class="panel-lede">
+                            Webhook routes can receive mission lifecycle and task launch events.
+                          </p>
+                        </div>
+
+                        <form id="notification-route-form" class="stack compact-form">
+                          <input name="name" type="text" placeholder="Route name" required />
+                          <input name="target" type="text" placeholder="Webhook URL" required />
+                          <input
+                            name="events"
+                            type="text"
+                            placeholder="mission/completed, mission/failed, task/*"
+                          />
+                          <input
+                            name="secret_header_name"
+                            type="text"
+                            placeholder="Optional secret header name"
+                          />
+                          <select
+                            name="vault_secret_id"
+                            id="notification-route-vault-secret-select"
+                          >
+                            <option value="">Use an existing vault secret (optional)</option>
+                          </select>
+                          <input
+                            name="secret_token"
+                            type="password"
+                            placeholder="New secret token (leave blank to attach existing)"
+                          />
+                          <label class="checkbox">
+                            <input name="enabled" type="checkbox" checked />
+                            Enabled
+                          </label>
+                          <button type="submit">Save Route</button>
+                        </form>
+
+                        <div id="notification-routes" class="stack library-list"></div>
+                      </section>
                     </section>
 
                     <section class="stack">

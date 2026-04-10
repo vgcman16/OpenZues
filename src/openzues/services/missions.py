@@ -99,6 +99,32 @@ class MissionService:
         rows = await self.database.list_missions()
         return [await self._build_view(row) for row in rows]
 
+    def _spawn_run_now(self, mission_id: int) -> None:
+        task = asyncio.create_task(
+            self.run_now(mission_id),
+            name=f"openzues-mission-run-now-{mission_id}",
+        )
+        task.add_done_callback(
+            lambda finished_task: self._handle_run_now_result(mission_id, finished_task)
+        )
+
+    def _handle_run_now_result(self, mission_id: int, task: asyncio.Task[MissionView]) -> None:
+        try:
+            task.result()
+        except asyncio.CancelledError:
+            return
+        except ValueError as exc:
+            if str(exc) == f"Unknown mission {mission_id}":
+                logger.info("Mission %s was deleted before the async cycle finished.", mission_id)
+                return
+            logger.warning(
+                "Mission %s async cycle failed with a recoverable error.",
+                mission_id,
+                exc_info=True,
+            )
+        except Exception:
+            logger.exception("Mission %s async cycle crashed.", mission_id)
+
     async def get_view(self, mission_id: int) -> MissionView:
         mission = await self.require_mission(mission_id)
         return await self._build_view(mission)
@@ -142,11 +168,16 @@ class MissionService:
         )
         await self._publish_snapshot("mission/created", {"missionId": mission_id})
         if payload.start_immediately:
-            asyncio.create_task(self.run_now(mission_id))
+            self._spawn_run_now(mission_id)
         return await self.get_view(mission_id)
 
     async def pause(self, mission_id: int) -> MissionView:
-        await self.database.update_mission(mission_id, status="paused", phase="paused")
+        await self.database.update_mission(
+            mission_id,
+            status="paused",
+            phase="paused",
+            in_progress=0,
+        )
         await self._publish_snapshot("mission/paused", {"missionId": mission_id})
         return await self.get_view(mission_id)
 
@@ -264,7 +295,7 @@ class MissionService:
                     updates["last_error"] = None
                     max_turns = mission.get("max_turns")
                     if max_turns is None or next_completed < int(max_turns):
-                        asyncio.create_task(self.run_now(int(mission["id"])))
+                        self._spawn_run_now(int(mission["id"]))
         elif method == "thread/status/changed":
             status = params.get("status") if isinstance(params.get("status"), dict) else {}
             if status.get("type") == "idle":
@@ -857,6 +888,7 @@ class MissionService:
                 for candidate in await self.database.list_missions()
                 if int(candidate["instance_id"]) == int(mission["instance_id"])
                 and int(candidate["id"]) != mission_id
+                and str(candidate["status"]) in {"active", "blocked"}
                 and bool(candidate["in_progress"])
             ]
             if missions_for_instance:

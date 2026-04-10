@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import UTC, datetime
 
 import pytest
@@ -93,6 +94,30 @@ class FakeManager:
 
 
 @pytest.mark.asyncio
+async def test_async_run_now_cleanup_ignores_deleted_mission(caplog, tmp_path) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    service = MissionService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        poll_interval_seconds=3600,
+    )
+
+    async def missing() -> None:
+        raise ValueError("Unknown mission 99")
+
+    task = asyncio.create_task(missing())
+    with pytest.raises(ValueError):
+        await task
+
+    with caplog.at_level(logging.INFO):
+        service._handle_run_now_result(99, task)  # type: ignore[arg-type]
+
+    assert "Mission 99 was deleted before the async cycle finished." in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_run_now_creates_thread_and_turn(tmp_path) -> None:
     database = Database(tmp_path / "missions.db")
     await database.initialize()
@@ -120,6 +145,33 @@ async def test_run_now_creates_thread_and_turn(tmp_path) -> None:
     assert stored is not None
     assert stored["thread_id"] == "thread_auto_7"
     assert stored["in_progress"] == 1
+
+
+@pytest.mark.asyncio
+async def test_pause_clears_in_progress_so_lane_is_released(tmp_path) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    manager = FakeManager()
+    service = MissionService(database, manager, BroadcastHub(), poll_interval_seconds=3600)
+
+    mission = await service.create(
+        MissionCreate(
+            name="Pause me",
+            objective="Stop cleanly.",
+            instance_id=7,
+            cwd="C:/workspace",
+            start_immediately=False,
+        )
+    )
+    await database.update_mission(mission.id, in_progress=1, phase="thinking", status="active")
+
+    paused = await service.pause(mission.id)
+    stored = await database.get_mission(mission.id)
+
+    assert paused.status == "paused"
+    assert paused.in_progress is False
+    assert stored is not None
+    assert stored["in_progress"] == 0
 
 
 @pytest.mark.asyncio
