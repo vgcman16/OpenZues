@@ -21,6 +21,7 @@ from openzues.schemas import (
     DashboardContinuityPacketView,
     DashboardDoctrineView,
     DashboardDreamView,
+    DashboardEconomyView,
     DashboardInterferenceView,
     DashboardLaunchpadView,
     DashboardOpportunityView,
@@ -74,6 +75,7 @@ from openzues.services.cortex import (
     tune_draft_with_doctrine,
 )
 from openzues.services.dreams import build_dream_deck
+from openzues.services.economy import build_economy
 from openzues.services.environment import EnvironmentService
 from openzues.services.github import GitHubService
 from openzues.services.hub import BroadcastHub
@@ -975,6 +977,7 @@ def create_app(
         instances = await active_manager.list_views()
         missions = await active_mission_service.list_views()
         doctrines = build_doctrines(missions, projects)
+        economy = build_economy(missions, projects, task_blueprints, remote_requests)
         interference = build_interference(missions, projects, task_blueprints, remote_requests)
         return DashboardView(
             brief=build_brief(instances, missions, projects),
@@ -995,6 +998,7 @@ def create_app(
                 operators=operators,
                 remote_requests=remote_requests,
             ),
+            economy=economy,
             interference=interference,
             continuity=build_continuity(
                 instances,
@@ -1063,6 +1067,37 @@ def create_app(
     @fastapi_app.get("/api/dashboard")
     async def dashboard() -> DashboardView:
         return await build_dashboard()
+
+    @fastapi_app.get("/api/economy")
+    async def economy() -> DashboardEconomyView:
+        dashboard_view = await build_dashboard()
+        return dashboard_view.economy
+
+    @fastapi_app.get("/api/projects/{project_id}/economy")
+    async def project_economy(project_id: int) -> DashboardEconomyView:
+        dashboard_view = await build_dashboard()
+        scopes = [
+            scope for scope in dashboard_view.economy.scopes if scope.project_id == project_id
+        ]
+        if not scopes:
+            project_rows = await active_database.list_projects()
+            project = next((row for row in project_rows if int(row["id"]) == project_id), None)
+            if project is None:
+                raise HTTPException(status_code=404, detail="Project not found.")
+            label = str(project["label"])
+            return DashboardEconomyView(
+                headline=f"Autonomy economy is idle for {label}",
+                summary=(
+                    "No scoped mission history exists yet for this project, so there is no capital "
+                    "profile to learn from."
+                ),
+                scopes=[],
+            )
+        return DashboardEconomyView(
+            headline=dashboard_view.economy.headline,
+            summary=dashboard_view.economy.summary,
+            scopes=scopes,
+        )
 
     @fastapi_app.get("/api/interference")
     async def interference() -> DashboardInterferenceView:

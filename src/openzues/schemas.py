@@ -14,6 +14,7 @@ SignalLane = Literal["attention", "throughput", "reliability", "capacity"]
 LaunchImpact = Literal["high", "medium", "low"]
 ContinuityState = Literal["anchored", "warming", "fragile"]
 DreamStatus = Literal["forming", "ready", "fresh"]
+EconomyState = Literal["compounding", "balanced", "speculative", "leaking", "hibernating"]
 TaskStatus = Literal["idle", "due", "running", "attention", "completed", "disabled"]
 NotificationRouteKind = Literal["webhook"]
 LaunchKind = Literal[
@@ -634,6 +635,33 @@ class DashboardTaskInboxView(BaseModel):
     tasks: list[DashboardTaskView] = Field(default_factory=list)
 
 
+class DashboardEconomyScopeView(BaseModel):
+    id: str
+    project_id: int | None = None
+    scope_label: str
+    state: EconomyState
+    score: int = Field(ge=0, le=100)
+    summary: str
+    arbitrage_edge: str
+    capital_prompt: str
+    mission_count: int = 0
+    active_count: int = 0
+    checkpoint_count: int = 0
+    failure_count: int = 0
+    approval_count: int = 0
+    task_pressure_count: int = 0
+    remote_pressure_count: int = 0
+    token_burn: int = 0
+    command_burn: int = 0
+    checkpoint_efficiency: float = 0.0
+
+
+class DashboardEconomyView(BaseModel):
+    headline: str
+    summary: str
+    scopes: list[DashboardEconomyScopeView] = Field(default_factory=list)
+
+
 class RemoteRequestView(BaseModel):
     id: int
     team_id: int
@@ -756,6 +784,7 @@ class DashboardView(BaseModel):
     launchpad: DashboardLaunchpadView
     radar: DashboardRadarView
     ops_mesh: DashboardOpsMeshView
+    economy: DashboardEconomyView
     interference: DashboardInterferenceView
     continuity: DashboardContinuityView
     dream_deck: DashboardDreamDeckView

@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from openzues.app import (
     build_continuity,
     build_cortex,
+    build_economy,
     build_interference,
     build_launchpad,
     build_radar,
@@ -249,6 +250,7 @@ def test_project_creation_appears_on_dashboard(tmp_path) -> None:
     dashboard = dashboard_response.json()
     assert dashboard["brief"]["headline"]
     assert dashboard["dream_deck"]["headline"]
+    assert dashboard["economy"]["headline"]
     assert dashboard["missions"] == []
     assert dashboard["projects"][0]["label"] == "Sandbox"
     assert dashboard["playbooks"] == []
@@ -764,6 +766,140 @@ def test_build_interference_detects_remote_echo() -> None:
     interference = build_interference([], [project], [task], requests)
 
     assert any(vector.kind == "remote_echo" for vector in interference.vectors)
+
+
+def test_build_economy_marks_checkpointed_scope_as_compounding() -> None:
+    project = make_project_view(project_id=9, label="Atlas")
+    missions = [
+        make_mission_view(
+            mission_id=51,
+            name="Ship Atlas",
+            status="completed",
+            phase="completed",
+            project_id=9,
+            project_label="Atlas",
+            last_checkpoint="Milestone landed.",
+            total_tokens=18000,
+            command_count=7,
+        ),
+        make_mission_view(
+            mission_id=52,
+            name="Harden Atlas",
+            status="paused",
+            phase="paused",
+            project_id=9,
+            project_label="Atlas",
+            last_checkpoint="Verified and ready.",
+            total_tokens=12000,
+            command_count=6,
+        ),
+    ]
+    task = make_task_blueprint_view(
+        task_id=20,
+        name="Atlas upkeep",
+        project_id=9,
+        cadence_minutes=180,
+    )
+
+    economy = build_economy(missions, [project], [task], [])
+
+    assert economy.headline == "Autonomy economy is compounding"
+    assert economy.scopes[0].state == "compounding"
+    assert economy.scopes[0].project_id == 9
+
+
+def test_build_economy_marks_high_burn_scope_as_leaking() -> None:
+    project = make_project_view(project_id=10, label="Checkout")
+    mission = make_mission_view(
+        mission_id=61,
+        name="Checkout orbit",
+        status="active",
+        phase="thinking",
+        project_id=10,
+        project_label="Checkout",
+        total_tokens=76000,
+        command_count=18,
+        last_checkpoint=None,
+    )
+    remote_requests = [
+        make_remote_request_view(
+            request_id=10,
+            operator_id=1,
+            target_kind="mission",
+            target_id=61,
+        ),
+        make_remote_request_view(
+            request_id=11,
+            operator_id=2,
+            target_kind="mission",
+            target_id=61,
+            requested_at=datetime.now(UTC) - timedelta(minutes=30),
+        ),
+        make_remote_request_view(
+            request_id=12,
+            operator_id=3,
+            target_kind="mission",
+            target_id=61,
+            requested_at=datetime.now(UTC) - timedelta(minutes=10),
+        ),
+    ]
+
+    economy = build_economy([mission], [project], [], remote_requests)
+
+    assert economy.headline == "Autonomy economy is leaking"
+    assert economy.scopes[0].state == "leaking"
+    assert "compress" in economy.scopes[0].capital_prompt.lower()
+
+
+def test_dashboard_and_project_economy_endpoint_surface_scope_profile(tmp_path) -> None:
+    with make_client(tmp_path) as client:
+        project_response = client.post(
+            "/api/projects",
+            json={"path": str(tmp_path), "label": "OpenZues Workspace"},
+        )
+        project_id = project_response.json()["id"]
+        instance_response = client.post(
+            "/api/instances",
+            json={
+                "name": "Local Codex Desktop",
+                "transport": "desktop",
+                "cwd": str(tmp_path),
+                "auto_connect": False,
+            },
+        )
+        instance_id = instance_response.json()["id"]
+        client.post(
+            "/api/missions",
+            json={
+                "name": "Economy probe",
+                "objective": "Land a durable checkpoint.",
+                "instance_id": instance_id,
+                "project_id": project_id,
+                "cwd": str(tmp_path),
+                "thread_id": "thread_probe",
+                "model": "gpt-5.4",
+                "reasoning_effort": None,
+                "collaboration_mode": None,
+                "max_turns": 2,
+                "use_builtin_agents": True,
+                "run_verification": True,
+                "auto_commit": False,
+                "pause_on_approval": True,
+                "start_immediately": False,
+            },
+        )
+        dashboard_response = client.get("/api/dashboard")
+        economy_response = client.get("/api/economy")
+        project_economy_response = client.get(f"/api/projects/{project_id}/economy")
+
+    assert dashboard_response.status_code == 200
+    dashboard = dashboard_response.json()
+    assert dashboard["economy"]["headline"]
+    assert economy_response.status_code == 200
+    assert economy_response.json()["headline"]
+    assert project_economy_response.status_code == 200
+    project_economy = project_economy_response.json()
+    assert project_economy["scopes"][0]["project_id"] == project_id
 
 
 def test_dashboard_and_project_interference_endpoint_surface_scope_overlap(tmp_path) -> None:
