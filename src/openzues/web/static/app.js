@@ -549,6 +549,7 @@ function applyMissionPreset(presetId) {
   missionFormEl.querySelector('input[name="pause_on_approval"]').checked = preset.pauseOnApproval;
   missionFormEl.querySelector('input[name="allow_auto_reflexes"]').checked = true;
   missionFormEl.querySelector('input[name="auto_recover"]').checked = true;
+  missionFormEl.querySelector('input[name="allow_failover"]').checked = true;
   missionFormEl.querySelector('input[name="auto_recover_limit"]').value = 2;
   missionFormEl.querySelector('input[name="reflex_cooldown_seconds"]').value = 900;
   missionFormEl.querySelector('input[name="start_immediately"]').checked = true;
@@ -564,6 +565,7 @@ function resetMissionForm() {
   missionFormEl.querySelector('input[name="pause_on_approval"]').checked = true;
   missionFormEl.querySelector('input[name="allow_auto_reflexes"]').checked = true;
   missionFormEl.querySelector('input[name="auto_recover"]').checked = true;
+  missionFormEl.querySelector('input[name="allow_failover"]').checked = true;
   missionFormEl.querySelector('input[name="auto_recover_limit"]').value = 2;
   missionFormEl.querySelector('input[name="reflex_cooldown_seconds"]').value = 900;
   missionFormEl.querySelector('input[name="start_immediately"]').checked = true;
@@ -591,6 +593,7 @@ function applyMissionDraft(draft) {
   missionFormEl.querySelector('input[name="pause_on_approval"]').checked = !!draft.pause_on_approval;
   missionFormEl.querySelector('input[name="allow_auto_reflexes"]').checked = !!draft.allow_auto_reflexes;
   missionFormEl.querySelector('input[name="auto_recover"]').checked = !!draft.auto_recover;
+  missionFormEl.querySelector('input[name="allow_failover"]').checked = draft.allow_failover !== false;
   missionFormEl.querySelector('input[name="start_immediately"]').checked = !!draft.start_immediately;
   if (draft.instance_id != null) {
     missionInstanceSelectEl.value = String(draft.instance_id);
@@ -830,6 +833,7 @@ function renderMissions() {
                   ${booleanBadge(mission.pause_on_approval, "pause approvals")}
                   ${booleanBadge(mission.allow_auto_reflexes, "auto reflex")}
                   ${booleanBadge(mission.auto_recover, "auto recover")}
+                  ${booleanBadge(mission.allow_failover, "lane failover")}
                   ${mission.last_reflex_kind ? pill(`last ${mission.last_reflex_kind}`, "warn") : ""}
                 </div>
               </article>
@@ -1290,6 +1294,7 @@ missionFormEl.addEventListener("submit", async (event) => {
       pause_on_approval: form.get("pause_on_approval") === "on",
       allow_auto_reflexes: form.get("allow_auto_reflexes") === "on",
       auto_recover: form.get("auto_recover") === "on",
+      allow_failover: form.get("allow_failover") === "on",
       auto_recover_limit: form.get("auto_recover_limit")
         ? Number(form.get("auto_recover_limit"))
         : 2,

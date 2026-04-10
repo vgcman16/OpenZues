@@ -52,6 +52,7 @@ async def test_database_round_trip(tmp_path) -> None:
         auto_recover=True,
         auto_recover_limit=2,
         reflex_cooldown_seconds=900,
+        allow_failover=True,
     )
     await database.append_mission_checkpoint(
         mission_id=mission_id,
@@ -71,4 +72,5 @@ async def test_database_round_trip(tmp_path) -> None:
     assert events[0]["payload"]["ok"] is True
     assert playbook_id == playbooks[0]["id"]
     assert missions[0]["name"] == "Nightly builder"
+    assert missions[0]["allow_failover"] == 1
     assert checkpoints[0]["summary"] == "Verified the first milestone."

@@ -198,6 +198,7 @@ class MissionCreate(BaseModel):
     auto_recover: bool = True
     auto_recover_limit: int = Field(default=2, ge=0)
     reflex_cooldown_seconds: int = Field(default=900, ge=60)
+    allow_failover: bool = True
     start_immediately: bool = True
 
 
@@ -244,6 +245,7 @@ class MissionView(BaseModel):
     auto_recover: bool = True
     auto_recover_limit: int = 2
     reflex_cooldown_seconds: int = 900
+    allow_failover: bool = True
     in_progress: bool = False
     phase: str | None = None
     current_command: str | None = None

@@ -11,19 +11,23 @@ from openzues.services.missions import MissionService
 
 
 class FakeRuntime:
-    def __init__(self) -> None:
+    def __init__(self, instance_id: int) -> None:
+        self.instance_id = instance_id
         self.name = "Local Codex Desktop"
         self.cwd = "C:/workspace"
         self.connected = False
         self.threads: list[dict] = []
         self.unresolved_requests: list[dict] = []
+        self.models: list[dict] = []
+        self.last_event_at: str | None = None
 
 
 class FakeManager:
     def __init__(self) -> None:
-        self.instances = {7: FakeRuntime()}
+        self.instances = {7: FakeRuntime(7)}
         self.thread_calls: list[dict] = []
         self.turn_calls: list[dict] = []
+        self.fail_connect_for: set[int] = set()
 
     async def get(self, instance_id: int) -> FakeRuntime:
         runtime = self.instances.get(instance_id)
@@ -32,6 +36,8 @@ class FakeManager:
         return runtime
 
     async def connect_instance(self, instance_id: int) -> FakeRuntime:
+        if instance_id in self.fail_connect_for:
+            raise RuntimeError(f"offline lane {instance_id}")
         runtime = await self.get(instance_id)
         runtime.connected = True
         return runtime
@@ -55,8 +61,9 @@ class FakeManager:
             }
         )
         runtime = await self.get(instance_id)
-        runtime.threads = [{"id": "thread_auto", "status": {"type": "idle"}}]
-        return {"thread": {"id": "thread_auto"}}
+        thread_id = f"thread_auto_{instance_id}"
+        runtime.threads = [{"id": thread_id, "status": {"type": "idle"}}]
+        return {"thread": {"id": thread_id}}
 
     async def start_turn(
         self,
@@ -81,7 +88,7 @@ class FakeManager:
         )
         runtime = await self.get(instance_id)
         runtime.threads = [{"id": thread_id, "status": {"type": "active"}}]
-        return {"turn": {"id": "turn_auto"}}
+        return {"turn": {"id": f"turn_auto_{instance_id}"}}
 
 
 @pytest.mark.asyncio
@@ -108,7 +115,7 @@ async def test_run_now_creates_thread_and_turn(tmp_path) -> None:
     assert manager.thread_calls[0]["model"] == "gpt-5.4"
     assert "Autonomous cycle: 1" in manager.turn_calls[0]["text"]
     assert stored is not None
-    assert stored["thread_id"] == "thread_auto"
+    assert stored["thread_id"] == "thread_auto_7"
     assert stored["in_progress"] == 1
 
 
@@ -480,6 +487,72 @@ async def test_reconcile_auto_recovers_failed_mission_with_checkpoint(tmp_path) 
     assert mission["last_reflex_kind"] == "recovery_triangle"
     assert "recovery is still within budget" in manager.turn_calls[0]["text"]
     assert checkpoints[0]["kind"] == "recovery"
+
+
+@pytest.mark.asyncio
+async def test_reconcile_fails_over_offline_mission_to_idle_instance(tmp_path) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    manager = FakeManager()
+    manager.instances[7].name = "Primary Lane"
+    manager.instances[7].connected = False
+    manager.instances[7].models = [{"id": "gpt-5.4"}]
+    manager.fail_connect_for.add(7)
+    manager.instances[8] = FakeRuntime(8)
+    manager.instances[8].name = "Recovery Lane"
+    manager.instances[8].connected = True
+    manager.instances[8].models = [{"id": "gpt-5.4"}]
+    service = MissionService(database, manager, BroadcastHub(), poll_interval_seconds=3600)
+
+    mission_id = await database.create_mission(
+        name="Lane transplant",
+        objective="Keep building even if one lane drops offline.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread_primary",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=True,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+    )
+    await database.append_mission_checkpoint(
+        mission_id=mission_id,
+        thread_id="thread_primary",
+        turn_id="turn_primary",
+        kind="final_answer",
+        summary="Verified the last stable slice before the lane dropped.",
+    )
+
+    await service._reconcile_mission(mission_id)
+    mission = await database.get_mission(mission_id)
+    checkpoints = await database.list_mission_checkpoints(mission_id)
+
+    assert mission is not None
+    assert mission["instance_id"] == 8
+    assert mission["thread_id"] == "thread_auto_8"
+    assert mission["status"] == "active"
+    assert mission["phase"] == "thinking"
+    assert manager.thread_calls[0]["instance_id"] == 8
+    assert manager.turn_calls[0]["instance_id"] == 8
+    assert (
+        "taking over an OpenZues autonomous mission after lane failover"
+        in manager.turn_calls[0]["text"]
+    )
+    assert "Recent checkpoint trail:" in manager.turn_calls[0]["text"]
+    assert checkpoints[0]["kind"] == "failover"
+    assert "Primary Lane" in checkpoints[0]["summary"]
+    assert "Recovery Lane" in checkpoints[0]["summary"]
 
 
 @pytest.mark.asyncio

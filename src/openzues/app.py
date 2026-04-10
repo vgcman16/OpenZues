@@ -143,8 +143,7 @@ def build_brief(
         status = "idle"
         headline = "Control plane is connected and ready"
         summary = (
-            "Launch a mission, start a thread manually, or prepare the workspace "
-            "for the next run."
+            "Launch a mission, start a thread manually, or prepare the workspace for the next run."
         )
     else:
         status = "mixed"
@@ -246,7 +245,7 @@ def build_radar(
                 level="critical",
                 title=f"{mission.name} lost its Codex connection",
                 detail=last_error or "The mission cannot progress until its instance reconnects.",
-                action="Reconnect the instance, then run the mission again.",
+                action=mission.suggested_action,
                 mission_id=mission.id,
                 instance_id=mission.instance_id,
                 freshness_minutes=age_minutes,
@@ -275,8 +274,7 @@ def build_radar(
                 title=f"{mission.name} is queued behind another run",
                 detail=last_error
                 or (
-                    "This mission is waiting for another in-progress mission on "
-                    "the same instance."
+                    "This mission is waiting for another in-progress mission on the same instance."
                 ),
                 action=mission.suggested_action,
                 mission_id=mission.id,
@@ -319,8 +317,7 @@ def build_radar(
                     "without producing a durable checkpoint yet."
                 ),
                 action=(
-                    "Review the live commentary and checkpoint strategy before it "
-                    "keeps looping."
+                    "Review the live commentary and checkpoint strategy before it keeps looping."
                 ),
                 mission_id=mission.id,
                 instance_id=mission.instance_id,
@@ -585,8 +582,7 @@ def build_launchpad(
                 impact="high",
                 title=f"Recover {mission.name}",
                 summary=(
-                    "Re-open the path from the last failure without throwing away "
-                    "mission context."
+                    "Re-open the path from the last failure without throwing away mission context."
                 ),
                 why_now=(
                     "The mission already has thread memory and a failure checkpoint, which makes "
@@ -885,8 +881,7 @@ def create_app(
         project_rows = await active_database.list_projects()
         playbook_rows = await active_database.list_playbooks()
         projects = [
-            ProjectView.model_validate(active_project_service.inspect(row))
-            for row in project_rows
+            ProjectView.model_validate(active_project_service.inspect(row)) for row in project_rows
         ]
         playbooks = [PlaybookView.model_validate(row) for row in playbook_rows]
         events = [
@@ -936,11 +931,15 @@ def create_app(
 
     @fastapi_app.post("/api/instances")
     async def create_instance(payload: InstanceCreate) -> dict:
-        command = None if payload.transport == "desktop" else (
-            payload.command or active_settings.default_codex_command
+        command = (
+            None
+            if payload.transport == "desktop"
+            else (payload.command or active_settings.default_codex_command)
         )
-        args = None if payload.transport == "desktop" else (
-            payload.args or active_settings.default_codex_args
+        args = (
+            None
+            if payload.transport == "desktop"
+            else (payload.args or active_settings.default_codex_args)
         )
         websocket_url = payload.websocket_url if payload.transport == "websocket" else None
         runtime = await active_manager.create_instance(

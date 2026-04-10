@@ -92,6 +92,7 @@ class Database:
                     auto_recover INTEGER NOT NULL DEFAULT 1,
                     auto_recover_limit INTEGER NOT NULL DEFAULT 2,
                     reflex_cooldown_seconds INTEGER NOT NULL DEFAULT 900,
+                    allow_failover INTEGER NOT NULL DEFAULT 1,
                     in_progress INTEGER NOT NULL DEFAULT 0,
                     phase TEXT,
                     current_command TEXT,
@@ -127,33 +128,19 @@ class Database:
                     ON mission_checkpoints(mission_id, id DESC);
                 """
             )
-            await self._ensure_column(
-                db, "missions", "phase", "TEXT"
-            )
-            await self._ensure_column(
-                db, "missions", "current_command", "TEXT"
-            )
-            await self._ensure_column(
-                db, "missions", "command_count", "INTEGER NOT NULL DEFAULT 0"
-            )
-            await self._ensure_column(
-                db, "missions", "total_tokens", "INTEGER NOT NULL DEFAULT 0"
-            )
-            await self._ensure_column(
-                db, "missions", "output_tokens", "INTEGER NOT NULL DEFAULT 0"
-            )
+            await self._ensure_column(db, "missions", "phase", "TEXT")
+            await self._ensure_column(db, "missions", "current_command", "TEXT")
+            await self._ensure_column(db, "missions", "command_count", "INTEGER NOT NULL DEFAULT 0")
+            await self._ensure_column(db, "missions", "total_tokens", "INTEGER NOT NULL DEFAULT 0")
+            await self._ensure_column(db, "missions", "output_tokens", "INTEGER NOT NULL DEFAULT 0")
             await self._ensure_column(
                 db, "missions", "reasoning_tokens", "INTEGER NOT NULL DEFAULT 0"
             )
-            await self._ensure_column(
-                db, "missions", "last_commentary", "TEXT"
-            )
+            await self._ensure_column(db, "missions", "last_commentary", "TEXT")
             await self._ensure_column(
                 db, "missions", "allow_auto_reflexes", "INTEGER NOT NULL DEFAULT 1"
             )
-            await self._ensure_column(
-                db, "missions", "auto_recover", "INTEGER NOT NULL DEFAULT 1"
-            )
+            await self._ensure_column(db, "missions", "auto_recover", "INTEGER NOT NULL DEFAULT 1")
             await self._ensure_column(
                 db, "missions", "auto_recover_limit", "INTEGER NOT NULL DEFAULT 2"
             )
@@ -161,11 +148,10 @@ class Database:
                 db, "missions", "reflex_cooldown_seconds", "INTEGER NOT NULL DEFAULT 900"
             )
             await self._ensure_column(
-                db, "missions", "last_reflex_kind", "TEXT"
+                db, "missions", "allow_failover", "INTEGER NOT NULL DEFAULT 1"
             )
-            await self._ensure_column(
-                db, "missions", "last_reflex_at", "TEXT"
-            )
+            await self._ensure_column(db, "missions", "last_reflex_kind", "TEXT")
+            await self._ensure_column(db, "missions", "last_reflex_at", "TEXT")
             await db.commit()
 
     async def _ensure_column(
@@ -180,9 +166,7 @@ class Database:
         existing = {str(row["name"]) for row in rows}
         if column_name in existing:
             return
-        await db.execute(
-            f"ALTER TABLE {table_name} ADD COLUMN {column_name} {definition}"
-        )
+        await db.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {definition}")
 
     async def list_instances(self) -> list[dict[str, Any]]:
         async with aiosqlite.connect(self.path) as db:
@@ -349,6 +333,7 @@ class Database:
         auto_recover: bool,
         auto_recover_limit: int,
         reflex_cooldown_seconds: int,
+        allow_failover: bool = True,
     ) -> int:
         now = utcnow()
         async with aiosqlite.connect(self.path) as db:
@@ -374,10 +359,11 @@ class Database:
                     auto_recover,
                     auto_recover_limit,
                     reflex_cooldown_seconds,
+                    allow_failover,
                     created_at,
                     updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     name,
@@ -399,6 +385,7 @@ class Database:
                     int(auto_recover),
                     auto_recover_limit,
                     reflex_cooldown_seconds,
+                    int(allow_failover),
                     now,
                     now,
                 ),

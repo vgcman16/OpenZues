@@ -121,6 +121,7 @@ class MissionService:
             auto_recover=payload.auto_recover,
             auto_recover_limit=payload.auto_recover_limit,
             reflex_cooldown_seconds=payload.reflex_cooldown_seconds,
+            allow_failover=payload.allow_failover,
         )
         await self.database.update_mission(
             mission_id,
@@ -167,9 +168,8 @@ class MissionService:
         if not isinstance(thread_id, str) or not thread_id:
             raise ValueError("Mission needs an attached thread before you can fire a reflex.")
 
-        if (
-            mission["status"] == "blocked"
-            and str(mission.get("last_error") or "").startswith("Waiting for approval:")
+        if mission["status"] == "blocked" and str(mission.get("last_error") or "").startswith(
+            "Waiting for approval:"
         ):
             raise ValueError(
                 "Resolve the approval request before firing a reflex into this mission."
@@ -454,6 +454,246 @@ class MissionService:
 
         return None
 
+    def _runtime_supports_model(self, runtime: Any, model: str) -> bool:
+        catalog = getattr(runtime, "models", None)
+        if not isinstance(catalog, list) or not catalog:
+            return True
+        expected = model.strip().lower()
+        for item in catalog:
+            if not isinstance(item, dict):
+                continue
+            for key in ("id", "model", "displayName"):
+                value = item.get(key)
+                if isinstance(value, str) and expected in value.strip().lower():
+                    return True
+        return False
+
+    async def _pick_failover_target(
+        self,
+        mission_id: int,
+        mission: dict[str, Any],
+    ) -> Any | None:
+        live_counts: dict[int, int] = {}
+        for candidate in await self.database.list_missions():
+            instance_id = int(candidate["instance_id"])
+            if int(candidate["id"]) == mission_id:
+                continue
+            if str(candidate.get("status") or "") in {"active", "blocked"}:
+                live_counts[instance_id] = live_counts.get(instance_id, 0) + 1
+
+        scored: list[tuple[int, int, int, int, Any]] = []
+        for runtime in self.manager.instances.values():
+            if runtime.instance_id == int(mission["instance_id"]) or not runtime.connected:
+                continue
+            if live_counts.get(runtime.instance_id, 0):
+                continue
+            model_penalty = 0 if self._runtime_supports_model(runtime, str(mission["model"])) else 1
+            request_penalty = len(getattr(runtime, "unresolved_requests", []))
+            freshness = _seconds_since(getattr(runtime, "last_event_at", None))
+            freshness_penalty = 999999 if freshness is None else freshness
+            scored.append(
+                (
+                    model_penalty,
+                    request_penalty,
+                    freshness_penalty,
+                    runtime.instance_id,
+                    runtime,
+                )
+            )
+
+        if not scored:
+            return None
+
+        scored.sort(key=lambda item: item[:4])
+        return scored[0][4]
+
+    def _build_failover_prompt(
+        self,
+        mission: dict[str, Any],
+        *,
+        source_name: str,
+        target_name: str,
+        offline_error: str,
+        checkpoints: list[dict[str, Any]],
+    ) -> str:
+        instructions = [
+            "You are taking over an OpenZues autonomous mission after lane failover.",
+            f"Mission: {mission['name']}",
+            f"Source lane: {source_name}",
+            f"Recovery lane: {target_name}",
+            "",
+            "Primary objective:",
+            str(mission["objective"]),
+            "",
+            "Failover doctrine:",
+            "- Reconstruct state from the checkpoint trail before making new changes.",
+            "- Do not redo already-landed work unless verification proves it is broken.",
+            "- Verify your footing quickly, then resume the highest-leverage next step.",
+            (
+                "- End this turn with a re-entry checkpoint: recovered state, "
+                "verified facts, next move, blockers."
+            ),
+        ]
+        if bool(mission.get("use_builtin_agents")):
+            instructions.append(
+                "- Use built-in agents for bounded parallel subtasks once "
+                "you have re-established context."
+            )
+        if bool(mission.get("run_verification")):
+            instructions.append(
+                "- Run the fastest meaningful verification before broadening scope again."
+            )
+        if mission.get("cwd"):
+            instructions.append(
+                f"- Treat `{mission['cwd']}` as the primary workspace for this recovery lane."
+            )
+        instructions.extend(
+            [
+                "",
+                "Failover trigger:",
+                offline_error,
+            ]
+        )
+        if checkpoints:
+            instructions.extend(
+                [
+                    "",
+                    "Recent checkpoint trail:",
+                ]
+            )
+            for checkpoint in reversed(checkpoints):
+                summary = str(checkpoint.get("summary") or "").strip().replace("\n", " ")
+                summary = summary[:700]
+                instructions.append(f"- [{checkpoint['kind']}] {summary}")
+        elif mission.get("last_checkpoint"):
+            instructions.extend(
+                [
+                    "",
+                    "Last known checkpoint:",
+                    str(mission["last_checkpoint"]),
+                ]
+            )
+        if mission.get("last_error") and str(mission["last_error"]) != offline_error:
+            instructions.extend(
+                [
+                    "",
+                    "Recent mission issue:",
+                    str(mission["last_error"]),
+                ]
+            )
+        return "\n".join(instructions)
+
+    async def _attempt_failover(
+        self,
+        mission_id: int,
+        mission: dict[str, Any],
+        *,
+        offline_error: str,
+    ) -> bool:
+        if not bool(mission.get("allow_failover")):
+            await self.database.update_mission(
+                mission_id,
+                status="blocked",
+                phase="offline",
+                last_error=offline_error,
+            )
+            return False
+
+        target = await self._pick_failover_target(mission_id, mission)
+        if target is None:
+            await self.database.update_mission(
+                mission_id,
+                status="blocked",
+                phase="offline",
+                last_error=(
+                    f"{offline_error} No connected idle failover lane is available for "
+                    "mission transplantation."
+                ),
+            )
+            return False
+
+        source_runtime = self.manager.instances.get(int(mission["instance_id"]))
+        source_name = (
+            source_runtime.name
+            if source_runtime is not None
+            else f"Instance {mission['instance_id']}"
+        )
+        checkpoints = await self.database.list_mission_checkpoints(mission_id, limit=4)
+        try:
+            thread_result = await self.manager.start_thread(
+                target.instance_id,
+                model=str(mission["model"]),
+                cwd=mission["cwd"],
+                reasoning_effort=mission["reasoning_effort"],
+                collaboration_mode=mission["collaboration_mode"],
+            )
+        except Exception as exc:
+            await self.database.update_mission(
+                mission_id,
+                status="blocked",
+                phase="offline",
+                last_error=(f"{offline_error} Failover to {target.name} could not start: {exc}"),
+            )
+            return False
+
+        thread_id = extract_thread_id(thread_result) or extract_thread_id(
+            {"thread": thread_result.get("thread")}
+        )
+        if thread_id is None:
+            await self.database.update_mission(
+                mission_id,
+                status="blocked",
+                phase="offline",
+                last_error=(
+                    f"{offline_error} Failover to {target.name} did not return a thread ID."
+                ),
+            )
+            return False
+
+        await self.database.update_mission(
+            mission_id,
+            instance_id=target.instance_id,
+            thread_id=thread_id,
+            status="active",
+            phase="rehydrating",
+            in_progress=0,
+            last_error=None,
+            last_activity_at=utcnow(),
+        )
+        await self.database.append_mission_checkpoint(
+            mission_id=mission_id,
+            thread_id=thread_id,
+            turn_id=None,
+            kind="failover",
+            summary=f"Mission transplanted from {source_name} to {target.name}.",
+        )
+        await self._publish_snapshot(
+            "mission/failover-routed",
+            {
+                "missionId": mission_id,
+                "threadId": thread_id,
+                "sourceInstanceId": int(mission["instance_id"]),
+                "sourceInstanceName": source_name,
+                "targetInstanceId": target.instance_id,
+                "targetInstanceName": target.name,
+            },
+        )
+        refreshed = await self.require_mission(mission_id)
+        await self._start_turn_with_prompt(
+            mission_id,
+            refreshed,
+            thread_id=thread_id,
+            prompt=self._build_failover_prompt(
+                refreshed,
+                source_name=source_name,
+                target_name=target.name,
+                offline_error=offline_error,
+                checkpoints=checkpoints,
+            ),
+            event_type="mission/failover-started",
+        )
+        return True
+
     async def _start_turn_with_prompt(
         self,
         mission_id: int,
@@ -567,20 +807,20 @@ class MissionService:
                 try:
                     runtime = await self.manager.connect_instance(int(mission["instance_id"]))
                 except Exception as exc:
-                    await self.database.update_mission(
+                    if await self._attempt_failover(
                         mission_id,
-                        status="blocked",
-                        phase="offline",
-                        last_error=f"Instance is offline: {exc}",
-                    )
+                        mission,
+                        offline_error=f"Instance is offline: {exc}",
+                    ):
+                        return
                     return
             if not runtime.connected:
-                await self.database.update_mission(
+                if await self._attempt_failover(
                     mission_id,
-                    status="blocked",
-                    phase="offline",
-                    last_error="Instance is offline.",
-                )
+                    mission,
+                    offline_error="Instance is offline.",
+                ):
+                    return
                 return
 
             missions_for_instance = [
@@ -655,9 +895,8 @@ class MissionService:
                 await self.database.update_mission(mission_id, status="active", phase="ready")
                 mission["status"] = "active"
 
-            if (
+            if mission["max_turns"] and int(mission["turns_completed"]) >= int(
                 mission["max_turns"]
-                and int(mission["turns_completed"]) >= int(mission["max_turns"])
             ):
                 await self.database.update_mission(
                     mission_id,
@@ -807,6 +1046,13 @@ class MissionService:
                 return "Review the approval request and decide whether to let the mission continue."
             if last_error.startswith("Queued behind mission:"):
                 return "Finish or pause the earlier mission, then tap run now to continue this one."
+            if last_error.startswith("Instance is offline"):
+                if bool(mission.get("allow_failover")):
+                    return (
+                        "Reconnect the original lane or keep another connected idle lane available "
+                        "so OpenZues can transplant this mission."
+                    )
+                return "Reconnect the instance, then run the mission again."
             return "Inspect the blocker, then resume the mission when the path is clear."
         if str(mission.get("status")) == "failed":
             return "Inspect the failure checkpoint, adjust the mission, and run it again."
