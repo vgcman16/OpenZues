@@ -19,6 +19,7 @@ from openzues.schemas import (
     CommandCreate,
     ControlChatCreate,
     ControlChatResponse,
+    DashboardAttentionQueueView,
     DashboardBriefView,
     DashboardContinuityPacketView,
     DashboardControlChatView,
@@ -938,7 +939,13 @@ def create_app(
         await active_manager.load()
         await active_mission_service.start()
         await active_ops_mesh_service.start()
+        await active_control_chat_service.start_attention_queue(
+            build_dashboard,
+            enabled=active_settings.attention_queue_enabled,
+            poll_interval_seconds=active_settings.attention_queue_poll_interval_seconds,
+        )
         yield
+        await active_control_chat_service.close_attention_queue()
         await active_ops_mesh_service.close()
         await active_mission_service.close()
         for runtime in active_manager.instances.values():
@@ -971,6 +978,17 @@ def create_app(
             ),
             input_placeholder="Describe the next thing you want built, fixed, or verified",
             messages=[],
+        )
+
+    def empty_attention_queue_view() -> DashboardAttentionQueueView:
+        return DashboardAttentionQueueView(
+            enabled=active_settings.attention_queue_enabled,
+            headline="Attention queue is standing by",
+            summary=(
+                "Recoveries and checkpoint hardeners will auto-launch when the lane is safe to "
+                "continue."
+            ),
+            actions=[],
         )
 
     async def build_dashboard() -> DashboardView:
@@ -1007,6 +1025,7 @@ def create_app(
         dashboard_view = DashboardView(
             brief=build_brief(instances, missions, projects),
             control_chat=empty_control_chat_view(),
+            attention_queue=empty_attention_queue_view(),
             launchpad=build_launchpad(instances, missions, projects, doctrines=doctrines),
             radar=build_radar(instances, missions, projects),
             ops_mesh=build_ops_mesh(
@@ -1052,7 +1071,13 @@ def create_app(
             events=events,
         )
         return dashboard_view.model_copy(
-            update={"control_chat": await active_control_chat_service.build_view(dashboard_view)}
+            update={
+                "attention_queue": await active_control_chat_service.build_attention_queue_view(
+                    dashboard_view,
+                    enabled=active_settings.attention_queue_enabled,
+                ),
+                "control_chat": await active_control_chat_service.build_view(dashboard_view),
+            }
         )
 
     async def require_remote_operator(

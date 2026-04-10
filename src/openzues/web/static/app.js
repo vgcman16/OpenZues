@@ -275,19 +275,18 @@ function renderControlChatEntry(message) {
   const isUser = message.role === "user";
   return renderChatMessage({
     stamp: isUser ? "YOU" : "OZ",
-    lane: isUser ? "Operator" : "Zues action",
+    lane: isUser ? "Directive" : "Zues",
     tone: isUser ? "user" : "assistant",
-    title: isUser
-      ? "Directive received"
-      : message.target_label
-        ? `Handled ${message.target_label}`
-        : "Decision made",
+    compact: true,
+    title: message.content,
     meta: [
-      message.action_kind ? pill(labelizeActionKind(message.action_kind), isUser ? "" : "ok") : "",
+      !isUser && message.action_kind
+        ? pill(labelizeActionKind(message.action_kind), "ok")
+        : "",
       message.mission_id ? pill(`mission ${message.mission_id}`) : "",
+      !isUser && message.target_label ? pill(message.target_label) : "",
       `<span class="chat-age">${escapeHtml(formatRelativeTimestamp(message.created_at))}</span>`,
     ],
-    body: message.content,
   });
 }
 
@@ -295,6 +294,7 @@ function renderChatMessage({
   stamp = "OZ",
   lane = "",
   tone = "",
+  compact = false,
   title,
   meta = [],
   body = "",
@@ -305,7 +305,7 @@ function renderChatMessage({
   actions = [],
 }) {
   return `
-    <article class="chat-message ${tone ? `chat-${escapeHtml(tone)}` : ""}">
+    <article class="chat-message ${compact ? "chat-compact " : ""}${tone ? `chat-${escapeHtml(tone)}` : ""}">
       <div class="chat-avatar">${escapeHtml(stamp)}</div>
       <div class="chat-bubble">
         <div class="chat-message-head">
@@ -487,6 +487,7 @@ function renderHero() {
   const missions = state.dashboard?.missions ?? [];
   const projects = state.dashboard?.projects ?? [];
   const radarSignals = state.dashboard?.radar?.signals ?? [];
+  const attentionQueue = state.dashboard?.attention_queue;
   const connected = instances.filter((instance) => instance.connected).length;
   const approvals = instances.reduce(
     (total, instance) => total + instance.unresolved_requests.length,
@@ -509,7 +510,9 @@ function renderHero() {
     {
       label: "Attention",
       value: blockedMissions,
-      note: `${summarizeCount(approvals, "approval")} pending`,
+      note: attentionQueue?.enabled
+        ? `${summarizeCount(approvals, "approval")} pending | auto`
+        : `${summarizeCount(approvals, "approval")} pending`,
     },
     {
       label: "Projects",
@@ -641,6 +644,7 @@ function renderChat() {
 
   const brief = dashboard.brief;
   const controlChat = dashboard.control_chat;
+  const attentionQueue = dashboard.attention_queue;
   const radar = dashboard.radar;
   const launchpad = dashboard.launchpad;
   const opsMesh = dashboard.ops_mesh;
@@ -668,6 +672,7 @@ function renderChat() {
 
   chatHeadlineEl.textContent = controlChat?.headline || brief?.headline || "Control plane transcript";
   chatSummaryEl.textContent =
+    attentionQueue?.summary ||
     controlChat?.summary ||
     radar?.summary ||
     brief?.summary ||
@@ -678,11 +683,12 @@ function renderChat() {
   if (controlChatHintEl) {
     controlChatHintEl.textContent =
       controlChat?.summary ||
-      "Chat can decide when to wait, resume, recover, harden, or launch without making you work through manual action buttons first.";
+    "Chat can decide when to wait, resume, recover, harden, or launch without making you work through manual action buttons first.";
   }
   chatPresenceEl.innerHTML = [
     pill(`${connectedCount} live lanes`, connectedCount ? "ok" : ""),
     pill(`${activeMissions.length} active loops`, activeMissions.length ? "ok" : ""),
+    attentionQueue?.enabled ? pill("attention auto", "ok") : "",
     blockedMissions.length ? pill(`${blockedMissions.length} blocked`, "warn") : "",
     pendingApprovals ? pill(`${pendingApprovals} approvals`, "warn") : "",
     dueTasks ? pill(`${dueTasks} ops cues`, dueTasks > 1 ? "warn" : "ok") : "",
@@ -695,6 +701,25 @@ function renderChat() {
 
   if (controlChat?.messages?.length) {
     messages.push(...controlChat.messages.map((message) => renderControlChatEntry(message)));
+  }
+
+  if (attentionQueue?.actions?.length) {
+    const latestAction = attentionQueue.actions[attentionQueue.actions.length - 1];
+    messages.push(
+      renderChatMessage({
+        stamp: "AQ",
+        lane: "Attention queue",
+        tone: latestAction.status === "executed" ? "ok" : "warn",
+        compact: true,
+        title: attentionQueue.headline,
+        meta: [
+          pill(latestAction.status, latestAction.status === "executed" ? "ok" : "warn"),
+          latestAction.action_kind ? pill(labelizeActionKind(latestAction.action_kind)) : "",
+          `<span class="chat-age">${escapeHtml(formatRelativeTimestamp(latestAction.created_at))}</span>`,
+        ],
+        body: attentionQueue.summary,
+      }),
+    );
   }
 
   if (brief) {
@@ -1119,7 +1144,7 @@ function renderRadar() {
   }
 
   const titles = {
-    hot: "Attention queue is active",
+    hot: "Autonomous attention queue is active",
     watch: "A few loops need steering",
     steady: "Autonomy lanes are stable",
   };
@@ -2331,6 +2356,7 @@ function renderDiagnostics() {
 
 function renderShellChrome() {
   const opsMesh = state.dashboard?.ops_mesh;
+  const missions = state.dashboard?.missions ?? [];
   const tasks = opsMesh?.task_inbox?.tasks ?? [];
   const remoteRequests = opsMesh?.remote_requests ?? [];
   const routes = opsMesh?.notification_routes ?? [];

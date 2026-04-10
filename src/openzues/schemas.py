@@ -52,6 +52,7 @@ ControlChatActionKind = Literal[
     "create_mission",
     "unavailable",
 ]
+AttentionQueueActionStatus = Literal["executed", "escalated", "observed"]
 
 
 class InstanceCreate(BaseModel):
@@ -220,6 +221,21 @@ class ControlChatResponse(BaseModel):
     assistant: ControlChatMessageView
     action_kind: ControlChatActionKind
     executed: bool
+
+
+class AttentionQueueActionView(BaseModel):
+    id: int
+    signal_id: str
+    signal_fingerprint: str
+    signal_level: SignalLevel
+    mission_id: int | None = None
+    opportunity_id: str | None = None
+    target_label: str | None = None
+    action_kind: ControlChatActionKind
+    status: AttentionQueueActionStatus
+    summary: str | None = None
+    created_at: datetime
+    updated_at: datetime
 
 
 class PlaybookCreate(BaseModel):
@@ -818,9 +834,17 @@ class DashboardControlChatView(BaseModel):
     messages: list[ControlChatMessageView] = Field(default_factory=list)
 
 
+class DashboardAttentionQueueView(BaseModel):
+    enabled: bool = True
+    headline: str
+    summary: str
+    actions: list[AttentionQueueActionView] = Field(default_factory=list)
+
+
 class DashboardView(BaseModel):
     brief: DashboardBriefView
     control_chat: DashboardControlChatView
+    attention_queue: DashboardAttentionQueueView
     launchpad: DashboardLaunchpadView
     radar: DashboardRadarView
     ops_mesh: DashboardOpsMeshView

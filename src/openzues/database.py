@@ -87,6 +87,24 @@ class Database:
                 );
                 CREATE INDEX IF NOT EXISTS idx_control_chat_messages_created
                     ON control_chat_messages(id DESC);
+                CREATE TABLE IF NOT EXISTS attention_queue_actions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    signal_id TEXT NOT NULL,
+                    signal_fingerprint TEXT NOT NULL,
+                    signal_level TEXT NOT NULL,
+                    mission_id INTEGER,
+                    opportunity_id TEXT,
+                    target_label TEXT,
+                    action_kind TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    summary TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_attention_queue_actions_signal
+                    ON attention_queue_actions(signal_fingerprint, id DESC);
+                CREATE INDEX IF NOT EXISTS idx_attention_queue_actions_created
+                    ON attention_queue_actions(id DESC);
                 CREATE TABLE IF NOT EXISTS server_requests (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     instance_id INTEGER NOT NULL,
@@ -1253,6 +1271,89 @@ class Database:
                 """
                 SELECT *
                 FROM control_chat_messages
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (limit,),
+            )
+            return list(reversed([dict(row) for row in rows]))
+
+    async def append_attention_queue_action(
+        self,
+        *,
+        signal_id: str,
+        signal_fingerprint: str,
+        signal_level: str,
+        action_kind: str,
+        status: str,
+        mission_id: int | None = None,
+        opportunity_id: str | None = None,
+        target_label: str | None = None,
+        summary: str | None = None,
+    ) -> int:
+        now = utcnow()
+        async with aiosqlite.connect(self.path) as db:
+            cursor = await db.execute(
+                """
+                INSERT INTO attention_queue_actions (
+                    signal_id,
+                    signal_fingerprint,
+                    signal_level,
+                    mission_id,
+                    opportunity_id,
+                    target_label,
+                    action_kind,
+                    status,
+                    summary,
+                    created_at,
+                    updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    signal_id,
+                    signal_fingerprint,
+                    signal_level,
+                    mission_id,
+                    opportunity_id,
+                    target_label,
+                    action_kind,
+                    status,
+                    summary,
+                    now,
+                    now,
+                ),
+            )
+            await db.commit()
+            assert cursor.lastrowid is not None
+            return int(cursor.lastrowid)
+
+    async def get_latest_attention_queue_action(
+        self,
+        signal_fingerprint: str,
+    ) -> dict[str, Any] | None:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                """
+                SELECT *
+                FROM attention_queue_actions
+                WHERE signal_fingerprint = ?
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (signal_fingerprint,),
+            )
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+
+    async def list_attention_queue_actions(self, *, limit: int = 24) -> list[dict[str, Any]]:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            rows = await db.execute_fetchall(
+                """
+                SELECT *
+                FROM attention_queue_actions
                 ORDER BY id DESC
                 LIMIT ?
                 """,

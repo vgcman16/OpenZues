@@ -23,15 +23,21 @@ from openzues.schemas import (
     RemoteRequestView,
     TaskBlueprintView,
 )
-from openzues.services.control_chat import plan_control_chat
+from openzues.services.control_chat import plan_attention_queue, plan_control_chat
 from openzues.services.dreams import build_dream_deck
 from openzues.settings import Settings
 
 
-def make_client(tmp_path, *, client_host: str = "testclient"):
+def make_client(
+    tmp_path,
+    *,
+    client_host: str = "testclient",
+    attention_queue_enabled: bool = True,
+):
     app_settings = Settings(
         data_dir=tmp_path / "data",
         db_path=tmp_path / "data" / "openzues-test.db",
+        attention_queue_enabled=attention_queue_enabled,
     )
     app = create_app(app_settings)
     return TestClient(app, client=(client_host, 50000))
@@ -255,6 +261,12 @@ def make_dashboard_view(
                 "summary": "Chat summary",
                 "input_placeholder": "Describe the next thing",
                 "messages": [],
+            },
+            "attention_queue": {
+                "enabled": True,
+                "headline": "Attention queue is standing by",
+                "summary": "Queue summary",
+                "actions": [],
             },
             "launchpad": {
                 "headline": "Launchpad ready",
@@ -566,6 +578,153 @@ def test_control_chat_builds_new_mission_from_freeform_request() -> None:
     assert decision.mission_payload.instance_id == 1
     assert decision.mission_payload.project_id == 3
     assert decision.mission_payload.start_immediately is True
+
+
+def test_attention_queue_plans_recovery_from_failed_signal() -> None:
+    failed = make_mission_view(
+        mission_id=61,
+        name="Vault Mesh Finish",
+        status="failed",
+        phase="failed",
+        project_id=11,
+        project_label="OpenZues",
+        last_checkpoint="Checkpoint exists",
+        last_error="thread not found",
+    )
+    dashboard = make_dashboard_view(
+        instances=[make_instance_view()],
+        missions=[failed],
+        projects=[make_project_view(project_id=11, label="OpenZues")],
+        opportunities=[
+            {
+                "id": "recover-61",
+                "kind": "recovery_run",
+                "impact": "high",
+                "title": "Recover Vault Mesh Finish",
+                "summary": "Resume from the failure checkpoint.",
+                "why_now": "The failure already has thread context.",
+                "action_label": "Recover run",
+                "mission_draft": {
+                    "name": "Recover Vault Mesh Finish",
+                    "objective": "Recover from the failure and verify it.",
+                    "instance_id": 1,
+                    "project_id": 11,
+                    "task_blueprint_id": None,
+                    "cwd": "C:/workspace",
+                    "thread_id": "thread_61",
+                    "model": "gpt-5.4",
+                    "reasoning_effort": None,
+                    "collaboration_mode": None,
+                    "max_turns": 3,
+                    "use_builtin_agents": True,
+                    "run_verification": True,
+                    "auto_commit": False,
+                    "pause_on_approval": True,
+                    "allow_auto_reflexes": True,
+                    "auto_recover": True,
+                    "auto_recover_limit": 2,
+                    "reflex_cooldown_seconds": 900,
+                    "allow_failover": True,
+                    "start_immediately": True,
+                },
+            }
+        ],
+    )
+    dashboard = dashboard.model_copy(
+        update={
+            "radar": build_radar(
+                dashboard.instances,
+                dashboard.missions,
+                dashboard.projects,
+            ),
+            "launchpad": build_launchpad(
+                dashboard.instances,
+                dashboard.missions,
+                dashboard.projects,
+            ),
+        }
+    )
+
+    decision = plan_attention_queue(dashboard)
+
+    assert decision is not None
+    assert decision.action_kind == "launch_opportunity"
+    assert decision.opportunity_id == "recover-61"
+    assert decision.mission_payload is not None
+    assert decision.status == "executed"
+
+
+def test_attention_queue_escalates_approval_once(tmp_path) -> None:
+    with make_client(tmp_path, attention_queue_enabled=False) as client:
+        instance_response = client.post(
+            "/api/instances",
+            json={
+                "name": "Local Codex Desktop",
+                "transport": "desktop",
+                "cwd": str(tmp_path),
+                "auto_connect": False,
+            },
+        )
+        project_response = client.post(
+            "/api/projects",
+            json={"path": str(tmp_path), "label": "Sandbox"},
+        )
+
+        assert instance_response.status_code == 200
+        project_id = project_response.json()["id"]
+        database = client.app.state.database
+
+        mission_id = asyncio.run(
+            database.create_mission(
+                name="Approval Bound Mission",
+                objective="Wait for approval.",
+                status="blocked",
+                instance_id=1,
+                project_id=project_id,
+                task_blueprint_id=None,
+                thread_id="thread-approval",
+                cwd=str(tmp_path),
+                model="gpt-5.4",
+                reasoning_effort=None,
+                collaboration_mode=None,
+                max_turns=2,
+                use_builtin_agents=True,
+                run_verification=True,
+                auto_commit=False,
+                pause_on_approval=True,
+                allow_auto_reflexes=True,
+                auto_recover=True,
+                auto_recover_limit=2,
+                reflex_cooldown_seconds=900,
+                allow_failover=True,
+            )
+        )
+        asyncio.run(
+            database.update_mission(
+                mission_id,
+                phase="approval",
+                last_error="Waiting for approval: shell_command",
+                last_activity_at=datetime.now(UTC).isoformat(),
+            )
+        )
+
+        dashboard = DashboardView.model_validate(client.get("/api/dashboard").json())
+        acted_once = asyncio.run(
+            client.app.state.control_chat_service.tick_attention_queue(dashboard)
+        )
+        dashboard = DashboardView.model_validate(client.get("/api/dashboard").json())
+        acted_twice = asyncio.run(
+            client.app.state.control_chat_service.tick_attention_queue(dashboard)
+        )
+        actions = asyncio.run(database.list_attention_queue_actions())
+        messages = asyncio.run(database.list_control_chat_messages())
+
+    assert acted_once is True
+    assert acted_twice is False
+    assert len(actions) == 1
+    assert actions[0]["status"] == "escalated"
+    assert "approval gate" in actions[0]["summary"]
+    assert messages[-1]["action_kind"] == "blocked"
 
 
 def test_control_chat_endpoint_persists_wait_messages(tmp_path) -> None:

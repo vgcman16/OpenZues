@@ -1,21 +1,30 @@
 from __future__ import annotations
 
+import asyncio
+import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from openzues.database import Database, utcnow
 from openzues.schemas import (
+    AttentionQueueActionStatus,
+    AttentionQueueActionView,
     ControlChatActionKind,
     ControlChatMessageView,
     ControlChatResponse,
+    DashboardAttentionQueueView,
     DashboardControlChatView,
     DashboardOpportunityView,
+    DashboardSignalView,
     DashboardView,
     MissionCreate,
     MissionView,
 )
 from openzues.services.hub import BroadcastHub
 from openzues.services.missions import MissionService
+
+logger = logging.getLogger(__name__)
 
 CONTINUE_PHRASES = (
     "continue",
@@ -202,6 +211,84 @@ def _find_opportunity(
         if match is not None:
             return match
     return opportunities[0] if opportunities else None
+
+
+def _find_mission(dashboard: DashboardView, mission_id: int | None) -> MissionView | None:
+    if mission_id is None:
+        return None
+    return next((mission for mission in dashboard.missions if mission.id == mission_id), None)
+
+
+def _find_signal_mission_fingerprint(
+    signal: DashboardSignalView,
+    dashboard: DashboardView,
+) -> str:
+    mission = _find_mission(dashboard, signal.mission_id)
+    if mission is not None:
+        return "|".join(
+            [
+                signal.id,
+                mission.status,
+                str(mission.phase or ""),
+                str(mission.last_error or ""),
+                str(mission.last_checkpoint or ""),
+                mission.updated_at.isoformat(),
+            ]
+        )
+    return "|".join(
+        [
+            signal.id,
+            signal.level,
+            str(signal.detail or ""),
+            str(signal.action or ""),
+        ]
+    )
+
+
+def _find_signal_opportunity(
+    dashboard: DashboardView,
+    signal: DashboardSignalView,
+    *,
+    kind: str,
+) -> DashboardOpportunityView | None:
+    if signal.mission_id is not None:
+        exact_id = (
+            f"recover-{signal.mission_id}"
+            if kind == "recovery_run"
+            else f"harden-{signal.mission_id}"
+        )
+        direct = next(
+            (
+                opportunity
+                for opportunity in dashboard.launchpad.opportunities
+                if opportunity.kind == kind and opportunity.id == exact_id
+            ),
+            None,
+        )
+        if direct is not None:
+            return direct
+    return next(
+        (
+            opportunity
+            for opportunity in dashboard.launchpad.opportunities
+            if opportunity.kind == kind
+        ),
+        None,
+    )
+
+
+@dataclass(slots=True)
+class AttentionQueuePlan:
+    signal_id: str
+    signal_fingerprint: str
+    signal_level: str
+    action_kind: ControlChatActionKind
+    status: AttentionQueueActionStatus
+    reply: str
+    mission_id: int | None = None
+    opportunity_id: str | None = None
+    target_label: str | None = None
+    mission_payload: MissionCreate | None = None
 
 
 @dataclass(slots=True)
@@ -425,6 +512,161 @@ def plan_control_chat(prompt: str, dashboard: DashboardView) -> ControlChatPlan:
     )
 
 
+def plan_attention_queue(dashboard: DashboardView) -> AttentionQueuePlan | None:
+    active_in_progress = any(
+        mission.status == "active" and mission.in_progress for mission in dashboard.missions
+    )
+    actionable_signals = list(dashboard.radar.signals)
+
+    approval_signal = next(
+        (
+            signal
+            for signal in actionable_signals
+            if signal.mission_id is not None and signal.id.endswith("-approval")
+        ),
+        None,
+    )
+    if approval_signal is not None:
+        mission = _find_mission(dashboard, approval_signal.mission_id)
+        target_label = mission.name if mission is not None else approval_signal.title
+        return AttentionQueuePlan(
+            signal_id=approval_signal.id,
+            signal_fingerprint=_find_signal_mission_fingerprint(approval_signal, dashboard),
+            signal_level=approval_signal.level,
+            action_kind="blocked",
+            status="escalated",
+            mission_id=approval_signal.mission_id,
+            target_label=target_label,
+            reply=(
+                f"I left `{target_label}` paused because it is waiting on an approval gate. "
+                "The autonomous queue will not guess its way through irreversible actions."
+            ),
+        )
+
+    orphan_approval_signal = next(
+        (
+            signal
+            for signal in actionable_signals
+            if signal.id.endswith("orphan-approval")
+        ),
+        None,
+    )
+    if orphan_approval_signal is not None:
+        return AttentionQueuePlan(
+            signal_id=orphan_approval_signal.id,
+            signal_fingerprint=_find_signal_mission_fingerprint(orphan_approval_signal, dashboard),
+            signal_level=orphan_approval_signal.level,
+            action_kind="observe",
+            status="escalated",
+            mission_id=orphan_approval_signal.mission_id,
+            target_label=orphan_approval_signal.title,
+            reply=(
+                "I found an approval request outside the tracked mission set, so I surfaced it "
+                "instead of auto-approving or inventing a thread attachment."
+            ),
+        )
+
+    if active_in_progress:
+        return None
+
+    for signal in actionable_signals:
+        if signal.mission_id is not None and signal.id.endswith("-failed"):
+            recovery = _find_signal_opportunity(dashboard, signal, kind="recovery_run")
+            mission = _find_mission(dashboard, signal.mission_id)
+            target_label = recovery.title if recovery is not None else (
+                mission.name if mission is not None else signal.title
+            )
+            if recovery is not None:
+                return AttentionQueuePlan(
+                    signal_id=signal.id,
+                    signal_fingerprint=_find_signal_mission_fingerprint(signal, dashboard),
+                    signal_level=signal.level,
+                    action_kind="launch_opportunity",
+                    status="executed",
+                    mission_id=signal.mission_id,
+                    opportunity_id=recovery.id,
+                    target_label=target_label,
+                    mission_payload=MissionCreate.model_validate(
+                        recovery.mission_draft.model_dump()
+                    ),
+                    reply=(
+                        f"I launched `{target_label}` from the attention queue because the failed "
+                        "cycle already has enough context for a tighter recovery pass."
+                    ),
+                )
+            return AttentionQueuePlan(
+                signal_id=signal.id,
+                signal_fingerprint=_find_signal_mission_fingerprint(signal, dashboard),
+                signal_level=signal.level,
+                action_kind="observe",
+                status="escalated",
+                mission_id=signal.mission_id,
+                target_label=target_label,
+                reply=(
+                    f"`{target_label}` failed, but there is no safe recovery draft yet. I held "
+                    "the queue instead of retrying blindly."
+                ),
+            )
+
+        if signal.mission_id is not None and signal.id.endswith("-handoff"):
+            hardener = _find_signal_opportunity(dashboard, signal, kind="checkpoint_hardener")
+            mission = _find_mission(dashboard, signal.mission_id)
+            target_label = hardener.title if hardener is not None else (
+                mission.name if mission is not None else signal.title
+            )
+            if hardener is not None:
+                return AttentionQueuePlan(
+                    signal_id=signal.id,
+                    signal_fingerprint=_find_signal_mission_fingerprint(signal, dashboard),
+                    signal_level=signal.level,
+                    action_kind="launch_opportunity",
+                    status="executed",
+                    mission_id=signal.mission_id,
+                    opportunity_id=hardener.id,
+                    target_label=target_label,
+                    mission_payload=MissionCreate.model_validate(
+                        hardener.mission_draft.model_dump()
+                    ),
+                    reply=(
+                        f"I launched `{target_label}` from the attention queue so the finished "
+                        "checkpoint gets hardened automatically instead of waiting for a manual "
+                        "button click."
+                    ),
+                )
+            return AttentionQueuePlan(
+                signal_id=signal.id,
+                signal_fingerprint=_find_signal_mission_fingerprint(signal, dashboard),
+                signal_level=signal.level,
+                action_kind="observe",
+                status="observed",
+                mission_id=signal.mission_id,
+                target_label=target_label,
+                reply=(
+                    f"`{target_label}` has a ready checkpoint, but there is no hardening draft "
+                    "attached yet."
+                ),
+            )
+
+        if signal.mission_id is not None and signal.id.endswith("-quiet"):
+            mission = _find_mission(dashboard, signal.mission_id)
+            target_label = mission.name if mission is not None else signal.title
+            return AttentionQueuePlan(
+                signal_id=signal.id,
+                signal_fingerprint=_find_signal_mission_fingerprint(signal, dashboard),
+                signal_level=signal.level,
+                action_kind="run_mission",
+                status="executed",
+                mission_id=signal.mission_id,
+                target_label=target_label,
+                reply=(
+                    f"I nudged `{target_label}` into another cycle because the lane went quiet "
+                    "without closing the loop."
+                ),
+            )
+
+    return None
+
+
 class ControlChatService:
     def __init__(
         self,
@@ -435,6 +677,36 @@ class ControlChatService:
         self.database = database
         self.missions = missions
         self.hub = hub
+        self._attention_task: asyncio.Task[None] | None = None
+        self._attention_stop_event = asyncio.Event()
+
+    async def start_attention_queue(
+        self,
+        dashboard_loader: Callable[[], Awaitable[DashboardView]],
+        *,
+        enabled: bool = True,
+        poll_interval_seconds: float = 30.0,
+    ) -> None:
+        if not enabled or self._attention_task is not None:
+            return
+        self._attention_stop_event.clear()
+        self._attention_task = asyncio.create_task(
+            self._attention_queue_loop(
+                dashboard_loader,
+                poll_interval_seconds=poll_interval_seconds,
+            ),
+            name="openzues-attention-queue",
+        )
+
+    async def close_attention_queue(self) -> None:
+        self._attention_stop_event.set()
+        if self._attention_task is not None:
+            self._attention_task.cancel()
+            try:
+                await self._attention_task
+            except asyncio.CancelledError:
+                pass
+            self._attention_task = None
 
     async def build_view(
         self,
@@ -446,6 +718,7 @@ class ControlChatService:
             ControlChatMessageView.model_validate(row)
             for row in await self.database.list_control_chat_messages(limit=limit)
         ]
+        attention_queue = getattr(dashboard, "attention_queue", None)
         active_running = sum(
             1
             for mission in dashboard.missions
@@ -460,6 +733,15 @@ class ControlChatService:
             )
             placeholder = (
                 "Try: keep going, status, recover the failed run, or harden the finished one"
+            )
+        elif attention_queue is not None and attention_queue.enabled:
+            headline = "Chat steers while the attention queue keeps momentum alive"
+            summary = (
+                "Zues can auto-recover failed runs, harden finished checkpoints, and escalate "
+                "approval gates into the transcript without waiting for manual launch buttons."
+            )
+            placeholder = (
+                "Try: continue building, status, recover the failed run, or give me a new goal"
             )
         elif ready_moves:
             headline = "Describe the next outcome and Zues will pick the move"
@@ -483,6 +765,46 @@ class ControlChatService:
             summary=summary,
             input_placeholder=placeholder,
             messages=messages,
+        )
+
+    async def build_attention_queue_view(
+        self,
+        dashboard: DashboardView,
+        *,
+        enabled: bool,
+        limit: int = 8,
+    ) -> DashboardAttentionQueueView:
+        actions = [
+            AttentionQueueActionView.model_validate(row)
+            for row in await self.database.list_attention_queue_actions(limit=limit)
+        ]
+        critical = sum(signal.level == "critical" for signal in dashboard.radar.signals)
+        if not enabled:
+            headline = "Attention queue is manual"
+            summary = "Autonomous follow-through is disabled, so Zues will only suggest actions."
+        elif critical:
+            headline = "Attention queue is autonomous"
+            summary = (
+                f"Zues is actively auto-routing recoveries and hardening passes while leaving "
+                f"{critical} critical human-risk signal{'s' if critical != 1 else ''} explicit."
+            )
+        elif actions:
+            headline = "Attention queue is keeping momentum"
+            summary = (
+                "Recent recoveries, hardeners, and queue nudges are being logged directly into the "
+                "transcript."
+            )
+        else:
+            headline = "Attention queue is standing by"
+            summary = (
+                "Recoveries and checkpoint hardeners will auto-launch from the transcript when the "
+                "lane is safe to continue."
+            )
+        return DashboardAttentionQueueView(
+            enabled=enabled,
+            headline=headline,
+            summary=summary,
+            actions=actions,
         )
 
     async def submit(self, prompt: str, dashboard: DashboardView) -> ControlChatResponse:
@@ -538,6 +860,88 @@ class ControlChatService:
             action_kind=plan.action_kind,
             executed=executed,
         )
+
+    async def tick_attention_queue(self, dashboard: DashboardView) -> bool:
+        plan = plan_attention_queue(dashboard)
+        if plan is None:
+            return False
+
+        latest = await self.database.get_latest_attention_queue_action(plan.signal_fingerprint)
+        if latest is not None:
+            return False
+
+        executed = False
+        mission_id = plan.mission_id
+        target_label = plan.target_label
+
+        if plan.action_kind == "run_mission" and plan.mission_id is not None:
+            mission = await self.missions.run_now(plan.mission_id)
+            executed = True
+            mission_id = mission.id
+            target_label = mission.name
+        elif (
+            plan.action_kind == "launch_opportunity"
+            and plan.mission_payload is not None
+        ):
+            mission = await self.missions.create(plan.mission_payload)
+            executed = True
+            mission_id = mission.id
+            target_label = mission.name
+
+        assistant_message = await self._append_message(
+            role="assistant",
+            content=plan.reply,
+            action_kind=plan.action_kind,
+            mission_id=mission_id,
+            opportunity_id=plan.opportunity_id,
+            target_label=target_label,
+        )
+        await self.database.append_attention_queue_action(
+            signal_id=plan.signal_id,
+            signal_fingerprint=plan.signal_fingerprint,
+            signal_level=plan.signal_level,
+            mission_id=plan.mission_id,
+            opportunity_id=plan.opportunity_id,
+            target_label=target_label,
+            action_kind=plan.action_kind,
+            status=plan.status,
+            summary=assistant_message.content,
+        )
+        await self.hub.publish(
+            {
+                "type": "attention-queue/acted",
+                "createdAt": utcnow(),
+                "signalId": plan.signal_id,
+                "actionKind": plan.action_kind,
+                "status": plan.status,
+                "missionId": mission_id,
+                "executed": executed,
+                "targetLabel": target_label,
+            }
+        )
+        return True
+
+    async def _attention_queue_loop(
+        self,
+        dashboard_loader: Callable[[], Awaitable[DashboardView]],
+        *,
+        poll_interval_seconds: float,
+    ) -> None:
+        while not self._attention_stop_event.is_set():
+            try:
+                dashboard = await dashboard_loader()
+                await self.tick_attention_queue(dashboard)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("Attention queue loop crashed")
+            try:
+                await asyncio.wait_for(
+                    self._attention_stop_event.wait(),
+                    timeout=poll_interval_seconds,
+                )
+            except TimeoutError:
+                continue
 
     async def _append_message(
         self,

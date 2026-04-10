@@ -92,6 +92,17 @@ async def test_database_round_trip(tmp_path) -> None:
         result={"summary": "Mission created."},
         resolved_at="2026-04-10T00:01:00+00:00",
     )
+    attention_action_id = await database.append_attention_queue_action(
+        signal_id="mission-1-failed",
+        signal_fingerprint="mission-1-failed|failed|thread not found",
+        signal_level="critical",
+        mission_id=mission_id,
+        opportunity_id="recover-1",
+        target_label="Recover Nightly builder",
+        action_kind="launch_opportunity",
+        status="executed",
+        summary="Launched recovery from the attention queue.",
+    )
 
     instances = await database.list_instances()
     teams = await database.list_teams()
@@ -101,6 +112,7 @@ async def test_database_round_trip(tmp_path) -> None:
     missions = await database.list_missions()
     checkpoints = await database.list_mission_checkpoints(mission_id)
     remote_requests = await database.list_remote_requests()
+    attention_actions = await database.list_attention_queue_actions()
 
     assert instances[0]["name"] == "Local Codex"
     assert teams[0]["slug"] == "remote-ops"
@@ -113,3 +125,5 @@ async def test_database_round_trip(tmp_path) -> None:
     assert remote_request_id == remote_requests[0]["id"]
     assert remote_requests[0]["payload"]["name"] == "Nightly builder"
     assert remote_requests[0]["result"]["summary"] == "Mission created."
+    assert attention_action_id == attention_actions[0]["id"]
+    assert attention_actions[0]["target_label"] == "Recover Nightly builder"
