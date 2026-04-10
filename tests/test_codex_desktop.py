@@ -76,7 +76,29 @@ def test_resolve_launch_stages_binary_without_windowsapps_dependency(tmp_path, m
 
     assert staged_path.exists()
     assert staged_path.read_bytes() == executable.read_bytes()
-    assert launch.args == "app-server"
+    assert launch.args == "-a never -s workspace-write app-server"
     assert "Staged from" in launch.note
+    assert "sandbox workspace-write" in launch.note
+    assert "approval never" in launch.note
     metadata = json.loads((staged_path.parent / "metadata.json").read_text(encoding="utf-8"))
     assert metadata["source_path"] == str(executable.resolve())
+
+
+def test_resolve_launch_respects_custom_execution_policy(tmp_path, monkeypatch) -> None:
+    packages_root = tmp_path / "packages"
+    runtime_root = tmp_path / "runtime"
+    write_desktop_package(packages_root, "26.406.3494.0", contents=b"binary")
+    service = CodexDesktopService(
+        runtime_root=runtime_root,
+        package_root=packages_root,
+        logs_root=tmp_path / "logs",
+        approval_policy="on-request",
+        sandbox_mode="danger-full-access",
+    )
+    monkeypatch.setattr(service, "probe_executable", lambda _: "codex-cli 0.119.0-alpha.11")
+
+    launch = service.resolve_launch()
+
+    assert launch.args == "-a on-request -s danger-full-access app-server"
+    assert launch.approval_policy == "on-request"
+    assert launch.sandbox_mode == "danger-full-access"

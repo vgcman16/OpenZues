@@ -35,9 +35,10 @@ dev = [
 
 [project.scripts]
 openzues = "openzues.cli:app"
+forumforge = "forumforge.cli:app"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/openzues"]
+packages = ["src/openzues", "src/forumforge"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

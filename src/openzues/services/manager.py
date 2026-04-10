@@ -9,7 +9,7 @@ from typing import Any, Literal, cast
 from openzues.database import Database, utcnow
 from openzues.schemas import InstanceView, TransportType
 from openzues.services.codex_desktop import CodexDesktopService
-from openzues.services.codex_rpc import CodexAppServerClient
+from openzues.services.codex_rpc import CodexAppServerClient, extract_turn_id
 from openzues.services.hub import BroadcastHub
 
 logger = logging.getLogger(__name__)
@@ -56,7 +56,7 @@ def _summarize_threads(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
         summary = _pick_fields(item, ("id", "title", "name", "updatedAt"))
         status = item.get("status")
         if isinstance(status, dict):
-            summary["status"] = _pick_fields(status, ("type",))
+            summary["status"] = _pick_fields(status, ("type", "turnId", "activeTurnId"))
         summarized.append(summary)
     return summarized
 
@@ -411,7 +411,17 @@ class RuntimeManager:
         )
         raw_config = (await client.call("config/read", {"includeLayers": False})).get("config")
         runtime.config = (
-            _pick_fields(raw_config, ("model", "model_reasoning_effort", "profile"))
+            _pick_fields(
+                raw_config,
+                (
+                    "model",
+                    "model_reasoning_effort",
+                    "profile",
+                    "sandbox",
+                    "approvalPolicy",
+                    "approval_policy",
+                ),
+            )
             if isinstance(raw_config, dict)
             else None
         )
@@ -479,7 +489,12 @@ class RuntimeManager:
         runtime = await self.get(instance_id)
         if runtime.client is None:
             raise RuntimeError("Instance is not connected.")
-        result = await runtime.client.interrupt_turn(thread_id=thread_id)
+        turn_id = self._turn_id_from_runtime(runtime, thread_id)
+        if turn_id is None:
+            turn_id = await self._turn_id_from_events(instance_id, thread_id)
+        if turn_id is None:
+            raise RuntimeError(f"No active turn ID found for thread {thread_id}.")
+        result = await runtime.client.interrupt_turn(thread_id=thread_id, turn_id=turn_id)
         await self.refresh_instance(instance_id)
         return result
 
@@ -629,3 +644,33 @@ class RuntimeManager:
             runtime.websocket_url,
             runtime.transport_note,
         )
+
+    def _turn_id_from_runtime(self, runtime: InstanceRuntime, thread_id: str) -> str | None:
+        for thread in runtime.threads:
+            if thread.get("id") != thread_id:
+                continue
+            status = thread.get("status")
+            if not isinstance(status, dict):
+                continue
+            for key in ("turnId", "activeTurnId"):
+                value = status.get(key)
+                if isinstance(value, str):
+                    return value
+        return None
+
+    async def _turn_id_from_events(self, instance_id: int, thread_id: str) -> str | None:
+        active_turn_id: str | None = None
+        for event in await self.database.list_events(500):
+            if int(event.get("instance_id") or 0) != instance_id:
+                continue
+            if event.get("thread_id") != thread_id:
+                continue
+            payload = event.get("payload")
+            if not isinstance(payload, dict):
+                continue
+            turn_id = extract_turn_id(payload)
+            if event.get("method") == "turn/started" and turn_id:
+                active_turn_id = turn_id
+            elif event.get("method") == "turn/completed" and turn_id == active_turn_id:
+                active_turn_id = None
+        return active_turn_id

@@ -153,6 +153,25 @@ class EnvironmentService:
                 action=desktop_action,
             )
         )
+        checks.append(
+            DiagnosticCheck(
+                key="codex_desktop_policy",
+                label="Desktop mission policy",
+                status="info",
+                detail=(
+                    "OpenZues will launch desktop Codex lanes "
+                    f"{self.desktop_service.launch_policy_summary()}."
+                ),
+                value=(
+                    f"sandbox={self.desktop_service.sandbox_mode or 'default'}, "
+                    f"approval={self.desktop_service.approval_policy or 'default'}"
+                ),
+                action=(
+                    "Set OPENZUES_DESKTOP_SANDBOX_MODE or "
+                    "OPENZUES_DESKTOP_APPROVAL_POLICY to override this launch policy."
+                ),
+            )
+        )
 
         if desktop.source_path is None:
             bridge_status: DiagnosticStatus = "fail"

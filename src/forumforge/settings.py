@@ -7,23 +7,18 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    app_name: str = "OpenZues"
+    app_name: str = "ForumForge"
     host: str = "127.0.0.1"
-    port: int = 8765
-    data_dir: Path = Field(default_factory=lambda: Path.cwd() / ".openzues")
+    port: int = 8890
+    data_dir: Path = Field(default_factory=lambda: Path.cwd() / ".forumforge")
     db_path: Path | None = None
-    default_codex_command: str = "codex"
-    default_codex_args: str = "app-server"
-    desktop_approval_policy: str | None = "never"
-    desktop_sandbox_mode: str | None = "workspace-write"
-    websocket_ping_interval_seconds: int = 20
-    model_config = SettingsConfigDict(env_prefix="OPENZUES_", env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(env_prefix="FORUMFORGE_", env_file=".env", extra="ignore")
 
     @property
     def effective_db_path(self) -> Path:
         if self.db_path is not None:
             return self.db_path
-        return self.data_dir / "openzues.db"
+        return self.data_dir / "forumforge.db"
 
     @property
     def templates_dir(self) -> Path:

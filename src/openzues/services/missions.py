@@ -246,7 +246,7 @@ class MissionService:
             else:
                 next_completed = int(mission["turns_completed"]) + 1
                 updates["turns_completed"] = next_completed
-                updates["phase"] = "ready"
+                updates["phase"] = "completed" if mission["status"] == "completed" else "ready"
                 updates["current_command"] = None
                 if mission["status"] == "active":
                     updates["last_error"] = None
@@ -297,7 +297,8 @@ class MissionService:
                 if text:
                     summary = text[:3000]
                     updates["last_checkpoint"] = summary
-                    updates["phase"] = "checkpointed"
+                    updates["status"] = "completed"
+                    updates["phase"] = "completed"
                     await self.database.append_mission_checkpoint(
                         mission_id=int(mission["id"]),
                         thread_id=thread_id,

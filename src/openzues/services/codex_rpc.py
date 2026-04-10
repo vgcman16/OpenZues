@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import shlex
+import sys
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -45,6 +46,36 @@ def extract_thread_id(payload: JsonDict) -> str | None:
     return None
 
 
+def extract_turn_id(payload: JsonDict) -> str | None:
+    if "turnId" in payload and isinstance(payload["turnId"], str):
+        return payload["turnId"]
+    turn = payload.get("turn")
+    if isinstance(turn, dict) and isinstance(turn.get("id"), str):
+        return turn["id"]
+    item = payload.get("item")
+    if isinstance(item, dict):
+        if isinstance(item.get("turnId"), str):
+            return item["turnId"]
+        nested_turn = item.get("turn")
+        if isinstance(nested_turn, dict) and isinstance(nested_turn.get("id"), str):
+            return nested_turn["id"]
+    return None
+
+
+def _sandbox_policy_from_mode(value: str | None) -> JsonDict | None:
+    if value == "read-only":
+        return {"type": "readOnly"}
+    if value == "workspace-write":
+        return {"type": "workspaceWrite"}
+    if value == "danger-full-access":
+        return {"type": "dangerFullAccess"}
+    return None
+
+
+def _danger_full_access_policy() -> JsonDict:
+    return {"type": "dangerFullAccess"}
+
+
 @dataclass(slots=True)
 class ConnectionInfo:
     connected: bool = False
@@ -70,7 +101,29 @@ class CodexAppServerClient:
     _send_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     _pending: dict[int, asyncio.Future[Any]] = field(default_factory=dict)
     _next_id: int = 0
+    _windows_sandbox_waiters: dict[str, asyncio.Future[None]] = field(default_factory=dict)
+    _windows_sandbox_ready_modes: set[str] = field(default_factory=set)
     info: ConnectionInfo = field(default_factory=ConnectionInfo)
+
+    def _execution_defaults(self) -> tuple[str | None, str | None, JsonDict | None]:
+        approval_policy: str | None = None
+        sandbox_mode: str | None = None
+        sandbox_policy: JsonDict | None = None
+        args = split_args(self.args)
+        for index, token in enumerate(args):
+            next_value = args[index + 1] if index + 1 < len(args) else None
+            if token in {"-a", "--ask-for-approval"} and next_value:
+                approval_policy = next_value
+            elif token in {"-s", "--sandbox"} and next_value:
+                sandbox_mode = next_value
+                sandbox_policy = _sandbox_policy_from_mode(next_value)
+        return approval_policy, sandbox_mode, sandbox_policy
+
+    def _execution_policy_for_turns(self) -> JsonDict | None:
+        _approval_policy, sandbox_mode, sandbox_policy = self._execution_defaults()
+        if sys.platform.startswith("win") and sandbox_mode != "danger-full-access":
+            return _danger_full_access_policy()
+        return sandbox_policy
 
     async def connect(self) -> None:
         if self.info.connected:
@@ -122,6 +175,10 @@ class CodexAppServerClient:
         self.info.client_user_agent = result.get("clientUserAgent") or result.get("userAgent")
         self.info.initialized = True
         await self.notify("initialized", {})
+        try:
+            await self.prepare_windows_sandbox(cwd=self.cwd)
+        except Exception:
+            logger.warning("Windows sandbox preparation failed", exc_info=True)
 
     async def close(self) -> None:
         self.info.connected = False
@@ -147,6 +204,11 @@ class CodexAppServerClient:
             if not future.done():
                 future.cancel()
         self._pending.clear()
+        for waiter in self._windows_sandbox_waiters.values():
+            if not waiter.done():
+                waiter.cancel()
+        self._windows_sandbox_waiters.clear()
+        self._windows_sandbox_ready_modes.clear()
 
     async def call(self, method: str, params: JsonDict | None = None, timeout: float = 30.0) -> Any:
         request_id = self._next_id
@@ -172,6 +234,25 @@ class CodexAppServerClient:
     async def respond(self, request_id: str, result: Any) -> None:
         await self._send_json({"jsonrpc": "2.0", "id": int(request_id), "result": result})
 
+    async def prepare_windows_sandbox(self, *, cwd: str | None = None) -> None:
+        if not sys.platform.startswith("win"):
+            return
+        _approval_policy, sandbox_mode, _sandbox_policy = self._execution_defaults()
+        if sandbox_mode in {None, "danger-full-access"}:
+            return
+        for mode in ("elevated",):
+            waiter = self._windows_sandbox_waiters.get(mode)
+            if waiter is None or waiter.done():
+                waiter = asyncio.get_running_loop().create_future()
+                self._windows_sandbox_waiters[mode] = waiter
+            self._windows_sandbox_ready_modes.discard(mode)
+            params: JsonDict = {"mode": mode}
+            if cwd:
+                params["cwd"] = cwd
+            await self.call("windowsSandbox/setupStart", params, timeout=120.0)
+            await asyncio.wait_for(waiter, timeout=120.0)
+            self._windows_sandbox_ready_modes.add(mode)
+
     async def start_thread(
         self,
         *,
@@ -181,12 +262,14 @@ class CodexAppServerClient:
         collaboration_mode: str | None = None,
     ) -> Any:
         params: JsonDict = {"model": model}
+        approval_policy, sandbox_mode, _sandbox_policy = self._execution_defaults()
+        await self.prepare_windows_sandbox(cwd=cwd or self.cwd)
         if cwd:
             params["cwd"] = cwd
-        if reasoning_effort:
-            params["reasoningEffort"] = reasoning_effort
-        if collaboration_mode:
-            params["collaborationMode"] = collaboration_mode
+        if approval_policy:
+            params["approvalPolicy"] = approval_policy
+        if sandbox_mode:
+            params["sandbox"] = sandbox_mode
         return await self.call("thread/start", params)
 
     async def start_turn(
@@ -203,18 +286,26 @@ class CodexAppServerClient:
             "threadId": thread_id,
             "input": [{"type": "text", "text": text}],
         }
+        approval_policy, _sandbox_mode, _sandbox_policy = self._execution_defaults()
+        await self.prepare_windows_sandbox(cwd=cwd or self.cwd)
+        sandbox_policy = self._execution_policy_for_turns()
         if cwd:
             params["cwd"] = cwd
         if model:
             params["model"] = model
         if reasoning_effort:
-            params["reasoningEffort"] = reasoning_effort
-        if collaboration_mode:
-            params["collaborationMode"] = collaboration_mode
+            params["effort"] = reasoning_effort
+        if approval_policy:
+            params["approvalPolicy"] = approval_policy
+        if sandbox_policy:
+            params["sandboxPolicy"] = sandbox_policy
         return await self.call("turn/start", params, timeout=60.0)
 
-    async def interrupt_turn(self, *, thread_id: str) -> Any:
-        return await self.call("turn/interrupt", {"threadId": thread_id})
+    async def interrupt_turn(self, *, thread_id: str, turn_id: str | None = None) -> Any:
+        params: JsonDict = {"threadId": thread_id}
+        if turn_id:
+            params["turnId"] = turn_id
+        return await self.call("turn/interrupt", params)
 
     async def start_review(self, *, thread_id: str) -> Any:
         return await self.call("review/start", {"threadId": thread_id})
@@ -232,6 +323,10 @@ class CodexAppServerClient:
             params["cwd"] = cwd
         if timeout_ms is not None:
             params["timeoutMs"] = timeout_ms
+        await self.prepare_windows_sandbox(cwd=cwd or self.cwd)
+        sandbox_policy = self._execution_policy_for_turns()
+        if sandbox_policy:
+            params["sandboxPolicy"] = sandbox_policy
         return await self.call("command/exec", params)
 
     async def _send_json(self, payload: JsonDict) -> None:
@@ -271,6 +366,21 @@ class CodexAppServerClient:
             )
             return
         if "method" in payload:
+            if payload["method"] == "windowsSandbox/setupCompleted":
+                params = dict(payload.get("params", {}))
+                mode = str(params.get("mode") or "")
+                if mode:
+                    waiter = self._windows_sandbox_waiters.get(mode)
+                    if bool(params.get("success")):
+                        self._windows_sandbox_ready_modes.add(mode)
+                        if waiter is not None and not waiter.done():
+                            waiter.set_result(None)
+                    else:
+                        error = str(
+                            params.get("error") or f"Windows sandbox setup failed for {mode}."
+                        )
+                        if waiter is not None and not waiter.done():
+                            waiter.set_exception(RuntimeError(error))
             params = dict(payload.get("params", {}))
             await self.event_callback(
                 {

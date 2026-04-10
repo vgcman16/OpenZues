@@ -1,0 +1,1 @@
+"""ForumForge application package."""

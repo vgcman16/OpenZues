@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+
+{% block content %}
+  <section class="search-hero">
+    <span class="eyebrow">Search</span>
+    <h1>Find the thread with the most signal, not just the newest timestamp.</h1>
+    <p>Search across open discussion, solved knowledge, and canonical references.</p>
+  </section>
+
+  <section class="panel">
+    <div class="panel-heading">
+      <div>
+        <span class="eyebrow">Results</span>
+        <h2>{{ results|length }} result{% if results|length != 1 %}s{% endif %} for “{{ query }}”</h2>
+      </div>
+    </div>
+    <div class="thread-list">
+      {% for thread in results %}
+        <article class="thread-card">
+          <div class="thread-card-meta">
+            <a href="{{ request.url_for('forum_page', forum_slug=thread.forum_slug) }}">{{ thread.forum_name }}</a>
+            <span>{{ thread.heat_label }}</span>
+            <span>{{ thread.freshness }}</span>
+          </div>
+          <h3><a href="{{ request.url_for('thread_page', thread_slug=thread.slug) }}">{{ thread.title }}</a></h3>
+          <p>{{ thread.excerpt }}</p>
+          <div class="tag-row">
+            {% for tag in thread.tags %}
+              <span class="tag">{{ tag }}</span>
+            {% endfor %}
+          </div>
+        </article>
+      {% else %}
+        <p class="empty-copy">Try a tag like “knowledge”, “deploys”, or “interface”.</p>
+      {% endfor %}
+    </div>
+  </section>
+{% endblock %}

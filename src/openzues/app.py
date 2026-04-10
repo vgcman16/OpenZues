@@ -834,7 +834,10 @@ def create_app(
     active_settings = app_settings or settings
     active_database = database or Database(active_settings.effective_db_path)
     active_hub = hub or BroadcastHub()
-    active_desktop_service = desktop_service or CodexDesktopService()
+    active_desktop_service = desktop_service or CodexDesktopService(
+        approval_policy=active_settings.desktop_approval_policy,
+        sandbox_mode=active_settings.desktop_sandbox_mode,
+    )
     active_manager = manager or RuntimeManager(
         active_database,
         active_hub,

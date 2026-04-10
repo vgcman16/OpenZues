@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+
+{% block content %}
+  <section class="forum-hero" style="--forum-accent: {{ forum.accent }};">
+    <div>
+      <span class="eyebrow">Forum</span>
+      <h1>{{ forum.name }}</h1>
+      <p>{{ forum.hero }}</p>
+      <div class="forum-summary">
+        <span>{{ forum.summary }}</span>
+        <span>{{ forum.thread_count }} active threads</span>
+      </div>
+    </div>
+    <form class="composer-panel" action="{{ request.url_for('create_thread', forum_slug=forum.slug) }}" method="post" data-draft-key="thread-{{ forum.slug }}">
+      <div class="composer-heading">
+        <div>
+          <span class="eyebrow">Start a thread</span>
+          <h2>Open a better conversation</h2>
+        </div>
+        <span class="draft-indicator" data-draft-status hidden>Draft restored</span>
+      </div>
+      <label>
+        Your name
+        <input type="text" name="author_name" placeholder="Operator name" required data-draft-field="author_name" />
+      </label>
+      <label>
+        Thread title
+        <input type="text" name="title" placeholder="Frame the problem or idea clearly" required data-draft-field="title" />
+      </label>
+      <label>
+        Opening post
+        <textarea name="body" rows="6" placeholder="What is true, what is blocked, what are you proposing?" required data-draft-field="body"></textarea>
+      </label>
+      <label>
+        Tags
+        <input type="text" name="tags" placeholder="deploys, launch, incident" data-draft-field="tags" />
+      </label>
+      <button class="button button-primary" type="submit">Publish thread</button>
+    </form>
+  </section>
+
+  <section class="toolbar">
+    <div class="sort-chips">
+      {% for key, label in sort_labels.items() %}
+        <a class="chip {% if sort == key %}chip-active{% endif %}" href="{{ request.url_for('forum_page', forum_slug=forum.slug) }}?sort={{ key }}{% if forum.query %}&q={{ forum.query }}{% endif %}">{{ label }}</a>
+      {% endfor %}
+    </div>
+    <form class="inline-search" action="{{ request.url_for('forum_page', forum_slug=forum.slug) }}" method="get">
+      <input type="hidden" name="sort" value="{{ sort }}" />
+      <input type="search" name="q" value="{{ forum.query }}" placeholder="Filter this forum..." />
+      <button type="submit">Filter</button>
+    </form>
+  </section>
+
+  <section class="forum-layout">
+    <div class="thread-list">
+      {% for thread in forum.threads %}
+        <article class="thread-card forum-thread-card">
+          <div class="thread-card-meta">
+            <span>{{ thread.state_label }}</span>
+            <span>{{ thread.freshness }}</span>
+            <span>{{ thread.heat_label }}</span>
+          </div>
+          <h2><a href="{{ request.url_for('thread_page', thread_slug=thread.slug) }}">{{ thread.title }}</a></h2>
+          <p>{{ thread.excerpt }}</p>
+          <div class="tag-row">
+            {% for tag in thread.tags %}
+              <a class="tag" href="{{ request.url_for('search_page') }}?q={{ tag }}">{{ tag }}</a>
+            {% endfor %}
+          </div>
+          <div class="thread-card-footer">
+            <span>{{ thread.reply_label }}</span>
+            <span>{{ thread.view_label }}</span>
+            <span>by <a href="{{ request.url_for('profile_page', username=thread.author_username) }}">{{ thread.author_name }}</a></span>
+          </div>
+        </article>
+      {% else %}
+        <section class="panel empty-panel">
+          <h2>No threads yet</h2>
+          <p>Start the first high-signal conversation in this forum.</p>
+        </section>
+      {% endfor %}
+    </div>
+
+    <aside class="stack-lane">
+      <section class="panel">
+        <div class="panel-heading">
+          <div>
+            <span class="eyebrow">Forum promise</span>
+            <h2>What belongs here</h2>
+          </div>
+        </div>
+        <p>{{ forum.summary }}</p>
+        <ul class="plain-list">
+          <li>Ask questions that improve the shared system, not just your local moment.</li>
+          <li>Turn solved work into durable knowledge with accepted answers and tags.</li>
+          <li>Use pinned and canonical states to keep the best threads discoverable.</li>
+        </ul>
+      </section>
+
+      <section class="panel">
+        <div class="panel-heading">
+          <div>
+            <span class="eyebrow">Suggested searches</span>
+            <h2>Jump points</h2>
+          </div>
+        </div>
+        <div class="tag-row">
+          <a class="tag" href="{{ request.url_for('search_page') }}?q=knowledge">knowledge</a>
+          <a class="tag" href="{{ request.url_for('search_page') }}?q=verification">verification</a>
+          <a class="tag" href="{{ request.url_for('search_page') }}?q=canonical">canonical</a>
+          <a class="tag" href="{{ request.url_for('search_page') }}?q=signal">signal</a>
+        </div>
+      </section>
+    </aside>
+  </section>
+{% endblock %}

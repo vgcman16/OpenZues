@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 
 import pytest
@@ -173,6 +174,78 @@ async def test_final_answer_event_creates_checkpoint(tmp_path) -> None:
     assert checkpoints[0]["summary"].startswith("Implemented the first milestone")
     assert mission is not None
     assert mission["last_checkpoint"].startswith("Implemented the first milestone")
+    assert mission["status"] == "completed"
+    assert mission["phase"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_turn_completed_after_final_answer_does_not_launch_another_cycle(tmp_path) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    manager = FakeManager()
+    manager.instances[7].connected = True
+    manager.instances[7].threads = [{"id": "thread_final", "status": {"type": "idle"}}]
+    service = MissionService(database, manager, BroadcastHub(), poll_interval_seconds=3600)
+
+    mission_id = await database.create_mission(
+        name="Stop on handoff",
+        objective="Do not relaunch after a final answer.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread_final",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=4,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=True,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+    )
+
+    await service.handle_event(
+        7,
+        {
+            "method": "item/completed",
+            "threadId": "thread_final",
+            "params": {
+                "threadId": "thread_final",
+                "turnId": "turn_final",
+                "item": {
+                    "type": "agentMessage",
+                    "phase": "final_answer",
+                    "text": "Completed the requested slice and verified it.",
+                },
+            },
+        },
+    )
+    await service.handle_event(
+        7,
+        {
+            "method": "turn/completed",
+            "threadId": "thread_final",
+            "params": {
+                "threadId": "thread_final",
+                "turnId": "turn_final",
+                "turn": {"id": "turn_final"},
+            },
+        },
+    )
+    await asyncio.sleep(0)
+
+    mission = await database.get_mission(mission_id)
+
+    assert mission is not None
+    assert mission["status"] == "completed"
+    assert mission["phase"] == "completed"
+    assert mission["turns_completed"] == 1
+    assert manager.turn_calls == []
 
 
 @pytest.mark.asyncio

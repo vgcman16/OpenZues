@@ -1,0 +1,159 @@
+{% extends "base.html" %}
+
+{% block content %}
+  {% set thread = payload.thread %}
+  <section class="thread-layout">
+    <article class="thread-main">
+      <header class="thread-hero" style="--forum-accent: {{ thread.forum_accent }};">
+        <div class="thread-hero-top">
+          <a class="eyebrow-link" href="{{ request.url_for('forum_page', forum_slug=thread.forum_slug) }}">{{ thread.forum_name }}</a>
+          <div class="pill-row">
+            <span class="pill">{{ thread.state_label }}</span>
+            <span class="pill">{{ thread.heat_label }}</span>
+            {% if thread.canonical %}<span class="pill">Canonical</span>{% endif %}
+            {% if thread.pinned %}<span class="pill">Pinned</span>{% endif %}
+            {% if thread.locked %}<span class="pill">Locked</span>{% endif %}
+          </div>
+        </div>
+        <h1>{{ thread.title }}</h1>
+        <p>{{ thread.excerpt }}</p>
+        <div class="thread-hero-meta">
+          <span>Started by <a href="{{ request.url_for('profile_page', username=thread.author_username) }}">{{ thread.author_name }}</a></span>
+          <span>{{ thread.created_freshness }}</span>
+          <span>{{ thread.reply_label }}</span>
+          <span>{{ thread.view_label }}</span>
+        </div>
+        <div class="tag-row">
+          {% for tag in thread.tags %}
+            <a class="tag" href="{{ request.url_for('search_page') }}?q={{ tag }}">{{ tag }}</a>
+          {% endfor %}
+        </div>
+      </header>
+
+      <section class="post-stream">
+        {% for post in payload.posts %}
+          <article class="post-card {% if post.is_answer %}post-answer{% endif %}">
+            <div class="post-meta">
+              <div>
+                <strong><a href="{{ request.url_for('profile_page', username=post.author_username) }}">{{ post.author_name }}</a></strong>
+                <span>{{ post.author_role }}</span>
+              </div>
+              <div class="post-meta-right">
+                {% if post.is_opener %}<span class="pill">Opener</span>{% endif %}
+                {% if post.is_answer %}<span class="pill pill-answer">Accepted answer</span>{% endif %}
+                <span>{{ post.freshness }}</span>
+              </div>
+            </div>
+            <div class="post-body">{{ post.body|body_html }}</div>
+            <footer class="post-footer">
+              <div class="reaction-strip">
+                {% for reaction in post.reactions %}
+                  <span class="reaction-chip">{{ reaction.kind }} · {{ reaction.count }}</span>
+                {% endfor %}
+                {% if not post.reactions %}
+                  <span class="reaction-chip reaction-empty">No reactions yet</span>
+                {% endif %}
+              </div>
+              <div class="post-actions">
+                <form action="{{ request.url_for('react_to_post', thread_slug=thread.slug, post_id=post.id) }}" method="post">
+                  <select name="kind">
+                    {% for kind, label in reaction_choices %}
+                      <option value="{{ kind }}">{{ label }}</option>
+                    {% endfor %}
+                  </select>
+                  <button type="submit">React</button>
+                </form>
+                {% if not post.is_opener %}
+                  <form action="{{ request.url_for('mark_answer', thread_slug=thread.slug, post_id=post.id) }}" method="post">
+                    <button type="submit">Mark answer</button>
+                  </form>
+                {% endif %}
+              </div>
+            </footer>
+          </article>
+        {% endfor %}
+      </section>
+
+      <section class="composer-panel reply-panel">
+        <div class="composer-heading">
+          <div>
+            <span class="eyebrow">Reply</span>
+            <h2>Add signal to the thread</h2>
+          </div>
+          <span class="draft-indicator" data-draft-status hidden>Draft restored</span>
+        </div>
+        {% if thread.locked %}
+          <p class="empty-copy">This thread is locked, so replies are paused.</p>
+        {% else %}
+          <form action="{{ request.url_for('create_reply', thread_slug=thread.slug) }}" method="post" data-draft-key="reply-{{ thread.slug }}">
+            <label>
+              Your name
+              <input type="text" name="author_name" placeholder="Your name" required data-draft-field="author_name" />
+            </label>
+            <label>
+              Reply
+              <textarea name="body" rows="7" placeholder="What is true now, and what should the next reader know?" required data-draft-field="body"></textarea>
+            </label>
+            <button class="button button-primary" type="submit">Post reply</button>
+          </form>
+        {% endif %}
+      </section>
+    </article>
+
+    <aside class="thread-rail">
+      <section class="panel">
+        <div class="panel-heading">
+          <div>
+            <span class="eyebrow">Moderator deck</span>
+            <h2>Thread state</h2>
+          </div>
+        </div>
+        <div class="moderation-grid">
+          <form action="{{ request.url_for('moderate_thread', thread_slug=thread.slug, field='pinned') }}" method="post">
+            <button type="submit">{{ 'Unpin' if thread.pinned else 'Pin thread' }}</button>
+          </form>
+          <form action="{{ request.url_for('moderate_thread', thread_slug=thread.slug, field='canonical') }}" method="post">
+            <button type="submit">{{ 'Remove canonical' if thread.canonical else 'Make canonical' }}</button>
+          </form>
+          <form action="{{ request.url_for('moderate_thread', thread_slug=thread.slug, field='locked') }}" method="post">
+            <button type="submit">{{ 'Unlock' if thread.locked else 'Lock thread' }}</button>
+          </form>
+        </div>
+        <a class="button button-secondary rail-link" href="{{ request.url_for('moderation_queue_page') }}">Open moderation queue</a>
+      </section>
+
+      <section class="panel">
+        <div class="panel-heading">
+          <div>
+            <span class="eyebrow">Reading guide</span>
+            <h2>Why this works better</h2>
+          </div>
+        </div>
+        <ul class="plain-list">
+          <li>The opener reads like an editorial lead, not a collapsed metadata row.</li>
+          <li>Accepted answers sit in the same stream instead of hiding behind forum chrome.</li>
+          <li>Thread flags act like publishing signals, not obscure admin toggles.</li>
+        </ul>
+      </section>
+
+      <section class="panel">
+        <div class="panel-heading">
+          <div>
+            <span class="eyebrow">Related</span>
+            <h2>Keep exploring</h2>
+          </div>
+        </div>
+        <div class="mini-list">
+          {% for related in payload.related %}
+            <a class="mini-card" href="{{ request.url_for('thread_page', thread_slug=related.slug) }}">
+              <strong>{{ related.title }}</strong>
+              <span>{{ related.heat_label }} · {{ related.freshness }}</span>
+            </a>
+          {% else %}
+            <p class="empty-copy">No adjacent threads yet.</p>
+          {% endfor %}
+        </div>
+      </section>
+    </aside>
+  </section>
+{% endblock %}

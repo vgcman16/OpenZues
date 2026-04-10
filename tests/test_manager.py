@@ -1,6 +1,12 @@
 from __future__ import annotations
 
-from openzues.services.manager import compact_event_payload
+from unittest.mock import AsyncMock
+
+import pytest
+
+from openzues.database import Database
+from openzues.services.hub import BroadcastHub
+from openzues.services.manager import InstanceRuntime, RuntimeManager, compact_event_payload
 
 
 def test_compact_event_payload_trims_catalog_updates() -> None:
@@ -100,3 +106,46 @@ def test_compact_event_payload_drops_empty_catalog_items() -> None:
     compact = compact_event_payload("skill/list/updated", {"data": [{"name": "Checks"}, {}]})
 
     assert compact["data"] == [{"name": "Checks"}]
+
+
+class FakeInterruptClient:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, str]] = []
+
+    async def interrupt_turn(self, *, thread_id: str, turn_id: str | None = None) -> dict[str, str]:
+        self.calls.append({"thread_id": thread_id, "turn_id": turn_id or ""})
+        return {"ok": "true"}
+
+
+@pytest.mark.asyncio
+async def test_interrupt_turn_uses_latest_active_turn_from_events(tmp_path) -> None:
+    database = Database(tmp_path / "manager.db")
+    await database.initialize()
+    manager = RuntimeManager(database, BroadcastHub())
+    client = FakeInterruptClient()
+    runtime = InstanceRuntime(
+        instance_id=1,
+        name="Local Codex Desktop",
+        transport="desktop",
+        command=None,
+        args=None,
+        websocket_url=None,
+        cwd="C:/workspace",
+        auto_connect=False,
+        client=client,  # type: ignore[arg-type]
+        connected=True,
+    )
+    manager.instances[1] = runtime
+
+    await database.append_event(
+        instance_id=1,
+        thread_id="thread_123",
+        method="turn/started",
+        payload={"threadId": "thread_123", "turnId": "turn_123"},
+    )
+    manager.refresh_instance = AsyncMock(return_value=runtime)  # type: ignore[method-assign]
+
+    result = await manager.interrupt_turn(1, "thread_123")
+
+    assert client.calls == [{"thread_id": "thread_123", "turn_id": "turn_123"}]
+    assert result == {"ok": "true"}

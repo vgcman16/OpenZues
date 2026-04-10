@@ -37,6 +37,8 @@ class DesktopLaunchConfig:
     args: str
     note: str
     version: str | None = None
+    approval_policy: str | None = None
+    sandbox_mode: str | None = None
 
 
 class CodexDesktopService:
@@ -46,6 +48,8 @@ class CodexDesktopService:
         runtime_root: Path | None = None,
         package_root: Path | None = None,
         logs_root: Path | None = None,
+        approval_policy: str | None = "never",
+        sandbox_mode: str | None = "workspace-write",
     ) -> None:
         local_appdata = Path(
             os.getenv("LOCALAPPDATA", str(Path.home() / "AppData" / "Local"))
@@ -63,6 +67,8 @@ class CodexDesktopService:
             / "Codex"
             / "Logs"
         )
+        self.approval_policy = approval_policy
+        self.sandbox_mode = sandbox_mode
 
     def discover(self) -> DesktopDiscovery:
         source_path = self.find_source_executable()
@@ -142,12 +148,25 @@ class CodexDesktopService:
             )
         staged_path = self.stage_executable(source_path)
         version = self.probe_executable(staged_path)
+        policy = self.launch_policy_summary()
         return DesktopLaunchConfig(
             command=str(staged_path),
-            args="app-server",
-            note=f"Staged from {source_path}",
+            args=self._build_app_server_args(),
+            note=f"Staged from {source_path}; {policy}",
             version=version,
+            approval_policy=self.approval_policy,
+            sandbox_mode=self.sandbox_mode,
         )
+
+    def launch_policy_summary(self) -> str:
+        parts: list[str] = []
+        if self.sandbox_mode:
+            parts.append(f"sandbox {self.sandbox_mode}")
+        if self.approval_policy:
+            parts.append(f"approval {self.approval_policy}")
+        if not parts:
+            return "using Codex config defaults"
+        return "launching with " + ", ".join(parts)
 
     def _discover_session(self) -> DesktopSessionInfo:
         if not self.logs_root.exists():
@@ -209,6 +228,15 @@ class CodexDesktopService:
     def _staged_path_for(self, source_path: Path) -> Path:
         package_name = source_path.parents[2].name
         return self.runtime_root / package_name / source_path.name
+
+    def _build_app_server_args(self) -> str:
+        args: list[str] = []
+        if self.approval_policy:
+            args.extend(["-a", self.approval_policy])
+        if self.sandbox_mode:
+            args.extend(["-s", self.sandbox_mode])
+        args.append("app-server")
+        return subprocess.list2cmdline(args)
 
     def _package_version_key(self, package_name: str) -> tuple[int, ...]:
         match = re.search(r"OpenAI\.Codex_([0-9.]+)_", package_name)

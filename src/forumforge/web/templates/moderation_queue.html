@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+
+{% block content %}
+  <section class="search-hero">
+    <div>
+      <span class="eyebrow">Moderation queue</span>
+      <h1>What needs a human editor next.</h1>
+      <p>Queue items are derived from live thread state so moderators can spot locked, drifting, and promotable discussions in one pass.</p>
+      <div class="hero-actions">
+        <a class="button button-secondary" href="{{ request.url_for('home') }}">Back to home</a>
+      </div>
+    </div>
+    <div class="profile-meta">
+      <div class="metric-card">
+        <span>Pending</span>
+        <strong>{{ payload.stats.pending_count }}</strong>
+      </div>
+      <div class="metric-card">
+        <span>Locked</span>
+        <strong>{{ payload.stats.locked_count }}</strong>
+      </div>
+      <div class="metric-card">
+        <span>Knowledge</span>
+        <strong>{{ payload.stats.knowledge_count }}</strong>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-heading">
+      <div>
+        <span class="eyebrow">Queue</span>
+        <h2>Active moderation work</h2>
+      </div>
+    </div>
+    <div class="thread-list">
+      {% for item in payload.queue_items %}
+        <article class="thread-card queue-card">
+          <div class="thread-card-meta">
+            <span>{{ item.priority }}</span>
+            <span>{{ item.thread.forum_name }}</span>
+            <span>{{ item.thread.freshness }}</span>
+          </div>
+          <h2><a href="{{ request.url_for('thread_page', thread_slug=item.thread.slug) }}">{{ item.thread.title }}</a></h2>
+          <p>{{ item.summary }}</p>
+          <div class="thread-card-footer">
+            <span>{{ item.headline }}</span>
+            <span>{{ item.thread.reply_label }}</span>
+            <span>by <a href="{{ request.url_for('profile_page', username=item.thread.author_username) }}">{{ item.thread.author_name }}</a></span>
+            <span>{{ item.action }}</span>
+          </div>
+        </article>
+      {% else %}
+        <p class="empty-copy">The queue is clear. Locked threads, stale discussions, and knowledge candidates will appear here.</p>
+      {% endfor %}
+    </div>
+  </section>
+{% endblock %}
