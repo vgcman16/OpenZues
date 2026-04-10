@@ -180,46 +180,6 @@
               </div>
             </section>
 
-            <section class="deck-section cortex-section">
-              <div class="section-header">
-                <div>
-                  <p class="eyebrow">Autonomy Cortex</p>
-                  <h2 id="cortex-headline">Learning from recent runs...</h2>
-                </div>
-                <p id="cortex-summary" class="panel-lede"></p>
-              </div>
-
-              <div class="cortex-grid">
-                <div class="cortex-column stack">
-                  <div class="cortex-subhead">
-                    <p class="eyebrow">Project Doctrine</p>
-                    <h3>What each repo seems to respond to best</h3>
-                  </div>
-                  <div id="cortex-doctrines" class="cortex-list"></div>
-                </div>
-
-                <div class="cortex-column stack">
-                  <div class="cortex-subhead">
-                    <p class="eyebrow">Preflight Inoculations</p>
-                    <h3>Hardening moves before the next long run</h3>
-                  </div>
-                  <div id="cortex-inoculations" class="cortex-list"></div>
-                </div>
-              </div>
-            </section>
-
-            <section class="deck-section reflex-section">
-              <div class="section-header">
-                <div>
-                  <p class="eyebrow">Reflex Deck</p>
-                  <h2 id="reflex-headline">Synthesizing intervention prompts...</h2>
-                </div>
-                <p id="reflex-summary" class="panel-lede"></p>
-              </div>
-
-              <div id="reflexes" class="reflex-grid"></div>
-            </section>
-
             <section class="deck-section">
               <div class="section-header">
                 <div>
@@ -234,72 +194,149 @@
               <div id="missions" class="mission-list"></div>
             </section>
 
-            <div class="ops-grid">
-              <section class="deck-section">
-                <div class="section-header">
-                  <div>
-                    <p class="eyebrow">Playbooks</p>
-                    <h2>Reusable operator routines</h2>
-                  </div>
-                  <p class="panel-lede">
-                    Save common reviews, commands, and thread jumps so the control plane stays fast.
+            <details class="deck-shell" id="intelligence-shell">
+              <summary class="shell-summary">
+                <div class="shell-copy">
+                  <p class="eyebrow">Autonomy Intelligence</p>
+                  <h2>Doctrine, hardening, and reflexes</h2>
+                  <p id="intelligence-shell-summary" class="panel-lede">
+                    Learned guidance and intervention cues live here when you need them.
                   </p>
                 </div>
+                <div class="shell-metrics">
+                  <span id="intelligence-doctrine-count" class="pill">0 doctrines</span>
+                  <span id="intelligence-inoculation-count" class="pill">0 inoculations</span>
+                  <span id="intelligence-reflex-count" class="pill">0 reflexes</span>
+                </div>
+              </summary>
 
-                <form id="playbook-form" class="stack form-grid">
-                  <input name="name" type="text" placeholder="Playbook name" required />
-                  <select name="kind">
-                    <option value="command">Command</option>
-                    <option value="turn">Turn</option>
-                    <option value="thread_turn">Thread + Turn</option>
-                    <option value="review">Review</option>
-                  </select>
-                  <input
-                    name="instance_id"
-                    type="number"
-                    min="1"
-                    placeholder="Instance ID (optional)"
-                  />
-                  <input name="cwd" type="text" placeholder="CWD template (optional)" />
-                  <input name="model" type="text" placeholder="Model (thread-turn only)" />
-                  <input
-                    name="thread_id"
-                    type="text"
-                    placeholder="Thread ID template (turn/review)"
-                  />
-                  <textarea name="description" placeholder="What this playbook is for"></textarea>
-                  <textarea
-                    name="template"
-                    placeholder="Template. Supports {date}, {datetime}, {cwd}, {thread_id}, and custom variables."
-                    required
-                  ></textarea>
-                  <button type="submit">Save Playbook</button>
-                </form>
-
-                <div id="playbooks" class="stack library-list"></div>
-              </section>
-
-              <section class="deck-section">
-                <div class="section-header">
-                  <div>
-                    <p class="eyebrow">Projects</p>
-                    <h2>Real workspaces for long runs</h2>
+              <div class="shell-body stack">
+                <section class="subsection-panel cortex-section">
+                  <div class="section-header">
+                    <div>
+                      <p class="eyebrow">Autonomy Cortex</p>
+                      <h2 id="cortex-headline">Learning from recent runs...</h2>
+                    </div>
+                    <p id="cortex-summary" class="panel-lede"></p>
                   </div>
-                  <p class="panel-lede">
-                    Attach local repos so autonomous missions can build, verify, and commit against
-                    a real codebase.
+
+                  <div class="cortex-grid">
+                    <div class="cortex-column stack">
+                      <div class="cortex-subhead">
+                        <p class="eyebrow">Project Doctrine</p>
+                        <h3>What each repo seems to respond to best</h3>
+                      </div>
+                      <div id="cortex-doctrines" class="cortex-list"></div>
+                    </div>
+
+                    <div class="cortex-column stack">
+                      <div class="cortex-subhead">
+                        <p class="eyebrow">Preflight Inoculations</p>
+                        <h3>Hardening moves before the next long run</h3>
+                      </div>
+                      <div id="cortex-inoculations" class="cortex-list"></div>
+                    </div>
+                  </div>
+                </section>
+
+                <section class="subsection-panel reflex-section">
+                  <div class="section-header">
+                    <div>
+                      <p class="eyebrow">Reflex Deck</p>
+                      <h2 id="reflex-headline">Synthesizing intervention prompts...</h2>
+                    </div>
+                    <p id="reflex-summary" class="panel-lede"></p>
+                  </div>
+
+                  <div id="reflexes" class="reflex-grid"></div>
+                </section>
+              </div>
+            </details>
+
+            <details class="deck-shell" id="library-shell">
+              <summary class="shell-summary">
+                <div class="shell-copy">
+                  <p class="eyebrow">Workspace Library</p>
+                  <h2>Playbooks and project memory</h2>
+                  <p id="library-shell-summary" class="panel-lede">
+                    Keep setup and reusable operator routines close, but out of the main mission lane.
                   </p>
                 </div>
+                <div class="shell-metrics">
+                  <span id="library-playbook-count" class="pill">0 playbooks</span>
+                  <span id="library-project-count" class="pill">0 projects</span>
+                </div>
+              </summary>
 
-                <form id="project-form" class="stack">
-                  <input name="path" type="text" placeholder="C:\path\to\repo" required />
-                  <input name="label" type="text" placeholder="Optional label" />
-                  <button type="submit">Add Project</button>
-                </form>
+              <div class="shell-body">
+                <div class="ops-grid">
+                  <section class="subsection-panel">
+                    <div class="section-header">
+                      <div>
+                        <p class="eyebrow">Playbooks</p>
+                        <h2>Reusable operator routines</h2>
+                      </div>
+                      <p class="panel-lede">
+                        Save common reviews, commands, and thread jumps so the control plane stays fast.
+                      </p>
+                    </div>
 
-                <div id="projects" class="stack library-list"></div>
-              </section>
-            </div>
+                    <form id="playbook-form" class="stack form-grid">
+                      <input name="name" type="text" placeholder="Playbook name" required />
+                      <select name="kind">
+                        <option value="command">Command</option>
+                        <option value="turn">Turn</option>
+                        <option value="thread_turn">Thread + Turn</option>
+                        <option value="review">Review</option>
+                      </select>
+                      <input
+                        name="instance_id"
+                        type="number"
+                        min="1"
+                        placeholder="Instance ID (optional)"
+                      />
+                      <input name="cwd" type="text" placeholder="CWD template (optional)" />
+                      <input name="model" type="text" placeholder="Model (thread-turn only)" />
+                      <input
+                        name="thread_id"
+                        type="text"
+                        placeholder="Thread ID template (turn/review)"
+                      />
+                      <textarea name="description" placeholder="What this playbook is for"></textarea>
+                      <textarea
+                        name="template"
+                        placeholder="Template. Supports {date}, {datetime}, {cwd}, {thread_id}, and custom variables."
+                        required
+                      ></textarea>
+                      <button type="submit">Save Playbook</button>
+                    </form>
+
+                    <div id="playbooks" class="stack library-list"></div>
+                  </section>
+
+                  <section class="subsection-panel">
+                    <div class="section-header">
+                      <div>
+                        <p class="eyebrow">Projects</p>
+                        <h2>Real workspaces for long runs</h2>
+                      </div>
+                      <p class="panel-lede">
+                        Attach local repos so autonomous missions can build, verify, and commit against
+                        a real codebase.
+                      </p>
+                    </div>
+
+                    <form id="project-form" class="stack">
+                      <input name="path" type="text" placeholder="C:\path\to\repo" required />
+                      <input name="label" type="text" placeholder="Optional label" />
+                      <button type="submit">Add Project</button>
+                    </form>
+
+                    <div id="projects" class="stack library-list"></div>
+                  </section>
+                </div>
+              </div>
+            </details>
           </section>
 
           <aside class="control-rail">
@@ -349,43 +386,63 @@
               <div id="instances" class="stack rail-list"></div>
             </section>
 
-            <section class="rail-section">
-              <div class="section-header">
-                <div>
+            <details class="rail-shell" id="health-shell">
+              <summary class="shell-summary shell-summary-compact">
+                <div class="shell-copy">
                   <p class="eyebrow">System Health</p>
                   <h2>Environment and toolchain posture</h2>
+                  <p id="health-shell-summary" class="panel-lede">
+                    Expand when you need diagnostics or environment repair clues.
+                  </p>
                 </div>
+                <div class="shell-metrics">
+                  <span id="health-shell-status" class="pill">checking</span>
+                </div>
+              </summary>
+              <div class="shell-body">
+                <div id="diagnostics" class="stack diagnostic-rail"></div>
               </div>
-              <div id="diagnostics" class="stack diagnostic-rail"></div>
-            </section>
+            </details>
           </aside>
         </div>
 
-        <section class="stream-section">
-          <div class="section-header event-head">
-            <div>
+        <details class="stream-shell" id="activity-shell">
+          <summary class="shell-summary">
+            <div class="shell-copy">
               <p class="eyebrow">Activity Ledger</p>
               <h2>Checkpoints, turn milestones, and transport events</h2>
-              <p class="panel-lede">
-                Noise filtering stays on by default so the signal trail stays readable when Codex runs
-                for hours.
+              <p id="activity-shell-summary" class="panel-lede">
+                Keep the event stream tucked away until you need to inspect a live trail.
               </p>
             </div>
-
-            <div class="event-toolbar">
-              <label class="checkbox compact">
-                <input id="event-hide-noise" type="checkbox" checked />
-                Hide noise
-              </label>
-              <input
-                id="event-filter"
-                type="text"
-                placeholder="Filter by method, thread, instance, or payload"
-              />
+            <div class="shell-metrics">
+              <span id="activity-shell-count" class="pill">0 events</span>
             </div>
+          </summary>
+          <div class="shell-body">
+            <div class="section-header event-head">
+              <div>
+                <p class="panel-lede">
+                  Noise filtering stays on by default so the signal trail stays readable when Codex runs
+                  for hours.
+                </p>
+              </div>
+
+              <div class="event-toolbar">
+                <label class="checkbox compact">
+                  <input id="event-hide-noise" type="checkbox" checked />
+                  Hide noise
+                </label>
+                <input
+                  id="event-filter"
+                  type="text"
+                  placeholder="Filter by method, thread, instance, or payload"
+                />
+              </div>
+            </div>
+            <div id="events" class="events"></div>
           </div>
-          <div id="events" class="events"></div>
-        </section>
+        </details>
       </main>
     </div>
 

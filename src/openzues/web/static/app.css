@@ -199,7 +199,10 @@ a {
 .horizon,
 .deck-section,
 .rail-section,
-.stream-section {
+.stream-section,
+.deck-shell,
+.rail-shell,
+.stream-shell {
   position: relative;
   overflow: hidden;
   border: 1px solid var(--line);
@@ -214,7 +217,11 @@ a {
 .horizon::before,
 .deck-section::before,
 .rail-section::before,
-.stream-section::before {
+.stream-section::before,
+.subsection-panel::before,
+.deck-shell::before,
+.rail-shell::before,
+.stream-shell::before {
   content: "";
   position: absolute;
   inset: 0 0 auto;
@@ -437,6 +444,91 @@ a {
 .stream-section {
   padding: 22px;
   animation: rise-in 560ms ease both;
+}
+
+.deck-shell,
+.rail-shell,
+.stream-shell {
+  animation: rise-in 600ms ease both;
+}
+
+.shell-summary {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 18px;
+  padding: 20px 22px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.shell-summary::-webkit-details-marker {
+  display: none;
+}
+
+.shell-summary::after {
+  content: "▾";
+  align-self: center;
+  color: var(--muted);
+  font-size: 0.96rem;
+  transform: rotate(-90deg);
+}
+
+.deck-shell[open] > .shell-summary::after,
+.rail-shell[open] > .shell-summary::after,
+.stream-shell[open] > .shell-summary::after {
+  transform: rotate(0deg);
+}
+
+.shell-copy {
+  min-width: 0;
+}
+
+.shell-summary h2 {
+  margin: 0;
+  font-family: var(--display);
+  font-size: 1.42rem;
+  line-height: 1.08;
+  letter-spacing: -0.03em;
+}
+
+.shell-summary-compact h2 {
+  font-size: 1.18rem;
+}
+
+.shell-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-end;
+  max-width: 320px;
+}
+
+.shell-body {
+  display: grid;
+  gap: 18px;
+  padding: 0 22px 22px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.subsection-panel {
+  position: relative;
+  overflow: hidden;
+  padding: 18px;
+  border-radius: 24px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.018)),
+    rgba(255, 255, 255, 0.02);
+}
+
+.subsection-panel .section-header {
+  margin-bottom: 14px;
+}
+
+.subsection-panel .section-header h2 {
+  font-size: 1.34rem;
 }
 
 .launch-deck {
@@ -1224,6 +1316,10 @@ pre {
   animation: rise-in 640ms ease both;
 }
 
+.stream-shell {
+  animation: rise-in 640ms ease both;
+}
+
 .event-head {
   align-items: end;
 }
@@ -1372,9 +1468,26 @@ pre {
   .horizon,
   .deck-section,
   .rail-section,
-  .stream-section {
+  .stream-section,
+  .deck-shell,
+  .rail-shell,
+  .stream-shell {
     padding: 18px;
     border-radius: 24px;
+  }
+
+  .deck-shell,
+  .rail-shell,
+  .stream-shell {
+    padding: 0;
+  }
+
+  .shell-summary {
+    padding: 16px 18px;
+  }
+
+  .shell-body {
+    padding: 0 18px 18px;
   }
 
   .signal-strip,

@@ -22,13 +22,28 @@ const cortexInoculationsEl = document.querySelector("#cortex-inoculations");
 const reflexHeadlineEl = document.querySelector("#reflex-headline");
 const reflexSummaryEl = document.querySelector("#reflex-summary");
 const reflexesEl = document.querySelector("#reflexes");
+const intelligenceShellEl = document.querySelector("#intelligence-shell");
+const intelligenceShellSummaryEl = document.querySelector("#intelligence-shell-summary");
+const intelligenceDoctrineCountEl = document.querySelector("#intelligence-doctrine-count");
+const intelligenceInoculationCountEl = document.querySelector("#intelligence-inoculation-count");
+const intelligenceReflexCountEl = document.querySelector("#intelligence-reflex-count");
 const missionsEl = document.querySelector("#missions");
 const missionPresetsEl = document.querySelector("#mission-presets");
 const instancesEl = document.querySelector("#instances");
+const libraryShellEl = document.querySelector("#library-shell");
+const libraryShellSummaryEl = document.querySelector("#library-shell-summary");
+const libraryPlaybookCountEl = document.querySelector("#library-playbook-count");
+const libraryProjectCountEl = document.querySelector("#library-project-count");
 const diagnosticsEl = document.querySelector("#diagnostics");
+const healthShellEl = document.querySelector("#health-shell");
+const healthShellSummaryEl = document.querySelector("#health-shell-summary");
+const healthShellStatusEl = document.querySelector("#health-shell-status");
 const playbooksEl = document.querySelector("#playbooks");
 const projectsEl = document.querySelector("#projects");
 const eventsEl = document.querySelector("#events");
+const activityShellEl = document.querySelector("#activity-shell");
+const activityShellSummaryEl = document.querySelector("#activity-shell-summary");
+const activityShellCountEl = document.querySelector("#activity-shell-count");
 const toastEl = document.querySelector("#toast");
 const eventFilterEl = document.querySelector("#event-filter");
 const eventHideNoiseEl = document.querySelector("#event-hide-noise");
@@ -38,6 +53,7 @@ const missionAdvancedEl = document.querySelector("#mission-advanced");
 const missionInstanceSelectEl = document.querySelector("#mission-instance-select");
 const missionProjectSelectEl = document.querySelector("#mission-project-select");
 const transportSelectEl = document.querySelector("#transport-select");
+const DISCLOSURE_SHELL_IDS = ["intelligence-shell", "library-shell", "health-shell", "activity-shell"];
 
 const MISSION_PRESETS = [
   {
@@ -143,6 +159,30 @@ function formatRelativeTimestamp(value) {
 
 function summarizeCount(count, singular, plural = `${singular}s`) {
   return `${count} ${count === 1 ? singular : plural}`;
+}
+
+function disclosureKey(id) {
+  return `openzues:${id}:open`;
+}
+
+function restoreDisclosureState() {
+  DISCLOSURE_SHELL_IDS.forEach((id) => {
+    const element = document.getElementById(id);
+    if (!element) {
+      return;
+    }
+    try {
+      const saved = window.localStorage.getItem(disclosureKey(id));
+      if (saved !== null) {
+        element.open = saved === "1";
+      }
+    } catch {}
+    element.addEventListener("toggle", () => {
+      try {
+        window.localStorage.setItem(disclosureKey(id), element.open ? "1" : "0");
+      } catch {}
+    });
+  });
 }
 
 function toneForMissionStatus(status) {
@@ -641,6 +681,13 @@ function renderDiagnostics() {
   const diagnostics = state.diagnostics?.checks ?? [];
   if (!diagnostics.length) {
     diagnosticsEl.innerHTML = `<article class="diagnostic empty-state"><p>No diagnostics yet.</p></article>`;
+    if (healthShellStatusEl) {
+      healthShellStatusEl.textContent = "checking";
+      healthShellStatusEl.className = "pill";
+    }
+    if (healthShellSummaryEl) {
+      healthShellSummaryEl.textContent = "Expand when you need diagnostics or environment repair clues.";
+    }
     return;
   }
   diagnosticsEl.innerHTML = diagnostics
@@ -660,6 +707,96 @@ function renderDiagnostics() {
       `,
     )
     .join("");
+
+  const failCount = diagnostics.filter((check) => check.status === "fail").length;
+  const warnCount = diagnostics.filter((check) => check.status === "warn").length;
+  const okCount = diagnostics.filter((check) => check.status === "ok").length;
+  if (healthShellStatusEl) {
+    if (failCount) {
+      healthShellStatusEl.textContent = summarizeCount(failCount, "fail", "fails");
+      healthShellStatusEl.className = "pill bad";
+    } else if (warnCount) {
+      healthShellStatusEl.textContent = summarizeCount(warnCount, "warn");
+      healthShellStatusEl.className = "pill warn";
+    } else {
+      healthShellStatusEl.textContent = summarizeCount(okCount, "ok");
+      healthShellStatusEl.className = "pill ok";
+    }
+  }
+  if (healthShellSummaryEl) {
+    if (failCount) {
+      healthShellSummaryEl.textContent =
+        "Environment issues are present. Expand this dock when you need the exact repair path.";
+    } else if (warnCount) {
+      healthShellSummaryEl.textContent =
+        "The environment is mostly healthy, with a few things worth watching before a long run.";
+    } else {
+      healthShellSummaryEl.textContent =
+        "System posture is healthy. The dock can stay collapsed until you need details.";
+    }
+  }
+}
+
+function renderShellChrome() {
+  const doctrines = state.dashboard?.cortex?.doctrines ?? [];
+  const inoculations = state.dashboard?.cortex?.inoculations ?? [];
+  const reflexes = state.dashboard?.reflex_deck?.reflexes ?? [];
+  const playbooks = state.dashboard?.playbooks ?? [];
+  const projects = state.dashboard?.projects ?? [];
+  const events = state.dashboard?.events ?? [];
+
+  if (intelligenceDoctrineCountEl) {
+    intelligenceDoctrineCountEl.textContent = summarizeCount(doctrines.length, "doctrine");
+    intelligenceDoctrineCountEl.className = doctrines.length ? "pill ok" : "pill";
+  }
+  if (intelligenceInoculationCountEl) {
+    intelligenceInoculationCountEl.textContent = summarizeCount(inoculations.length, "inoculation");
+    intelligenceInoculationCountEl.className = inoculations.length ? "pill warn" : "pill";
+  }
+  if (intelligenceReflexCountEl) {
+    intelligenceReflexCountEl.textContent = summarizeCount(reflexes.length, "reflex");
+    intelligenceReflexCountEl.className = reflexes.length ? "pill ok" : "pill";
+  }
+  if (intelligenceShellSummaryEl) {
+    if (reflexes.length) {
+      intelligenceShellSummaryEl.textContent =
+        "Intervention cues are armed. Expand this layer when you want to steer a live mission.";
+    } else if (doctrines.length || inoculations.length) {
+      intelligenceShellSummaryEl.textContent =
+        "Learned repo doctrine is available, but it stays tucked away until you need guidance.";
+    } else {
+      intelligenceShellSummaryEl.textContent =
+        "Collapsed by default so the main mission lane stays clean while intelligence is still forming.";
+    }
+  }
+
+  if (libraryPlaybookCountEl) {
+    libraryPlaybookCountEl.textContent = summarizeCount(playbooks.length, "playbook");
+    libraryPlaybookCountEl.className = playbooks.length ? "pill ok" : "pill";
+  }
+  if (libraryProjectCountEl) {
+    libraryProjectCountEl.textContent = summarizeCount(projects.length, "project");
+    libraryProjectCountEl.className = projects.length ? "pill ok" : "pill";
+  }
+  if (libraryShellSummaryEl) {
+    if (playbooks.length || projects.length) {
+      libraryShellSummaryEl.textContent =
+        "Workspace setup is available on demand, without competing with the live mission surface.";
+    } else {
+      libraryShellSummaryEl.textContent =
+        "Keep setup and reusable operator routines close, but out of the main mission lane.";
+    }
+  }
+
+  if (activityShellCountEl) {
+    activityShellCountEl.textContent = summarizeCount(events.length, "event");
+    activityShellCountEl.className = events.length ? "pill ok" : "pill";
+  }
+  if (activityShellSummaryEl) {
+    activityShellSummaryEl.textContent = events.length
+      ? "The ledger is hidden until you need a full trail of mission, thread, and transport activity."
+      : "The event stream will appear here when live activity starts landing.";
+  }
 }
 
 function renderMissions() {
@@ -1201,6 +1338,7 @@ function render() {
   renderInstances();
   renderPlaybooks();
   renderProjects();
+  renderShellChrome();
   renderEvents();
   syncMissionOptions();
 }
@@ -1543,6 +1681,7 @@ function connectSocket() {
   };
 }
 
+restoreDisclosureState();
 refreshAll().catch((error) => showToast(normalizeError(error), true));
 syncTransportFields();
 connectSocket();
