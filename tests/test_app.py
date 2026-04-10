@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 
@@ -24,8 +25,27 @@ from openzues.schemas import (
     TaskBlueprintView,
 )
 from openzues.services.control_chat import plan_attention_queue, plan_control_chat
+from openzues.services.control_plane import ControlPlaneLease
 from openzues.services.dreams import build_dream_deck
 from openzues.settings import Settings
+
+
+class FakeControlPlaneLease(ControlPlaneLease):
+    def __init__(self, *, owner: bool, owner_pid: int | None = None) -> None:
+        super().__init__(Path("control-plane.lock"))
+        self._owner = owner
+        self._simulated_owner_pid = owner_pid
+
+    def acquire(self, *, metadata: dict[str, object] | None = None) -> bool:
+        self.metadata = dict(metadata or {})
+        self.acquired = self._owner
+        self.owner_pid = (
+            self._simulated_owner_pid if not self._owner else 1001
+        )
+        return self.acquired
+
+    def release(self) -> None:
+        self.acquired = False
 
 
 def make_client(
@@ -33,13 +53,14 @@ def make_client(
     *,
     client_host: str = "testclient",
     attention_queue_enabled: bool = True,
+    control_plane_lease: ControlPlaneLease | None = None,
 ):
     app_settings = Settings(
         data_dir=tmp_path / "data",
         db_path=tmp_path / "data" / "openzues-test.db",
         attention_queue_enabled=attention_queue_enabled,
     )
-    app = create_app(app_settings)
+    app = create_app(app_settings, control_plane_lease=control_plane_lease)
     return TestClient(app, client=(client_host, 50000))
 
 
@@ -347,7 +368,25 @@ def test_health_endpoint(tmp_path) -> None:
     with make_client(tmp_path) as client:
         response = client.get("/api/health")
     assert response.status_code == 200
-    assert response.json() == {"status": "ok"}
+    assert response.json()["status"] == "ok"
+    assert response.json()["control_plane"] == "leader"
+
+
+def test_observer_mode_blocks_mutating_requests(tmp_path) -> None:
+    lease = FakeControlPlaneLease(owner=False, owner_pid=4242)
+    with make_client(tmp_path, control_plane_lease=lease) as client:
+        health = client.get("/api/health")
+        dashboard = client.get("/api/dashboard")
+        response = client.post("/api/control-chat", json={"text": "continue building"})
+
+    assert health.status_code == 200
+    assert health.json()["control_plane"] == "observer"
+    assert health.json()["owner_pid"] == 4242
+    assert dashboard.status_code == 200
+    assert dashboard.json()["control_chat"]["headline"] == "Observer mode is active"
+    assert dashboard.json()["attention_queue"]["headline"] == "Observer mode is active"
+    assert response.status_code == 409
+    assert response.json()["control_plane"] == "observer"
 
 
 def test_project_creation_appears_on_dashboard(tmp_path) -> None:

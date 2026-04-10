@@ -617,6 +617,173 @@ async def test_reconcile_auto_recovers_failed_mission_with_checkpoint(tmp_path) 
 
 
 @pytest.mark.asyncio
+async def test_reconcile_rebinds_stale_thread_before_failing_again(tmp_path) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    manager = FakeManager()
+    manager.instances[7].connected = True
+    manager.instances[7].threads = []
+    service = MissionService(database, manager, BroadcastHub(), poll_interval_seconds=3600)
+
+    mission_id = await database.create_mission(
+        name="Stale thread mission",
+        objective="Keep shipping after a stale thread disappears.",
+        status="failed",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread_stale",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=True,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+    )
+    await database.append_mission_checkpoint(
+        mission_id=mission_id,
+        thread_id="thread_stale",
+        turn_id="turn_stale",
+        kind="final_answer",
+        summary="The last stable milestone mostly landed before the thread vanished.",
+    )
+    await database.update_mission(
+        mission_id,
+        last_error="thread not found: thread_stale",
+        last_checkpoint="The last stable milestone mostly landed before the thread vanished.",
+    )
+
+    await service._reconcile_mission(mission_id)
+    mission = await database.get_mission(mission_id)
+    checkpoints = await database.list_mission_checkpoints(mission_id)
+
+    assert mission is not None
+    assert mission["thread_id"] == "thread_auto_7"
+    assert mission["status"] == "active"
+    assert mission["phase"] == "thinking"
+    assert manager.thread_calls[0]["instance_id"] == 7
+    assert manager.turn_calls[0]["thread_id"] == "thread_auto_7"
+    assert "stale-thread recovery" in manager.turn_calls[0]["text"]
+    assert checkpoints[0]["kind"] == "thread_rebind"
+    assert "thread_stale" in checkpoints[0]["summary"]
+
+
+@pytest.mark.asyncio
+async def test_live_event_clears_stale_thread_failure_state(tmp_path) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    manager = FakeManager()
+    manager.instances[7].connected = True
+    service = MissionService(database, manager, BroadcastHub(), poll_interval_seconds=3600)
+
+    mission_id = await database.create_mission(
+        name="Live thread proof",
+        objective="Recover status when a real event arrives on the thread.",
+        status="failed",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread_live",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=True,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+    )
+    await database.update_mission(
+        mission_id,
+        last_error="thread not found: thread_live",
+        phase="failed",
+        in_progress=0,
+    )
+
+    await service.handle_event(
+        7,
+        {
+            "method": "item/started",
+            "threadId": "thread_live",
+            "params": {
+                "threadId": "thread_live",
+                "turnId": "turn_live",
+                "item": {
+                    "type": "commandExecution",
+                    "command": 'powershell.exe -Command "Get-Date"',
+                },
+            },
+        },
+    )
+
+    mission = await database.get_mission(mission_id)
+
+    assert mission is not None
+    assert mission["status"] == "active"
+    assert mission["last_error"] is None
+    assert mission["phase"] == "executing"
+    assert mission["in_progress"] == 1
+
+
+@pytest.mark.asyncio
+async def test_reconcile_clears_stale_thread_error_when_runtime_thread_is_alive(tmp_path) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    manager = FakeManager()
+    manager.instances[7].connected = True
+    manager.instances[7].threads = [{"id": "thread_live", "status": {"type": "active"}}]
+    service = MissionService(database, manager, BroadcastHub(), poll_interval_seconds=3600)
+
+    mission_id = await database.create_mission(
+        name="Healed by runtime",
+        objective="Trust a live runtime thread over a stale failure marker.",
+        status="failed",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread_live",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=True,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+    )
+    await database.update_mission(
+        mission_id,
+        last_error="thread not found: thread_live",
+        phase="failed",
+        in_progress=0,
+    )
+
+    await service._reconcile_mission(mission_id)
+    mission = await database.get_mission(mission_id)
+
+    assert mission is not None
+    assert mission["status"] == "active"
+    assert mission["last_error"] is None
+    assert mission["phase"] == "thinking"
+    assert mission["in_progress"] == 1
+
+
+@pytest.mark.asyncio
 async def test_reconcile_fails_over_offline_mission_to_idle_instance(tmp_path) -> None:
     database = Database(tmp_path / "missions.db")
     await database.initialize()

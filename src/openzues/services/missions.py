@@ -33,6 +33,21 @@ def _seconds_since(value: str | None) -> int | None:
     return max(0, int((datetime.now(UTC) - parsed).total_seconds()))
 
 
+def _is_thread_not_found_error(value: str | Exception | None) -> bool:
+    if value is None:
+        return False
+    return "thread not found" in str(value).lower()
+
+
+def _thread_status_type(thread_state: dict[str, Any] | None) -> str | None:
+    if not isinstance(thread_state, dict):
+        return None
+    status = thread_state.get("status")
+    if isinstance(status, dict) and isinstance(status.get("type"), str):
+        return str(status["type"])
+    return None
+
+
 def extract_thread_id(payload: dict[str, Any]) -> str | None:
     thread_id = payload.get("threadId")
     if isinstance(thread_id, str):
@@ -269,6 +284,13 @@ class MissionService:
         updates: dict[str, Any] = {"last_activity_at": utcnow()}
         method = event["method"]
         params = event["params"]
+        live_thread_signal = self._event_proves_thread_is_live(method, params)
+
+        if live_thread_signal and _is_thread_not_found_error(mission.get("last_error")):
+            updates["status"] = "active"
+            updates["last_error"] = None
+            if method in {"turn/started", "item/started", "item/completed"}:
+                updates["in_progress"] = 1
 
         if method == "turn/started":
             updates["in_progress"] = 1
@@ -361,6 +383,17 @@ class MissionService:
             "mission/event",
             {"missionId": int(mission["id"]), "method": method, "threadId": thread_id},
         )
+
+    def _event_proves_thread_is_live(self, method: str, params: dict[str, Any]) -> bool:
+        if method in {"turn/started", "item/started", "item/completed"}:
+            return True
+        if method == "thread/tokenUsage/updated":
+            return True
+        if method != "thread/status/changed":
+            return False
+        raw_status = params.get("status")
+        status = raw_status if isinstance(raw_status, dict) else {}
+        return str(status.get("type") or "") in {"active", "idle"}
 
     async def handle_server_request(self, instance_id: int, request: dict[str, Any]) -> None:
         thread_id = request.get("threadId")
@@ -646,8 +679,200 @@ class MissionService:
                     "Recent mission issue:",
                     str(mission["last_error"]),
                 ]
+        )
+        return "\n".join(instructions)
+
+    def _build_stale_thread_recovery_prompt(
+        self,
+        mission: dict[str, Any],
+        *,
+        stale_thread_id: str,
+        new_thread_id: str,
+        stale_error: str,
+        checkpoints: list[dict[str, Any]],
+    ) -> str:
+        continuity = build_continuity_packet(
+            mission,
+            instance_connected=True,
+            checkpoints=checkpoints,
+        )
+        instructions = [
+            "You are resuming an OpenZues autonomous mission after stale-thread recovery.",
+            f"Mission: {mission['name']}",
+            f"Stale thread: {stale_thread_id}",
+            f"Recovery thread: {new_thread_id}",
+            "",
+            "Primary objective:",
+            str(mission["objective"]),
+            "",
+            "Recovery doctrine:",
+            "- The prior thread can no longer be resumed, so treat this as a fresh re-entry lane.",
+            "- Reconstruct context from the checkpoint trail before taking new action.",
+            "- Do not redo verified work unless the checkpoint or repo state proves it is broken.",
+            "- Verify your footing quickly, then continue with the smallest high-leverage step.",
+            (
+                "- End this turn with a re-entry checkpoint: recovered context, verified state, "
+                "next step, blockers."
+            ),
+        ]
+        if bool(mission.get("use_builtin_agents")):
+            instructions.append(
+                "- Use built-in agents only after you have rebuilt enough local context to "
+                "delegate safely."
+            )
+        if bool(mission.get("run_verification")):
+            instructions.append(
+                "- Run the fastest meaningful verification before broadening scope again."
+            )
+        if mission.get("cwd"):
+            instructions.append(
+                f"- Treat `{mission['cwd']}` as the primary workspace for this re-entry."
+            )
+        instructions.extend(
+            [
+                "",
+                "Recovery trigger:",
+                stale_error,
+                "",
+                "Continuity relay packet:",
+                f"- State: {continuity.state} ({continuity.score}/100)",
+                f"- Anchor: {continuity.anchor}",
+                f"- Drift: {continuity.drift}",
+                f"- Safest handoff: {continuity.next_handoff}",
+            ]
+        )
+        if checkpoints:
+            instructions.extend(
+                [
+                    "",
+                    "Recent checkpoint trail:",
+                ]
+            )
+            for checkpoint in reversed(checkpoints):
+                summary = str(checkpoint.get("summary") or "").strip().replace("\n", " ")
+                instructions.append(f"- [{checkpoint['kind']}] {summary[:700]}")
+        elif mission.get("last_checkpoint"):
+            instructions.extend(
+                [
+                    "",
+                    "Last known checkpoint:",
+                    str(mission["last_checkpoint"]),
+                ]
+            )
+        elif mission.get("last_commentary"):
+            instructions.extend(
+                [
+                    "",
+                    "Last known live commentary:",
+                    str(mission["last_commentary"]),
+                ]
             )
         return "\n".join(instructions)
+
+    async def _attempt_stale_thread_recovery(
+        self,
+        mission_id: int,
+        mission: dict[str, Any],
+        *,
+        stale_thread_id: str,
+        stale_error: str,
+    ) -> bool:
+        runtime = await self.manager.get(int(mission["instance_id"]))
+        if not runtime.connected:
+            return False
+
+        checkpoints = await self.database.list_mission_checkpoints(mission_id, limit=4)
+        try:
+            thread_result = await self.manager.start_thread(
+                int(mission["instance_id"]),
+                model=str(mission["model"]),
+                cwd=mission["cwd"],
+                reasoning_effort=mission["reasoning_effort"],
+                collaboration_mode=mission["collaboration_mode"],
+            )
+        except Exception as exc:
+            await self.database.update_mission(
+                mission_id,
+                status="failed",
+                phase="failed",
+                failure_count=int(mission["failure_count"]) + 1,
+                last_error=f"{stale_error} Fresh-thread recovery failed: {exc}",
+                in_progress=0,
+                last_activity_at=utcnow(),
+            )
+            await self._publish_snapshot(
+                "mission/thread-recovery-failed",
+                {
+                    "missionId": mission_id,
+                    "staleThreadId": stale_thread_id,
+                    "error": str(exc),
+                },
+            )
+            return False
+
+        new_thread_id = extract_thread_id(thread_result) or extract_thread_id(
+            {"thread": thread_result.get("thread")}
+        )
+        if new_thread_id is None:
+            await self.database.update_mission(
+                mission_id,
+                status="failed",
+                phase="failed",
+                failure_count=int(mission["failure_count"]) + 1,
+                last_error=(
+                    f"{stale_error} Fresh-thread recovery did not return a thread ID."
+                ),
+                in_progress=0,
+                last_activity_at=utcnow(),
+            )
+            return False
+
+        await self.database.update_mission(
+            mission_id,
+            thread_id=new_thread_id,
+            status="active",
+            phase="rehydrating",
+            in_progress=0,
+            last_turn_id=None,
+            current_command=None,
+            last_error=None,
+            last_activity_at=utcnow(),
+        )
+        await self.database.append_mission_checkpoint(
+            mission_id=mission_id,
+            thread_id=new_thread_id,
+            turn_id=None,
+            kind="thread_rebind",
+            summary=(
+                f"Mission rebound from stale thread {stale_thread_id} to fresh thread "
+                f"{new_thread_id}."
+            ),
+        )
+        await self._publish_snapshot(
+            "mission/thread-rebound",
+            {
+                "missionId": mission_id,
+                "staleThreadId": stale_thread_id,
+                "threadId": new_thread_id,
+                "instanceId": int(mission["instance_id"]),
+            },
+        )
+        refreshed = await self.require_mission(mission_id)
+        await self._start_turn_with_prompt(
+            mission_id,
+            refreshed,
+            thread_id=new_thread_id,
+            prompt=self._build_stale_thread_recovery_prompt(
+                refreshed,
+                stale_thread_id=stale_thread_id,
+                new_thread_id=new_thread_id,
+                stale_error=stale_error,
+                checkpoints=checkpoints,
+            ),
+            event_type="mission/thread-recovery-started",
+            allow_stale_thread_recovery=False,
+        )
+        return True
 
     async def _attempt_failover(
         self,
@@ -770,6 +995,7 @@ class MissionService:
         event_type: str,
         reflex: MissionReflexRun | None = None,
         checkpoint_kind: str = "reflex",
+        allow_stale_thread_recovery: bool = True,
     ) -> None:
         if reflex is not None:
             await self.database.append_mission_checkpoint(
@@ -790,6 +1016,15 @@ class MissionService:
                 collaboration_mode=mission["collaboration_mode"],
             )
         except Exception as exc:
+            if allow_stale_thread_recovery and _is_thread_not_found_error(exc):
+                recovered = await self._attempt_stale_thread_recovery(
+                    mission_id,
+                    mission,
+                    stale_thread_id=thread_id,
+                    stale_error=str(exc),
+                )
+                if recovered:
+                    return
             await self.database.update_mission(
                 mission_id,
                 status="failed",
@@ -918,6 +1153,7 @@ class MissionService:
                 )
                 if thread_state is not None:
                     status = thread_state.get("status")
+                    thread_status = _thread_status_type(thread_state)
                     if (
                         isinstance(status, dict)
                         and status.get("type") == "idle"
@@ -932,6 +1168,27 @@ class MissionService:
                     ):
                         await self.database.update_mission(mission_id, in_progress=1)
                         mission["in_progress"] = 1
+                    if _is_thread_not_found_error(mission.get("last_error")):
+                        heal_updates: dict[str, Any] = {
+                            "status": "active",
+                            "last_error": None,
+                        }
+                        if thread_status == "active":
+                            heal_updates["phase"] = "thinking"
+                            heal_updates["in_progress"] = 1
+                        elif thread_status == "idle":
+                            heal_updates["phase"] = "ready"
+                            heal_updates["in_progress"] = 0
+                        await self.database.update_mission(mission_id, **heal_updates)
+                        mission.update(heal_updates)
+                elif _is_thread_not_found_error(mission.get("last_error")):
+                    if await self._attempt_stale_thread_recovery(
+                        mission_id,
+                        mission,
+                        stale_thread_id=str(mission["thread_id"]),
+                        stale_error=str(mission.get("last_error") or ""),
+                    ):
+                        return
 
             pending_requests = [
                 request
@@ -1135,6 +1392,11 @@ class MissionService:
                 return "Reconnect the instance, then run the mission again."
             return "Inspect the blocker, then resume the mission when the path is clear."
         if str(mission.get("status")) == "failed":
+            if _is_thread_not_found_error(last_error):
+                return (
+                    "The previous thread went stale. OpenZues can reopen this mission on a fresh "
+                    "thread and rebuild context from the last checkpoint."
+                )
             return "Inspect the failure checkpoint, adjust the mission, and run it again."
         if str(mission.get("status")) == "paused":
             return "Resume the mission when you want Codex to continue."

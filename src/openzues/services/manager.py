@@ -216,7 +216,7 @@ class RuntimeManager:
     def add_server_request_listener(self, listener: RuntimeListener) -> None:
         self.server_request_listeners.append(listener)
 
-    async def load(self) -> None:
+    async def load(self, *, auto_connect: bool = True) -> None:
         rows = await self.database.list_instances()
         for row in rows:
             runtime = InstanceRuntime(
@@ -235,7 +235,7 @@ class RuntimeManager:
             )
             self.instances[runtime.instance_id] = runtime
         for runtime in self.instances.values():
-            if runtime.auto_connect:
+            if runtime.auto_connect and auto_connect:
                 asyncio.create_task(self.connect_instance(runtime.instance_id))
 
     async def create_instance(

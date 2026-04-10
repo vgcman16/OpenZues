@@ -9,7 +9,7 @@ from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -73,6 +73,7 @@ from openzues.services.access import AccessService, AuthenticatedOperator, build
 from openzues.services.codex_desktop import CodexDesktopService
 from openzues.services.continuity import build_continuity, build_continuity_packet
 from openzues.services.control_chat import ControlChatService
+from openzues.services.control_plane import ControlPlaneLease
 from openzues.services.cortex import (
     build_cortex,
     build_doctrines,
@@ -881,6 +882,7 @@ def create_app(
     access_service: AccessService | None = None,
     remote_ops_service: RemoteOpsService | None = None,
     control_chat_service: ControlChatService | None = None,
+    control_plane_lease: ControlPlaneLease | None = None,
 ) -> FastAPI:
     active_settings = app_settings or settings
     active_database = database or Database(active_settings.effective_db_path)
@@ -925,6 +927,9 @@ def create_app(
         active_mission_service,
         active_hub,
     )
+    active_control_plane_lease = control_plane_lease or ControlPlaneLease(
+        active_settings.data_dir / "control-plane.lock"
+    )
     active_manager.add_event_listener(active_mission_service.handle_event)
     active_manager.add_server_request_listener(active_mission_service.handle_server_request)
     active_mission_service.add_event_listener(active_ops_mesh_service.handle_mission_event)
@@ -936,21 +941,34 @@ def create_app(
         active_vault_service.initialize()
         await active_database.initialize()
         await active_access_service.initialize()
-        await active_manager.load()
-        await active_mission_service.start()
-        await active_ops_mesh_service.start()
-        await active_control_chat_service.start_attention_queue(
-            build_dashboard,
-            enabled=active_settings.attention_queue_enabled,
-            poll_interval_seconds=active_settings.attention_queue_poll_interval_seconds,
+        is_control_plane_owner = active_control_plane_lease.acquire(
+            metadata={
+                "port": active_settings.port,
+                "host": active_settings.host,
+                "cwd": str(Path.cwd()),
+            }
         )
+        app.state.control_plane_role = active_control_plane_lease.role
+        app.state.control_plane_owner_pid = active_control_plane_lease.owner_pid
+        app.state.control_plane_lock_path = str(active_control_plane_lease.path)
+        await active_manager.load(auto_connect=is_control_plane_owner)
+        if is_control_plane_owner:
+            await active_mission_service.start()
+            await active_ops_mesh_service.start()
+            await active_control_chat_service.start_attention_queue(
+                build_dashboard,
+                enabled=active_settings.attention_queue_enabled,
+                poll_interval_seconds=active_settings.attention_queue_poll_interval_seconds,
+            )
         yield
-        await active_control_chat_service.close_attention_queue()
-        await active_ops_mesh_service.close()
-        await active_mission_service.close()
+        if is_control_plane_owner:
+            await active_control_chat_service.close_attention_queue()
+            await active_ops_mesh_service.close()
+            await active_mission_service.close()
         for runtime in active_manager.instances.values():
             if runtime.client is not None:
                 await runtime.client.close()
+        active_control_plane_lease.release()
 
     fastapi_app = FastAPI(title="OpenZues", lifespan=lifespan)
     fastapi_app.add_middleware(
@@ -968,8 +986,25 @@ def create_app(
     fastapi_app.state.manager = active_manager
     fastapi_app.state.mission_service = active_mission_service
     fastapi_app.state.control_chat_service = active_control_chat_service
+    fastapi_app.state.control_plane_role = "leader"
+    fastapi_app.state.control_plane_owner_pid = None
+    fastapi_app.state.control_plane_lock_path = str(active_control_plane_lease.path)
 
     def empty_control_chat_view() -> DashboardControlChatView:
+        if fastapi_app.state.control_plane_role != "leader":
+            owner_pid = fastapi_app.state.control_plane_owner_pid
+            summary = (
+                "Observer mode is active because another OpenZues server already owns the "
+                "autonomous control plane for this data dir."
+            )
+            if owner_pid is not None:
+                summary = f"{summary} Leader PID: {owner_pid}."
+            return DashboardControlChatView(
+                headline="Observer mode is active",
+                summary=summary,
+                input_placeholder="Use the leader window to launch or steer missions",
+                messages=[],
+            )
         return DashboardControlChatView(
             headline="Tell Zues what to do next",
             summary=(
@@ -981,6 +1016,20 @@ def create_app(
         )
 
     def empty_attention_queue_view() -> DashboardAttentionQueueView:
+        if fastapi_app.state.control_plane_role != "leader":
+            owner_pid = fastapi_app.state.control_plane_owner_pid
+            summary = (
+                "Autonomous queue workers are paused in this window because another "
+                "OpenZues server already owns the control-plane lease."
+            )
+            if owner_pid is not None:
+                summary = f"{summary} Leader PID: {owner_pid}."
+            return DashboardAttentionQueueView(
+                enabled=False,
+                headline="Observer mode is active",
+                summary=summary,
+                actions=[],
+            )
         return DashboardAttentionQueueView(
             enabled=active_settings.attention_queue_enabled,
             headline="Attention queue is standing by",
@@ -1070,6 +1119,8 @@ def create_app(
             lane_snapshots=lane_snapshots,
             events=events,
         )
+        if fastapi_app.state.control_plane_role != "leader":
+            return dashboard_view
         return dashboard_view.model_copy(
             update={
                 "attention_queue": await active_control_chat_service.build_attention_queue_view(
@@ -1079,6 +1130,28 @@ def create_app(
                 "control_chat": await active_control_chat_service.build_view(dashboard_view),
             }
         )
+
+    @fastapi_app.middleware("http")
+    async def guard_observer_mutations(request: Request, call_next):
+        if (
+            request.method in {"POST", "PUT", "PATCH", "DELETE"}
+            and request.url.path.startswith("/api/")
+            and fastapi_app.state.control_plane_role != "leader"
+        ):
+            owner_pid = fastapi_app.state.control_plane_owner_pid
+            detail = (
+                "Observer mode is active because another OpenZues server owns the control plane."
+            )
+            if owner_pid is not None:
+                detail = f"{detail} Leader PID: {owner_pid}."
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "detail": detail,
+                    "control_plane": fastapi_app.state.control_plane_role,
+                },
+            )
+        return await call_next(request)
 
     async def require_remote_operator(
         request: Request,
@@ -1123,8 +1196,13 @@ def create_app(
         )
 
     @fastapi_app.get("/api/health")
-    async def health() -> dict[str, str]:
-        return {"status": "ok"}
+    async def health() -> dict[str, Any]:
+        return {
+            "status": "ok",
+            "control_plane": fastapi_app.state.control_plane_role,
+            "owner_pid": fastapi_app.state.control_plane_owner_pid,
+            "lock_path": fastapi_app.state.control_plane_lock_path,
+        }
 
     @fastapi_app.get("/api/dashboard")
     async def dashboard() -> DashboardView:
