@@ -47,6 +47,7 @@ ControlChatActionKind = Literal[
     "wait",
     "blocked",
     "resolve_request",
+    "pause_mission",
     "resume_mission",
     "run_mission",
     "launch_opportunity",

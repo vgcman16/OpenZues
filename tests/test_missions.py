@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -573,6 +573,141 @@ async def test_reconcile_uses_auto_reflex_for_orbiting_mission(tmp_path) -> None
     assert manager.turn_calls[0]["thread_id"] == "thread_auto_reflex"
     assert "Stop broadening the task." in manager.turn_calls[0]["text"]
     assert checkpoints[0]["kind"] == "reflex_auto"
+
+
+@pytest.mark.asyncio
+async def test_reconcile_auto_yields_stale_hot_mission_and_releases_queue(tmp_path) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    manager = FakeManager()
+    manager.instances[7].connected = True
+    manager.instances[7].threads = [{"id": "thread_hot", "status": {"type": "notLoaded"}}]
+    service = MissionService(database, manager, BroadcastHub(), poll_interval_seconds=3600)
+
+    hot_id = await database.create_mission(
+        name="Hot lane owner",
+        objective="Keep shipping until a checkpoint lands.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread_hot",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=True,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+    )
+    await database.update_mission(
+        hot_id,
+        in_progress=1,
+        phase="thinking",
+        total_tokens=77089,
+        command_count=4,
+        last_activity_at=(datetime.now(UTC) - timedelta(minutes=11)).isoformat(),
+    )
+
+    queued_id = await database.create_mission(
+        name="Queued follower",
+        objective="Pick up once the lane is free.",
+        status="blocked",
+        instance_id=7,
+        project_id=None,
+        thread_id=None,
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=True,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+    )
+    await database.update_mission(
+        queued_id,
+        phase="queued",
+        last_error="Queued behind mission: Hot lane owner",
+    )
+
+    await service._reconcile_mission(hot_id)
+    hot = await database.get_mission(hot_id)
+    hot_checkpoints = await database.list_mission_checkpoints(hot_id)
+
+    assert hot is not None
+    assert hot["status"] == "paused"
+    assert hot["in_progress"] == 0
+    assert hot["last_checkpoint"].startswith("Auto-yielded the lane after 77,089 tokens")
+    assert hot_checkpoints[0]["kind"] == "queue_yield"
+
+    await service._reconcile_mission(queued_id)
+    queued = await database.get_mission(queued_id)
+
+    assert queued is not None
+    assert queued["status"] == "active"
+    assert queued["in_progress"] == 1
+    assert queued["last_error"] is None
+    assert manager.thread_calls[0]["instance_id"] == 7
+    assert manager.turn_calls[0]["text"].startswith(
+        "You are running inside an OpenZues autonomous mission."
+    )
+
+
+@pytest.mark.asyncio
+async def test_yield_for_queue_is_idempotent_once_checkpoint_exists(tmp_path) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    manager = FakeManager()
+    service = MissionService(database, manager, BroadcastHub(), poll_interval_seconds=3600)
+
+    mission_id = await database.create_mission(
+        name="Yield once",
+        objective="Cool the lane once.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread_once",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=True,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+    )
+    await database.update_mission(
+        mission_id,
+        total_tokens=64000,
+        command_count=7,
+        last_activity_at=(datetime.now(UTC) - timedelta(minutes=9)).isoformat(),
+    )
+
+    await service.yield_for_queue(mission_id)
+    await service.yield_for_queue(mission_id)
+
+    mission = await database.get_mission(mission_id)
+    checkpoints = await database.list_mission_checkpoints(mission_id)
+
+    assert mission is not None
+    assert mission["status"] == "paused"
+    assert len([item for item in checkpoints if item["kind"] == "queue_yield"]) == 1
 
 
 @pytest.mark.asyncio

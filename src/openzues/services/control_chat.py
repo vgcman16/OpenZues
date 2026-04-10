@@ -135,6 +135,13 @@ def _parse_timestamp(value: str | None) -> datetime | None:
         return None
 
 
+def _minutes_since(value: str | None) -> int | None:
+    parsed = _parse_timestamp(value)
+    if parsed is None:
+        return None
+    return max(0, int((datetime.now(UTC) - parsed).total_seconds() // 60))
+
+
 def _sort_missions(missions: list[MissionView]) -> list[MissionView]:
     return sorted(
         missions,
@@ -285,6 +292,30 @@ def _find_mission(dashboard: DashboardView, mission_id: int | None) -> MissionVi
     if mission_id is None:
         return None
     return next((mission for mission in dashboard.missions if mission.id == mission_id), None)
+
+
+def _find_queued_followers(dashboard: DashboardView, mission: MissionView) -> list[MissionView]:
+    return sorted(
+        [
+            candidate
+            for candidate in dashboard.missions
+            if candidate.instance_id == mission.instance_id
+            and candidate.id != mission.id
+            and candidate.status == "blocked"
+            and candidate.phase == "queued"
+        ],
+        key=lambda candidate: candidate.id,
+    )
+
+
+def _should_pause_hot_mission_for_queue(mission: MissionView) -> bool:
+    if mission.status != "active" or mission.last_checkpoint:
+        return False
+    quiet_minutes = _minutes_since(mission.last_activity_at)
+    if quiet_minutes is None or quiet_minutes < 8:
+        return False
+    orbit_threshold = max(6, mission.turns_completed * 4 + 4)
+    return mission.total_tokens >= 60000 or mission.command_count >= orbit_threshold
 
 
 def _find_signal_mission_fingerprint(
@@ -647,6 +678,31 @@ def plan_attention_queue(dashboard: DashboardView) -> AttentionQueuePlan | None:
             ),
         )
 
+    for signal in actionable_signals:
+        if signal.mission_id is None or not signal.id.endswith(("-burn", "-orbit")):
+            continue
+        mission = _find_mission(dashboard, signal.mission_id)
+        if mission is None or not _should_pause_hot_mission_for_queue(mission):
+            continue
+        queued_followers = _find_queued_followers(dashboard, mission)
+        if not queued_followers:
+            continue
+        next_target = queued_followers[0]
+        return AttentionQueuePlan(
+            signal_id=signal.id,
+            signal_fingerprint=_find_signal_mission_fingerprint(signal, dashboard),
+            signal_level=signal.level,
+            action_kind="pause_mission",
+            status="executed",
+            mission_id=mission.id,
+            target_label=mission.name,
+            reply=(
+                f"I cooled `{mission.name}` into a paused relay because it was blocking "
+                f"`{next_target.name}` after a hot run without a durable checkpoint. The lane is "
+                "free for the next queued mission to advance automatically."
+            ),
+        )
+
     if active_in_progress:
         return None
 
@@ -971,6 +1027,11 @@ class ControlChatService:
 
         if plan.action_kind == "run_mission" and plan.mission_id is not None:
             mission = await self.missions.run_now(plan.mission_id)
+            executed = True
+            mission_id = mission.id
+            target_label = mission.name
+        elif plan.action_kind == "pause_mission" and plan.mission_id is not None:
+            mission = await self.missions.yield_for_queue(plan.mission_id)
             executed = True
             mission_id = mission.id
             target_label = mission.name

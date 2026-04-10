@@ -16,6 +16,9 @@ from openzues.services.manager import RuntimeManager
 
 logger = logging.getLogger(__name__)
 
+STALE_TURN_SECONDS = 8 * 60
+HOT_MISSION_TOKEN_THRESHOLD = 60_000
+
 
 def _parse_timestamp(value: str | None) -> datetime | None:
     if not value:
@@ -200,6 +203,13 @@ class MissionService:
             in_progress=0,
         )
         await self._publish_snapshot("mission/paused", {"missionId": mission_id})
+        return await self.get_view(mission_id)
+
+    async def yield_for_queue(self, mission_id: int) -> MissionView:
+        lock = self._locks[mission_id]
+        async with lock:
+            mission = await self.require_mission(mission_id)
+            await self._yield_for_queue_locked(mission_id, mission)
         return await self.get_view(mission_id)
 
     async def resume(self, mission_id: int) -> MissionView:
@@ -442,6 +452,12 @@ class MissionService:
     def _orbit_threshold(self, mission: dict[str, Any]) -> int:
         return max(6, int(mission["turns_completed"]) * 4 + 4)
 
+    def _stale_turn_threshold_seconds(self) -> int:
+        return STALE_TURN_SECONDS
+
+    def _hot_token_threshold(self) -> int:
+        return HOT_MISSION_TOKEN_THRESHOLD
+
     def _reflex_ready(self, mission: dict[str, Any]) -> bool:
         if not bool(mission.get("allow_auto_reflexes")):
             return False
@@ -449,6 +465,98 @@ class MissionService:
         if elapsed is None:
             return True
         return elapsed >= int(mission.get("reflex_cooldown_seconds") or 900)
+
+    def _should_auto_yield_for_queue(
+        self,
+        mission: dict[str, Any],
+        *,
+        queue_depth: int,
+        last_activity_seconds: int | None,
+    ) -> bool:
+        if queue_depth <= 0:
+            return False
+        if str(mission.get("status") or "") != "active":
+            return False
+        if bool(mission.get("in_progress")):
+            return False
+        if bool(mission.get("last_checkpoint")):
+            return False
+        if (
+            last_activity_seconds is None
+            or last_activity_seconds < self._stale_turn_threshold_seconds()
+        ):
+            return False
+        token_hot = int(mission.get("total_tokens") or 0) >= self._hot_token_threshold()
+        orbiting = int(mission.get("command_count") or 0) >= self._orbit_threshold(mission)
+        return token_hot or orbiting
+
+    async def _build_queue_yield_checkpoint(
+        self,
+        mission_id: int,
+        mission: dict[str, Any],
+    ) -> str:
+        checkpoints = await self.database.list_mission_checkpoints(mission_id, limit=3)
+        packet = build_continuity_packet(
+            mission,
+            instance_connected=True,
+            checkpoints=checkpoints,
+        )
+        queue_depth = sum(
+            1
+            for candidate in await self.database.list_missions()
+            if int(candidate["instance_id"]) == int(mission["instance_id"])
+            and int(candidate["id"]) != mission_id
+            and str(candidate.get("status") or "") == "blocked"
+            and str(candidate.get("phase") or "") == "queued"
+        )
+        lines = [
+            (
+                f"Auto-yielded the lane after {int(mission.get('total_tokens') or 0):,} tokens "
+                f"and {int(mission.get('command_count') or 0)} commands "
+                "without a durable checkpoint."
+            ),
+            f"Queue pressure: {queue_depth} queued mission(s) were waiting on this lane.",
+            f"Anchor: {packet.anchor}",
+            f"Drift: {packet.drift}",
+            f"Next handoff: {packet.next_handoff}",
+        ]
+        return "\n".join(lines)
+
+    async def _yield_for_queue_locked(
+        self,
+        mission_id: int,
+        mission: dict[str, Any],
+    ) -> None:
+        existing_checkpoint = str(mission.get("last_checkpoint") or "")
+        if (
+            str(mission.get("status") or "") == "paused"
+            and existing_checkpoint.startswith("Auto-yielded the lane after")
+        ):
+            return
+        if str(mission.get("status") or "") != "active":
+            return
+        summary = await self._build_queue_yield_checkpoint(mission_id, mission)
+        await self.database.append_mission_checkpoint(
+            mission_id=mission_id,
+            thread_id=str(mission.get("thread_id") or "") or None,
+            turn_id=str(mission.get("last_turn_id") or "") or None,
+            kind="queue_yield",
+            summary=summary,
+        )
+        await self.database.update_mission(
+            mission_id,
+            status="paused",
+            phase="paused",
+            in_progress=0,
+            current_command=None,
+            last_error=None,
+            last_checkpoint=summary,
+            last_activity_at=utcnow(),
+        )
+        await self._publish_snapshot(
+            "mission/auto-yielded",
+            {"missionId": mission_id, "reason": "queue_pressure"},
+        )
 
     def _build_governor_reflex(self, mission: dict[str, Any]) -> MissionReflexRun | None:
         if not self._reflex_ready(mission):
@@ -1134,24 +1242,7 @@ class MissionService:
                     return
                 return
 
-            missions_for_instance = [
-                candidate
-                for candidate in await self.database.list_missions()
-                if int(candidate["instance_id"]) == int(mission["instance_id"])
-                and int(candidate["id"]) != mission_id
-                and str(candidate["status"]) in {"active", "blocked"}
-                and bool(candidate["in_progress"])
-            ]
-            if missions_for_instance:
-                queued_reason = f"Queued behind mission: {missions_for_instance[0]['name']}"
-                await self.database.update_mission(
-                    mission_id,
-                    status="blocked",
-                    phase="queued",
-                    last_error=queued_reason,
-                )
-                return
-
+            last_activity_seconds = _seconds_since(mission.get("last_activity_at"))
             if mission["thread_id"]:
                 thread_state = next(
                     (
@@ -1164,6 +1255,26 @@ class MissionService:
                 if thread_state is not None:
                     status = thread_state.get("status")
                     thread_status = _thread_status_type(thread_state)
+                    if (
+                        bool(mission.get("in_progress"))
+                        and thread_status != "active"
+                        and last_activity_seconds is not None
+                        and last_activity_seconds >= self._stale_turn_threshold_seconds()
+                    ):
+                        await self.database.update_mission(
+                            mission_id,
+                            in_progress=0,
+                            phase=(
+                                "ready"
+                                if str(mission.get("status") or "") == "active"
+                                else mission.get("phase")
+                            ),
+                            current_command=None,
+                        )
+                        mission["in_progress"] = 0
+                        mission["current_command"] = None
+                        if str(mission.get("status") or "") == "active":
+                            mission["phase"] = "ready"
                     if (
                         isinstance(status, dict)
                         and status.get("type") == "idle"
@@ -1199,6 +1310,24 @@ class MissionService:
                         stale_error=str(mission.get("last_error") or ""),
                     ):
                         return
+
+            missions_for_instance = [
+                candidate
+                for candidate in await self.database.list_missions()
+                if int(candidate["instance_id"]) == int(mission["instance_id"])
+                and int(candidate["id"]) != mission_id
+                and str(candidate["status"]) in {"active", "blocked"}
+                and bool(candidate["in_progress"])
+            ]
+            if missions_for_instance:
+                queued_reason = f"Queued behind mission: {missions_for_instance[0]['name']}"
+                await self.database.update_mission(
+                    mission_id,
+                    status="blocked",
+                    phase="queued",
+                    last_error=queued_reason,
+                )
+                return
 
             pending_requests = [
                 request
@@ -1239,6 +1368,25 @@ class MissionService:
                     in_progress=0,
                 )
                 await self._publish_snapshot("mission/completed", {"missionId": mission_id})
+                return
+
+            queued_followers = [
+                candidate
+                for candidate in await self.database.list_missions()
+                if int(candidate["instance_id"]) == int(mission["instance_id"])
+                and int(candidate["id"]) != mission_id
+                and str(candidate.get("status") or "") == "blocked"
+                and str(candidate.get("phase") or "") == "queued"
+            ]
+            if (
+                not force
+                and self._should_auto_yield_for_queue(
+                    mission,
+                    queue_depth=len(queued_followers),
+                    last_activity_seconds=last_activity_seconds,
+                )
+            ):
+                await self._yield_for_queue_locked(mission_id, mission)
                 return
 
             if mission["in_progress"] and not force:

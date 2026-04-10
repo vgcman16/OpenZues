@@ -833,6 +833,112 @@ def test_attention_queue_auto_approves_safe_orphan_request(tmp_path, monkeypatch
     assert messages[-1]["action_kind"] == "resolve_request"
 
 
+def test_attention_queue_pauses_hot_stale_mission_to_free_queue(tmp_path) -> None:
+    with make_client(tmp_path, attention_queue_enabled=False) as client:
+        instance_response = client.post(
+            "/api/instances",
+            json={
+                "name": "Local Codex Desktop",
+                "transport": "desktop",
+                "cwd": str(tmp_path),
+                "auto_connect": False,
+            },
+        )
+
+        assert instance_response.status_code == 200
+        instance_id = instance_response.json()["id"]
+        database = client.app.state.database
+        runtime = client.app.state.manager.instances[instance_id]
+        runtime.connected = True
+        runtime.threads = [{"id": "thread-hot", "status": {"type": "notLoaded"}}]
+
+        hot_id = asyncio.run(
+            database.create_mission(
+                name="ForumForge Inbox + Queue Build",
+                objective="Keep building the inbox routes until the milestone is durable.",
+                status="active",
+                instance_id=instance_id,
+                project_id=None,
+                task_blueprint_id=None,
+                thread_id="thread-hot",
+                cwd=str(tmp_path),
+                model="gpt-5.4",
+                reasoning_effort=None,
+                collaboration_mode=None,
+                max_turns=None,
+                use_builtin_agents=True,
+                run_verification=True,
+                auto_commit=False,
+                pause_on_approval=True,
+                allow_auto_reflexes=True,
+                auto_recover=True,
+                auto_recover_limit=2,
+                reflex_cooldown_seconds=900,
+                allow_failover=True,
+            )
+        )
+        asyncio.run(
+            database.update_mission(
+                hot_id,
+                phase="thinking",
+                in_progress=1,
+                command_count=4,
+                total_tokens=77089,
+                last_activity_at=(datetime.now(UTC) - timedelta(minutes=12)).isoformat(),
+            )
+        )
+        queued_id = asyncio.run(
+            database.create_mission(
+                name="Vault Mesh Finish",
+                objective="Continue when the lane is free.",
+                status="blocked",
+                instance_id=instance_id,
+                project_id=None,
+                task_blueprint_id=None,
+                thread_id=None,
+                cwd=str(tmp_path),
+                model="gpt-5.4",
+                reasoning_effort=None,
+                collaboration_mode=None,
+                max_turns=None,
+                use_builtin_agents=True,
+                run_verification=True,
+                auto_commit=False,
+                pause_on_approval=True,
+                allow_auto_reflexes=True,
+                auto_recover=True,
+                auto_recover_limit=2,
+                reflex_cooldown_seconds=900,
+                allow_failover=True,
+            )
+        )
+        asyncio.run(
+            database.update_mission(
+                queued_id,
+                phase="queued",
+                last_error="Queued behind mission: ForumForge Inbox + Queue Build",
+            )
+        )
+
+        dashboard = DashboardView.model_validate(client.get("/api/dashboard").json())
+        acted = asyncio.run(
+            client.app.state.control_chat_service.tick_attention_queue(dashboard)
+        )
+        hot = asyncio.run(database.get_mission(hot_id))
+        actions = asyncio.run(database.list_attention_queue_actions())
+        messages = asyncio.run(database.list_control_chat_messages())
+
+    assert acted is True
+    assert hot is not None
+    assert hot["status"] == "paused"
+    assert hot["in_progress"] == 0
+    assert hot["last_checkpoint"].startswith("Auto-yielded the lane after 77,089 tokens")
+    assert actions[0]["action_kind"] == "pause_mission"
+    assert actions[0]["status"] == "executed"
+    assert "cooled `ForumForge Inbox + Queue Build` into a paused relay" in actions[0]["summary"]
+    assert messages[-1]["action_kind"] == "pause_mission"
+
+
 def test_control_chat_endpoint_persists_wait_messages(tmp_path) -> None:
     with make_client(tmp_path) as client:
         instance_response = client.post(
