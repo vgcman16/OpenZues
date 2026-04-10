@@ -686,6 +686,96 @@ button.danger {
   gap: 10px;
 }
 
+.cortex-section {
+  background:
+    radial-gradient(circle at top right, rgba(139, 255, 202, 0.08), transparent 24%),
+    linear-gradient(180deg, rgba(93, 168, 255, 0.06), transparent 42%),
+    var(--surface);
+}
+
+.cortex-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.cortex-column {
+  min-width: 0;
+}
+
+.cortex-subhead h3 {
+  margin: 0;
+  font-size: 1.12rem;
+  line-height: 1.2;
+}
+
+.cortex-list {
+  display: grid;
+  gap: 12px;
+}
+
+.cortex-card {
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+  border-radius: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.cortex-card h4 {
+  margin: 0;
+  font-size: 1.04rem;
+  line-height: 1.22;
+}
+
+.cortex-card p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.doctrine-card {
+  background:
+    linear-gradient(180deg, rgba(93, 168, 255, 0.08), rgba(255, 255, 255, 0.03)),
+    rgba(255, 255, 255, 0.03);
+}
+
+.inoculation-card {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.03)),
+    rgba(255, 255, 255, 0.03);
+}
+
+.inoculation-critical {
+  border-color: rgba(255, 122, 140, 0.18);
+  background:
+    linear-gradient(180deg, rgba(255, 122, 140, 0.12), rgba(255, 255, 255, 0.03)),
+    rgba(255, 255, 255, 0.03);
+}
+
+.inoculation-warn {
+  border-color: rgba(255, 197, 106, 0.16);
+  background:
+    linear-gradient(180deg, rgba(255, 197, 106, 0.1), rgba(255, 255, 255, 0.03)),
+    rgba(255, 255, 255, 0.03);
+}
+
+.cortex-readout {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.cortex-prescription {
+  padding: 12px 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.025);
+  color: #d6e9fb;
+  line-height: 1.5;
+}
+
 .preset-strip {
   display: flex;
   flex-wrap: wrap;
@@ -1156,6 +1246,7 @@ pre {
 @media (max-width: 1260px) {
   .workspace-grid,
   .launch-layout,
+  .cortex-grid,
   .ops-grid,
   .mission-body,
   .horizon {

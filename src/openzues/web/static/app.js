@@ -15,6 +15,10 @@ const launchpadOpportunitiesEl = document.querySelector("#launchpad-opportunitie
 const radarHeadlineEl = document.querySelector("#radar-headline");
 const radarSummaryEl = document.querySelector("#radar-summary");
 const radarSignalsEl = document.querySelector("#radar-signals");
+const cortexHeadlineEl = document.querySelector("#cortex-headline");
+const cortexSummaryEl = document.querySelector("#cortex-summary");
+const cortexDoctrinesEl = document.querySelector("#cortex-doctrines");
+const cortexInoculationsEl = document.querySelector("#cortex-inoculations");
 const missionsEl = document.querySelector("#missions");
 const missionPresetsEl = document.querySelector("#mission-presets");
 const instancesEl = document.querySelector("#instances");
@@ -379,6 +383,82 @@ function renderRadar() {
       `,
     )
     .join("");
+}
+
+function renderCortex() {
+  const cortex = state.dashboard?.cortex;
+  if (!cortex) {
+    cortexHeadlineEl.textContent = "Learning from recent runs...";
+    cortexSummaryEl.textContent = "";
+    cortexDoctrinesEl.innerHTML = "";
+    cortexInoculationsEl.innerHTML = "";
+    return;
+  }
+
+  cortexHeadlineEl.textContent = cortex.headline;
+  cortexSummaryEl.textContent = cortex.summary;
+
+  cortexDoctrinesEl.innerHTML = cortex.doctrines.length
+    ? cortex.doctrines
+        .map(
+          (doctrine) => `
+            <article class="cortex-card doctrine-card">
+              <div class="signal-meta">
+                ${pill(doctrine.confidence, doctrine.confidence === "strong" ? "ok" : doctrine.confidence === "solid" ? "warn" : "")}
+                ${pill(`${doctrine.mission_count} runs`)}
+                ${pill(`${doctrine.checkpoint_count} checkpoints`, "ok")}
+              </div>
+              <h4>${escapeHtml(doctrine.project_label)}</h4>
+              <p>${escapeHtml(doctrine.summary)}</p>
+              <div class="cortex-readout">
+                ${pill(doctrine.recommended_model)}
+                ${
+                  doctrine.recommended_max_turns != null
+                    ? pill(`${doctrine.recommended_max_turns} turns`)
+                    : ""
+                }
+                ${doctrine.run_verification ? pill("verify", "ok") : pill("light loop")}
+                ${doctrine.auto_commit ? pill("commit", "ok") : pill("hold commits", "warn")}
+                ${doctrine.use_builtin_agents ? pill("agents", "ok") : ""}
+              </div>
+              <div class="small-muted">${escapeHtml(doctrine.rationale)}</div>
+            </article>
+          `,
+        )
+        .join("")
+    : `
+        <article class="cortex-card empty-state">
+          <strong>No doctrine yet.</strong>
+          <p class="small-muted">
+            As missions accumulate, OpenZues will learn which loop shape each workspace responds to best.
+          </p>
+        </article>
+      `;
+
+  cortexInoculationsEl.innerHTML = cortex.inoculations.length
+    ? cortex.inoculations
+        .map(
+          (inoculation) => `
+            <article class="cortex-card inoculation-card inoculation-${escapeHtml(inoculation.level)}">
+              <div class="signal-meta">
+                ${pill(inoculation.level, toneForSignal(inoculation.level))}
+                ${pill("inoculation")}
+              </div>
+              <h4>${escapeHtml(inoculation.title)}</h4>
+              <p>${escapeHtml(inoculation.summary)}</p>
+              <div class="cortex-prescription">${escapeHtml(inoculation.prescription)}</div>
+            </article>
+          `,
+        )
+        .join("")
+    : `
+        <article class="cortex-card empty-state">
+          <strong>No inoculations yet.</strong>
+          <p class="small-muted">
+            Once OpenZues sees a few real autonomy patterns, it will start hardening future runs here.
+          </p>
+        </article>
+      `;
 }
 
 function renderPresets() {
@@ -1022,6 +1102,7 @@ function render() {
   renderBrief();
   renderLaunchpad();
   renderRadar();
+  renderCortex();
   renderPresets();
   renderMissions();
   renderInstances();

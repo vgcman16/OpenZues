@@ -17,6 +17,7 @@ from openzues.logging_utils import configure_logging
 from openzues.schemas import (
     CommandCreate,
     DashboardBriefView,
+    DashboardDoctrineView,
     DashboardLaunchpadView,
     DashboardOpportunityView,
     DashboardRadarView,
@@ -41,6 +42,12 @@ from openzues.schemas import (
     TurnCreate,
 )
 from openzues.services.codex_desktop import CodexDesktopService
+from openzues.services.cortex import (
+    build_cortex,
+    build_doctrines,
+    doctrine_index,
+    tune_draft_with_doctrine,
+)
 from openzues.services.environment import EnvironmentService
 from openzues.services.github import GitHubService
 from openzues.services.hub import BroadcastHub
@@ -451,8 +458,11 @@ def build_launchpad(
     instances: list[InstanceView],
     missions: list[MissionView],
     projects: list[ProjectView],
+    *,
+    doctrines: list[DashboardDoctrineView] | None = None,
 ) -> DashboardLaunchpadView:
     opportunities: list[DashboardOpportunityView] = []
+    project_doctrine_index = doctrine_index(doctrines or build_doctrines(missions, projects))
     live_project_ids = {
         mission.project_id
         for mission in missions
@@ -493,6 +503,17 @@ def build_launchpad(
                 mission_draft=draft,
             )
         )
+
+    def tune_project_draft(
+        project_id: int | None,
+        draft: MissionDraftView,
+    ) -> MissionDraftView:
+        if project_id is None:
+            return draft
+        doctrine = project_doctrine_index.get(project_id)
+        if doctrine is None:
+            return draft
+        return tune_draft_with_doctrine(draft, doctrine)
 
     idle_instance = _pick_launch_instance(instances, missions, prefer_idle=True)
     connected_instance = _pick_launch_instance(instances, missions, prefer_idle=False)
@@ -569,26 +590,30 @@ def build_launchpad(
                     "The mission already has thread memory and a failure checkpoint, which makes "
                     "a tight recovery loop faster than starting over."
                 ),
-                draft=MissionDraftView(
-                    name=f"Recover {mission.name}",
-                    objective=(
-                        f"Continue the mission '{mission.name}' from its existing thread. Start by "
-                        "reading the last checkpoint and failure context, fix the blocker, verify "
-                        "the path forward, and leave a cleaner checkpoint when done."
+                draft=tune_project_draft(
+                    mission.project_id,
+                    MissionDraftView(
+                        name=f"Recover {mission.name}",
+                        objective=(
+                            f"Continue the mission '{mission.name}' from its existing thread. "
+                            "Start by reading the last checkpoint and failure context, fix the "
+                            "blocker, verify the path forward, and leave a cleaner checkpoint "
+                            "when done."
+                        ),
+                        instance_id=target_instance.id,
+                        project_id=mission.project_id,
+                        cwd=mission.cwd,
+                        thread_id=mission.thread_id,
+                        model=mission.model,
+                        reasoning_effort=mission.reasoning_effort,
+                        collaboration_mode=mission.collaboration_mode,
+                        max_turns=3,
+                        use_builtin_agents=mission.use_builtin_agents,
+                        run_verification=True,
+                        auto_commit=False,
+                        pause_on_approval=mission.pause_on_approval,
+                        start_immediately=True,
                     ),
-                    instance_id=target_instance.id,
-                    project_id=mission.project_id,
-                    cwd=mission.cwd,
-                    thread_id=mission.thread_id,
-                    model=mission.model,
-                    reasoning_effort=mission.reasoning_effort,
-                    collaboration_mode=mission.collaboration_mode,
-                    max_turns=3,
-                    use_builtin_agents=mission.use_builtin_agents,
-                    run_verification=True,
-                    auto_commit=False,
-                    pause_on_approval=mission.pause_on_approval,
-                    start_immediately=True,
                 ),
                 action_label="Recover run",
             )
@@ -607,26 +632,30 @@ def build_launchpad(
                 "A handoff already exists, so the shortest path to durable progress is to verify, "
                 "tighten, and lock in that checkpoint."
             ),
-            draft=MissionDraftView(
-                name=f"Harden {mission.project_label or mission.name}",
-                objective=(
-                    f"Continue from the latest checkpoint in the mission '{mission.name}'. First "
-                    "read the existing handoff in the thread, verify what is already true, close "
-                    "the biggest gaps, and leave a stronger checkpoint with validation."
+            draft=tune_project_draft(
+                mission.project_id,
+                MissionDraftView(
+                    name=f"Harden {mission.project_label or mission.name}",
+                    objective=(
+                        f"Continue from the latest checkpoint in the mission '{mission.name}'. "
+                        "First read the existing handoff in the thread, verify what is already "
+                        "true, close the biggest gaps, and leave a stronger checkpoint with "
+                        "validation."
+                    ),
+                    instance_id=target_instance.id,
+                    project_id=mission.project_id,
+                    cwd=mission.cwd,
+                    thread_id=mission.thread_id,
+                    model=mission.model,
+                    reasoning_effort=mission.reasoning_effort,
+                    collaboration_mode=mission.collaboration_mode,
+                    max_turns=3,
+                    use_builtin_agents=mission.use_builtin_agents,
+                    run_verification=True,
+                    auto_commit=True,
+                    pause_on_approval=mission.pause_on_approval,
+                    start_immediately=True,
                 ),
-                instance_id=target_instance.id,
-                project_id=mission.project_id,
-                cwd=mission.cwd,
-                thread_id=mission.thread_id,
-                model=mission.model,
-                reasoning_effort=mission.reasoning_effort,
-                collaboration_mode=mission.collaboration_mode,
-                max_turns=3,
-                use_builtin_agents=mission.use_builtin_agents,
-                run_verification=True,
-                auto_commit=True,
-                pause_on_approval=mission.pause_on_approval,
-                start_immediately=True,
             ),
             action_label="Load hardener",
         )
@@ -649,26 +678,29 @@ def build_launchpad(
                         "The worktree already has drift, so a short scout run can prevent autonomy "
                         "from compounding hidden state."
                     ),
-                    draft=MissionDraftView(
-                        name=f"Drift Sweep: {project.label}",
-                        objective=(
-                            f"Inspect the repository at {project.path}, explain the current branch "
-                            "and worktree state, identify unfinished or risky changes, and propose "
-                            "the safest next autonomous mission."
+                    draft=tune_project_draft(
+                        project.id,
+                        MissionDraftView(
+                            name=f"Drift Sweep: {project.label}",
+                            objective=(
+                                f"Inspect the repository at {project.path}, explain the current "
+                                "branch and worktree state, identify unfinished or risky changes, "
+                                "and propose the safest next autonomous mission."
+                            ),
+                            instance_id=idle_instance.id,
+                            project_id=project.id,
+                            cwd=project.path,
+                            thread_id=None,
+                            model="gpt-5.4-mini",
+                            reasoning_effort=None,
+                            collaboration_mode=None,
+                            max_turns=2,
+                            use_builtin_agents=True,
+                            run_verification=True,
+                            auto_commit=False,
+                            pause_on_approval=True,
+                            start_immediately=True,
                         ),
-                        instance_id=idle_instance.id,
-                        project_id=project.id,
-                        cwd=project.path,
-                        thread_id=None,
-                        model="gpt-5.4-mini",
-                        reasoning_effort=None,
-                        collaboration_mode=None,
-                        max_turns=2,
-                        use_builtin_agents=True,
-                        run_verification=True,
-                        auto_commit=False,
-                        pause_on_approval=True,
-                        start_immediately=True,
                     ),
                     action_label="Load sweep",
                 )
@@ -686,27 +718,29 @@ def build_launchpad(
                         "A connected lane is free and this repo is not currently under autonomous "
                         "load."
                     ),
-                    draft=MissionDraftView(
-                        name=f"Ship Next Slice: {project.label}",
-                        objective=(
-                            f"Identify the highest-leverage product or engineering improvement in "
-                            f"{project.path}, implement a meaningful milestone, verify it, and "
-                            "keep "
-                            "iterating until you leave a durable checkpoint."
+                    draft=tune_project_draft(
+                        project.id,
+                        MissionDraftView(
+                            name=f"Ship Next Slice: {project.label}",
+                            objective=(
+                                f"Identify the highest-leverage product or engineering improvement "
+                                f"in {project.path}, implement a meaningful milestone, verify it, "
+                                "and keep iterating until you leave a durable checkpoint."
+                            ),
+                            instance_id=idle_instance.id,
+                            project_id=project.id,
+                            cwd=project.path,
+                            thread_id=None,
+                            model="gpt-5.4",
+                            reasoning_effort=None,
+                            collaboration_mode=None,
+                            max_turns=5,
+                            use_builtin_agents=True,
+                            run_verification=True,
+                            auto_commit=True,
+                            pause_on_approval=True,
+                            start_immediately=True,
                         ),
-                        instance_id=idle_instance.id,
-                        project_id=project.id,
-                        cwd=project.path,
-                        thread_id=None,
-                        model="gpt-5.4",
-                        reasoning_effort=None,
-                        collaboration_mode=None,
-                        max_turns=5,
-                        use_builtin_agents=True,
-                        run_verification=True,
-                        auto_commit=True,
-                        pause_on_approval=True,
-                        start_immediately=True,
                     ),
                     action_label="Load ship run",
                 )
@@ -731,26 +765,30 @@ def build_launchpad(
                 "Parallel capacity exists, so a smaller scout can find blind spots without slowing "
                 "the main build loop."
             ),
-            draft=MissionDraftView(
-                name=f"Shadow Scout: {anchor.project_label or anchor.name}",
-                objective=(
-                    f"While the main mission continues, scout the project behind '{anchor.name}' "
-                    "for hidden risks, alternative implementation paths, or missing validation. "
-                    "Leave a short, high-signal handoff only."
+            draft=tune_project_draft(
+                anchor.project_id,
+                MissionDraftView(
+                    name=f"Shadow Scout: {anchor.project_label or anchor.name}",
+                    objective=(
+                        f"While the main mission continues, scout the project behind "
+                        f"'{anchor.name}' "
+                        "for hidden risks, alternative implementation paths, or missing "
+                        "validation. Leave a short, high-signal handoff only."
+                    ),
+                    instance_id=idle_instance.id,
+                    project_id=anchor.project_id,
+                    cwd=anchor.cwd,
+                    thread_id=None,
+                    model="gpt-5.4-mini",
+                    reasoning_effort=None,
+                    collaboration_mode=None,
+                    max_turns=2,
+                    use_builtin_agents=True,
+                    run_verification=False,
+                    auto_commit=False,
+                    pause_on_approval=True,
+                    start_immediately=True,
                 ),
-                instance_id=idle_instance.id,
-                project_id=anchor.project_id,
-                cwd=anchor.cwd,
-                thread_id=None,
-                model="gpt-5.4-mini",
-                reasoning_effort=None,
-                collaboration_mode=None,
-                max_turns=2,
-                use_builtin_agents=True,
-                run_verification=False,
-                auto_commit=False,
-                pause_on_approval=True,
-                start_immediately=True,
             ),
             action_label="Load shadow scout",
         )
@@ -860,10 +898,12 @@ def create_app(
         ]
         instances = await active_manager.list_views()
         missions = await active_mission_service.list_views()
+        doctrines = build_doctrines(missions, projects)
         return DashboardView(
             brief=build_brief(instances, missions, projects),
-            launchpad=build_launchpad(instances, missions, projects),
+            launchpad=build_launchpad(instances, missions, projects, doctrines=doctrines),
             radar=build_radar(instances, missions, projects),
+            cortex=build_cortex(instances, missions, projects, doctrines=doctrines),
             instances=instances,
             missions=missions,
             projects=projects,

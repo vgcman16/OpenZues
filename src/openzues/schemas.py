@@ -287,10 +287,46 @@ class DashboardLaunchpadView(BaseModel):
     opportunities: list[DashboardOpportunityView] = Field(default_factory=list)
 
 
+class DashboardDoctrineView(BaseModel):
+    id: str
+    project_id: int | None = None
+    project_label: str
+    confidence: Literal["forming", "solid", "strong"]
+    summary: str
+    rationale: str
+    mission_count: int = 0
+    checkpoint_count: int = 0
+    unstable_count: int = 0
+    recommended_model: str
+    recommended_max_turns: int | None = None
+    use_builtin_agents: bool = True
+    run_verification: bool = True
+    auto_commit: bool = True
+    pause_on_approval: bool = True
+
+
+class DashboardInoculationView(BaseModel):
+    id: str
+    level: SignalLevel
+    title: str
+    summary: str
+    prescription: str
+    project_id: int | None = None
+    mission_id: int | None = None
+
+
+class DashboardCortexView(BaseModel):
+    headline: str
+    summary: str
+    doctrines: list[DashboardDoctrineView] = Field(default_factory=list)
+    inoculations: list[DashboardInoculationView] = Field(default_factory=list)
+
+
 class DashboardView(BaseModel):
     brief: DashboardBriefView
     launchpad: DashboardLaunchpadView
     radar: DashboardRadarView
+    cortex: DashboardCortexView
     instances: list[InstanceView]
     missions: list[MissionView]
     projects: list[ProjectView]
