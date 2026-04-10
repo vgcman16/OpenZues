@@ -1,0 +1,110 @@
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Any, Literal
+
+from pydantic import BaseModel, Field
+
+TransportType = Literal["stdio", "websocket"]
+
+
+class InstanceCreate(BaseModel):
+    name: str
+    transport: TransportType = "stdio"
+    command: str | None = None
+    args: str | None = None
+    websocket_url: str | None = None
+    cwd: str | None = None
+    auto_connect: bool = False
+
+
+class InstanceView(BaseModel):
+    id: int
+    name: str
+    transport: TransportType
+    command: str | None
+    args: str | None
+    websocket_url: str | None
+    cwd: str | None
+    auto_connect: bool
+    connected: bool
+    pid: int | None = None
+    error: str | None = None
+    initialized: bool = False
+    client_user_agent: str | None = None
+    auth_state: dict[str, Any] | None = None
+    models: list[dict[str, Any]] = Field(default_factory=list)
+    collaboration_modes: list[dict[str, Any]] = Field(default_factory=list)
+    skills: list[dict[str, Any]] = Field(default_factory=list)
+    apps: list[dict[str, Any]] = Field(default_factory=list)
+    plugins: list[dict[str, Any]] = Field(default_factory=list)
+    mcp_servers: list[dict[str, Any]] = Field(default_factory=list)
+    config: dict[str, Any] | None = None
+    threads: list[dict[str, Any]] = Field(default_factory=list)
+    loaded_thread_ids: list[str] = Field(default_factory=list)
+    unresolved_requests: list[dict[str, Any]] = Field(default_factory=list)
+    last_event_at: str | None = None
+
+
+class ProjectCreate(BaseModel):
+    path: str
+    label: str | None = None
+
+
+class ProjectView(BaseModel):
+    id: int
+    path: str
+    label: str
+    exists: bool
+    is_git_repo: bool
+    branch: str | None = None
+    git_status: str | None = None
+    recent_commits: list[dict[str, Any]] = Field(default_factory=list)
+    pull_requests: list[dict[str, Any]] = Field(default_factory=list)
+    last_scan_at: str | None = None
+
+
+class ThreadCreate(BaseModel):
+    model: str = "gpt-5.4"
+    cwd: str | None = None
+    reasoning_effort: str | None = None
+    collaboration_mode: str | None = None
+
+
+class TurnCreate(BaseModel):
+    thread_id: str
+    text: str
+    cwd: str | None = None
+    model: str | None = None
+    reasoning_effort: str | None = None
+    collaboration_mode: str | None = None
+
+
+class CommandCreate(BaseModel):
+    command: list[str]
+    cwd: str | None = None
+    timeout_ms: int | None = 10000
+    tty: bool = False
+
+
+class ReviewCreate(BaseModel):
+    thread_id: str
+
+
+class RequestResolution(BaseModel):
+    result: Any
+
+
+class EventView(BaseModel):
+    id: int
+    instance_id: int | None
+    thread_id: str | None
+    method: str
+    payload: dict[str, Any]
+    created_at: datetime
+
+
+class DashboardView(BaseModel):
+    instances: list[InstanceView]
+    projects: list[ProjectView]
+    events: list[EventView]

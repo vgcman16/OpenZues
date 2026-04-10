@@ -1,0 +1,61 @@
+[build-system]
+requires = ["editables>=0.5", "hatchling>=1.27.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "openzues"
+version = "0.1.0"
+description = "Local-first Codex control plane with GitHub and operator workflows."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+authors = [
+  { name = "OpenZues" }
+]
+dependencies = [
+  "aiosqlite>=0.21.0",
+  "fastapi>=0.118.0",
+  "jinja2>=3.1.6",
+  "orjson>=3.11.0",
+  "pydantic-settings>=2.11.0",
+  "python-multipart>=0.0.20",
+  "typer>=0.19.2",
+  "uvicorn[standard]>=0.37.0",
+  "websockets>=15.0.1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "httpx>=0.28.1",
+  "mypy>=1.18.2",
+  "pytest>=8.4.2",
+  "pytest-asyncio>=1.2.0",
+  "ruff>=0.14.0",
+]
+
+[project.scripts]
+openzues = "openzues.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/openzues"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "ASYNC"]
+ignore = ["ASYNC109", "ASYNC240"]
+
+[tool.mypy]
+python_version = "3.12"
+warn_unused_configs = true
+check_untyped_defs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+strict_optional = true
+plugins = []

@@ -1,0 +1,206 @@
+from __future__ import annotations
+
+import json
+from contextlib import asynccontextmanager
+from pathlib import Path
+
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+
+from openzues.database import Database
+from openzues.logging_utils import configure_logging
+from openzues.schemas import (
+    CommandCreate,
+    DashboardView,
+    EventView,
+    InstanceCreate,
+    ProjectCreate,
+    ProjectView,
+    RequestResolution,
+    ReviewCreate,
+    ThreadCreate,
+    TurnCreate,
+)
+from openzues.services.github import GitHubService
+from openzues.services.hub import BroadcastHub
+from openzues.services.manager import RuntimeManager
+from openzues.services.projects import ProjectService
+from openzues.settings import Settings, settings
+
+configure_logging()
+
+
+def create_app(
+    app_settings: Settings | None = None,
+    *,
+    database: Database | None = None,
+    hub: BroadcastHub | None = None,
+    manager: RuntimeManager | None = None,
+    project_service: ProjectService | None = None,
+) -> FastAPI:
+    active_settings = app_settings or settings
+    active_database = database or Database(active_settings.effective_db_path)
+    active_hub = hub or BroadcastHub()
+    active_manager = manager or RuntimeManager(active_database, active_hub)
+    active_project_service = project_service or ProjectService(GitHubService())
+    templates = Jinja2Templates(directory=str(active_settings.templates_dir))
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        active_settings.data_dir.mkdir(parents=True, exist_ok=True)
+        await active_database.initialize()
+        await active_manager.load()
+        yield
+        for runtime in active_manager.instances.values():
+            if runtime.client is not None:
+                await runtime.client.close()
+
+    fastapi_app = FastAPI(title="OpenZues", lifespan=lifespan)
+    fastapi_app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+    fastapi_app.mount(
+        "/static",
+        StaticFiles(directory=str(active_settings.static_dir)),
+        name="static",
+    )
+
+    async def build_dashboard() -> DashboardView:
+        project_rows = await active_database.list_projects()
+        projects = [
+            ProjectView.model_validate(active_project_service.inspect(row))
+            for row in project_rows
+        ]
+        events = [EventView.model_validate(row) for row in await active_database.list_events(250)]
+        return DashboardView(
+            instances=await active_manager.list_views(),
+            projects=projects,
+            events=events,
+        )
+
+    @fastapi_app.get("/", response_class=HTMLResponse)
+    async def index(request: Request) -> HTMLResponse:
+        return templates.TemplateResponse(
+            request=request,
+            name="index.html",
+            context={"settings": active_settings},
+        )
+
+    @fastapi_app.get("/api/health")
+    async def health() -> dict[str, str]:
+        return {"status": "ok"}
+
+    @fastapi_app.get("/api/dashboard")
+    async def dashboard() -> DashboardView:
+        return await build_dashboard()
+
+    @fastapi_app.post("/api/instances")
+    async def create_instance(payload: InstanceCreate) -> dict:
+        runtime = await active_manager.create_instance(
+            name=payload.name,
+            transport=payload.transport,
+            command=payload.command or active_settings.default_codex_command,
+            args=payload.args or active_settings.default_codex_args,
+            websocket_url=payload.websocket_url,
+            cwd=payload.cwd,
+            auto_connect=payload.auto_connect,
+        )
+        return runtime.view().model_dump()
+
+    @fastapi_app.post("/api/instances/{instance_id}/connect")
+    async def connect_instance(instance_id: int) -> dict:
+        runtime = await active_manager.connect_instance(instance_id)
+        return runtime.view().model_dump()
+
+    @fastapi_app.post("/api/instances/{instance_id}/disconnect")
+    async def disconnect_instance(instance_id: int) -> dict:
+        await active_manager.disconnect_instance(instance_id)
+        runtime = await active_manager.get(instance_id)
+        return runtime.view().model_dump()
+
+    @fastapi_app.post("/api/instances/{instance_id}/refresh")
+    async def refresh_instance(instance_id: int) -> dict:
+        runtime = await active_manager.refresh_instance(instance_id)
+        return runtime.view().model_dump()
+
+    @fastapi_app.post("/api/instances/{instance_id}/threads")
+    async def start_thread(instance_id: int, payload: ThreadCreate) -> dict:
+        return await active_manager.start_thread(
+            instance_id,
+            model=payload.model,
+            cwd=payload.cwd,
+            reasoning_effort=payload.reasoning_effort,
+            collaboration_mode=payload.collaboration_mode,
+        )
+
+    @fastapi_app.post("/api/instances/{instance_id}/turns")
+    async def start_turn(instance_id: int, payload: TurnCreate) -> dict:
+        return await active_manager.start_turn(
+            instance_id,
+            thread_id=payload.thread_id,
+            text=payload.text,
+            cwd=payload.cwd,
+            model=payload.model,
+            reasoning_effort=payload.reasoning_effort,
+            collaboration_mode=payload.collaboration_mode,
+        )
+
+    @fastapi_app.post("/api/instances/{instance_id}/turns/{thread_id}/interrupt")
+    async def interrupt_turn(instance_id: int, thread_id: str) -> dict:
+        return await active_manager.interrupt_turn(instance_id, thread_id)
+
+    @fastapi_app.post("/api/instances/{instance_id}/reviews")
+    async def start_review(instance_id: int, payload: ReviewCreate) -> dict:
+        return await active_manager.start_review(instance_id, payload.thread_id)
+
+    @fastapi_app.post("/api/instances/{instance_id}/commands")
+    async def exec_command(instance_id: int, payload: CommandCreate) -> dict:
+        return await active_manager.exec_command(
+            instance_id,
+            command=payload.command,
+            cwd=payload.cwd,
+            timeout_ms=payload.timeout_ms,
+            tty=payload.tty,
+        )
+
+    @fastapi_app.post("/api/instances/{instance_id}/requests/{request_id}/resolve")
+    async def resolve_request(
+        instance_id: int,
+        request_id: str,
+        payload: RequestResolution,
+    ) -> dict[str, bool]:
+        await active_manager.resolve_request(instance_id, request_id, payload.result)
+        return {"ok": True}
+
+    @fastapi_app.post("/api/projects")
+    async def create_project(payload: ProjectCreate) -> ProjectView:
+        path = str(Path(payload.path).expanduser())
+        label = payload.label or Path(path).name
+        await active_database.create_project(path=path, label=label)
+        rows = await active_database.list_projects()
+        row = next((item for item in rows if Path(item["path"]).expanduser() == Path(path)), None)
+        if row is None:
+            raise HTTPException(status_code=500, detail="Failed to create project.")
+        return ProjectView.model_validate(active_project_service.inspect(row))
+
+    @fastapi_app.websocket("/ws")
+    async def websocket_events(websocket: WebSocket) -> None:
+        await websocket.accept()
+        async with active_hub.subscribe() as queue:
+            try:
+                while True:
+                    event = await queue.get()
+                    await websocket.send_text(json.dumps(event))
+            except WebSocketDisconnect:
+                return
+
+    return fastapi_app
+
+
+app = create_app()
