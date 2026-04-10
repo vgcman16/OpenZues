@@ -17,6 +17,7 @@ from openzues.logging_utils import configure_logging
 from openzues.schemas import (
     CommandCreate,
     DashboardBriefView,
+    DashboardContinuityPacketView,
     DashboardDoctrineView,
     DashboardLaunchpadView,
     DashboardOpportunityView,
@@ -43,6 +44,7 @@ from openzues.schemas import (
     TurnCreate,
 )
 from openzues.services.codex_desktop import CodexDesktopService
+from openzues.services.continuity import build_continuity, build_continuity_packet
 from openzues.services.cortex import (
     build_cortex,
     build_doctrines,
@@ -900,6 +902,12 @@ def create_app(
             brief=build_brief(instances, missions, projects),
             launchpad=build_launchpad(instances, missions, projects, doctrines=doctrines),
             radar=build_radar(instances, missions, projects),
+            continuity=build_continuity(
+                instances,
+                missions,
+                projects,
+                doctrines=doctrines,
+            ),
             cortex=build_cortex(instances, missions, projects, doctrines=doctrines),
             reflex_deck=build_reflex_deck(instances, missions, projects, doctrines=doctrines),
             instances=instances,
@@ -924,6 +932,31 @@ def create_app(
     @fastapi_app.get("/api/dashboard")
     async def dashboard() -> DashboardView:
         return await build_dashboard()
+
+    @fastapi_app.get("/api/missions/{mission_id}/continuity")
+    async def mission_continuity(mission_id: int) -> DashboardContinuityPacketView:
+        try:
+            mission = await active_mission_service.get_view(mission_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+        project_rows = await active_database.list_projects()
+        projects = [
+            ProjectView.model_validate(active_project_service.inspect(row)) for row in project_rows
+        ]
+        doctrines = build_doctrines(await active_mission_service.list_views(), projects)
+        doctrine = doctrine_index(doctrines).get(mission.project_id or -1)
+        instances = await active_manager.list_views()
+        connected = next(
+            (instance.connected for instance in instances if instance.id == mission.instance_id),
+            False,
+        )
+        return build_continuity_packet(
+            mission,
+            instance_connected=connected,
+            checkpoints=mission.checkpoints,
+            doctrine=doctrine,
+        )
 
     @fastapi_app.get("/api/diagnostics")
     async def diagnostics() -> DiagnosticsView:

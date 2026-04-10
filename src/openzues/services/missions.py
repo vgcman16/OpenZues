@@ -8,6 +8,7 @@ from typing import Any
 
 from openzues.database import Database, utcnow
 from openzues.schemas import MissionCheckpointView, MissionCreate, MissionReflexRun, MissionView
+from openzues.services.continuity import build_continuity_packet
 from openzues.services.hub import BroadcastHub
 from openzues.services.manager import RuntimeManager
 
@@ -516,6 +517,11 @@ class MissionService:
         offline_error: str,
         checkpoints: list[dict[str, Any]],
     ) -> str:
+        continuity = build_continuity_packet(
+            mission,
+            instance_connected=True,
+            checkpoints=checkpoints,
+        )
         instructions = [
             "You are taking over an OpenZues autonomous mission after lane failover.",
             f"Mission: {mission['name']}",
@@ -552,6 +558,16 @@ class MissionService:
                 "",
                 "Failover trigger:",
                 offline_error,
+            ]
+        )
+        instructions.extend(
+            [
+                "",
+                "Continuity relay packet:",
+                f"- State: {continuity.state} ({continuity.score}/100)",
+                f"- Anchor: {continuity.anchor}",
+                f"- Drift: {continuity.drift}",
+                f"- Safest handoff: {continuity.next_handoff}",
             ]
         )
         if checkpoints:
@@ -983,6 +999,7 @@ class MissionService:
         return MissionView.model_validate(payload)
 
     def _build_turn_prompt(self, mission: dict[str, Any]) -> str:
+        continuity = build_continuity_packet(mission, instance_connected=True)
         instructions = [
             "You are running inside an OpenZues autonomous mission.",
             f"Mission: {mission['name']}",
@@ -1022,6 +1039,10 @@ class MissionService:
             [
                 "",
                 f"Autonomous cycle: {int(mission['turns_started']) + 1}",
+                f"Continuity relay: {continuity.state} ({continuity.score}/100)",
+                f"Anchor: {continuity.anchor}",
+                f"Watch drift: {continuity.drift}",
+                f"Safest next handoff: {continuity.next_handoff}",
                 "End this turn with a concise operator handoff:"
                 " completed, verified, next step, blockers.",
             ]

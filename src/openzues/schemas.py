@@ -12,6 +12,7 @@ MissionStatus = Literal["active", "paused", "blocked", "completed", "failed"]
 SignalLevel = Literal["critical", "warn", "ready", "info"]
 SignalLane = Literal["attention", "throughput", "reliability", "capacity"]
 LaunchImpact = Literal["high", "medium", "low"]
+ContinuityState = Literal["anchored", "warming", "fragile"]
 LaunchKind = Literal[
     "workspace_scout",
     "ship_slice",
@@ -312,6 +313,28 @@ class DashboardLaunchpadView(BaseModel):
     opportunities: list[DashboardOpportunityView] = Field(default_factory=list)
 
 
+class DashboardContinuityPacketView(BaseModel):
+    id: str
+    mission_id: int
+    mission_name: str
+    project_label: str | None = None
+    state: ContinuityState
+    score: int = Field(ge=0, le=100)
+    freshness_minutes: int | None = None
+    drift_signatures: list[str] = Field(default_factory=list)
+    summary: str
+    anchor: str
+    drift: str
+    next_handoff: str
+    relay_prompt: str
+
+
+class DashboardContinuityView(BaseModel):
+    headline: str
+    summary: str
+    packets: list[DashboardContinuityPacketView] = Field(default_factory=list)
+
+
 class DashboardDoctrineView(BaseModel):
     id: str
     project_id: int | None = None
@@ -370,6 +393,7 @@ class DashboardView(BaseModel):
     brief: DashboardBriefView
     launchpad: DashboardLaunchpadView
     radar: DashboardRadarView
+    continuity: DashboardContinuityView
     cortex: DashboardCortexView
     reflex_deck: DashboardReflexDeckView
     instances: list[InstanceView]

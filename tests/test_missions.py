@@ -114,6 +114,8 @@ async def test_run_now_creates_thread_and_turn(tmp_path) -> None:
 
     assert manager.thread_calls[0]["model"] == "gpt-5.4"
     assert "Autonomous cycle: 1" in manager.turn_calls[0]["text"]
+    assert "Continuity relay:" in manager.turn_calls[0]["text"]
+    assert "Safest next handoff:" in manager.turn_calls[0]["text"]
     assert stored is not None
     assert stored["thread_id"] == "thread_auto_7"
     assert stored["in_progress"] == 1
@@ -549,6 +551,7 @@ async def test_reconcile_fails_over_offline_mission_to_idle_instance(tmp_path) -
         "taking over an OpenZues autonomous mission after lane failover"
         in manager.turn_calls[0]["text"]
     )
+    assert "Continuity relay packet:" in manager.turn_calls[0]["text"]
     assert "Recent checkpoint trail:" in manager.turn_calls[0]["text"]
     assert checkpoints[0]["kind"] == "failover"
     assert "Primary Lane" in checkpoints[0]["summary"]

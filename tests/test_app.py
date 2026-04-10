@@ -4,7 +4,14 @@ from datetime import UTC, datetime, timedelta
 
 from fastapi.testclient import TestClient
 
-from openzues.app import build_cortex, build_launchpad, build_radar, build_reflex_deck, create_app
+from openzues.app import (
+    build_continuity,
+    build_cortex,
+    build_launchpad,
+    build_radar,
+    build_reflex_deck,
+    create_app,
+)
 from openzues.schemas import InstanceView, MissionView, ProjectView
 from openzues.settings import Settings
 
@@ -254,6 +261,50 @@ def test_mission_creation_appears_on_dashboard(tmp_path) -> None:
     assert dashboard["brief"]["focus_mission_id"] == created["id"]
 
 
+def test_mission_continuity_endpoint_returns_relay_packet(tmp_path) -> None:
+    with make_client(tmp_path) as client:
+        instance_response = client.post(
+            "/api/instances",
+            json={
+                "name": "Local Codex Desktop",
+                "transport": "desktop",
+                "cwd": str(tmp_path),
+                "auto_connect": False,
+            },
+        )
+        instance_id = instance_response.json()["id"]
+        mission_response = client.post(
+            "/api/missions",
+            json={
+                "name": "Continuity probe",
+                "objective": "Build a relay-safe mission.",
+                "instance_id": instance_id,
+                "project_id": None,
+                "cwd": str(tmp_path),
+                "thread_id": "thread_probe",
+                "model": "gpt-5.4",
+                "reasoning_effort": None,
+                "collaboration_mode": None,
+                "max_turns": 3,
+                "use_builtin_agents": True,
+                "run_verification": True,
+                "auto_commit": True,
+                "pause_on_approval": True,
+                "start_immediately": False,
+            },
+        )
+        mission_id = mission_response.json()["id"]
+        continuity_response = client.get(f"/api/missions/{mission_id}/continuity")
+
+    assert continuity_response.status_code == 200
+    continuity = continuity_response.json()
+    assert continuity["mission_id"] == mission_id
+    assert continuity["state"] in {"anchored", "warming", "fragile"}
+    assert continuity["relay_prompt"].startswith(
+        "You are resuming or taking over an OpenZues mission."
+    )
+
+
 def test_build_radar_prioritizes_operator_risks() -> None:
     now = datetime.now(UTC)
     instance = make_instance_view()
@@ -330,6 +381,44 @@ def test_build_launchpad_uses_drift_sweep_for_dirty_projects() -> None:
     launchpad = build_launchpad([make_instance_view()], [], [project])
 
     assert any(opportunity.kind == "drift_sweep" for opportunity in launchpad.opportunities)
+
+
+def test_build_continuity_prioritizes_fragile_relay_packets() -> None:
+    now = datetime.now(UTC)
+    fragile = make_mission_view(
+        mission_id=21,
+        name="Orbiting relay",
+        status="active",
+        phase="thinking",
+        command_count=12,
+        turns_completed=1,
+        last_checkpoint=None,
+        last_activity_at=(now - timedelta(minutes=12)).isoformat(),
+    )
+    anchored = make_mission_view(
+        mission_id=22,
+        name="Anchored relay",
+        status="paused",
+        phase="paused",
+        last_checkpoint="Verified milestone and ready for the next thin slice.",
+        project_id=3,
+        project_label="Atlas",
+        last_activity_at=(now - timedelta(minutes=2)).isoformat(),
+    )
+
+    continuity = build_continuity(
+        [make_instance_view()],
+        [fragile, anchored],
+        [make_project_view()],
+    )
+
+    assert continuity.headline
+    assert continuity.packets[0].mission_id == 21
+    assert continuity.packets[0].state == "fragile"
+    assert continuity.packets[1].state in {"warming", "anchored"}
+    assert continuity.packets[0].relay_prompt.startswith(
+        "You are resuming or taking over an OpenZues mission."
+    )
 
 
 def test_build_cortex_learns_project_doctrine() -> None:

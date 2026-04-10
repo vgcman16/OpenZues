@@ -778,6 +778,98 @@ button.danger {
   gap: 10px;
 }
 
+.continuity-section {
+  background:
+    radial-gradient(circle at top left, rgba(93, 168, 255, 0.08), transparent 24%),
+    linear-gradient(180deg, rgba(139, 255, 202, 0.05), transparent 42%),
+    var(--surface);
+}
+
+.continuity-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+}
+
+.continuity-card {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border-radius: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.continuity-card h4 {
+  margin: 0;
+  font-size: 1.04rem;
+  line-height: 1.22;
+}
+
+.continuity-card p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.continuity-anchored {
+  border-color: rgba(139, 255, 202, 0.14);
+  background:
+    linear-gradient(180deg, rgba(139, 255, 202, 0.08), rgba(255, 255, 255, 0.03)),
+    rgba(255, 255, 255, 0.03);
+}
+
+.continuity-warming {
+  border-color: rgba(255, 197, 106, 0.16);
+  background:
+    linear-gradient(180deg, rgba(255, 197, 106, 0.09), rgba(255, 255, 255, 0.03)),
+    rgba(255, 255, 255, 0.03);
+}
+
+.continuity-fragile {
+  border-color: rgba(255, 122, 140, 0.18);
+  background:
+    linear-gradient(180deg, rgba(255, 122, 140, 0.11), rgba(255, 255, 255, 0.03)),
+    rgba(255, 255, 255, 0.03);
+}
+
+.continuity-rail {
+  display: grid;
+  gap: 10px;
+}
+
+.continuity-rail strong {
+  display: block;
+  margin-bottom: 4px;
+  color: #dff3ff;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.continuity-detail {
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.02);
+  overflow: hidden;
+}
+
+.continuity-detail summary {
+  cursor: pointer;
+  padding: 10px 12px;
+  color: var(--muted);
+  font-weight: 600;
+  list-style: none;
+}
+
+.continuity-detail summary::-webkit-details-marker {
+  display: none;
+}
+
+.continuity-detail pre {
+  padding: 0 12px 12px;
+}
+
 .cortex-section {
   background:
     radial-gradient(circle at top right, rgba(139, 255, 202, 0.08), transparent 24%),

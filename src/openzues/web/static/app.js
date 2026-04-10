@@ -15,6 +15,9 @@ const launchpadOpportunitiesEl = document.querySelector("#launchpad-opportunitie
 const radarHeadlineEl = document.querySelector("#radar-headline");
 const radarSummaryEl = document.querySelector("#radar-summary");
 const radarSignalsEl = document.querySelector("#radar-signals");
+const continuityHeadlineEl = document.querySelector("#continuity-headline");
+const continuitySummaryEl = document.querySelector("#continuity-summary");
+const continuityPacketsEl = document.querySelector("#continuity-packets");
 const cortexHeadlineEl = document.querySelector("#cortex-headline");
 const cortexSummaryEl = document.querySelector("#cortex-summary");
 const cortexDoctrinesEl = document.querySelector("#cortex-doctrines");
@@ -24,6 +27,7 @@ const reflexSummaryEl = document.querySelector("#reflex-summary");
 const reflexesEl = document.querySelector("#reflexes");
 const intelligenceShellEl = document.querySelector("#intelligence-shell");
 const intelligenceShellSummaryEl = document.querySelector("#intelligence-shell-summary");
+const intelligenceContinuityCountEl = document.querySelector("#intelligence-continuity-count");
 const intelligenceDoctrineCountEl = document.querySelector("#intelligence-doctrine-count");
 const intelligenceInoculationCountEl = document.querySelector("#intelligence-inoculation-count");
 const intelligenceReflexCountEl = document.querySelector("#intelligence-reflex-count");
@@ -428,6 +432,74 @@ function renderRadar() {
     .join("");
 }
 
+function renderContinuity() {
+  const continuity = state.dashboard?.continuity;
+  if (!continuity) {
+    continuityHeadlineEl.textContent = "Packaging relay packets...";
+    continuitySummaryEl.textContent = "";
+    continuityPacketsEl.innerHTML = "";
+    return;
+  }
+
+  continuityHeadlineEl.textContent = continuity.headline;
+  continuitySummaryEl.textContent = continuity.summary;
+
+  continuityPacketsEl.innerHTML = continuity.packets.length
+    ? continuity.packets
+        .map(
+          (packet) => `
+            <article class="continuity-card continuity-${escapeHtml(packet.state)}">
+              <div class="signal-meta">
+                ${pill(packet.state, packet.state === "anchored" ? "ok" : packet.state === "warming" ? "warn" : "bad")}
+                ${pill(`${packet.score}/100`)}
+                ${packet.project_label ? pill(packet.project_label) : ""}
+                ${
+                  packet.freshness_minutes != null
+                    ? `<span class="signal-fresh">${escapeHtml(formatRelativeTimestamp(Date.now() - packet.freshness_minutes * 60000))}</span>`
+                    : ""
+                }
+              </div>
+              <h4>${escapeHtml(packet.mission_name)}</h4>
+              <p>${escapeHtml(packet.summary)}</p>
+              <div class="continuity-rail">
+                <div>
+                  <strong>Anchor</strong>
+                  <p>${escapeHtml(packet.anchor)}</p>
+                </div>
+                <div>
+                  <strong>Drift</strong>
+                  <p>${escapeHtml(packet.drift)}</p>
+                </div>
+                <div>
+                  <strong>Next Handoff</strong>
+                  <p>${escapeHtml(packet.next_handoff)}</p>
+                </div>
+              </div>
+              ${
+                packet.drift_signatures?.length
+                  ? `<div class="signal-meta">${packet.drift_signatures
+                      .map((signature) => pill(signature, packet.state === "fragile" ? "bad" : "warn"))
+                      .join("")}</div>`
+                  : ""
+              }
+              <details class="continuity-detail">
+                <summary>Relay prompt</summary>
+                <pre>${escapeHtml(packet.relay_prompt)}</pre>
+              </details>
+            </article>
+          `,
+        )
+        .join("")
+    : `
+        <article class="continuity-card empty-state">
+          <strong>No relay packets yet.</strong>
+          <p class="small-muted">
+            Once a mission starts building thread memory or checkpoints, OpenZues will compress its current truth here.
+          </p>
+        </article>
+      `;
+}
+
 function renderCortex() {
   const cortex = state.dashboard?.cortex;
   if (!cortex) {
@@ -738,6 +810,7 @@ function renderDiagnostics() {
 }
 
 function renderShellChrome() {
+  const continuityPackets = state.dashboard?.continuity?.packets ?? [];
   const doctrines = state.dashboard?.cortex?.doctrines ?? [];
   const inoculations = state.dashboard?.cortex?.inoculations ?? [];
   const reflexes = state.dashboard?.reflex_deck?.reflexes ?? [];
@@ -745,6 +818,10 @@ function renderShellChrome() {
   const projects = state.dashboard?.projects ?? [];
   const events = state.dashboard?.events ?? [];
 
+  if (intelligenceContinuityCountEl) {
+    intelligenceContinuityCountEl.textContent = summarizeCount(continuityPackets.length, "packet");
+    intelligenceContinuityCountEl.className = continuityPackets.length ? "pill warn" : "pill";
+  }
   if (intelligenceDoctrineCountEl) {
     intelligenceDoctrineCountEl.textContent = summarizeCount(doctrines.length, "doctrine");
     intelligenceDoctrineCountEl.className = doctrines.length ? "pill ok" : "pill";
@@ -758,12 +835,16 @@ function renderShellChrome() {
     intelligenceReflexCountEl.className = reflexes.length ? "pill ok" : "pill";
   }
   if (intelligenceShellSummaryEl) {
-    if (reflexes.length) {
+    const fragilePackets = continuityPackets.filter((packet) => packet.state === "fragile").length;
+    if (fragilePackets) {
+      intelligenceShellSummaryEl.textContent =
+        "Relay packets are flagging fragile mission memory. Expand this layer before a long unattended run.";
+    } else if (reflexes.length) {
       intelligenceShellSummaryEl.textContent =
         "Intervention cues are armed. Expand this layer when you want to steer a live mission.";
-    } else if (doctrines.length || inoculations.length) {
+    } else if (continuityPackets.length || doctrines.length || inoculations.length) {
       intelligenceShellSummaryEl.textContent =
-        "Learned repo doctrine is available, but it stays tucked away until you need guidance.";
+        "Continuity, doctrine, and hardening signals are available, but they stay tucked away until you need guidance.";
     } else {
       intelligenceShellSummaryEl.textContent =
         "Collapsed by default so the main mission lane stays clean while intelligence is still forming.";
@@ -1331,6 +1412,7 @@ function render() {
   renderBrief();
   renderLaunchpad();
   renderRadar();
+  renderContinuity();
   renderCortex();
   renderReflexes();
   renderPresets();
