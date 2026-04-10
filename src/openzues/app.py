@@ -17,8 +17,11 @@ from openzues.database import Database
 from openzues.logging_utils import configure_logging
 from openzues.schemas import (
     CommandCreate,
+    ControlChatCreate,
+    ControlChatResponse,
     DashboardBriefView,
     DashboardContinuityPacketView,
+    DashboardControlChatView,
     DashboardDoctrineView,
     DashboardDreamView,
     DashboardEconomyView,
@@ -68,6 +71,7 @@ from openzues.schemas import (
 from openzues.services.access import AccessService, AuthenticatedOperator, build_access_posture
 from openzues.services.codex_desktop import CodexDesktopService
 from openzues.services.continuity import build_continuity, build_continuity_packet
+from openzues.services.control_chat import ControlChatService
 from openzues.services.cortex import (
     build_cortex,
     build_doctrines,
@@ -875,6 +879,7 @@ def create_app(
     vault_service: VaultService | None = None,
     access_service: AccessService | None = None,
     remote_ops_service: RemoteOpsService | None = None,
+    control_chat_service: ControlChatService | None = None,
 ) -> FastAPI:
     active_settings = app_settings or settings
     active_database = database or Database(active_settings.effective_db_path)
@@ -914,6 +919,11 @@ def create_app(
         active_ops_mesh_service,
         active_hub,
     )
+    active_control_chat_service = control_chat_service or ControlChatService(
+        active_database,
+        active_mission_service,
+        active_hub,
+    )
     active_manager.add_event_listener(active_mission_service.handle_event)
     active_manager.add_server_request_listener(active_mission_service.handle_server_request)
     active_mission_service.add_event_listener(active_ops_mesh_service.handle_mission_event)
@@ -947,6 +957,21 @@ def create_app(
         StaticFiles(directory=str(active_settings.static_dir)),
         name="static",
     )
+    fastapi_app.state.database = active_database
+    fastapi_app.state.manager = active_manager
+    fastapi_app.state.mission_service = active_mission_service
+    fastapi_app.state.control_chat_service = active_control_chat_service
+
+    def empty_control_chat_view() -> DashboardControlChatView:
+        return DashboardControlChatView(
+            headline="Tell Zues what to do next",
+            summary=(
+                "Chat can decide when to wait, resume, recover, harden, or launch without "
+                "flooding the main transcript with manual controls."
+            ),
+            input_placeholder="Describe the next thing you want built, fixed, or verified",
+            messages=[],
+        )
 
     async def build_dashboard() -> DashboardView:
         project_rows = await active_database.list_projects()
@@ -979,8 +1004,9 @@ def create_app(
         doctrines = build_doctrines(missions, projects)
         economy = build_economy(missions, projects, task_blueprints, remote_requests)
         interference = build_interference(missions, projects, task_blueprints, remote_requests)
-        return DashboardView(
+        dashboard_view = DashboardView(
             brief=build_brief(instances, missions, projects),
+            control_chat=empty_control_chat_view(),
             launchpad=build_launchpad(instances, missions, projects, doctrines=doctrines),
             radar=build_radar(instances, missions, projects),
             ops_mesh=build_ops_mesh(
@@ -1024,6 +1050,9 @@ def create_app(
             skill_pins=skill_pins,
             lane_snapshots=lane_snapshots,
             events=events,
+        )
+        return dashboard_view.model_copy(
+            update={"control_chat": await active_control_chat_service.build_view(dashboard_view)}
         )
 
     async def require_remote_operator(
@@ -1075,6 +1104,20 @@ def create_app(
     @fastapi_app.get("/api/dashboard")
     async def dashboard() -> DashboardView:
         return await build_dashboard()
+
+    @fastapi_app.post("/api/control-chat")
+    async def control_chat(payload: ControlChatCreate) -> ControlChatResponse:
+        text = payload.text.strip()
+        if not text:
+            raise HTTPException(
+                status_code=400,
+                detail="Enter a message before sending it to Zues.",
+            )
+        dashboard_view = await build_dashboard()
+        try:
+            return await active_control_chat_service.submit(text, dashboard_view)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @fastapi_app.get("/api/economy")
     async def economy() -> DashboardEconomyView:

@@ -13,6 +13,9 @@ const chatHeadlineEl = document.querySelector("#chat-headline");
 const chatSummaryEl = document.querySelector("#chat-summary");
 const chatPresenceEl = document.querySelector("#chat-presence");
 const opsChatEl = document.querySelector("#ops-chat");
+const controlChatFormEl = document.querySelector("#control-chat-form");
+const controlChatInputEl = document.querySelector("#control-chat-input");
+const controlChatHintEl = document.querySelector("#control-chat-hint");
 const launchpadHeadlineEl = document.querySelector("#launchpad-headline");
 const launchpadSummaryEl = document.querySelector("#launchpad-summary");
 const launchpadOpportunitiesEl = document.querySelector("#launchpad-opportunities");
@@ -246,6 +249,14 @@ function chatActionButton(label, action, dataset = {}, extraClass = "") {
   return `<button type="button" class="${escapeHtml(extraClass)}" data-action="${escapeHtml(action)}"${attrs ? ` ${attrs}` : ""}>${escapeHtml(label)}</button>`;
 }
 
+function labelizeActionKind(value) {
+  return String(value ?? "")
+    .split("_")
+    .filter(Boolean)
+    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
+    .join(" ");
+}
+
 function renderChatCard({ title, meta = [], body = "", note = "", actions = [] }) {
   return `
     <article class="chat-card">
@@ -258,6 +269,26 @@ function renderChatCard({ title, meta = [], body = "", note = "", actions = [] }
       ${actions.length ? `<div class="chat-actions">${actions.join("")}</div>` : ""}
     </article>
   `;
+}
+
+function renderControlChatEntry(message) {
+  const isUser = message.role === "user";
+  return renderChatMessage({
+    stamp: isUser ? "YOU" : "OZ",
+    lane: isUser ? "Operator" : "Zues action",
+    tone: isUser ? "user" : "assistant",
+    title: isUser
+      ? "Directive received"
+      : message.target_label
+        ? `Handled ${message.target_label}`
+        : "Decision made",
+    meta: [
+      message.action_kind ? pill(labelizeActionKind(message.action_kind), isUser ? "" : "ok") : "",
+      message.mission_id ? pill(`mission ${message.mission_id}`) : "",
+      `<span class="chat-age">${escapeHtml(formatRelativeTimestamp(message.created_at))}</span>`,
+    ],
+    body: message.content,
+  });
 }
 
 function renderChatMessage({
@@ -589,6 +620,13 @@ function renderChat() {
     chatSummaryEl.textContent =
       "OpenZues will narrate mission state, autonomy pressure, and operator choices here.";
     chatPresenceEl.innerHTML = "";
+    if (controlChatInputEl) {
+      controlChatInputEl.placeholder = "Describe the next thing you want built, fixed, or verified";
+    }
+    if (controlChatHintEl) {
+      controlChatHintEl.textContent =
+        "Chat can decide when to wait, resume, recover, harden, or launch without making you work through manual action buttons first.";
+    }
     opsChatEl.innerHTML = `
       <article class="chat-empty">
         <strong>No transcript yet.</strong>
@@ -602,6 +640,7 @@ function renderChat() {
   }
 
   const brief = dashboard.brief;
+  const controlChat = dashboard.control_chat;
   const radar = dashboard.radar;
   const launchpad = dashboard.launchpad;
   const opsMesh = dashboard.ops_mesh;
@@ -627,9 +666,20 @@ function renderChat() {
     ["due", "attention", "running"].includes(task.status),
   ).length;
 
-  chatHeadlineEl.textContent = brief?.headline || "Control plane transcript";
+  chatHeadlineEl.textContent = controlChat?.headline || brief?.headline || "Control plane transcript";
   chatSummaryEl.textContent =
-    radar?.summary || brief?.summary || "Mission state will condense into the transcript.";
+    controlChat?.summary ||
+    radar?.summary ||
+    brief?.summary ||
+    "Mission state will condense into the transcript.";
+  if (controlChatInputEl && controlChat?.input_placeholder) {
+    controlChatInputEl.placeholder = controlChat.input_placeholder;
+  }
+  if (controlChatHintEl) {
+    controlChatHintEl.textContent =
+      controlChat?.summary ||
+      "Chat can decide when to wait, resume, recover, harden, or launch without making you work through manual action buttons first.";
+  }
   chatPresenceEl.innerHTML = [
     pill(`${connectedCount} live lanes`, connectedCount ? "ok" : ""),
     pill(`${activeMissions.length} active loops`, activeMissions.length ? "ok" : ""),
@@ -642,6 +692,10 @@ function renderChat() {
     .join("");
 
   const messages = [];
+
+  if (controlChat?.messages?.length) {
+    messages.push(...controlChat.messages.map((message) => renderControlChatEntry(message)));
+  }
 
   if (brief) {
     messages.push(
@@ -700,14 +754,6 @@ function renderChat() {
         ],
         body: opportunity.summary,
         note: opportunity.why_now,
-        actions: [
-          chatActionButton("Load draft", "apply-opportunity", {
-            "opportunity-id": opportunity.id,
-          }, "ghost"),
-          chatActionButton(opportunity.action_label || "Launch now", "launch-opportunity", {
-            "opportunity-id": opportunity.id,
-          }),
-        ],
       }),
     );
     messages.push(
@@ -774,13 +820,6 @@ function renderChat() {
           `${formatNumber(mission.total_tokens)} tokens`,
           mission.thread_id ? `thread ${mission.thread_id}` : "thread pending",
         ],
-        actions: [
-          mission.status === "active" || mission.status === "blocked"
-            ? chatActionButton("Pause", "pause-mission", { "mission-id": mission.id }, "ghost")
-            : chatActionButton("Resume", "resume-mission", { "mission-id": mission.id }),
-          chatActionButton("Run now", "run-mission-now", { "mission-id": mission.id }, "ghost"),
-          chatActionButton("Complete", "complete-mission", { "mission-id": mission.id }, "ghost"),
-        ],
       }),
     );
   });
@@ -800,10 +839,6 @@ function renderChat() {
           : task.next_run_at
             ? `Next run ${formatRelativeTimestamp(task.next_run_at)}`
             : "No schedule attached",
-        actions: [
-          chatActionButton("Load draft", "apply-task", { "task-id": task.id }, "ghost"),
-          chatActionButton("Run now", "run-task", { "task-id": task.id }),
-        ],
       }),
     );
     const remoteCards = (opsMesh.remote_requests ?? []).slice(-2).reverse().map((request) =>
@@ -948,12 +983,6 @@ function renderChat() {
         ],
         body: dream.headline,
         note: dream.summary,
-        actions: [
-          chatActionButton("Load dream", "apply-dream", { "dream-id": dream.id }, "ghost"),
-          chatActionButton(dream.action_label || "Launch dream", "launch-dream", {
-            "dream-id": dream.id,
-          }),
-        ],
       }),
     );
     messages.push(
@@ -1013,11 +1042,6 @@ function renderChat() {
         ],
         body: reflex.summary,
         note: `Targets ${reflex.mission_name}`,
-        actions: [
-          chatActionButton(reflex.action_label || "Fire reflex", "fire-reflex", {
-            "reflex-id": reflex.id,
-          }),
-        ],
       }),
     );
     messages.push(
@@ -3081,6 +3105,29 @@ document.querySelector("#refresh-diagnostics").addEventListener("click", () => {
 
 eventFilterEl.addEventListener("input", () => renderEvents());
 eventHideNoiseEl.addEventListener("input", () => renderEvents());
+
+if (controlChatFormEl) {
+  controlChatFormEl.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const text = String(form.get("text") || "").trim();
+    if (!text) {
+      showToast("Write a message before sending it to Zues.", true);
+      return;
+    }
+    try {
+      const result = await submitJson("/api/control-chat", { text });
+      event.currentTarget.reset();
+      if (controlChatInputEl && state.dashboard?.control_chat?.input_placeholder) {
+        controlChatInputEl.placeholder = state.dashboard.control_chat.input_placeholder;
+      }
+      controlChatInputEl?.focus();
+      showToast(result?.assistant?.content || "Zues handled the request.");
+    } catch (error) {
+      showToast(normalizeError(error), true);
+    }
+  });
+}
 
 instanceFormEl.addEventListener("submit", async (event) => {
   event.preventDefault();

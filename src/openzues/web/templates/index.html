@@ -71,11 +71,28 @@
                 <p id="chat-summary" class="panel-lede">
                   OpenZues will narrate mission state, autonomy pressure, and operator choices here.
                 </p>
-              </div>
+               </div>
 
-              <div id="chat-presence" class="transcript-presence"></div>
-              <div id="ops-chat" class="ops-chat"></div>
-            </section>
+               <div id="chat-presence" class="transcript-presence"></div>
+               <div id="ops-chat" class="ops-chat"></div>
+               <form id="control-chat-form" class="chat-composer">
+                 <label class="sr-only" for="control-chat-input">Chat with Zues</label>
+                 <div class="chat-composer-row">
+                   <textarea
+                     id="control-chat-input"
+                     name="text"
+                     rows="3"
+                     placeholder="Describe the next thing you want built, fixed, or verified"
+                     required
+                   ></textarea>
+                   <button type="submit">Send to Zues</button>
+                 </div>
+                 <p id="control-chat-hint" class="chat-composer-hint">
+                   Chat can decide when to wait, resume, recover, harden, or launch without making
+                   you work through manual action buttons first.
+                 </p>
+               </form>
+             </section>
 
             <details class="deck-shell backstage-shell" id="backstage-shell">
               <summary class="shell-summary">

@@ -75,6 +75,18 @@ class Database:
                     payload_json TEXT NOT NULL,
                     created_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS control_chat_messages (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    role TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    action_kind TEXT,
+                    mission_id INTEGER,
+                    opportunity_id TEXT,
+                    target_label TEXT,
+                    created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_control_chat_messages_created
+                    ON control_chat_messages(id DESC);
                 CREATE TABLE IF NOT EXISTS server_requests (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     instance_id INTEGER NOT NULL,
@@ -1192,6 +1204,61 @@ class Database:
                 item["payload"] = json.loads(item.pop("payload_json"))
                 output.append(item)
             return list(reversed(output))
+
+    async def append_control_chat_message(
+        self,
+        *,
+        role: str,
+        content: str,
+        action_kind: str | None = None,
+        mission_id: int | None = None,
+        opportunity_id: str | None = None,
+        target_label: str | None = None,
+    ) -> int:
+        now = utcnow()
+        async with aiosqlite.connect(self.path) as db:
+            cursor = await db.execute(
+                """
+                INSERT INTO control_chat_messages (
+                    role,
+                    content,
+                    action_kind,
+                    mission_id,
+                    opportunity_id,
+                    target_label,
+                    created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (role, content, action_kind, mission_id, opportunity_id, target_label, now),
+            )
+            await db.commit()
+            assert cursor.lastrowid is not None
+            return int(cursor.lastrowid)
+
+    async def get_control_chat_message(self, message_id: int) -> dict[str, Any] | None:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT * FROM control_chat_messages WHERE id = ?",
+                (message_id,),
+            )
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+
+    async def list_control_chat_messages(self, *, limit: int = 24) -> list[dict[str, Any]]:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            rows = await db.execute_fetchall(
+                """
+                SELECT *
+                FROM control_chat_messages
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (limit,),
+            )
+            return list(reversed([dict(row) for row in rows]))
 
     async def upsert_server_request(
         self,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 
 from fastapi.testclient import TestClient
@@ -15,12 +16,14 @@ from openzues.app import (
     create_app,
 )
 from openzues.schemas import (
+    DashboardView,
     InstanceView,
     MissionView,
     ProjectView,
     RemoteRequestView,
     TaskBlueprintView,
 )
+from openzues.services.control_chat import plan_control_chat
 from openzues.services.dreams import build_dream_deck
 from openzues.settings import Settings
 
@@ -228,6 +231,106 @@ def make_remote_request_view(
     )
 
 
+def make_dashboard_view(
+    *,
+    instances: list[InstanceView] | None = None,
+    missions: list[MissionView] | None = None,
+    projects: list[ProjectView] | None = None,
+    opportunities: list[dict[str, object]] | None = None,
+) -> DashboardView:
+    instances = instances or []
+    missions = missions or []
+    projects = projects or []
+    return DashboardView.model_validate(
+        {
+            "brief": {
+                "status": "active" if any(m.status == "active" for m in missions) else "idle",
+                "headline": "Control plane summary",
+                "summary": "Dashboard summary",
+                "focus_mission_id": missions[0].id if missions else None,
+                "next_actions": [],
+            },
+            "control_chat": {
+                "headline": "Tell Zues what to do next",
+                "summary": "Chat summary",
+                "input_placeholder": "Describe the next thing",
+                "messages": [],
+            },
+            "launchpad": {
+                "headline": "Launchpad ready",
+                "summary": "Launch summary",
+                "opportunities": opportunities or [],
+            },
+            "radar": {"posture": "steady", "summary": "Radar summary", "signals": []},
+            "ops_mesh": {
+                "headline": "Ops mesh ready",
+                "summary": "Ops summary",
+                "task_inbox": {"headline": "Task inbox", "summary": "No tasks", "tasks": []},
+                "auth_posture": {
+                    "headline": "Auth idle",
+                    "summary": "No integrations",
+                    "satisfied_count": 0,
+                    "missing_count": 0,
+                    "degraded_count": 0,
+                },
+                "access_posture": {
+                    "headline": "Remote ingress is local-only",
+                    "summary": "No remote keys",
+                    "team_count": 0,
+                    "operator_count": 0,
+                    "api_key_count": 0,
+                    "recent_remote_request_count": 0,
+                },
+                "skillbooks": [],
+                "teams": [],
+                "operators": [],
+                "remote_requests": [],
+                "vault_secrets": [],
+                "integrations": [],
+                "notification_routes": [],
+                "lane_snapshots": [],
+            },
+            "economy": {"headline": "Economy idle", "summary": "No economy yet", "scopes": []},
+            "interference": {
+                "headline": "Interference calm",
+                "summary": "No overlaps",
+                "vectors": [],
+            },
+            "continuity": {
+                "headline": "Continuity ready",
+                "summary": "No packets yet",
+                "packets": [],
+            },
+            "dream_deck": {
+                "headline": "No dream candidates yet",
+                "summary": "No dreams",
+                "dreams": [],
+            },
+            "cortex": {
+                "headline": "Learning",
+                "summary": "No doctrine yet",
+                "doctrines": [],
+                "inoculations": [],
+            },
+            "reflex_deck": {
+                "headline": "No reflexes",
+                "summary": "No reflexes yet",
+                "reflexes": [],
+            },
+            "instances": [instance.model_dump(mode="json") for instance in instances],
+            "missions": [mission.model_dump(mode="json") for mission in missions],
+            "projects": [project.model_dump(mode="json") for project in projects],
+            "playbooks": [],
+            "task_blueprints": [],
+            "integrations": [],
+            "notification_routes": [],
+            "skill_pins": [],
+            "lane_snapshots": [],
+            "events": [],
+        }
+    )
+
+
 def test_health_endpoint(tmp_path) -> None:
     with make_client(tmp_path) as client:
         response = client.get("/api/health")
@@ -318,6 +421,265 @@ def test_dashboard_bootstraps_remote_access_foundations(tmp_path) -> None:
     assert dashboard["ops_mesh"]["teams"][0]["name"] == "Local Control"
     assert dashboard["ops_mesh"]["operators"][0]["role"] == "owner"
     assert dashboard["ops_mesh"]["remote_requests"] == []
+    assert dashboard["control_chat"]["headline"]
+    assert dashboard["control_chat"]["input_placeholder"]
+
+
+def test_control_chat_waits_for_active_mission_instead_of_launching_hardener() -> None:
+    active = make_mission_view(
+        mission_id=41,
+        name="Live Builder",
+        status="active",
+        phase="executing",
+        in_progress=True,
+        project_id=7,
+        project_label="OpenZues",
+    )
+    finished = make_mission_view(
+        mission_id=42,
+        name="Finished Builder",
+        status="completed",
+        phase="completed",
+        project_id=7,
+        project_label="OpenZues",
+        last_checkpoint="Verified a clean checkpoint and left a handoff.",
+    )
+    dashboard = make_dashboard_view(
+        instances=[make_instance_view()],
+        missions=[active, finished],
+        projects=[make_project_view(project_id=7, label="OpenZues")],
+        opportunities=[
+            {
+                "id": "harden-42",
+                "kind": "checkpoint_hardener",
+                "impact": "high",
+                "title": "Harden OpenZues",
+                "summary": "Tighten the finished checkpoint.",
+                "why_now": "A completed handoff is ready.",
+                "action_label": "Load hardener",
+                "mission_draft": {
+                    "name": "Harden OpenZues",
+                    "objective": "Continue from the checkpoint and verify it.",
+                    "instance_id": 1,
+                    "project_id": 7,
+                    "task_blueprint_id": None,
+                    "cwd": "C:/workspace",
+                    "thread_id": "thread_42",
+                    "model": "gpt-5.4",
+                    "reasoning_effort": None,
+                    "collaboration_mode": None,
+                    "max_turns": 3,
+                    "use_builtin_agents": True,
+                    "run_verification": True,
+                    "auto_commit": False,
+                    "pause_on_approval": True,
+                    "allow_auto_reflexes": True,
+                    "auto_recover": True,
+                    "auto_recover_limit": 2,
+                    "reflex_cooldown_seconds": 900,
+                    "allow_failover": True,
+                    "start_immediately": True,
+                },
+            }
+        ],
+    )
+
+    decision = plan_control_chat("continue building", dashboard)
+
+    assert decision.action_kind == "wait"
+    assert decision.mission_id == 41
+    assert "Live Builder" in decision.reply
+    assert "Harden OpenZues" in decision.reply
+
+
+def test_control_chat_launches_hardener_when_no_live_loop_is_running() -> None:
+    finished = make_mission_view(
+        mission_id=52,
+        name="ForumForge Slice",
+        status="completed",
+        phase="completed",
+        project_id=9,
+        project_label="ForumForge",
+        last_checkpoint="Feature shipped and verified.",
+    )
+    dashboard = make_dashboard_view(
+        instances=[make_instance_view()],
+        missions=[finished],
+        projects=[make_project_view(project_id=9, label="ForumForge")],
+        opportunities=[
+            {
+                "id": "harden-52",
+                "kind": "checkpoint_hardener",
+                "impact": "high",
+                "title": "Harden ForumForge",
+                "summary": "Verify and tighten the checkpoint.",
+                "why_now": "The last run already landed a handoff.",
+                "action_label": "Load hardener",
+                "mission_draft": {
+                    "name": "Harden ForumForge",
+                    "objective": "Continue from the checkpoint and make it more durable.",
+                    "instance_id": 1,
+                    "project_id": 9,
+                    "task_blueprint_id": None,
+                    "cwd": "C:/workspace",
+                    "thread_id": "thread_52",
+                    "model": "gpt-5.4",
+                    "reasoning_effort": None,
+                    "collaboration_mode": None,
+                    "max_turns": 3,
+                    "use_builtin_agents": True,
+                    "run_verification": True,
+                    "auto_commit": False,
+                    "pause_on_approval": True,
+                    "allow_auto_reflexes": True,
+                    "auto_recover": True,
+                    "auto_recover_limit": 2,
+                    "reflex_cooldown_seconds": 900,
+                    "allow_failover": True,
+                    "start_immediately": True,
+                },
+            }
+        ],
+    )
+
+    decision = plan_control_chat("continue", dashboard)
+
+    assert decision.action_kind == "launch_opportunity"
+    assert decision.opportunity_id == "harden-52"
+    assert decision.mission_payload is not None
+    assert decision.mission_payload.name == "Harden ForumForge"
+
+
+def test_control_chat_builds_new_mission_from_freeform_request() -> None:
+    dashboard = make_dashboard_view(
+        instances=[make_instance_view()],
+        projects=[make_project_view(project_id=3, label="OpenZues")],
+    )
+
+    decision = plan_control_chat(
+        "Build a remote notification digest for failed missions and verify the full path",
+        dashboard,
+    )
+
+    assert decision.action_kind == "create_mission"
+    assert decision.mission_payload is not None
+    assert decision.mission_payload.instance_id == 1
+    assert decision.mission_payload.project_id == 3
+    assert decision.mission_payload.start_immediately is True
+
+
+def test_control_chat_endpoint_persists_wait_messages(tmp_path) -> None:
+    with make_client(tmp_path) as client:
+        instance_response = client.post(
+            "/api/instances",
+            json={
+                "name": "Local Codex Desktop",
+                "transport": "desktop",
+                "cwd": str(tmp_path),
+                "auto_connect": False,
+            },
+        )
+        project_response = client.post(
+            "/api/projects",
+            json={"path": str(tmp_path), "label": "Sandbox"},
+        )
+
+        assert instance_response.status_code == 200
+        project_id = project_response.json()["id"]
+        database = client.app.state.database
+
+        live_mission_id = asyncio.run(
+            database.create_mission(
+                name="Live Run",
+                objective="Keep building.",
+                status="active",
+                instance_id=1,
+                project_id=project_id,
+                task_blueprint_id=None,
+                thread_id="thread-live",
+                cwd=str(tmp_path),
+                model="gpt-5.4",
+                reasoning_effort=None,
+                collaboration_mode=None,
+                max_turns=4,
+                use_builtin_agents=True,
+                run_verification=True,
+                auto_commit=False,
+                pause_on_approval=True,
+                allow_auto_reflexes=True,
+                auto_recover=True,
+                auto_recover_limit=2,
+                reflex_cooldown_seconds=900,
+                allow_failover=True,
+            )
+        )
+        asyncio.run(
+            database.update_mission(
+                live_mission_id,
+                in_progress=1,
+                phase="executing",
+                last_activity_at=datetime.now(UTC).isoformat(),
+            )
+        )
+        completed_mission_id = asyncio.run(
+            database.create_mission(
+                name="Finished Run",
+                objective="Leave a checkpoint.",
+                status="completed",
+                instance_id=1,
+                project_id=project_id,
+                task_blueprint_id=None,
+                thread_id="thread-done",
+                cwd=str(tmp_path),
+                model="gpt-5.4",
+                reasoning_effort=None,
+                collaboration_mode=None,
+                max_turns=3,
+                use_builtin_agents=True,
+                run_verification=True,
+                auto_commit=False,
+                pause_on_approval=True,
+                allow_auto_reflexes=True,
+                auto_recover=True,
+                auto_recover_limit=2,
+                reflex_cooldown_seconds=900,
+                allow_failover=True,
+            )
+        )
+        asyncio.run(
+            database.append_mission_checkpoint(
+                mission_id=completed_mission_id,
+                thread_id="thread-done",
+                turn_id="turn-done",
+                kind="final_answer",
+                summary="Completed the finished slice and verified it.",
+            )
+        )
+        asyncio.run(
+            database.update_mission(
+                completed_mission_id,
+                phase="completed",
+                last_checkpoint="Completed the finished slice and verified it.",
+                last_activity_at=(datetime.now(UTC) - timedelta(minutes=5)).isoformat(),
+            )
+        )
+
+        response = client.post("/api/control-chat", json={"text": "continue building"})
+        dashboard_response = client.get("/api/dashboard")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["action_kind"] == "wait"
+    assert payload["executed"] is False
+    assert "Live Run" in payload["assistant"]["content"]
+
+    dashboard = dashboard_response.json()
+    assert [message["role"] for message in dashboard["control_chat"]["messages"][-2:]] == [
+        "user",
+        "assistant",
+    ]
+    assert dashboard["control_chat"]["messages"][-1]["action_kind"] == "wait"
+    assert len(dashboard["missions"]) == 2
 
 
 def test_remote_mission_endpoint_requires_api_key(tmp_path) -> None:

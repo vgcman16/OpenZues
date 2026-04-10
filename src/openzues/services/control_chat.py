@@ -1,0 +1,562 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import UTC, datetime
+
+from openzues.database import Database, utcnow
+from openzues.schemas import (
+    ControlChatActionKind,
+    ControlChatMessageView,
+    ControlChatResponse,
+    DashboardControlChatView,
+    DashboardOpportunityView,
+    DashboardView,
+    MissionCreate,
+    MissionView,
+)
+from openzues.services.hub import BroadcastHub
+from openzues.services.missions import MissionService
+
+CONTINUE_PHRASES = (
+    "continue",
+    "keep going",
+    "keep building",
+    "keep cooking",
+    "cook",
+    "resume",
+    "do the next thing",
+    "do the next step",
+    "keep pushing",
+    "finish it",
+    "push it forward",
+    "ship the next thing",
+    "keep working",
+)
+STATUS_PHRASES = (
+    "status",
+    "what is running",
+    "what's running",
+    "what is going on",
+    "what's going on",
+    "how is it doing",
+    "how's it doing",
+    "what are you doing",
+    "what is zues doing",
+)
+HARDEN_PHRASES = ("harden", "harder", "checkpoint", "tighten", "verify it")
+RECOVERY_PHRASES = ("recover", "recovery", "fix the failed", "retry the failed", "rescue")
+
+IMPACT_RANK = {"high": 0, "medium": 1, "low": 2}
+
+
+def _parse_timestamp(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _sort_missions(missions: list[MissionView]) -> list[MissionView]:
+    return sorted(
+        missions,
+        key=lambda mission: (
+            _parse_timestamp(mission.last_activity_at) or datetime.min.replace(tzinfo=UTC),
+            mission.updated_at,
+        ),
+        reverse=True,
+    )
+
+
+def _normalize_prompt(value: str) -> str:
+    return " ".join(value.strip().lower().split())
+
+
+def _contains_any(text: str, phrases: tuple[str, ...]) -> bool:
+    return any(phrase in text for phrase in phrases)
+
+
+def _looks_like_status_request(text: str) -> bool:
+    return _contains_any(text, STATUS_PHRASES)
+
+
+def _looks_like_continue_request(text: str) -> bool:
+    return _contains_any(text, CONTINUE_PHRASES)
+
+
+def _looks_like_harden_request(text: str) -> bool:
+    return _contains_any(text, HARDEN_PHRASES)
+
+
+def _looks_like_recovery_request(text: str) -> bool:
+    return _contains_any(text, RECOVERY_PHRASES)
+
+
+def _mission_phase_label(mission: MissionView) -> str:
+    if mission.phase == "executing":
+        return "executing"
+    if mission.phase == "reasoning":
+        return "reasoning"
+    if mission.phase == "approval":
+        return "waiting on approval"
+    return "running"
+
+
+def _pick_launch_instance_id(dashboard: DashboardView) -> int | None:
+    live_instance_ids = {
+        mission.instance_id
+        for mission in dashboard.missions
+        if mission.status in {"active", "blocked"}
+    }
+    for instance in dashboard.instances:
+        if instance.connected and instance.id not in live_instance_ids:
+            return instance.id
+    for instance in dashboard.instances:
+        if instance.connected:
+            return instance.id
+    return dashboard.instances[0].id if dashboard.instances else None
+
+
+def _pick_project_id(dashboard: DashboardView) -> int | None:
+    if len(dashboard.projects) == 1:
+        return dashboard.projects[0].id
+    focus_mission_id = dashboard.brief.focus_mission_id
+    if focus_mission_id is not None:
+        focus = next(
+            (mission for mission in dashboard.missions if mission.id == focus_mission_id),
+            None,
+        )
+        if focus is not None and focus.project_id is not None:
+            return focus.project_id
+    for mission in _sort_missions(dashboard.missions):
+        if mission.project_id is not None:
+            return mission.project_id
+    return None
+
+
+def _derive_mission_name(prompt: str) -> str:
+    words = [segment for segment in prompt.replace("\n", " ").split(" ") if segment]
+    if not words:
+        return "Chat Directed Mission"
+    clipped = words[:6]
+    title = " ".join(clipped).strip(" .,:;!-")
+    return title.title() or "Chat Directed Mission"
+
+
+def _create_prompt_mission(prompt: str, dashboard: DashboardView) -> MissionCreate | None:
+    instance_id = _pick_launch_instance_id(dashboard)
+    if instance_id is None:
+        return None
+    project_id = _pick_project_id(dashboard)
+    project = next((item for item in dashboard.projects if item.id == project_id), None)
+    instance = next((item for item in dashboard.instances if item.id == instance_id), None)
+    objective = prompt.strip()
+    if objective and objective[-1] not in ".!?":
+        objective = f"{objective}."
+    return MissionCreate(
+        name=_derive_mission_name(prompt),
+        objective=objective,
+        instance_id=instance_id,
+        project_id=project_id,
+        cwd=(
+            project.path
+            if project is not None
+            else (instance.cwd if instance is not None else None)
+        ),
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=5,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        start_immediately=True,
+    )
+
+
+def _sorted_opportunities(dashboard: DashboardView) -> list[DashboardOpportunityView]:
+    return sorted(
+        dashboard.launchpad.opportunities,
+        key=lambda opportunity: (
+            IMPACT_RANK.get(opportunity.impact, 99),
+            opportunity.title.lower(),
+        ),
+    )
+
+
+def _find_opportunity(
+    dashboard: DashboardView,
+    *,
+    preferred_kinds: tuple[str, ...] = (),
+) -> DashboardOpportunityView | None:
+    opportunities = _sorted_opportunities(dashboard)
+    for kind in preferred_kinds:
+        match = next((item for item in opportunities if item.kind == kind), None)
+        if match is not None:
+            return match
+    return opportunities[0] if opportunities else None
+
+
+@dataclass(slots=True)
+class ControlChatPlan:
+    action_kind: ControlChatActionKind
+    reply: str
+    mission_id: int | None = None
+    opportunity_id: str | None = None
+    target_label: str | None = None
+    mission_payload: MissionCreate | None = None
+
+
+def plan_control_chat(prompt: str, dashboard: DashboardView) -> ControlChatPlan:
+    normalized = _normalize_prompt(prompt)
+    active_in_progress = [
+        mission
+        for mission in _sort_missions(dashboard.missions)
+        if mission.status == "active" and mission.in_progress
+    ]
+    blocked = [
+        mission for mission in _sort_missions(dashboard.missions) if mission.status == "blocked"
+    ]
+    paused = [
+        mission for mission in _sort_missions(dashboard.missions) if mission.status == "paused"
+    ]
+    active_ready = [
+        mission
+        for mission in _sort_missions(dashboard.missions)
+        if mission.status == "active" and not mission.in_progress
+    ]
+
+    if _looks_like_status_request(normalized):
+        ready_handoffs = sum(
+            1
+            for mission in dashboard.missions
+            if mission.status in {"paused", "completed", "failed"} and mission.last_checkpoint
+        )
+        connected_lanes = sum(1 for instance in dashboard.instances if instance.connected)
+        return ControlChatPlan(
+            action_kind="observe",
+            reply=(
+                f"{len(active_in_progress)} mission(s) are actively running, "
+                f"{len(blocked)} are blocked, {ready_handoffs} have checkpoint handoffs ready, "
+                f"and {connected_lanes} Codex lane(s) are connected."
+            ),
+        )
+
+    if _looks_like_continue_request(normalized):
+        if active_in_progress:
+            live = active_in_progress[0]
+            next_hardener = _find_opportunity(dashboard, preferred_kinds=("checkpoint_hardener",))
+            note = ""
+            if next_hardener is not None:
+                note = (
+                    f" `{next_hardener.title}` is already staged as the next hardening move once "
+                    "the "
+                    "live lane settles."
+                )
+            return ControlChatPlan(
+                action_kind="wait",
+                mission_id=live.id,
+                target_label=live.name,
+                reply=(
+                    f"I left `{live.name}` alone because it is already "
+                    f"{_mission_phase_label(live)} on "
+                    f"lane {live.instance_id}. I did not launch a duplicate loop.{note}"
+                ),
+            )
+
+        approval_block = next(
+            (
+                mission
+                for mission in blocked
+                if str(mission.last_error or "").startswith("Waiting for approval:")
+            ),
+            None,
+        )
+        if approval_block is not None:
+            return ControlChatPlan(
+                action_kind="blocked",
+                mission_id=approval_block.id,
+                target_label=approval_block.name,
+                reply=(
+                    f"`{approval_block.name}` is blocked on an approval gate, so I did not force "
+                    "it "
+                    "forward. Resolve the approval and then tell me to continue again."
+                ),
+            )
+
+        if _looks_like_recovery_request(normalized):
+            recovery = _find_opportunity(dashboard, preferred_kinds=("recovery_run",))
+            if recovery is not None:
+                return ControlChatPlan(
+                    action_kind="launch_opportunity",
+                    opportunity_id=recovery.id,
+                    target_label=recovery.title,
+                    mission_payload=MissionCreate.model_validate(recovery.mission_draft.model_dump()),
+                    reply=(
+                        f"I launched `{recovery.title}` because the strongest next move is a "
+                        "recovery "
+                        "loop, not a blind retry."
+                    ),
+                )
+
+        if _looks_like_harden_request(normalized):
+            hardener = _find_opportunity(dashboard, preferred_kinds=("checkpoint_hardener",))
+            if hardener is not None:
+                return ControlChatPlan(
+                    action_kind="launch_opportunity",
+                    opportunity_id=hardener.id,
+                    target_label=hardener.title,
+                    mission_payload=MissionCreate.model_validate(hardener.mission_draft.model_dump()),
+                    reply=(
+                        f"I launched `{hardener.title}` because a verified hardening pass is the "
+                        "shortest path to durable progress from the finished checkpoint."
+                    ),
+                )
+
+        recovery = _find_opportunity(dashboard, preferred_kinds=("recovery_run",))
+        if recovery is not None:
+            return ControlChatPlan(
+                action_kind="launch_opportunity",
+                opportunity_id=recovery.id,
+                target_label=recovery.title,
+                mission_payload=MissionCreate.model_validate(recovery.mission_draft.model_dump()),
+                reply=(
+                    f"I launched `{recovery.title}` because the failed checkpoint already gives us "
+                    "a better continuation path than restarting from scratch."
+                ),
+            )
+
+        hardener = _find_opportunity(dashboard, preferred_kinds=("checkpoint_hardener",))
+        if hardener is not None:
+            return ControlChatPlan(
+                action_kind="launch_opportunity",
+                opportunity_id=hardener.id,
+                target_label=hardener.title,
+                mission_payload=MissionCreate.model_validate(hardener.mission_draft.model_dump()),
+                reply=(
+                    f"I launched `{hardener.title}` because the finished run already produced a "
+                    "checkpoint and that is the highest-leverage follow-through."
+                ),
+            )
+
+        if paused:
+            mission = paused[0]
+            return ControlChatPlan(
+                action_kind="resume_mission",
+                mission_id=mission.id,
+                target_label=mission.name,
+                reply=(
+                    f"I resumed `{mission.name}` because it already has context and was paused, "
+                    "not complete."
+                ),
+            )
+
+        if active_ready:
+            mission = active_ready[0]
+            return ControlChatPlan(
+                action_kind="run_mission",
+                mission_id=mission.id,
+                target_label=mission.name,
+                reply=(
+                    f"I kicked `{mission.name}` into another autonomous cycle because it was idle "
+                    "and ready to continue on its existing thread."
+                ),
+            )
+
+        next_opportunity = _find_opportunity(dashboard)
+        if next_opportunity is not None:
+            return ControlChatPlan(
+                action_kind="launch_opportunity",
+                opportunity_id=next_opportunity.id,
+                target_label=next_opportunity.title,
+                mission_payload=MissionCreate.model_validate(
+                    next_opportunity.mission_draft.model_dump()
+                ),
+                reply=(
+                    f"I launched `{next_opportunity.title}` because it is the strongest ready move "
+                    "available right now."
+                ),
+            )
+
+        if not dashboard.instances:
+            return ControlChatPlan(
+                action_kind="unavailable",
+                reply="I need a connected Codex lane before I can continue work from chat.",
+            )
+
+        return ControlChatPlan(
+            action_kind="observe",
+            reply=(
+                "Nothing was queued because there is no stronger follow-through candidate right "
+                "now. "
+                "Give me a new objective and I will start a fresh mission."
+            ),
+        )
+
+    mission_payload = _create_prompt_mission(prompt, dashboard)
+    if mission_payload is None:
+        return ControlChatPlan(
+            action_kind="unavailable",
+            reply="I do not have a Codex lane to launch that on yet. Connect a lane first.",
+        )
+    project_note = ""
+    if mission_payload.project_id is not None:
+        project = next(
+            (item for item in dashboard.projects if item.id == mission_payload.project_id),
+            None,
+        )
+        if project is not None:
+            project_note = f" targeting `{project.label}`"
+    return ControlChatPlan(
+        action_kind="create_mission",
+        target_label=mission_payload.name,
+        mission_payload=mission_payload,
+        reply=(
+            f"I launched `{mission_payload.name}` from your chat request on lane "
+            f"{mission_payload.instance_id}{project_note}."
+        ),
+    )
+
+
+class ControlChatService:
+    def __init__(
+        self,
+        database: Database,
+        missions: MissionService,
+        hub: BroadcastHub,
+    ) -> None:
+        self.database = database
+        self.missions = missions
+        self.hub = hub
+
+    async def build_view(
+        self,
+        dashboard: DashboardView,
+        *,
+        limit: int = 18,
+    ) -> DashboardControlChatView:
+        messages = [
+            ControlChatMessageView.model_validate(row)
+            for row in await self.database.list_control_chat_messages(limit=limit)
+        ]
+        active_running = sum(
+            1
+            for mission in dashboard.missions
+            if mission.status == "active" and mission.in_progress
+        )
+        ready_moves = len(dashboard.launchpad.opportunities)
+        if active_running:
+            headline = "Chat can steer the live build without duplicate launches"
+            summary = (
+                "Type the outcome you want and Zues will wait, nudge, recover, or harden based on "
+                "the current mission state."
+            )
+            placeholder = (
+                "Try: keep going, status, recover the failed run, or harden the finished one"
+            )
+        elif ready_moves:
+            headline = "Describe the next outcome and Zues will pick the move"
+            summary = (
+                "Launchpad logic is now reachable through chat, so you do not need to manually "
+                "load "
+                "drafts just to keep momentum up."
+            )
+            placeholder = (
+                "Try: continue building, harden the last checkpoint, or describe a new goal"
+            )
+        else:
+            headline = "Tell Zues what to do next"
+            summary = (
+                "You can describe a fresh build objective here, and OpenZues will choose the lane, "
+                "project, and continuation path automatically."
+            )
+            placeholder = "Describe the next thing you want built, fixed, or verified"
+        return DashboardControlChatView(
+            headline=headline,
+            summary=summary,
+            input_placeholder=placeholder,
+            messages=messages,
+        )
+
+    async def submit(self, prompt: str, dashboard: DashboardView) -> ControlChatResponse:
+        text = prompt.strip()
+        if not text:
+            raise ValueError("Enter a message before sending it to Zues.")
+
+        user_message = await self._append_message(role="user", content=text)
+        plan = plan_control_chat(text, dashboard)
+        executed = False
+        mission_id = plan.mission_id
+        target_label = plan.target_label
+
+        if plan.action_kind == "resume_mission" and plan.mission_id is not None:
+            mission = await self.missions.resume(plan.mission_id)
+            executed = True
+            mission_id = mission.id
+            target_label = mission.name
+        elif plan.action_kind == "run_mission" and plan.mission_id is not None:
+            mission = await self.missions.run_now(plan.mission_id)
+            executed = True
+            mission_id = mission.id
+            target_label = mission.name
+        elif (
+            plan.action_kind in {"launch_opportunity", "create_mission"}
+            and plan.mission_payload is not None
+        ):
+            mission = await self.missions.create(plan.mission_payload)
+            executed = True
+            mission_id = mission.id
+            target_label = mission.name
+
+        assistant_message = await self._append_message(
+            role="assistant",
+            content=plan.reply,
+            action_kind=plan.action_kind,
+            mission_id=mission_id,
+            opportunity_id=plan.opportunity_id,
+            target_label=target_label,
+        )
+        await self.hub.publish(
+            {
+                "type": "control-chat/replied",
+                "createdAt": utcnow(),
+                "actionKind": plan.action_kind,
+                "missionId": mission_id,
+                "targetLabel": target_label,
+            }
+        )
+        return ControlChatResponse(
+            user=user_message,
+            assistant=assistant_message,
+            action_kind=plan.action_kind,
+            executed=executed,
+        )
+
+    async def _append_message(
+        self,
+        *,
+        role: str,
+        content: str,
+        action_kind: str | None = None,
+        mission_id: int | None = None,
+        opportunity_id: str | None = None,
+        target_label: str | None = None,
+    ) -> ControlChatMessageView:
+        message_id = await self.database.append_control_chat_message(
+            role=role,
+            content=content,
+            action_kind=action_kind,
+            mission_id=mission_id,
+            opportunity_id=opportunity_id,
+            target_label=target_label,
+        )
+        row = await self.database.get_control_chat_message(message_id)
+        assert row is not None
+        return ControlChatMessageView.model_validate(row)

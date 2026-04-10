@@ -42,6 +42,16 @@ InterferenceKind = Literal[
     "task_overlap",
     "remote_echo",
 ]
+ControlChatActionKind = Literal[
+    "observe",
+    "wait",
+    "blocked",
+    "resume_mission",
+    "run_mission",
+    "launch_opportunity",
+    "create_mission",
+    "unavailable",
+]
 
 
 class InstanceCreate(BaseModel):
@@ -188,6 +198,28 @@ class EventView(BaseModel):
     method: str
     payload: dict[str, Any]
     created_at: datetime
+
+
+class ControlChatCreate(BaseModel):
+    text: str = Field(min_length=1, max_length=4000)
+
+
+class ControlChatMessageView(BaseModel):
+    id: int
+    role: Literal["user", "assistant"]
+    content: str
+    action_kind: ControlChatActionKind | None = None
+    mission_id: int | None = None
+    opportunity_id: str | None = None
+    target_label: str | None = None
+    created_at: datetime
+
+
+class ControlChatResponse(BaseModel):
+    user: ControlChatMessageView
+    assistant: ControlChatMessageView
+    action_kind: ControlChatActionKind
+    executed: bool
 
 
 class PlaybookCreate(BaseModel):
@@ -779,8 +811,16 @@ class DashboardReflexDeckView(BaseModel):
     reflexes: list[DashboardReflexView] = Field(default_factory=list)
 
 
+class DashboardControlChatView(BaseModel):
+    headline: str
+    summary: str
+    input_placeholder: str
+    messages: list[ControlChatMessageView] = Field(default_factory=list)
+
+
 class DashboardView(BaseModel):
     brief: DashboardBriefView
+    control_chat: DashboardControlChatView
     launchpad: DashboardLaunchpadView
     radar: DashboardRadarView
     ops_mesh: DashboardOpsMeshView
