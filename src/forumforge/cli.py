@@ -21,3 +21,7 @@ def serve(
         reload=reload,
         factory=True,
     )
+
+
+if __name__ == "__main__":
+    app()
