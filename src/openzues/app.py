@@ -17,6 +17,8 @@ from openzues.logging_utils import configure_logging
 from openzues.schemas import (
     CommandCreate,
     DashboardBriefView,
+    DashboardLaunchpadView,
+    DashboardOpportunityView,
     DashboardRadarView,
     DashboardSignalView,
     DashboardView,
@@ -25,6 +27,7 @@ from openzues.schemas import (
     InstanceCreate,
     InstanceView,
     MissionCreate,
+    MissionDraftView,
     MissionView,
     PlaybookCreate,
     PlaybookRun,
@@ -64,6 +67,33 @@ def _minutes_since(value: str | None) -> int | None:
     if parsed is None:
         return None
     return max(0, int((datetime.now(UTC) - parsed).total_seconds() // 60))
+
+
+def _pick_launch_instance(
+    instances: list[InstanceView],
+    missions: list[MissionView],
+    *,
+    prefer_idle: bool = True,
+) -> InstanceView | None:
+    live_instance_ids = {
+        mission.instance_id for mission in missions if mission.status in {"active", "blocked"}
+    }
+    if prefer_idle:
+        for instance in instances:
+            if instance.connected and instance.id not in live_instance_ids:
+                return instance
+    for instance in instances:
+        if instance.connected:
+            return instance
+    return instances[0] if instances else None
+
+
+def _is_project_dirty(project: ProjectView) -> bool:
+    git_status = (project.git_status or "").strip()
+    if not git_status:
+        return False
+    lowered = git_status.lower()
+    return "working tree clean" not in lowered and "nothing to commit" not in lowered
 
 
 def build_brief(
@@ -417,6 +447,340 @@ def build_radar(
     return DashboardRadarView(posture=posture, summary=summary, signals=sorted_signals)
 
 
+def build_launchpad(
+    instances: list[InstanceView],
+    missions: list[MissionView],
+    projects: list[ProjectView],
+) -> DashboardLaunchpadView:
+    opportunities: list[DashboardOpportunityView] = []
+    live_project_ids = {
+        mission.project_id
+        for mission in missions
+        if mission.project_id is not None and mission.status in {"active", "blocked"}
+    }
+    seen_ids: set[str] = set()
+
+    def add_opportunity(
+        opportunity_id: str,
+        *,
+        kind: Literal[
+            "workspace_scout",
+            "ship_slice",
+            "drift_sweep",
+            "checkpoint_hardener",
+            "recovery_run",
+            "shadow_scout",
+        ],
+        impact: Literal["high", "medium", "low"],
+        title: str,
+        summary: str,
+        why_now: str,
+        draft: MissionDraftView,
+        action_label: str = "Load draft",
+    ) -> None:
+        if opportunity_id in seen_ids:
+            return
+        seen_ids.add(opportunity_id)
+        opportunities.append(
+            DashboardOpportunityView(
+                id=opportunity_id,
+                kind=kind,
+                impact=impact,
+                title=title,
+                summary=summary,
+                why_now=why_now,
+                action_label=action_label,
+                mission_draft=draft,
+            )
+        )
+
+    idle_instance = _pick_launch_instance(instances, missions, prefer_idle=True)
+    connected_instance = _pick_launch_instance(instances, missions, prefer_idle=False)
+
+    if connected_instance is not None and not projects:
+        add_opportunity(
+            "workspace-scout",
+            kind="workspace_scout",
+            impact="medium",
+            title="Scout the current workspace",
+            summary="Map the attached directory and let Codex propose the best durable build loop.",
+            why_now=(
+                "You have connected capacity but no registered repo, so the fastest gain is a "
+                "short orientation run."
+            ),
+            draft=MissionDraftView(
+                name="Scout Current Workspace",
+                objective=(
+                    "Map the current workspace, identify the highest-leverage product or tooling "
+                    "opportunity, and leave a concise operator handoff with recommended next "
+                    "missions and risks."
+                ),
+                instance_id=connected_instance.id,
+                project_id=None,
+                cwd=connected_instance.cwd,
+                thread_id=None,
+                model="gpt-5.4-mini",
+                reasoning_effort=None,
+                collaboration_mode=None,
+                max_turns=2,
+                use_builtin_agents=True,
+                run_verification=False,
+                auto_commit=False,
+                pause_on_approval=True,
+                start_immediately=True,
+            ),
+            action_label="Load scout",
+        )
+
+    checkpoint_missions = sorted(
+        [
+            mission
+            for mission in missions
+            if mission.last_checkpoint and mission.status in {"paused", "completed", "failed"}
+        ],
+        key=lambda mission: mission.updated_at,
+        reverse=True,
+    )
+    for mission in checkpoint_missions[:3]:
+        target_instance = next(
+            (
+                instance
+                for instance in instances
+                if instance.id == mission.instance_id and instance.connected
+            ),
+            idle_instance or connected_instance,
+        )
+        if target_instance is None:
+            continue
+        if mission.project_id is not None and mission.project_id in live_project_ids:
+            continue
+
+        if mission.status == "failed":
+            add_opportunity(
+                f"recover-{mission.id}",
+                kind="recovery_run",
+                impact="high",
+                title=f"Recover {mission.name}",
+                summary=(
+                    "Re-open the path from the last failure without throwing away "
+                    "mission context."
+                ),
+                why_now=(
+                    "The mission already has thread memory and a failure checkpoint, which makes "
+                    "a tight recovery loop faster than starting over."
+                ),
+                draft=MissionDraftView(
+                    name=f"Recover {mission.name}",
+                    objective=(
+                        f"Continue the mission '{mission.name}' from its existing thread. Start by "
+                        "reading the last checkpoint and failure context, fix the blocker, verify "
+                        "the path forward, and leave a cleaner checkpoint when done."
+                    ),
+                    instance_id=target_instance.id,
+                    project_id=mission.project_id,
+                    cwd=mission.cwd,
+                    thread_id=mission.thread_id,
+                    model=mission.model,
+                    reasoning_effort=mission.reasoning_effort,
+                    collaboration_mode=mission.collaboration_mode,
+                    max_turns=3,
+                    use_builtin_agents=mission.use_builtin_agents,
+                    run_verification=True,
+                    auto_commit=False,
+                    pause_on_approval=mission.pause_on_approval,
+                    start_immediately=True,
+                ),
+                action_label="Recover run",
+            )
+            continue
+
+        add_opportunity(
+            f"harden-{mission.id}",
+            kind="checkpoint_hardener",
+            impact="high",
+            title=f"Harden {mission.project_label or mission.name}",
+            summary=(
+                "Turn the latest checkpoint into a cleaner, verified milestone "
+                "instead of vague progress."
+            ),
+            why_now=(
+                "A handoff already exists, so the shortest path to durable progress is to verify, "
+                "tighten, and lock in that checkpoint."
+            ),
+            draft=MissionDraftView(
+                name=f"Harden {mission.project_label or mission.name}",
+                objective=(
+                    f"Continue from the latest checkpoint in the mission '{mission.name}'. First "
+                    "read the existing handoff in the thread, verify what is already true, close "
+                    "the biggest gaps, and leave a stronger checkpoint with validation."
+                ),
+                instance_id=target_instance.id,
+                project_id=mission.project_id,
+                cwd=mission.cwd,
+                thread_id=mission.thread_id,
+                model=mission.model,
+                reasoning_effort=mission.reasoning_effort,
+                collaboration_mode=mission.collaboration_mode,
+                max_turns=3,
+                use_builtin_agents=mission.use_builtin_agents,
+                run_verification=True,
+                auto_commit=True,
+                pause_on_approval=mission.pause_on_approval,
+                start_immediately=True,
+            ),
+            action_label="Load hardener",
+        )
+
+    if idle_instance is not None:
+        for project in projects:
+            if project.id in live_project_ids:
+                continue
+            if _is_project_dirty(project):
+                add_opportunity(
+                    f"drift-{project.id}",
+                    kind="drift_sweep",
+                    impact="medium",
+                    title=f"Sweep drift in {project.label}",
+                    summary=(
+                        "Map unfinished edits, branch state, and repo risk before "
+                        "starting fresh feature work."
+                    ),
+                    why_now=(
+                        "The worktree already has drift, so a short scout run can prevent autonomy "
+                        "from compounding hidden state."
+                    ),
+                    draft=MissionDraftView(
+                        name=f"Drift Sweep: {project.label}",
+                        objective=(
+                            f"Inspect the repository at {project.path}, explain the current branch "
+                            "and worktree state, identify unfinished or risky changes, and propose "
+                            "the safest next autonomous mission."
+                        ),
+                        instance_id=idle_instance.id,
+                        project_id=project.id,
+                        cwd=project.path,
+                        thread_id=None,
+                        model="gpt-5.4-mini",
+                        reasoning_effort=None,
+                        collaboration_mode=None,
+                        max_turns=2,
+                        use_builtin_agents=True,
+                        run_verification=True,
+                        auto_commit=False,
+                        pause_on_approval=True,
+                        start_immediately=True,
+                    ),
+                    action_label="Load sweep",
+                )
+            else:
+                add_opportunity(
+                    f"ship-{project.id}",
+                    kind="ship_slice",
+                    impact="high",
+                    title=f"Ship the next slice in {project.label}",
+                    summary=(
+                        "Use idle capacity to land the highest-leverage visible "
+                        "milestone in this repo."
+                    ),
+                    why_now=(
+                        "A connected lane is free and this repo is not currently under autonomous "
+                        "load."
+                    ),
+                    draft=MissionDraftView(
+                        name=f"Ship Next Slice: {project.label}",
+                        objective=(
+                            f"Identify the highest-leverage product or engineering improvement in "
+                            f"{project.path}, implement a meaningful milestone, verify it, and "
+                            "keep "
+                            "iterating until you leave a durable checkpoint."
+                        ),
+                        instance_id=idle_instance.id,
+                        project_id=project.id,
+                        cwd=project.path,
+                        thread_id=None,
+                        model="gpt-5.4",
+                        reasoning_effort=None,
+                        collaboration_mode=None,
+                        max_turns=5,
+                        use_builtin_agents=True,
+                        run_verification=True,
+                        auto_commit=True,
+                        pause_on_approval=True,
+                        start_immediately=True,
+                    ),
+                    action_label="Load ship run",
+                )
+
+    active_project_missions = [
+        mission
+        for mission in missions
+        if mission.status == "active" and mission.project_id is not None
+    ]
+    if idle_instance is not None and len(instances) > 1 and active_project_missions:
+        anchor = active_project_missions[0]
+        add_opportunity(
+            f"shadow-{anchor.id}",
+            kind="shadow_scout",
+            impact="medium",
+            title=f"Run a shadow scout for {anchor.project_label or anchor.name}",
+            summary=(
+                "Use spare capacity to explore risks or alternative approaches "
+                "while the main mission keeps shipping."
+            ),
+            why_now=(
+                "Parallel capacity exists, so a smaller scout can find blind spots without slowing "
+                "the main build loop."
+            ),
+            draft=MissionDraftView(
+                name=f"Shadow Scout: {anchor.project_label or anchor.name}",
+                objective=(
+                    f"While the main mission continues, scout the project behind '{anchor.name}' "
+                    "for hidden risks, alternative implementation paths, or missing validation. "
+                    "Leave a short, high-signal handoff only."
+                ),
+                instance_id=idle_instance.id,
+                project_id=anchor.project_id,
+                cwd=anchor.cwd,
+                thread_id=None,
+                model="gpt-5.4-mini",
+                reasoning_effort=None,
+                collaboration_mode=None,
+                max_turns=2,
+                use_builtin_agents=True,
+                run_verification=False,
+                auto_commit=False,
+                pause_on_approval=True,
+                start_immediately=True,
+            ),
+            action_label="Load shadow scout",
+        )
+
+    ranked = {"high": 0, "medium": 1, "low": 2}
+    opportunities = sorted(
+        opportunities,
+        key=lambda opportunity: (ranked[opportunity.impact], opportunity.title.lower()),
+    )[:4]
+
+    if opportunities:
+        headline = "Ghost launches are ready"
+        summary = (
+            "These mission drafts are synthesized from live capacity, repo state, and recent "
+            "checkpoints."
+        )
+    else:
+        headline = "No ghost launches yet"
+        summary = (
+            "Connect a Codex lane or register a project and OpenZues will start proposing mission "
+            "drafts here."
+        )
+
+    return DashboardLaunchpadView(
+        headline=headline,
+        summary=summary,
+        opportunities=opportunities,
+    )
+
+
 def create_app(
     app_settings: Settings | None = None,
     *,
@@ -498,6 +862,7 @@ def create_app(
         missions = await active_mission_service.list_views()
         return DashboardView(
             brief=build_brief(instances, missions, projects),
+            launchpad=build_launchpad(instances, missions, projects),
             radar=build_radar(instances, missions, projects),
             instances=instances,
             missions=missions,

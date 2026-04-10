@@ -80,18 +80,6 @@
                     <input name="name" type="text" placeholder="Mission name" required />
                     <select name="instance_id" id="mission-instance-select" required></select>
                     <select name="project_id" id="mission-project-select"></select>
-                    <input name="model" type="text" placeholder="Model (gpt-5.4)" />
-                    <input
-                      name="thread_id"
-                      type="text"
-                      placeholder="Attach existing thread ID (optional)"
-                    />
-                    <input
-                      name="max_turns"
-                      type="number"
-                      min="1"
-                      placeholder="Max turns (blank = unlimited)"
-                    />
                     <textarea
                       name="objective"
                       placeholder="Describe the end state. Example: Keep shipping the product until the dashboard supports durable autonomous runs, checkpoint memory, and a cleaner operator UX."
@@ -99,28 +87,48 @@
                     ></textarea>
                   </div>
 
-                  <div class="toggle-row">
-                    <label class="checkbox">
-                      <input name="use_builtin_agents" type="checkbox" checked />
-                      Use built-in agents
-                    </label>
-                    <label class="checkbox">
-                      <input name="run_verification" type="checkbox" checked />
-                      Run verification
-                    </label>
-                    <label class="checkbox">
-                      <input name="auto_commit" type="checkbox" checked />
-                      Commit milestones
-                    </label>
-                    <label class="checkbox">
-                      <input name="pause_on_approval" type="checkbox" checked />
-                      Pause on approvals
-                    </label>
-                    <label class="checkbox">
-                      <input name="start_immediately" type="checkbox" checked />
-                      Start now
-                    </label>
-                  </div>
+                  <details id="mission-advanced" class="mission-detail">
+                    <summary>Advanced runtime controls</summary>
+                    <div class="stack detail-body">
+                      <div class="mission-form-grid advanced-grid">
+                        <input name="model" type="text" placeholder="Model (gpt-5.4)" />
+                        <input
+                          name="thread_id"
+                          type="text"
+                          placeholder="Attach existing thread ID (optional)"
+                        />
+                        <input
+                          name="max_turns"
+                          type="number"
+                          min="1"
+                          placeholder="Max turns (blank = unlimited)"
+                        />
+                      </div>
+
+                      <div class="toggle-row">
+                        <label class="checkbox">
+                          <input name="use_builtin_agents" type="checkbox" checked />
+                          Use built-in agents
+                        </label>
+                        <label class="checkbox">
+                          <input name="run_verification" type="checkbox" checked />
+                          Run verification
+                        </label>
+                        <label class="checkbox">
+                          <input name="auto_commit" type="checkbox" checked />
+                          Commit milestones
+                        </label>
+                        <label class="checkbox">
+                          <input name="pause_on_approval" type="checkbox" checked />
+                          Pause on approvals
+                        </label>
+                        <label class="checkbox">
+                          <input name="start_immediately" type="checkbox" checked />
+                          Start now
+                        </label>
+                      </div>
+                    </div>
+                  </details>
 
                   <div class="launch-actions">
                     <button type="submit">Launch Mission</button>
@@ -128,6 +136,13 @@
                 </form>
 
                 <aside class="launch-aside stack">
+                  <div class="aside-intro stack">
+                    <p class="eyebrow">Ghost Launches</p>
+                    <h3 id="launchpad-headline">Synthesizing next runs...</h3>
+                    <p id="launchpad-summary" class="panel-lede"></p>
+                  </div>
+                  <div id="launchpad-opportunities" class="ghost-grid"></div>
+
                   <div class="aside-intro stack">
                     <p class="eyebrow">Preset Runs</p>
                     <h3>Load a proven mission shape</h3>

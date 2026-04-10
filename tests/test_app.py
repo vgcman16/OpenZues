@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta
 
 from fastapi.testclient import TestClient
 
-from openzues.app import build_radar, create_app
+from openzues.app import build_launchpad, build_radar, create_app
 from openzues.schemas import InstanceView, MissionView, ProjectView
 from openzues.settings import Settings
 
@@ -64,6 +64,8 @@ def make_mission_view(
     in_progress: bool = False,
     total_tokens: int = 0,
     command_count: int = 0,
+    project_id: int | None = None,
+    project_label: str | None = None,
     last_checkpoint: str | None = None,
     last_error: str | None = None,
     last_activity_at: str | None = None,
@@ -77,8 +79,8 @@ def make_mission_view(
         status=status,  # type: ignore[arg-type]
         instance_id=instance_id,
         instance_name="Local Codex Desktop",
-        project_id=None,
-        project_label=None,
+        project_id=project_id,
+        project_label=project_label,
         thread_id=f"thread_{mission_id}",
         cwd="C:/workspace",
         model="gpt-5.4",
@@ -271,3 +273,39 @@ def test_build_radar_reports_ready_capacity_when_lane_is_clear() -> None:
 
     assert radar.posture == "steady"
     assert any(signal.id == "capacity/idle-connected" for signal in radar.signals)
+
+
+def test_build_launchpad_suggests_workspace_scout_without_projects() -> None:
+    launchpad = build_launchpad([make_instance_view()], [], [])
+
+    assert launchpad.opportunities[0].kind == "workspace_scout"
+    assert launchpad.opportunities[0].mission_draft.instance_id == 1
+    assert launchpad.opportunities[0].mission_draft.model == "gpt-5.4-mini"
+
+
+def test_build_launchpad_prioritizes_checkpoint_hardener() -> None:
+    mission = make_mission_view(
+        mission_id=7,
+        name="Ship checkout",
+        status="completed",
+        phase="completed",
+        project_id=5,
+        project_label="Checkout",
+        last_checkpoint="Implemented the first milestone.",
+    )
+    project = make_project_view(project_id=5, label="Checkout")
+
+    launchpad = build_launchpad([make_instance_view()], [mission], [project])
+
+    assert launchpad.opportunities[0].kind == "checkpoint_hardener"
+    assert launchpad.opportunities[0].mission_draft.thread_id == "thread_7"
+    assert launchpad.opportunities[0].mission_draft.project_id == 5
+
+
+def test_build_launchpad_uses_drift_sweep_for_dirty_projects() -> None:
+    project = make_project_view(project_id=3, label="OpenZues")
+    project.git_status = " M src/openzues/app.py"
+
+    launchpad = build_launchpad([make_instance_view()], [], [project])
+
+    assert any(opportunity.kind == "drift_sweep" for opportunity in launchpad.opportunities)

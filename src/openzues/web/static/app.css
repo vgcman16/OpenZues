@@ -473,7 +473,7 @@ a {
 
 .launch-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1.4fr) minmax(260px, 0.78fr);
+  grid-template-columns: minmax(0, 1.18fr) minmax(320px, 0.96fr);
   gap: 18px;
 }
 
@@ -507,6 +507,14 @@ a {
 
 .mission-form-grid textarea {
   grid-column: span 4;
+}
+
+.advanced-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.advanced-grid textarea {
+  grid-column: span 1;
 }
 
 .form-grid {
@@ -606,6 +614,76 @@ button.danger {
 .launch-actions {
   display: flex;
   justify-content: flex-start;
+}
+
+.mission-detail {
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.025);
+  overflow: hidden;
+}
+
+.mission-detail summary {
+  cursor: pointer;
+  padding: 12px 14px;
+  color: var(--muted);
+  font-weight: 600;
+  list-style: none;
+}
+
+.mission-detail summary::-webkit-details-marker {
+  display: none;
+}
+
+.ghost-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.ghost-card {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.ghost-card h4 {
+  margin: 0;
+  font-size: 1.02rem;
+  line-height: 1.22;
+}
+
+.ghost-card p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.ghost-high {
+  background: linear-gradient(180deg, rgba(139, 255, 202, 0.08), rgba(255, 255, 255, 0.03));
+}
+
+.ghost-medium {
+  background: linear-gradient(180deg, rgba(93, 168, 255, 0.08), rgba(255, 255, 255, 0.03));
+}
+
+.ghost-low,
+.ghost-empty {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.ghost-why {
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+
+.ghost-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
 }
 
 .preset-strip {
@@ -1098,6 +1176,7 @@ pre {
 
 @media (max-width: 980px) {
   .mission-form-grid,
+  .advanced-grid,
   .form-grid,
   .subgrid,
   .hero-stats,
@@ -1155,6 +1234,10 @@ pre {
   .toggle-row {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .ghost-actions {
+    grid-template-columns: 1fr;
   }
 
   .event-toolbar {

@@ -11,6 +11,15 @@ DiagnosticStatus = Literal["ok", "warn", "fail", "info"]
 MissionStatus = Literal["active", "paused", "blocked", "completed", "failed"]
 SignalLevel = Literal["critical", "warn", "ready", "info"]
 SignalLane = Literal["attention", "throughput", "reliability", "capacity"]
+LaunchImpact = Literal["high", "medium", "low"]
+LaunchKind = Literal[
+    "workspace_scout",
+    "ship_slice",
+    "drift_sweep",
+    "checkpoint_hardener",
+    "recovery_run",
+    "shadow_scout",
+]
 
 
 class InstanceCreate(BaseModel):
@@ -181,6 +190,10 @@ class MissionCreate(BaseModel):
     start_immediately: bool = True
 
 
+class MissionDraftView(MissionCreate):
+    pass
+
+
 class MissionCheckpointView(BaseModel):
     id: int
     mission_id: int
@@ -257,8 +270,26 @@ class DashboardRadarView(BaseModel):
     signals: list[DashboardSignalView] = Field(default_factory=list)
 
 
+class DashboardOpportunityView(BaseModel):
+    id: str
+    kind: LaunchKind
+    impact: LaunchImpact
+    title: str
+    summary: str
+    why_now: str
+    action_label: str = "Load draft"
+    mission_draft: MissionDraftView
+
+
+class DashboardLaunchpadView(BaseModel):
+    headline: str
+    summary: str
+    opportunities: list[DashboardOpportunityView] = Field(default_factory=list)
+
+
 class DashboardView(BaseModel):
     brief: DashboardBriefView
+    launchpad: DashboardLaunchpadView
     radar: DashboardRadarView
     instances: list[InstanceView]
     missions: list[MissionView]

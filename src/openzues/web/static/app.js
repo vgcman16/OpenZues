@@ -9,6 +9,9 @@ const heroStatsEl = document.querySelector("#hero-stats");
 const briefHeadlineEl = document.querySelector("#brief-headline");
 const briefSummaryEl = document.querySelector("#brief-summary");
 const briefActionsEl = document.querySelector("#brief-actions");
+const launchpadHeadlineEl = document.querySelector("#launchpad-headline");
+const launchpadSummaryEl = document.querySelector("#launchpad-summary");
+const launchpadOpportunitiesEl = document.querySelector("#launchpad-opportunities");
 const radarHeadlineEl = document.querySelector("#radar-headline");
 const radarSummaryEl = document.querySelector("#radar-summary");
 const radarSignalsEl = document.querySelector("#radar-signals");
@@ -24,6 +27,7 @@ const eventFilterEl = document.querySelector("#event-filter");
 const eventHideNoiseEl = document.querySelector("#event-hide-noise");
 const instanceFormEl = document.querySelector("#instance-form");
 const missionFormEl = document.querySelector("#mission-form");
+const missionAdvancedEl = document.querySelector("#mission-advanced");
 const missionInstanceSelectEl = document.querySelector("#mission-instance-select");
 const missionProjectSelectEl = document.querySelector("#mission-project-select");
 const transportSelectEl = document.querySelector("#transport-select");
@@ -276,6 +280,65 @@ function renderBrief() {
     : `<span class="brief-action">No immediate operator action needed.</span>`;
 }
 
+function renderLaunchpad() {
+  const launchpad = state.dashboard?.launchpad;
+  if (!launchpad) {
+    launchpadHeadlineEl.textContent = "Synthesizing next runs...";
+    launchpadSummaryEl.textContent = "";
+    launchpadOpportunitiesEl.innerHTML = "";
+    return;
+  }
+
+  launchpadHeadlineEl.textContent = launchpad.headline;
+  launchpadSummaryEl.textContent = launchpad.summary;
+
+  if (!launchpad.opportunities.length) {
+    launchpadOpportunitiesEl.innerHTML = `
+      <article class="ghost-card ghost-empty">
+        <strong>No ghost launches yet.</strong>
+        <p class="small-muted">
+          Register a project or connect another lane and OpenZues will start suggesting mission
+          drafts here.
+        </p>
+      </article>
+    `;
+    return;
+  }
+
+  launchpadOpportunitiesEl.innerHTML = launchpad.opportunities
+    .map(
+      (opportunity) => `
+        <article class="ghost-card ghost-${escapeHtml(opportunity.impact)}">
+          <div class="signal-meta">
+            ${pill(opportunity.impact, opportunity.impact === "high" ? "ok" : opportunity.impact === "medium" ? "warn" : "")}
+            ${pill(opportunity.kind)}
+          </div>
+          <h4>${escapeHtml(opportunity.title)}</h4>
+          <p>${escapeHtml(opportunity.summary)}</p>
+          <div class="ghost-why">${escapeHtml(opportunity.why_now)}</div>
+          <div class="ghost-actions">
+            <button
+              type="button"
+              class="ghost"
+              data-action="apply-opportunity"
+              data-opportunity-id="${opportunity.id}"
+            >
+              ${escapeHtml(opportunity.action_label || "Load draft")}
+            </button>
+            <button
+              type="button"
+              data-action="launch-opportunity"
+              data-opportunity-id="${opportunity.id}"
+            >
+              Launch now
+            </button>
+          </div>
+        </article>
+      `,
+    )
+    .join("");
+}
+
 function renderRadar() {
   const radar = state.dashboard?.radar;
   if (!radar) {
@@ -348,12 +411,51 @@ function applyMissionPreset(presetId) {
   missionFormEl.querySelector('input[name="auto_commit"]').checked = preset.autoCommit;
   missionFormEl.querySelector('input[name="pause_on_approval"]').checked = preset.pauseOnApproval;
   missionFormEl.querySelector('input[name="start_immediately"]').checked = true;
+  missionAdvancedEl.open = true;
   showToast(`Loaded preset: ${preset.name}`);
+}
+
+function resetMissionForm() {
+  missionFormEl.reset();
+  missionFormEl.querySelector('input[name="use_builtin_agents"]').checked = true;
+  missionFormEl.querySelector('input[name="run_verification"]').checked = true;
+  missionFormEl.querySelector('input[name="auto_commit"]').checked = true;
+  missionFormEl.querySelector('input[name="pause_on_approval"]').checked = true;
+  missionFormEl.querySelector('input[name="start_immediately"]').checked = true;
+  missionAdvancedEl.open = false;
+}
+
+function getOpportunityById(opportunityId) {
+  return (state.dashboard?.launchpad?.opportunities ?? []).find(
+    (opportunity) => opportunity.id === opportunityId,
+  );
+}
+
+function applyMissionDraft(draft) {
+  missionFormEl.querySelector('input[name="name"]').value = draft.name || "";
+  missionFormEl.querySelector('textarea[name="objective"]').value = draft.objective || "";
+  missionFormEl.querySelector('input[name="model"]').value = draft.model || "gpt-5.4";
+  missionFormEl.querySelector('input[name="thread_id"]').value = draft.thread_id || "";
+  missionFormEl.querySelector('input[name="max_turns"]').value = draft.max_turns || "";
+  missionFormEl.querySelector('input[name="use_builtin_agents"]').checked = !!draft.use_builtin_agents;
+  missionFormEl.querySelector('input[name="run_verification"]').checked = !!draft.run_verification;
+  missionFormEl.querySelector('input[name="auto_commit"]').checked = !!draft.auto_commit;
+  missionFormEl.querySelector('input[name="pause_on_approval"]').checked = !!draft.pause_on_approval;
+  missionFormEl.querySelector('input[name="start_immediately"]').checked = !!draft.start_immediately;
+  if (draft.instance_id != null) {
+    missionInstanceSelectEl.value = String(draft.instance_id);
+  }
+  missionProjectSelectEl.value = draft.project_id != null ? String(draft.project_id) : "";
+  missionAdvancedEl.open = Boolean(
+    draft.thread_id || draft.max_turns || draft.model !== "gpt-5.4" || !draft.auto_commit,
+  );
 }
 
 function syncMissionOptions() {
   const instances = state.dashboard?.instances ?? [];
   const projects = state.dashboard?.projects ?? [];
+  const selectedInstance = missionInstanceSelectEl.value;
+  const selectedProject = missionProjectSelectEl.value;
   const instanceOptions = instances.length
     ? instances
         .map(
@@ -365,15 +467,21 @@ function syncMissionOptions() {
         .join("")
     : `<option value="">No connections yet</option>`;
   missionInstanceSelectEl.innerHTML = instanceOptions;
+  if (selectedInstance && instances.some((instance) => String(instance.id) === selectedInstance)) {
+    missionInstanceSelectEl.value = selectedInstance;
+  }
   missionProjectSelectEl.innerHTML = `
     <option value="">Project (optional)</option>
     ${projects
       .map(
         (project) =>
           `<option value="${project.id}">${escapeHtml(project.label)}</option>`,
-      )
-      .join("")}
+        )
+        .join("")}
   `;
+  if (selectedProject && projects.some((project) => String(project.id) === selectedProject)) {
+    missionProjectSelectEl.value = selectedProject;
+  }
 }
 
 function renderDiagnostics() {
@@ -912,6 +1020,7 @@ function renderEvents() {
 function render() {
   renderHero();
   renderBrief();
+  renderLaunchpad();
   renderRadar();
   renderPresets();
   renderMissions();
@@ -1011,12 +1120,7 @@ missionFormEl.addEventListener("submit", async (event) => {
       pause_on_approval: form.get("pause_on_approval") === "on",
       start_immediately: form.get("start_immediately") === "on",
     });
-    event.currentTarget.reset();
-    missionFormEl.querySelector('input[name="use_builtin_agents"]').checked = true;
-    missionFormEl.querySelector('input[name="run_verification"]').checked = true;
-    missionFormEl.querySelector('input[name="auto_commit"]').checked = true;
-    missionFormEl.querySelector('input[name="pause_on_approval"]').checked = true;
-    missionFormEl.querySelector('input[name="start_immediately"]').checked = true;
+    resetMissionForm();
     showToast("Mission launched.");
   } catch (error) {
     showToast(normalizeError(error), true);
@@ -1084,6 +1188,23 @@ document.addEventListener("click", async (event) => {
   try {
     if (target.dataset.action === "apply-mission-preset") {
       applyMissionPreset(target.dataset.presetId);
+    }
+    if (target.dataset.action === "apply-opportunity") {
+      const opportunity = getOpportunityById(target.dataset.opportunityId);
+      if (!opportunity) {
+        throw new Error("That launch draft is no longer available.");
+      }
+      applyMissionDraft(opportunity.mission_draft);
+      showToast(`Loaded ghost launch: ${opportunity.title}`);
+    }
+    if (target.dataset.action === "launch-opportunity") {
+      const opportunity = getOpportunityById(target.dataset.opportunityId);
+      if (!opportunity) {
+        throw new Error("That launch draft is no longer available.");
+      }
+      await submitJson("/api/missions", opportunity.mission_draft);
+      showToast(`Launched: ${opportunity.title}`);
+      resetMissionForm();
     }
     if (target.dataset.action === "connect") {
       await submitJson(`/api/instances/${instanceId}/connect`, {});
