@@ -7,12 +7,19 @@ from fastapi.testclient import TestClient
 from openzues.app import (
     build_continuity,
     build_cortex,
+    build_interference,
     build_launchpad,
     build_radar,
     build_reflex_deck,
     create_app,
 )
-from openzues.schemas import InstanceView, MissionView, ProjectView
+from openzues.schemas import (
+    InstanceView,
+    MissionView,
+    ProjectView,
+    RemoteRequestView,
+    TaskBlueprintView,
+)
 from openzues.services.dreams import build_dream_deck
 from openzues.settings import Settings
 
@@ -93,6 +100,9 @@ def make_mission_view(
     failure_count: int = 0,
     last_reflex_kind: str | None = None,
     last_reflex_at: str | None = None,
+    cwd: str = "C:/workspace",
+    thread_id: str | None = None,
+    updated_at: datetime | None = None,
 ) -> MissionView:
     now = datetime.now(UTC)
     return MissionView(
@@ -104,8 +114,8 @@ def make_mission_view(
         instance_name="Local Codex Desktop",
         project_id=project_id,
         project_label=project_label,
-        thread_id=f"thread_{mission_id}",
-        cwd="C:/workspace",
+        thread_id=thread_id or f"thread_{mission_id}",
+        cwd=cwd,
         model=model,
         reasoning_effort=None,
         collaboration_mode=None,
@@ -138,7 +148,82 @@ def make_mission_view(
         last_activity_at=last_activity_at or now.isoformat(),
         checkpoints=[],
         created_at=now,
+        updated_at=updated_at or now,
+    )
+
+
+def make_task_blueprint_view(
+    *,
+    task_id: int,
+    name: str,
+    project_id: int | None = None,
+    cwd: str = "C:/workspace",
+    cadence_minutes: int | None = None,
+    enabled: bool = True,
+) -> TaskBlueprintView:
+    now = datetime.now(UTC)
+    return TaskBlueprintView(
+        id=task_id,
+        name=name,
+        summary=f"{name} summary",
+        objective_template=f"{name} objective",
+        instance_id=1,
+        project_id=project_id,
+        cadence_minutes=cadence_minutes,
+        cwd=cwd,
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=2,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        enabled=enabled,
+        last_launched_at=None,
+        last_status=None,
+        last_result_summary=None,
+        created_at=now,
         updated_at=now,
+    )
+
+
+def make_remote_request_view(
+    *,
+    request_id: int,
+    operator_id: int,
+    target_kind: str,
+    target_id: int,
+    requested_at: datetime | None = None,
+) -> RemoteRequestView:
+    now = requested_at or datetime.now(UTC)
+    return RemoteRequestView(
+        id=request_id,
+        team_id=1,
+        team_name="Local Control",
+        operator_id=operator_id,
+        operator_name=f"Operator {operator_id}",
+        operator_role="operator",
+        kind="mission.create" if target_kind == "mission" else "task.trigger",
+        status="completed",
+        source="api_key",
+        source_ip="127.0.0.1",
+        user_agent="pytest",
+        target_kind=target_kind,
+        target_id=target_id,
+        target_label=f"{target_kind}-{target_id}",
+        idempotency_key=f"req-{request_id}",
+        summary="Remote request completed.",
+        error=None,
+        payload_preview=None,
+        result_preview=None,
+        requested_at=now,
+        resolved_at=now,
     )
 
 
@@ -596,6 +681,134 @@ def test_build_launchpad_uses_drift_sweep_for_dirty_projects() -> None:
     launchpad = build_launchpad([make_instance_view()], [], [project])
 
     assert any(opportunity.kind == "drift_sweep" for opportunity in launchpad.opportunities)
+
+
+def test_build_interference_detects_lane_braid() -> None:
+    project = make_project_view(project_id=5, label="Checkout")
+    first = make_mission_view(
+        mission_id=31,
+        name="Ship checkout",
+        project_id=5,
+        project_label="Checkout",
+    )
+    second = make_mission_view(
+        mission_id=32,
+        name="Harden checkout",
+        instance_id=2,
+        project_id=5,
+        project_label="Checkout",
+    )
+
+    interference = build_interference([first, second], [project], [], [])
+
+    assert interference.headline == "Interference forecast is watchful"
+    assert interference.vectors[0].kind == "lane_braid"
+    assert interference.vectors[0].mission_ids == [31, 32]
+
+
+def test_build_interference_flags_checkpoint_eclipse() -> None:
+    now = datetime.now(UTC)
+    project = make_project_view(project_id=7, label="Atlas")
+    anchor = make_mission_view(
+        mission_id=41,
+        name="Atlas anchor",
+        status="completed",
+        phase="completed",
+        project_id=7,
+        project_label="Atlas",
+        last_checkpoint="Verified the current milestone.",
+        thread_id="thread_anchor",
+        updated_at=now - timedelta(minutes=5),
+    )
+    live = make_mission_view(
+        mission_id=42,
+        name="Atlas live",
+        status="active",
+        phase="thinking",
+        project_id=7,
+        project_label="Atlas",
+        thread_id="thread_live",
+    )
+
+    interference = build_interference([anchor, live], [project], [], [])
+
+    assert any(vector.kind == "checkpoint_eclipse" for vector in interference.vectors)
+
+
+def test_build_interference_detects_remote_echo() -> None:
+    now = datetime.now(UTC)
+    project = make_project_view(project_id=8, label="ForumForge")
+    task = make_task_blueprint_view(
+        task_id=12,
+        name="ForumForge loop",
+        project_id=8,
+        cadence_minutes=60,
+    )
+    requests = [
+        make_remote_request_view(
+            request_id=1,
+            operator_id=7,
+            target_kind="task",
+            target_id=12,
+            requested_at=now - timedelta(hours=1),
+        ),
+        make_remote_request_view(
+            request_id=2,
+            operator_id=8,
+            target_kind="task",
+            target_id=12,
+            requested_at=now - timedelta(minutes=30),
+        ),
+    ]
+
+    interference = build_interference([], [project], [task], requests)
+
+    assert any(vector.kind == "remote_echo" for vector in interference.vectors)
+
+
+def test_dashboard_and_project_interference_endpoint_surface_scope_overlap(tmp_path) -> None:
+    with make_client(tmp_path) as client:
+        project_response = client.post(
+            "/api/projects",
+            json={"path": str(tmp_path), "label": "OpenZues Workspace"},
+        )
+        project_id = project_response.json()["id"]
+        for offset in (0, 1):
+            client.post(
+                "/api/tasks",
+                json={
+                    "name": f"Overlap {offset}",
+                    "summary": "Overlap detector",
+                    "objective_template": "Keep the workspace healthy.",
+                    "instance_id": 1,
+                    "project_id": project_id,
+                    "cadence_minutes": 60 + offset * 30,
+                    "cwd": str(tmp_path),
+                    "model": "gpt-5.4-mini",
+                    "reasoning_effort": None,
+                    "collaboration_mode": None,
+                    "max_turns": 2,
+                    "use_builtin_agents": True,
+                    "run_verification": True,
+                    "auto_commit": False,
+                    "pause_on_approval": True,
+                    "allow_auto_reflexes": True,
+                    "auto_recover": True,
+                    "auto_recover_limit": 2,
+                    "reflex_cooldown_seconds": 900,
+                    "allow_failover": True,
+                    "enabled": True,
+                },
+            )
+        dashboard_response = client.get("/api/dashboard")
+        project_interference_response = client.get(f"/api/projects/{project_id}/interference")
+
+    assert dashboard_response.status_code == 200
+    dashboard = dashboard_response.json()
+    assert any(vector["kind"] == "task_overlap" for vector in dashboard["interference"]["vectors"])
+    assert project_interference_response.status_code == 200
+    project_interference = project_interference_response.json()
+    assert project_interference["vectors"][0]["project_id"] == project_id
 
 
 def test_build_continuity_prioritizes_fragile_relay_packets() -> None:

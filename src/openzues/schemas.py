@@ -35,6 +35,12 @@ IntegrationAuthStatus = Literal["satisfied", "missing", "degraded"]
 OperatorRole = Literal["owner", "admin", "operator", "viewer"]
 RemoteRequestKind = Literal["mission.create", "task.trigger"]
 RemoteRequestStatus = Literal["accepted", "completed", "failed", "denied", "dry_run"]
+InterferenceKind = Literal[
+    "lane_braid",
+    "checkpoint_eclipse",
+    "task_overlap",
+    "remote_echo",
+]
 
 
 class InstanceCreate(BaseModel):
@@ -561,6 +567,27 @@ class DashboardContinuityView(BaseModel):
     packets: list[DashboardContinuityPacketView] = Field(default_factory=list)
 
 
+class DashboardInterferenceVectorView(BaseModel):
+    id: str
+    kind: InterferenceKind
+    level: SignalLevel
+    scope_label: str
+    project_id: int | None = None
+    summary: str
+    pressure: str
+    treaty_prompt: str
+    mission_ids: list[int] = Field(default_factory=list)
+    task_ids: list[int] = Field(default_factory=list)
+    operator_ids: list[int] = Field(default_factory=list)
+    request_ids: list[int] = Field(default_factory=list)
+
+
+class DashboardInterferenceView(BaseModel):
+    headline: str
+    summary: str
+    vectors: list[DashboardInterferenceVectorView] = Field(default_factory=list)
+
+
 class DashboardDreamView(BaseModel):
     id: str
     project_id: int
@@ -729,6 +756,7 @@ class DashboardView(BaseModel):
     launchpad: DashboardLaunchpadView
     radar: DashboardRadarView
     ops_mesh: DashboardOpsMeshView
+    interference: DashboardInterferenceView
     continuity: DashboardContinuityView
     dream_deck: DashboardDreamDeckView
     cortex: DashboardCortexView

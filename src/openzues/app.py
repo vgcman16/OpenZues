@@ -21,6 +21,7 @@ from openzues.schemas import (
     DashboardContinuityPacketView,
     DashboardDoctrineView,
     DashboardDreamView,
+    DashboardInterferenceView,
     DashboardLaunchpadView,
     DashboardOpportunityView,
     DashboardRadarView,
@@ -76,6 +77,7 @@ from openzues.services.dreams import build_dream_deck
 from openzues.services.environment import EnvironmentService
 from openzues.services.github import GitHubService
 from openzues.services.hub import BroadcastHub
+from openzues.services.interference import build_interference
 from openzues.services.manager import RuntimeManager, compact_event_payload
 from openzues.services.missions import MissionService
 from openzues.services.ops_mesh import OpsMeshService, build_ops_mesh
@@ -973,6 +975,7 @@ def create_app(
         instances = await active_manager.list_views()
         missions = await active_mission_service.list_views()
         doctrines = build_doctrines(missions, projects)
+        interference = build_interference(missions, projects, task_blueprints, remote_requests)
         return DashboardView(
             brief=build_brief(instances, missions, projects),
             launchpad=build_launchpad(instances, missions, projects, doctrines=doctrines),
@@ -992,6 +995,7 @@ def create_app(
                 operators=operators,
                 remote_requests=remote_requests,
             ),
+            interference=interference,
             continuity=build_continuity(
                 instances,
                 missions,
@@ -1059,6 +1063,39 @@ def create_app(
     @fastapi_app.get("/api/dashboard")
     async def dashboard() -> DashboardView:
         return await build_dashboard()
+
+    @fastapi_app.get("/api/interference")
+    async def interference() -> DashboardInterferenceView:
+        dashboard_view = await build_dashboard()
+        return dashboard_view.interference
+
+    @fastapi_app.get("/api/projects/{project_id}/interference")
+    async def project_interference(project_id: int) -> DashboardInterferenceView:
+        dashboard_view = await build_dashboard()
+        vectors = [
+            vector
+            for vector in dashboard_view.interference.vectors
+            if vector.project_id == project_id
+        ]
+        if not vectors:
+            project_rows = await active_database.list_projects()
+            project = next((row for row in project_rows if int(row["id"]) == project_id), None)
+            if project is None:
+                raise HTTPException(status_code=404, detail="Project not found.")
+            label = str(project["label"])
+            return DashboardInterferenceView(
+                headline=f"Interference is calm for {label}",
+                summary=(
+                    "No overlap between live missions, automation loops, or remote launches is "
+                    "currently forecast for this project."
+                ),
+                vectors=[],
+            )
+        return DashboardInterferenceView(
+            headline=dashboard_view.interference.headline,
+            summary=dashboard_view.interference.summary,
+            vectors=vectors,
+        )
 
     @fastapi_app.get("/api/missions/{mission_id}/continuity")
     async def mission_continuity(mission_id: int) -> DashboardContinuityPacketView:
