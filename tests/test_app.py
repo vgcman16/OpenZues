@@ -35,6 +35,7 @@ def test_project_creation_appears_on_dashboard(tmp_path) -> None:
     assert project["label"] == "Sandbox"
     assert project["exists"] is True
     dashboard = dashboard_response.json()
+    assert dashboard["brief"]["headline"]
     assert dashboard["missions"] == []
     assert dashboard["projects"][0]["label"] == "Sandbox"
     assert dashboard["playbooks"] == []
@@ -65,6 +66,7 @@ def test_playbook_creation_and_diagnostics_endpoint(tmp_path) -> None:
     created = create_response.json()
     assert created["name"] == "Status check"
     dashboard = dashboard_response.json()
+    assert dashboard["brief"]["summary"]
     assert dashboard["missions"] == []
     assert dashboard["playbooks"][0]["name"] == "Status check"
     diagnostics = diagnostics_response.json()
@@ -130,3 +132,4 @@ def test_mission_creation_appears_on_dashboard(tmp_path) -> None:
     assert created["status"] == "paused"
     dashboard = dashboard_response.json()
     assert dashboard["missions"][0]["name"] == "Ship autonomy loop"
+    assert dashboard["brief"]["focus_mission_id"] == created["id"]

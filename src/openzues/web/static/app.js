@@ -6,7 +6,11 @@ const state = {
 };
 
 const heroStatsEl = document.querySelector("#hero-stats");
+const briefHeadlineEl = document.querySelector("#brief-headline");
+const briefSummaryEl = document.querySelector("#brief-summary");
+const briefActionsEl = document.querySelector("#brief-actions");
 const missionsEl = document.querySelector("#missions");
+const missionPresetsEl = document.querySelector("#mission-presets");
 const instancesEl = document.querySelector("#instances");
 const diagnosticsEl = document.querySelector("#diagnostics");
 const playbooksEl = document.querySelector("#playbooks");
@@ -20,6 +24,61 @@ const missionFormEl = document.querySelector("#mission-form");
 const missionInstanceSelectEl = document.querySelector("#mission-instance-select");
 const missionProjectSelectEl = document.querySelector("#mission-project-select");
 const transportSelectEl = document.querySelector("#transport-select");
+
+const MISSION_PRESETS = [
+  {
+    id: "ship",
+    name: "Ship Feature",
+    description: "Build, verify, and keep going until a visible feature milestone lands.",
+    objective:
+      "Build the highest-leverage product improvement in this workspace, verify it, and keep iterating until you either reach a solid milestone or hit a real blocker.",
+    model: "gpt-5.4",
+    maxTurns: "6",
+    useBuiltinAgents: true,
+    runVerification: true,
+    autoCommit: true,
+    pauseOnApproval: true,
+  },
+  {
+    id: "rescue",
+    name: "Rescue Build",
+    description: "Triage failing tests, runtime errors, and broken flows until the system is stable.",
+    objective:
+      "Triage the biggest reliability issue in this workspace, reproduce it, implement fixes, run verification, and continue until the product is stable again.",
+    model: "gpt-5.4",
+    maxTurns: "5",
+    useBuiltinAgents: true,
+    runVerification: true,
+    autoCommit: false,
+    pauseOnApproval: true,
+  },
+  {
+    id: "map",
+    name: "Map Codebase",
+    description: "Create durable understanding before editing risky areas.",
+    objective:
+      "Map the codebase, identify the most important moving pieces, and produce a concise operator handoff that explains where to build next and where the risks live.",
+    model: "gpt-5.4-mini",
+    maxTurns: "3",
+    useBuiltinAgents: true,
+    runVerification: false,
+    autoCommit: false,
+    pauseOnApproval: true,
+  },
+  {
+    id: "polish",
+    name: "Polish UX",
+    description: "Tighten visuals, interaction flow, and verification in one loop.",
+    objective:
+      "Improve the user experience in this workspace, focusing on hierarchy, clarity, and polish. Verify changes in-browser and keep iterating until the interface feels production-ready.",
+    model: "gpt-5.4",
+    maxTurns: "4",
+    useBuiltinAgents: false,
+    runVerification: true,
+    autoCommit: true,
+    pauseOnApproval: true,
+  },
+];
 
 function showToast(message, isError = false) {
   toastEl.hidden = false;
@@ -129,6 +188,54 @@ function booleanBadge(enabled, label) {
   return enabled ? pill(label, "ok") : "";
 }
 
+function renderBrief() {
+  const brief = state.dashboard?.brief;
+  if (!brief) {
+    briefHeadlineEl.textContent = "Waiting for dashboard data...";
+    briefSummaryEl.textContent = "";
+    briefActionsEl.innerHTML = "";
+    return;
+  }
+  briefHeadlineEl.textContent = brief.headline;
+  briefSummaryEl.textContent = brief.summary;
+  briefActionsEl.innerHTML = brief.next_actions.length
+    ? brief.next_actions.map((action) => `<span class="brief-action">${escapeHtml(action)}</span>`).join("")
+    : `<span class="brief-action">No immediate operator action needed.</span>`;
+}
+
+function renderPresets() {
+  missionPresetsEl.innerHTML = MISSION_PRESETS.map(
+    (preset) => `
+      <button
+        type="button"
+        class="preset-chip"
+        data-action="apply-mission-preset"
+        data-preset-id="${preset.id}"
+        title="${escapeHtml(preset.description)}"
+      >
+        ${escapeHtml(preset.name)}
+      </button>
+    `,
+  ).join("");
+}
+
+function applyMissionPreset(presetId) {
+  const preset = MISSION_PRESETS.find((item) => item.id === presetId);
+  if (!preset) {
+    return;
+  }
+  missionFormEl.querySelector('input[name="name"]').value = preset.name;
+  missionFormEl.querySelector('textarea[name="objective"]').value = preset.objective;
+  missionFormEl.querySelector('input[name="model"]').value = preset.model;
+  missionFormEl.querySelector('input[name="max_turns"]').value = preset.maxTurns;
+  missionFormEl.querySelector('input[name="use_builtin_agents"]').checked = preset.useBuiltinAgents;
+  missionFormEl.querySelector('input[name="run_verification"]').checked = preset.runVerification;
+  missionFormEl.querySelector('input[name="auto_commit"]').checked = preset.autoCommit;
+  missionFormEl.querySelector('input[name="pause_on_approval"]').checked = preset.pauseOnApproval;
+  missionFormEl.querySelector('input[name="start_immediately"]').checked = true;
+  showToast(`Loaded preset: ${preset.name}`);
+}
+
 function syncMissionOptions() {
   const instances = state.dashboard?.instances ?? [];
   const projects = state.dashboard?.projects ?? [];
@@ -197,6 +304,11 @@ function renderMissions() {
       const progressSuffix = mission.max_turns
         ? `${mission.turns_completed}/${mission.max_turns}`
         : `${mission.turns_completed} complete`;
+      const progressPercent = mission.max_turns
+        ? Math.max(6, Math.min(100, Math.round((mission.turns_completed / mission.max_turns) * 100)))
+        : mission.turns_completed
+          ? Math.min(100, 18 + mission.turns_completed * 12)
+          : 6;
       const checkpoints = mission.checkpoints?.length
         ? mission.checkpoints
             .map(
@@ -214,13 +326,14 @@ function renderMissions() {
         : `<p class="mono">No checkpoints yet.</p>`;
 
       return `
-        <article class="mission stack">
+        <article class="mission stack phase-${escapeHtml(mission.phase || "ready")}">
           <div class="instance-head">
             <div class="stack mission-head-copy">
               <div class="row">
                 <h3>${escapeHtml(mission.name)}</h3>
                 <div class="mission-pills">
                   ${pill(mission.status, mission.status === "active" ? "ok" : mission.status === "blocked" ? "warn" : mission.status === "failed" ? "bad" : "")}
+                  ${mission.phase ? pill(mission.phase) : ""}
                   ${mission.in_progress ? pill("turn running", "ok") : pill("idle")}
                   ${pill(`instance ${mission.instance_id}`)}
                   ${mission.instance_name ? pill(mission.instance_name) : ""}
@@ -242,6 +355,10 @@ function renderMissions() {
             </div>
           </div>
 
+          <div class="mission-progress">
+            <div class="mission-progress-bar" style="width:${progressPercent}%"></div>
+          </div>
+
           <div class="mission-stats">
             <article class="mini-stat">
               <span class="mini-stat-label">Thread</span>
@@ -252,8 +369,13 @@ function renderMissions() {
               <span>${escapeHtml(progressSuffix)}</span>
             </article>
             <article class="mini-stat">
-              <span class="mini-stat-label">Failures</span>
-              <span>${mission.failure_count}</span>
+              <span class="mini-stat-label">Mission Telemetry</span>
+              <div class="telemetry-grid">
+                <span>${mission.command_count} commands</span>
+                <span>${mission.total_tokens.toLocaleString()} tokens</span>
+                <span>${mission.output_tokens.toLocaleString()} output</span>
+                <span>${mission.reasoning_tokens.toLocaleString()} reasoning</span>
+              </div>
             </article>
             <article class="mini-stat">
               <span class="mini-stat-label">Policies</span>
@@ -263,6 +385,10 @@ function renderMissions() {
                 ${booleanBadge(mission.auto_commit, "commit")}
                 ${booleanBadge(mission.pause_on_approval, "pause approvals")}
               </div>
+            </article>
+            <article class="mini-stat">
+              <span class="mini-stat-label">Operator Next</span>
+              <span>${escapeHtml(mission.suggested_action || "No action needed right now.")}</span>
             </article>
           </div>
 
@@ -278,6 +404,28 @@ function renderMissions() {
                 <div class="stack">
                   <strong>Latest handoff</strong>
                   <pre>${escapeHtml(mission.last_checkpoint)}</pre>
+                </div>
+              `
+              : ""
+          }
+
+          ${
+            mission.current_command
+              ? `
+                <div class="stack">
+                  <strong>Current Command</strong>
+                  <pre>${escapeHtml(mission.current_command)}</pre>
+                </div>
+              `
+              : ""
+          }
+
+          ${
+            mission.last_commentary
+              ? `
+                <div class="stack">
+                  <strong>Live Commentary</strong>
+                  <div class="mission-commentary">${escapeHtml(mission.last_commentary)}</div>
                 </div>
               `
               : ""
@@ -361,7 +509,6 @@ function renderInstances() {
                 ${pill(instance.transport)}
                 ${instance.resolved_transport ? pill(`via ${instance.resolved_transport}`) : ""}
                 ${instance.pid ? pill(`pid ${instance.pid}`) : ""}
-                ${instance.client_user_agent ? pill(instance.client_user_agent) : ""}
               </div>
             </div>
             <div class="actions">
@@ -381,70 +528,80 @@ function renderInstances() {
           }
           ${
             instance.transport_note
-              ? `<div class="small-muted">${escapeHtml(instance.transport_note)}</div>`
+              ? `<div class="small-muted wrap-text">${escapeHtml(instance.transport_note)}</div>`
               : ""
           }
           ${
             instance.resolved_command
-              ? `<div class="mono">launcher: ${escapeHtml(instance.resolved_command)}${instance.resolved_args ? ` ${escapeHtml(instance.resolved_args)}` : ""}</div>`
+              ? `<div class="mono mono-wrap">launcher: ${escapeHtml(instance.resolved_command)}${instance.resolved_args ? ` ${escapeHtml(instance.resolved_args)}` : ""}</div>`
               : ""
           }
 
-          <div class="subgrid">
-            <div class="stack">
-              <strong>Catalog</strong>
-              <div class="pill-row">
-                ${pill(`${instance.models.length} models`)}
-                ${pill(`${instance.skills.length} skills`)}
-                ${pill(`${instance.apps.length} apps`)}
-                ${pill(`${instance.plugins.length} plugins`)}
-                ${pill(`${instance.mcp_servers.length} MCP servers`)}
+          <details class="instance-detail">
+            <summary>Live Context</summary>
+            <div class="stack detail-body">
+              <div class="subgrid">
+                <div class="stack">
+                  <strong>Catalog</strong>
+                  <div class="pill-row">
+                    ${pill(`${instance.models.length} models`)}
+                    ${pill(`${instance.skills.length} skills`)}
+                    ${pill(`${instance.apps.length} apps`)}
+                    ${pill(`${instance.plugins.length} plugins`)}
+                    ${pill(`${instance.mcp_servers.length} MCP servers`)}
+                  </div>
+                  <pre>${summarize(instance.auth_state || { message: "Not fetched yet." })}</pre>
+                </div>
+                <div class="stack">
+                  <strong>Threads</strong>
+                  <div class="stack">${threadRows}</div>
+                </div>
               </div>
-              <pre>${summarize(instance.auth_state || { message: "Not fetched yet." })}</pre>
             </div>
-            <div class="stack">
-              <strong>Threads</strong>
-              <div class="stack">${threadRows}</div>
-            </div>
-          </div>
+          </details>
 
-          <div class="subgrid">
-            <form class="stack" data-action-form="new-thread" data-instance-id="${instance.id}">
-              <strong>Start Thread</strong>
-              <select name="model">${modelOptions}</select>
-              <input name="cwd" type="text" placeholder="${escapeHtml(instance.cwd || "Working directory")}" />
-              <input name="reasoning_effort" type="text" placeholder="reasoning effort (optional)" />
-              <input name="collaboration_mode" type="text" placeholder="collaboration mode (optional)" />
-              <button type="submit">Create Thread</button>
-            </form>
+          <details class="instance-detail">
+            <summary>Manual Controls</summary>
+            <div class="stack detail-body">
+              <div class="subgrid">
+                <form class="stack" data-action-form="new-thread" data-instance-id="${instance.id}">
+                  <strong>Start Thread</strong>
+                  <select name="model">${modelOptions}</select>
+                  <input name="cwd" type="text" placeholder="${escapeHtml(instance.cwd || "Working directory")}" />
+                  <input name="reasoning_effort" type="text" placeholder="reasoning effort (optional)" />
+                  <input name="collaboration_mode" type="text" placeholder="collaboration mode (optional)" />
+                  <button type="submit">Create Thread</button>
+                </form>
 
-            <form class="stack" data-action-form="start-turn" data-instance-id="${instance.id}">
-              <strong>Start Turn</strong>
-              <input name="thread_id" type="text" placeholder="Thread ID" required />
-              <textarea name="text" placeholder="What should Codex do?" required></textarea>
-              <input name="cwd" type="text" placeholder="${escapeHtml(instance.cwd || "Working directory")}" />
-              <div class="actions">
-                <button type="submit">Send Turn</button>
-                <button type="button" class="ghost" data-action="interrupt-turn" data-instance-id="${instance.id}">Interrupt</button>
+                <form class="stack" data-action-form="start-turn" data-instance-id="${instance.id}">
+                  <strong>Start Turn</strong>
+                  <input name="thread_id" type="text" placeholder="Thread ID" required />
+                  <textarea name="text" placeholder="What should Codex do?" required></textarea>
+                  <input name="cwd" type="text" placeholder="${escapeHtml(instance.cwd || "Working directory")}" />
+                  <div class="actions">
+                    <button type="submit">Send Turn</button>
+                    <button type="button" class="ghost" data-action="interrupt-turn" data-instance-id="${instance.id}">Interrupt</button>
+                  </div>
+                </form>
               </div>
-            </form>
-          </div>
 
-          <div class="subgrid">
-            <form class="stack" data-action-form="command" data-instance-id="${instance.id}">
-              <strong>Run Command</strong>
-              <input name="command" type="text" placeholder="git status --short --branch" required />
-              <input name="cwd" type="text" placeholder="${escapeHtml(instance.cwd || "Working directory")}" />
-              <button type="submit">Execute</button>
-            </form>
+              <div class="subgrid">
+                <form class="stack" data-action-form="command" data-instance-id="${instance.id}">
+                  <strong>Run Command</strong>
+                  <input name="command" type="text" placeholder="git status --short --branch" required />
+                  <input name="cwd" type="text" placeholder="${escapeHtml(instance.cwd || "Working directory")}" />
+                  <button type="submit">Execute</button>
+                </form>
 
-            <form class="stack" data-action-form="review" data-instance-id="${instance.id}">
-              <strong>Start Review</strong>
-              <input name="thread_id" type="text" placeholder="Thread ID" required />
-              <button type="submit">Review Thread</button>
-              <small class="mono">Kicks off the App Server review flow.</small>
-            </form>
-          </div>
+                <form class="stack" data-action-form="review" data-instance-id="${instance.id}">
+                  <strong>Start Review</strong>
+                  <input name="thread_id" type="text" placeholder="Thread ID" required />
+                  <button type="submit">Review Thread</button>
+                  <small class="mono">Kicks off the App Server review flow.</small>
+                </form>
+              </div>
+            </div>
+          </details>
 
           <div class="stack">
             <strong>Pending Requests</strong>
@@ -608,6 +765,8 @@ function renderEvents() {
 
 function render() {
   renderHero();
+  renderBrief();
+  renderPresets();
   renderMissions();
   renderInstances();
   renderPlaybooks();
@@ -776,6 +935,9 @@ document.addEventListener("click", async (event) => {
   }
   const instanceId = target.dataset.instanceId;
   try {
+    if (target.dataset.action === "apply-mission-preset") {
+      applyMissionPreset(target.dataset.presetId);
+    }
     if (target.dataset.action === "connect") {
       await submitJson(`/api/instances/${instanceId}/connect`, {});
       showToast("Connected.");

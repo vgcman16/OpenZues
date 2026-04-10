@@ -15,6 +15,115 @@ from openzues.services.hub import BroadcastHub
 logger = logging.getLogger(__name__)
 RuntimeListener = Callable[[int, dict[str, Any]], Awaitable[None]]
 
+CATALOG_SAMPLE_LIMIT = 8
+LOG_LINE_PREVIEW_LIMIT = 360
+
+
+def _pick_fields(item: dict[str, Any], keys: tuple[str, ...]) -> dict[str, Any]:
+    return {
+        key: value
+        for key in keys
+        if (value := item.get(key)) not in (None, "", [], {})
+    }
+
+
+def _summarize_account(account: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(account, dict):
+        return None
+    return _pick_fields(account, ("type", "email", "planType"))
+
+
+def _summarize_models(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        _pick_fields(
+            item,
+            (
+                "id",
+                "model",
+                "displayName",
+                "description",
+                "defaultReasoningEffort",
+                "isDefault",
+            ),
+        )
+        for item in items
+    ]
+
+
+def _summarize_threads(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    summarized: list[dict[str, Any]] = []
+    for item in items:
+        summary = _pick_fields(item, ("id", "title", "name", "updatedAt"))
+        status = item.get("status")
+        if isinstance(status, dict):
+            summary["status"] = _pick_fields(status, ("type",))
+        summarized.append(summary)
+    return summarized
+
+
+def _summarize_named_items(
+    items: list[dict[str, Any]],
+    *,
+    keys: tuple[str, ...],
+) -> list[dict[str, Any]]:
+    return [_pick_fields(item, keys) for item in items]
+
+
+def compact_event_payload(method: str, payload: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        return payload
+
+    compact = dict(payload)
+
+    if method in {"server/stderr", "server/stdout"}:
+        line = payload.get("line")
+        if isinstance(line, str) and len(line) > LOG_LINE_PREVIEW_LIMIT:
+            compact["line"] = f"{line[:LOG_LINE_PREVIEW_LIMIT]} ... [truncated]"
+            compact["lineLength"] = len(line)
+        return compact
+
+    if method == "account/updated":
+        compact["account"] = _summarize_account(payload.get("account"))
+        return compact
+
+    data = payload.get("data")
+    if isinstance(data, list) and (
+        method.endswith("/updated") or method.endswith("/list") or len(data) > 12
+    ):
+        sample = data[:CATALOG_SAMPLE_LIMIT]
+        if method.startswith("model/"):
+            compact["data"] = _summarize_models([item for item in sample if isinstance(item, dict)])
+        elif method.startswith("thread/"):
+            compact["data"] = _summarize_threads(
+                [item for item in sample if isinstance(item, dict)]
+            )
+        else:
+            compact["data"] = _summarize_named_items(
+                [item for item in sample if isinstance(item, dict)],
+                keys=(
+                    "id",
+                    "name",
+                    "displayName",
+                    "description",
+                    "status",
+                    "type",
+                    "method",
+                    "isAccessible",
+                    "isEnabled",
+                ),
+            )
+        compact["count"] = len(data)
+        compact["truncated"] = len(data) > CATALOG_SAMPLE_LIMIT
+        return compact
+
+    thread_ids = payload.get("threadIds")
+    if isinstance(thread_ids, list) and len(thread_ids) > 12:
+        compact["threadIds"] = [str(item) for item in thread_ids[:CATALOG_SAMPLE_LIMIT]]
+        compact["count"] = len(thread_ids)
+        compact["truncated"] = len(thread_ids) > CATALOG_SAMPLE_LIMIT
+
+    return compact
+
 
 @dataclass(slots=True)
 class InstanceRuntime:
@@ -258,26 +367,54 @@ class RuntimeManager:
         client = runtime.client
         if client is None or not runtime.connected:
             return runtime
-        runtime.auth_state = (
-            await client.call("account/read", {"refreshToken": False})
-        ).get("account")
-        runtime.models = (
+        account = (await client.call("account/read", {"refreshToken": False})).get("account")
+        runtime.auth_state = _summarize_account(account)
+        raw_models = (
             await client.call("model/list", {"limit": 50, "includeHidden": False})
         ).get("data", [])
-        runtime.collaboration_modes = (
-            await client.call("collaborationMode/list", {})
-        ).get("data", [])
+        runtime.models = _summarize_models(
+            [item for item in raw_models if isinstance(item, dict)]
+        )
+        raw_modes = (await client.call("collaborationMode/list", {})).get("data", [])
+        runtime.collaboration_modes = _summarize_named_items(
+            [item for item in raw_modes if isinstance(item, dict)],
+            keys=("name", "mode", "model", "reasoning_effort"),
+        )
         skills_params: dict[str, Any] = {"forceReload": False}
         if runtime.cwd:
             skills_params["cwds"] = [runtime.cwd]
-        runtime.skills = (await client.call("skills/list", skills_params)).get("data", [])
-        runtime.apps = (await client.call("app/list", {"limit": 50})).get("data", [])
-        runtime.plugins = (await client.call("plugin/list", {})).get("data", [])
-        runtime.mcp_servers = (
+        raw_skills = (await client.call("skills/list", skills_params)).get("data", [])
+        runtime.skills = _summarize_named_items(
+            [item for item in raw_skills if isinstance(item, dict)],
+            keys=("name", "description"),
+        )
+        raw_apps = (await client.call("app/list", {"limit": 50})).get("data", [])
+        runtime.apps = _summarize_named_items(
+            [item for item in raw_apps if isinstance(item, dict)],
+            keys=("id", "name", "description", "isAccessible", "isEnabled"),
+        )
+        raw_plugins = (await client.call("plugin/list", {})).get("data", [])
+        runtime.plugins = _summarize_named_items(
+            [item for item in raw_plugins if isinstance(item, dict)],
+            keys=("name", "enabled"),
+        )
+        raw_mcp_servers = (
             await client.call("mcpServerStatus/list", {"limit": 50})
         ).get("data", [])
-        runtime.config = (await client.call("config/read", {"includeLayers": False})).get("config")
-        runtime.threads = (await client.call("thread/list", {"limit": 30})).get("data", [])
+        runtime.mcp_servers = _summarize_named_items(
+            [item for item in raw_mcp_servers if isinstance(item, dict)],
+            keys=("name", "status", "source"),
+        )
+        raw_config = (await client.call("config/read", {"includeLayers": False})).get("config")
+        runtime.config = (
+            _pick_fields(raw_config, ("model", "model_reasoning_effort", "profile"))
+            if isinstance(raw_config, dict)
+            else None
+        )
+        raw_threads = (await client.call("thread/list", {"limit": 30})).get("data", [])
+        runtime.threads = _summarize_threads(
+            [item for item in raw_threads if isinstance(item, dict)]
+        )
         runtime.loaded_thread_ids = (
             await client.call("thread/loaded/list", {})
         ).get("threadIds", [])
@@ -415,11 +552,12 @@ class RuntimeManager:
                 logger.exception("Runtime server request listener crashed")
 
     async def handle_event(self, instance_id: int, event: dict[str, Any]) -> None:
+        compact_payload = compact_event_payload(event["method"], event["params"])
         await self.database.append_event(
             instance_id=instance_id,
             thread_id=event.get("threadId"),
             method=event["method"],
-            payload=event["params"],
+            payload=compact_payload,
         )
         runtime = await self.get(instance_id)
         runtime.last_event_at = utcnow()
@@ -434,7 +572,7 @@ class RuntimeManager:
                 "instanceId": instance_id,
                 "method": event["method"],
                 "threadId": event.get("threadId"),
-                "params": event["params"],
+                "params": compact_payload,
                 "createdAt": runtime.last_event_at,
             }
         )

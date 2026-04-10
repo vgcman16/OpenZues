@@ -209,6 +209,14 @@ class MissionView(BaseModel):
     auto_commit: bool = True
     pause_on_approval: bool = True
     in_progress: bool = False
+    phase: str | None = None
+    current_command: str | None = None
+    command_count: int = 0
+    total_tokens: int = 0
+    output_tokens: int = 0
+    reasoning_tokens: int = 0
+    last_commentary: str | None = None
+    suggested_action: str | None = None
     turns_started: int = 0
     turns_completed: int = 0
     failure_count: int = 0
@@ -221,7 +229,16 @@ class MissionView(BaseModel):
     updated_at: datetime
 
 
+class DashboardBriefView(BaseModel):
+    status: Literal["idle", "active", "blocked", "mixed"]
+    headline: str
+    summary: str
+    focus_mission_id: int | None = None
+    next_actions: list[str] = Field(default_factory=list)
+
+
 class DashboardView(BaseModel):
+    brief: DashboardBriefView
     instances: list[InstanceView]
     missions: list[MissionView]
     projects: list[ProjectView]

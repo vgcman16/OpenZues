@@ -161,6 +161,74 @@ async def test_final_answer_event_creates_checkpoint(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_token_and_commentary_events_update_mission_telemetry(tmp_path) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    manager = FakeManager()
+    service = MissionService(database, manager, BroadcastHub(), poll_interval_seconds=3600)
+
+    mission_id = await database.create_mission(
+        name="Telemetry",
+        objective="Track runtime signals.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread_metrics",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=True,
+        pause_on_approval=True,
+    )
+
+    await service.handle_event(
+        7,
+        {
+            "method": "thread/tokenUsage/updated",
+            "threadId": "thread_metrics",
+            "params": {
+                "threadId": "thread_metrics",
+                "tokenUsage": {
+                    "total": {
+                        "totalTokens": 1200,
+                        "outputTokens": 220,
+                        "reasoningOutputTokens": 90,
+                    }
+                },
+            },
+        },
+    )
+    await service.handle_event(
+        7,
+        {
+            "method": "item/completed",
+            "threadId": "thread_metrics",
+            "params": {
+                "threadId": "thread_metrics",
+                "turnId": "turn_metrics",
+                "item": {
+                    "type": "agentMessage",
+                    "phase": "commentary",
+                    "text": "I am verifying the main workflow now.",
+                },
+            },
+        },
+    )
+
+    mission = await database.get_mission(mission_id)
+
+    assert mission is not None
+    assert mission["total_tokens"] == 1200
+    assert mission["output_tokens"] == 220
+    assert mission["reasoning_tokens"] == 90
+    assert mission["last_commentary"] == "I am verifying the main workflow now."
+
+
+@pytest.mark.asyncio
 async def test_server_request_blocks_mission_when_approval_is_required(tmp_path) -> None:
     database = Database(tmp_path / "missions.db")
     await database.initialize()

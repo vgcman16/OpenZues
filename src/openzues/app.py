@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,6 +15,7 @@ from openzues.database import Database
 from openzues.logging_utils import configure_logging
 from openzues.schemas import (
     CommandCreate,
+    DashboardBriefView,
     DashboardView,
     DiagnosticsView,
     EventView,
@@ -34,7 +36,7 @@ from openzues.services.codex_desktop import CodexDesktopService
 from openzues.services.environment import EnvironmentService
 from openzues.services.github import GitHubService
 from openzues.services.hub import BroadcastHub
-from openzues.services.manager import RuntimeManager
+from openzues.services.manager import RuntimeManager, compact_event_payload
 from openzues.services.missions import MissionService
 from openzues.services.playbooks import PlaybookService
 from openzues.services.projects import ProjectService
@@ -78,6 +80,68 @@ def create_app(
     active_manager.add_server_request_listener(active_mission_service.handle_server_request)
     templates = Jinja2Templates(directory=str(active_settings.templates_dir))
 
+    def build_brief(instances: list, missions: list, projects: list) -> DashboardBriefView:
+        connected = sum(1 for instance in instances if instance.connected)
+        blocked = [mission for mission in missions if mission.status == "blocked"]
+        active = [mission for mission in missions if mission.status == "active"]
+        paused = [mission for mission in missions if mission.status == "paused"]
+        focus = blocked[0] if blocked else active[0] if active else paused[0] if paused else None
+
+        next_actions: list[str] = []
+        if focus is not None and focus.suggested_action:
+            next_actions.append(focus.suggested_action)
+        if connected == 0 and instances:
+            next_actions.append(
+                "Reconnect a Codex Desktop instance to resume autonomous work."
+            )
+        if not instances:
+            next_actions.append(
+                "Create or quick-connect a Codex instance before launching missions."
+            )
+        if not projects:
+            next_actions.append("Register a project so missions can target a real workspace.")
+        if not missions:
+            next_actions.append("Launch a mission from a preset to start a durable build loop.")
+
+        status: Literal["idle", "active", "blocked", "mixed"]
+        if blocked:
+            status = "blocked"
+            mission_word = "missions" if len(blocked) != 1 else "mission"
+            headline = f"{len(blocked)} {mission_word} need operator attention"
+            summary = (
+                "Approvals, queueing, or runtime blockers are pausing autonomous progress."
+            )
+        elif active:
+            status = "active"
+            mission_word = "missions" if len(active) != 1 else "mission"
+            headline = f"{len(active)} {mission_word} currently running"
+            summary = (
+                "Autonomous cycles are live. Let them work or jump in at the "
+                "recommended moment."
+            )
+        elif connected:
+            status = "idle"
+            headline = "Control plane is connected and ready"
+            summary = (
+                "Launch a mission, start a thread manually, or prepare the "
+                "workspace for the next run."
+            )
+        else:
+            status = "mixed"
+            headline = "OpenZues is ready to reconnect"
+            summary = (
+                "The UI is live, but Codex is not currently attached to the "
+                "control plane."
+            )
+
+        return DashboardBriefView(
+            status=status,
+            headline=headline,
+            summary=summary,
+            focus_mission_id=focus.id if focus is not None else None,
+            next_actions=next_actions[:3],
+        )
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         active_settings.data_dir.mkdir(parents=True, exist_ok=True)
@@ -111,10 +175,20 @@ def create_app(
             for row in project_rows
         ]
         playbooks = [PlaybookView.model_validate(row) for row in playbook_rows]
-        events = [EventView.model_validate(row) for row in await active_database.list_events(250)]
+        events = [
+            EventView.model_validate(
+                {
+                    **row,
+                    "payload": compact_event_payload(row["method"], row["payload"]),
+                }
+            )
+            for row in await active_database.list_events(250)
+        ]
+        instances = await active_manager.list_views()
         missions = await active_mission_service.list_views()
         return DashboardView(
-            instances=await active_manager.list_views(),
+            brief=build_brief(instances, missions, projects),
+            instances=instances,
             missions=missions,
             projects=projects,
             playbooks=playbooks,

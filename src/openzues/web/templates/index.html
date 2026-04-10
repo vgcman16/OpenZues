@@ -13,8 +13,8 @@
           <p class="eyebrow">Codex Control Plane</p>
           <h1>OpenZues</h1>
           <p class="lede">
-            Local-first mission control for Codex: always-on build loops, approval-aware autonomy,
-            checkpoint memory, project context, and direct desktop connectivity.
+            Local-first mission control for Codex: always-on build loops, approval-aware
+            autonomy, checkpoint memory, project context, and direct desktop connectivity.
           </p>
         </div>
         <div class="hero-stats" id="hero-stats"></div>
@@ -31,13 +31,42 @@
               </p>
             </div>
           </div>
+
+          <div class="brief-band">
+            <article class="brief-card stack">
+              <p class="eyebrow">Operator Brief</p>
+              <h3 id="brief-headline">Waiting for dashboard data...</h3>
+              <p id="brief-summary" class="panel-lede"></p>
+              <div id="brief-actions" class="brief-actions"></div>
+            </article>
+
+            <article class="preset-card stack">
+              <p class="eyebrow">Launch Pattern</p>
+              <h3>Start from a proven mission shape</h3>
+              <p class="panel-lede">
+                Load a preset, point it at a workspace, and let OpenZues keep Codex moving until
+                it reaches a checkpoint or needs operator judgment.
+              </p>
+              <div id="mission-presets" class="preset-strip"></div>
+            </article>
+          </div>
+
           <form id="mission-form" class="stack form-grid mission-form">
             <input name="name" type="text" placeholder="Mission name" required />
             <select name="instance_id" id="mission-instance-select" required></select>
             <select name="project_id" id="mission-project-select"></select>
             <input name="model" type="text" placeholder="Model (gpt-5.4)" />
-            <input name="thread_id" type="text" placeholder="Attach existing thread ID (optional)" />
-            <input name="max_turns" type="number" min="1" placeholder="Max turns (blank = unlimited)" />
+            <input
+              name="thread_id"
+              type="text"
+              placeholder="Attach existing thread ID (optional)"
+            />
+            <input
+              name="max_turns"
+              type="number"
+              min="1"
+              placeholder="Max turns (blank = unlimited)"
+            />
             <textarea
               name="objective"
               placeholder="Describe the end state. Example: Keep shipping the product until the dashboard supports durable autonomous runs, checkpoint memory, and a cleaner operator UX."
@@ -84,7 +113,7 @@
               `codex` alias.
             </p>
           </div>
-          <form id="instance-form" class="stack form-grid">
+          <form id="instance-form" class="stack form-grid compact-form">
             <input name="name" type="text" placeholder="Name" required />
             <select name="transport" id="transport-select">
               <option value="desktop">Desktop (Recommended)</option>
@@ -121,7 +150,9 @@
         <section class="panel span-2">
           <div class="panel-head">
             <h2>Playbooks</h2>
-            <p class="panel-lede">Reusable operator routines for one-off commands, reviews, and thread jumps.</p>
+            <p class="panel-lede">
+              Reusable operator routines for one-off commands, reviews, and thread jumps.
+            </p>
           </div>
           <form id="playbook-form" class="stack form-grid">
             <input name="name" type="text" placeholder="Playbook name" required />
@@ -131,14 +162,16 @@
               <option value="thread_turn">Thread + Turn</option>
               <option value="review">Review</option>
             </select>
-            <input name="instance_id" type="number" min="1" placeholder="Instance ID (optional)" />
+            <input
+              name="instance_id"
+              type="number"
+              min="1"
+              placeholder="Instance ID (optional)"
+            />
             <input name="cwd" type="text" placeholder="CWD template (optional)" />
             <input name="model" type="text" placeholder="Model (thread-turn only)" />
             <input name="thread_id" type="text" placeholder="Thread ID template (turn/review)" />
-            <textarea
-              name="description"
-              placeholder="What this playbook is for"
-            ></textarea>
+            <textarea name="description" placeholder="What this playbook is for"></textarea>
             <textarea
               name="template"
               placeholder="Template. Supports {date}, {datetime}, {cwd}, {thread_id}, and custom variables."

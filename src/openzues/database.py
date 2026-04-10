@@ -89,6 +89,13 @@ class Database:
                     auto_commit INTEGER NOT NULL DEFAULT 1,
                     pause_on_approval INTEGER NOT NULL DEFAULT 1,
                     in_progress INTEGER NOT NULL DEFAULT 0,
+                    phase TEXT,
+                    current_command TEXT,
+                    command_count INTEGER NOT NULL DEFAULT 0,
+                    total_tokens INTEGER NOT NULL DEFAULT 0,
+                    output_tokens INTEGER NOT NULL DEFAULT 0,
+                    reasoning_tokens INTEGER NOT NULL DEFAULT 0,
+                    last_commentary TEXT,
                     turns_started INTEGER NOT NULL DEFAULT 0,
                     turns_completed INTEGER NOT NULL DEFAULT 0,
                     failure_count INTEGER NOT NULL DEFAULT 0,
@@ -114,7 +121,44 @@ class Database:
                     ON mission_checkpoints(mission_id, id DESC);
                 """
             )
+            await self._ensure_column(
+                db, "missions", "phase", "TEXT"
+            )
+            await self._ensure_column(
+                db, "missions", "current_command", "TEXT"
+            )
+            await self._ensure_column(
+                db, "missions", "command_count", "INTEGER NOT NULL DEFAULT 0"
+            )
+            await self._ensure_column(
+                db, "missions", "total_tokens", "INTEGER NOT NULL DEFAULT 0"
+            )
+            await self._ensure_column(
+                db, "missions", "output_tokens", "INTEGER NOT NULL DEFAULT 0"
+            )
+            await self._ensure_column(
+                db, "missions", "reasoning_tokens", "INTEGER NOT NULL DEFAULT 0"
+            )
+            await self._ensure_column(
+                db, "missions", "last_commentary", "TEXT"
+            )
             await db.commit()
+
+    async def _ensure_column(
+        self,
+        db: aiosqlite.Connection,
+        table_name: str,
+        column_name: str,
+        definition: str,
+    ) -> None:
+        db.row_factory = aiosqlite.Row
+        rows = await db.execute_fetchall(f"PRAGMA table_info({table_name})")
+        existing = {str(row["name"]) for row in rows}
+        if column_name in existing:
+            return
+        await db.execute(
+            f"ALTER TABLE {table_name} ADD COLUMN {column_name} {definition}"
+        )
 
     async def list_instances(self) -> list[dict[str, Any]]:
         async with aiosqlite.connect(self.path) as db:

@@ -101,24 +101,38 @@ class MissionService:
             auto_commit=payload.auto_commit,
             pause_on_approval=payload.pause_on_approval,
         )
+        await self.database.update_mission(
+            mission_id,
+            phase="ready" if payload.start_immediately else "paused",
+        )
         await self._publish_snapshot("mission/created", {"missionId": mission_id})
         if payload.start_immediately:
             asyncio.create_task(self.run_now(mission_id))
         return await self.get_view(mission_id)
 
     async def pause(self, mission_id: int) -> MissionView:
-        await self.database.update_mission(mission_id, status="paused")
+        await self.database.update_mission(mission_id, status="paused", phase="paused")
         await self._publish_snapshot("mission/paused", {"missionId": mission_id})
         return await self.get_view(mission_id)
 
     async def resume(self, mission_id: int) -> MissionView:
-        await self.database.update_mission(mission_id, status="active", last_error=None)
+        await self.database.update_mission(
+            mission_id,
+            status="active",
+            phase="ready",
+            last_error=None,
+        )
         await self._publish_snapshot("mission/resumed", {"missionId": mission_id})
         await self.run_now(mission_id)
         return await self.get_view(mission_id)
 
     async def complete(self, mission_id: int) -> MissionView:
-        await self.database.update_mission(mission_id, status="completed", in_progress=0)
+        await self.database.update_mission(
+            mission_id,
+            status="completed",
+            phase="completed",
+            in_progress=0,
+        )
         await self._publish_snapshot("mission/completed", {"missionId": mission_id})
         return await self.get_view(mission_id)
 
@@ -131,7 +145,12 @@ class MissionService:
         if mission["status"] == "completed":
             return await self.get_view(mission_id)
         if mission["status"] in {"paused", "failed"}:
-            await self.database.update_mission(mission_id, status="active", last_error=None)
+            await self.database.update_mission(
+                mission_id,
+                status="active",
+                phase="ready",
+                last_error=None,
+            )
         await self._reconcile_mission(mission_id, force=True)
         return await self.get_view(mission_id)
 
@@ -150,6 +169,7 @@ class MissionService:
         if method == "turn/started":
             updates["in_progress"] = 1
             updates["last_turn_id"] = extract_turn_id(params)
+            updates["phase"] = "thinking"
             if mission["status"] == "active":
                 updates["last_error"] = None
         elif method == "turn/completed":
@@ -158,6 +178,7 @@ class MissionService:
             updates["last_turn_id"] = extract_turn_id(params) or mission.get("last_turn_id")
             if turn.get("error"):
                 updates["status"] = "failed"
+                updates["phase"] = "failed"
                 updates["failure_count"] = int(mission["failure_count"]) + 1
                 updates["last_error"] = str(turn["error"])
                 await self.database.append_mission_checkpoint(
@@ -170,6 +191,8 @@ class MissionService:
             else:
                 next_completed = int(mission["turns_completed"]) + 1
                 updates["turns_completed"] = next_completed
+                updates["phase"] = "ready"
+                updates["current_command"] = None
                 if mission["status"] == "active":
                     updates["last_error"] = None
                     max_turns = mission.get("max_turns")
@@ -179,15 +202,47 @@ class MissionService:
             status = params.get("status") if isinstance(params.get("status"), dict) else {}
             if status.get("type") == "idle":
                 updates["in_progress"] = 0
+                updates["phase"] = "ready"
             if status.get("type") == "active":
                 updates["in_progress"] = 1
+                updates["phase"] = "thinking"
+        elif method == "thread/tokenUsage/updated":
+            raw_token_usage = params.get("tokenUsage")
+            token_usage: dict[str, Any] = (
+                raw_token_usage if isinstance(raw_token_usage, dict) else {}
+            )
+            raw_total = token_usage.get("total")
+            total: dict[str, Any] = raw_total if isinstance(raw_total, dict) else {}
+            updates["total_tokens"] = int(total.get("totalTokens") or 0)
+            updates["output_tokens"] = int(total.get("outputTokens") or 0)
+            updates["reasoning_tokens"] = int(total.get("reasoningOutputTokens") or 0)
+        elif method == "item/started":
+            item = params.get("item") if isinstance(params.get("item"), dict) else {}
+            item_type = str(item.get("type") or "")
+            if item_type == "reasoning":
+                updates["phase"] = "reasoning"
+            if item_type == "commandExecution":
+                updates["phase"] = "executing"
+                updates["current_command"] = str(item.get("command") or "")
+            if item_type == "agentMessage":
+                updates["phase"] = "reporting"
         elif method == "item/completed":
             item = params.get("item") if isinstance(params.get("item"), dict) else {}
+            item_type = str(item.get("type") or "")
+            if item_type == "commandExecution":
+                updates["phase"] = "thinking"
+                updates["current_command"] = None
+                updates["command_count"] = int(mission["command_count"]) + 1
+            if item_type == "agentMessage" and item.get("phase") == "commentary":
+                text = str(item.get("text") or "").strip()
+                if text:
+                    updates["last_commentary"] = text[:1200]
             if item.get("type") == "agentMessage" and item.get("phase") == "final_answer":
                 text = str(item.get("text") or "").strip()
                 if text:
                     summary = text[:3000]
                     updates["last_checkpoint"] = summary
+                    updates["phase"] = "checkpointed"
                     await self.database.append_mission_checkpoint(
                         mission_id=int(mission["id"]),
                         thread_id=thread_id,
@@ -221,6 +276,7 @@ class MissionService:
         await self.database.update_mission(
             int(mission["id"]),
             status="blocked",
+            phase="approval",
             last_error=summary,
             last_activity_at=utcnow(),
         )
@@ -270,6 +326,7 @@ class MissionService:
                     await self.database.update_mission(
                         mission_id,
                         status="blocked",
+                        phase="offline",
                         last_error=f"Instance is offline: {exc}",
                     )
                     return
@@ -277,6 +334,7 @@ class MissionService:
                 await self.database.update_mission(
                     mission_id,
                     status="blocked",
+                    phase="offline",
                     last_error="Instance is offline.",
                 )
                 return
@@ -293,6 +351,7 @@ class MissionService:
                 await self.database.update_mission(
                     mission_id,
                     status="blocked",
+                    phase="queued",
                     last_error=queued_reason,
                 )
                 return
@@ -332,6 +391,7 @@ class MissionService:
                 await self.database.update_mission(
                     mission_id,
                     status="blocked",
+                    phase="approval",
                     last_error=f"Waiting for approval: {pending_requests[0]['method']}",
                 )
                 return
@@ -340,17 +400,27 @@ class MissionService:
                 blocked_reason.startswith("Waiting for approval:")
                 or blocked_reason.startswith("Queued behind mission:")
             ):
-                await self.database.update_mission(mission_id, status="active", last_error=None)
+                await self.database.update_mission(
+                    mission_id,
+                    status="active",
+                    phase="ready",
+                    last_error=None,
+                )
                 mission["status"] = "active"
             elif mission["status"] == "blocked":
-                await self.database.update_mission(mission_id, status="active")
+                await self.database.update_mission(mission_id, status="active", phase="ready")
                 mission["status"] = "active"
 
             if (
                 mission["max_turns"]
                 and int(mission["turns_completed"]) >= int(mission["max_turns"])
             ):
-                await self.database.update_mission(mission_id, status="completed", in_progress=0)
+                await self.database.update_mission(
+                    mission_id,
+                    status="completed",
+                    phase="completed",
+                    in_progress=0,
+                )
                 await self._publish_snapshot("mission/completed", {"missionId": mission_id})
                 return
 
@@ -374,6 +444,7 @@ class MissionService:
                 await self.database.update_mission(
                     mission_id,
                     thread_id=thread_id,
+                    phase="ready",
                     last_activity_at=utcnow(),
                 )
                 mission["thread_id"] = thread_id
@@ -393,6 +464,7 @@ class MissionService:
                 await self.database.update_mission(
                     mission_id,
                     status="failed",
+                    phase="failed",
                     failure_count=int(mission["failure_count"]) + 1,
                     last_error=str(exc),
                     in_progress=0,
@@ -414,6 +486,7 @@ class MissionService:
                 mission_id,
                 status="active",
                 in_progress=1,
+                phase="thinking",
                 turns_started=int(mission["turns_started"]) + 1,
                 last_turn_id=extract_turn_id(turn_result),
                 last_error=None,
@@ -440,6 +513,7 @@ class MissionService:
             "instance_name": runtime.name if runtime is not None else None,
             "project_label": project_label,
             "checkpoints": checkpoints,
+            "suggested_action": self._suggested_action(mission),
         }
         return MissionView.model_validate(payload)
 
@@ -499,3 +573,23 @@ class MissionService:
 
     async def _publish_snapshot(self, event_type: str, payload: dict[str, Any]) -> None:
         await self.hub.publish({"type": event_type, **payload, "createdAt": utcnow()})
+
+    def _suggested_action(self, mission: dict[str, Any]) -> str:
+        last_error = str(mission.get("last_error") or "")
+        if str(mission.get("status")) == "blocked":
+            if last_error.startswith("Waiting for approval:"):
+                return "Review the approval request and decide whether to let the mission continue."
+            if last_error.startswith("Queued behind mission:"):
+                return "Finish or pause the earlier mission, then tap run now to continue this one."
+            return "Inspect the blocker, then resume the mission when the path is clear."
+        if str(mission.get("status")) == "failed":
+            return "Inspect the failure checkpoint, adjust the mission, and run it again."
+        if str(mission.get("status")) == "paused":
+            return "Resume the mission when you want Codex to continue."
+        if bool(mission.get("in_progress")):
+            if mission.get("phase") == "executing":
+                return "Let the current command finish unless it is clearly stuck."
+            return "Let Codex finish the active turn and watch for the next checkpoint."
+        if not mission.get("thread_id"):
+            return "Run the mission to create a fresh thread and start the first cycle."
+        return "Mission is ready for another autonomous cycle."
