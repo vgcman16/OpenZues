@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import sys
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from ipaddress import ip_address
@@ -108,6 +110,7 @@ from openzues.services.projects import ProjectService
 from openzues.services.reflexes import build_reflex_deck
 from openzues.services.remote_ops import RemoteOpsService
 from openzues.services.run_pressure import has_checkpoint_pressure
+from openzues.services.runtime_updates import RuntimeUpdateService
 from openzues.services.scope_enforcer import build_scope_assessment
 from openzues.services.setup import SetupService
 from openzues.services.vault import VaultService
@@ -1021,6 +1024,36 @@ def create_app(
         active_gateway_bootstrap_service,
         active_ops_mesh_service,
     )
+    runtime_restart_requested = False
+
+    async def request_runtime_restart() -> None:
+        nonlocal runtime_restart_requested
+        if runtime_restart_requested:
+            return
+        runtime_restart_requested = True
+        try:
+            await active_control_chat_service.close_attention_queue()
+            await active_ops_mesh_service.close()
+            await active_mission_service.close()
+            for runtime in active_manager.instances.values():
+                if runtime.client is not None:
+                    await runtime.client.close()
+        finally:
+            active_control_plane_lease.release()
+        reexec_args = list(getattr(sys, "orig_argv", []))
+        if reexec_args:
+            os.execv(sys.executable, [sys.executable, *reexec_args[1:]])
+        os.execv(
+            sys.executable,
+            [sys.executable, "-m", "openzues.cli", "--port", str(active_settings.port)],
+        )
+
+    active_runtime_update_service = RuntimeUpdateService(
+        active_database,
+        enabled=active_settings.auto_self_update_enabled,
+        poll_interval_seconds=active_settings.auto_self_update_poll_interval_seconds,
+        restart_callback=request_runtime_restart,
+    )
     active_onboarding_service = OnboardingService(
         active_database,
         active_manager,
@@ -1076,8 +1109,10 @@ def create_app(
                 enabled=active_settings.attention_queue_enabled,
                 poll_interval_seconds=active_settings.attention_queue_poll_interval_seconds,
             )
+            await active_runtime_update_service.start()
         yield
         if is_control_plane_owner:
+            await active_runtime_update_service.close()
             await active_control_chat_service.close_attention_queue()
             await active_ops_mesh_service.close()
             await active_mission_service.close()
@@ -1108,6 +1143,7 @@ def create_app(
     fastapi_app.state.control_plane_role = "leader"
     fastapi_app.state.control_plane_owner_pid = None
     fastapi_app.state.control_plane_lock_path = str(active_control_plane_lease.path)
+    fastapi_app.state.runtime_update_service = active_runtime_update_service
 
     def empty_control_chat_view() -> DashboardControlChatView:
         if fastapi_app.state.control_plane_role != "leader":
@@ -1393,6 +1429,7 @@ def create_app(
             "control_plane": fastapi_app.state.control_plane_role,
             "owner_pid": fastapi_app.state.control_plane_owner_pid,
             "lock_path": fastapi_app.state.control_plane_lock_path,
+            "runtime_update": active_runtime_update_service.snapshot(),
         }
 
     @fastapi_app.get("/api/dashboard")

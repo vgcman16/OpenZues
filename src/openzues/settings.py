@@ -26,6 +26,8 @@ class Settings(BaseSettings):
     attention_queue_enabled: bool = True
     attention_queue_poll_interval_seconds: int = 30
     websocket_ping_interval_seconds: int = 20
+    auto_self_update_enabled: bool = True
+    auto_self_update_poll_interval_seconds: int = 20
     model_config = SettingsConfigDict(env_prefix="OPENZUES_", env_file=".env", extra="ignore")
 
     @property

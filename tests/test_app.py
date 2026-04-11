@@ -422,6 +422,7 @@ def test_health_endpoint(tmp_path) -> None:
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
     assert response.json()["control_plane"] == "leader"
+    assert "runtime_update" in response.json()
 
 
 def test_dashboard_merges_repeated_plugin_warning_events(tmp_path) -> None:
