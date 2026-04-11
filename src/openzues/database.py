@@ -75,6 +75,8 @@ class Database:
                     payload_json TEXT NOT NULL,
                     created_at TEXT NOT NULL
                 );
+                CREATE INDEX IF NOT EXISTS idx_events_instance_thread
+                    ON events(instance_id, thread_id, id DESC);
                 CREATE TABLE IF NOT EXISTS control_chat_messages (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     role TEXT NOT NULL,
@@ -1589,6 +1591,32 @@ class Database:
             rows = await db.execute_fetchall(
                 "SELECT * FROM events ORDER BY id DESC LIMIT ?",
                 (limit,),
+            )
+            output = []
+            for row in rows:
+                item = dict(row)
+                item["payload"] = json.loads(item.pop("payload_json"))
+                output.append(item)
+            return list(reversed(output))
+
+    async def list_thread_events(
+        self,
+        *,
+        instance_id: int,
+        thread_id: str,
+        limit: int = 200,
+    ) -> list[dict[str, Any]]:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            rows = await db.execute_fetchall(
+                """
+                SELECT *
+                FROM events
+                WHERE instance_id = ? AND thread_id = ?
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (instance_id, thread_id, limit),
             )
             output = []
             for row in rows:

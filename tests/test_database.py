@@ -174,6 +174,10 @@ async def test_database_round_trip(tmp_path) -> None:
     teams = await database.list_teams()
     operators = await database.list_operators()
     events = await database.list_events()
+    thread_events = await database.list_thread_events(
+        instance_id=instance_id,
+        thread_id="thread_1",
+    )
     playbooks = await database.list_playbooks()
     missions = await database.list_missions()
     checkpoints = await database.list_mission_checkpoints(mission_id)
@@ -186,6 +190,8 @@ async def test_database_round_trip(tmp_path) -> None:
     assert teams[0]["slug"] == "remote-ops"
     assert operators[0]["api_key_preview"] == "ozk_abcd...1234"
     assert events[0]["payload"]["ok"] is True
+    assert thread_events[0]["method"] == "thread/started"
+    assert thread_events[0]["payload"]["ok"] is True
     assert playbook_id == playbooks[0]["id"]
     assert playbooks[0]["cadence_minutes"] == 60
     assert playbooks[0]["enabled"] == 1

@@ -661,9 +661,91 @@ async def test_turn_completed_without_final_answer_creates_continuity_snapshot(t
     assert mission is not None
     assert mission["last_checkpoint"] is None
     assert mission["turns_completed"] == 1
-    assert checkpoints[0]["kind"] == "continuity_auto"
-    assert "turn_boundary" in checkpoints[0]["summary"]
-    assert "Next handoff:" in checkpoints[0]["summary"]
+    kinds = {checkpoint["kind"] for checkpoint in checkpoints}
+    assert "continuity_auto" in kinds
+    assert "restart_safe" in kinds
+    restart_safe = next(
+        checkpoint for checkpoint in checkpoints if checkpoint["kind"] == "restart_safe"
+    )
+    assert "Restart-safe recovery packet (turn_boundary)" in restart_safe["summary"]
+    continuity = next(
+        checkpoint for checkpoint in checkpoints if checkpoint["kind"] == "continuity_auto"
+    )
+    assert "turn_boundary" in continuity["summary"]
+    assert "Next handoff:" in continuity["summary"]
+
+
+@pytest.mark.asyncio
+async def test_restart_safe_snapshot_uses_recent_thread_trace(tmp_path) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    manager = FakeManager()
+    service = MissionService(database, manager, BroadcastHub(), poll_interval_seconds=3600)
+
+    mission_id = await database.create_mission(
+        name="Crash journal",
+        objective="Keep enough evidence to recover after a sudden outage.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread_journal",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=4,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=True,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+    )
+    await database.update_mission(
+        mission_id,
+        in_progress=1,
+        phase="executing",
+        current_command='powershell.exe -Command "pytest -q"',
+        total_tokens=53200,
+        command_count=6,
+        last_commentary="I am verifying the current slice before I checkpoint it.",
+    )
+    await database.append_event(
+        instance_id=7,
+        thread_id="thread_journal",
+        method="item/started",
+        payload={
+            "item": {
+                "type": "commandExecution",
+                "command": 'powershell.exe -Command "pytest -q"',
+            }
+        },
+    )
+    await database.append_event(
+        instance_id=7,
+        thread_id="thread_journal",
+        method="item/commandExecution/outputDelta",
+        payload={"delta": "12 passed, 0 failed"},
+    )
+
+    mission = await database.get_mission(mission_id)
+    assert mission is not None
+
+    appended = await service._maybe_append_restart_safe_snapshot(
+        mission_id,
+        mission,
+        force=True,
+        reason="test_recovery",
+    )
+    checkpoints = await database.list_mission_checkpoints(mission_id)
+
+    assert appended is True
+    assert checkpoints[0]["kind"] == "restart_safe"
+    assert "Recent live trace:" in checkpoints[0]["summary"]
+    assert "Command started:" in checkpoints[0]["summary"]
+    assert "Output: 12 passed, 0 failed" in checkpoints[0]["summary"]
 
 
 @pytest.mark.asyncio
@@ -1332,10 +1414,23 @@ async def test_reconcile_rebinds_stale_thread_before_failing_again(tmp_path) -> 
         kind="final_answer",
         summary="The last stable milestone mostly landed before the thread vanished.",
     )
+    await database.append_mission_checkpoint(
+        mission_id=mission_id,
+        thread_id="thread_stale",
+        turn_id="turn_stale",
+        kind="restart_safe",
+        summary="Restart-safe recovery packet (turn_boundary) after 9 commands and 52,200 tokens.",
+    )
     await database.update_mission(
         mission_id,
         last_error="thread not found: thread_stale",
         last_checkpoint="The last stable milestone mostly landed before the thread vanished.",
+    )
+    await database.append_event(
+        instance_id=7,
+        thread_id="thread_stale",
+        method="item/commandExecution/outputDelta",
+        payload={"delta": "Recovered 3 route bindings before the thread vanished."},
     )
 
     await service._reconcile_mission(mission_id)
@@ -1349,6 +1444,9 @@ async def test_reconcile_rebinds_stale_thread_before_failing_again(tmp_path) -> 
     assert manager.thread_calls[0]["instance_id"] == 7
     assert manager.turn_calls[0]["thread_id"] == "thread_auto_7"
     assert "stale-thread recovery" in manager.turn_calls[0]["text"]
+    assert "Crash-safe relay packets:" in manager.turn_calls[0]["text"]
+    assert "Recent persisted live trace:" in manager.turn_calls[0]["text"]
+    assert "Recovered 3 route bindings before the thread vanished." in manager.turn_calls[0]["text"]
     assert checkpoints[0]["kind"] == "thread_rebind"
     assert "thread_stale" in checkpoints[0]["summary"]
 

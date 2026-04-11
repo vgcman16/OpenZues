@@ -33,6 +33,10 @@ logger = logging.getLogger(__name__)
 STALE_TURN_SECONDS = 8 * 60
 CONTINUITY_SNAPSHOT_MIN_SECONDS = 5 * 60
 CONTINUITY_SNAPSHOT_KIND = "continuity_auto"
+RESTART_SAFE_SNAPSHOT_MIN_SECONDS = 90
+RESTART_SAFE_SNAPSHOT_KIND = "restart_safe"
+RECOVERY_TRACE_EVENT_LIMIT = 80
+RECOVERY_TRACE_LINE_LIMIT = 8
 
 
 def _parse_timestamp(value: str | None) -> datetime | None:
@@ -70,6 +74,61 @@ def _thread_status_type(thread_state: dict[str, Any] | None) -> str | None:
     status = thread_state.get("status")
     if isinstance(status, dict) and isinstance(status.get("type"), str):
         return str(status["type"])
+    return None
+
+
+def _trace_fragment(value: Any, *, limit: int = 220) -> str | None:
+    text = str(value or "").replace("\r", "").replace("\n", " ").strip()
+    if not text:
+        return None
+    return _truncate_text(text, limit=limit)
+
+
+def _thread_event_trace_line(event: dict[str, Any]) -> str | None:
+    method = str(event.get("method") or "")
+    payload = event.get("payload")
+    if not isinstance(payload, dict):
+        return None
+
+    if method == "item/started":
+        item = payload.get("item")
+        if isinstance(item, dict) and str(item.get("type") or "") == "commandExecution":
+            command = _trace_fragment(item.get("command"), limit=260)
+            if command:
+                return f"Command started: {command}"
+        return None
+
+    if method == "item/completed":
+        item = payload.get("item")
+        if not isinstance(item, dict):
+            return None
+        item_type = str(item.get("type") or "")
+        if item_type == "agentMessage":
+            phase = str(item.get("phase") or "")
+            prefix = "Final answer" if phase == "final_answer" else "Commentary"
+            text = _trace_fragment(item.get("text"), limit=260)
+            if text:
+                return f"{prefix}: {text}"
+        if item_type == "commandExecution":
+            return "Command completed."
+        return None
+
+    if method.endswith("commandExecution/outputDelta"):
+        delta = _trace_fragment(payload.get("delta"))
+        if delta:
+            return f"Output: {delta}"
+        return None
+
+    if method.endswith("agentMessageDelta"):
+        delta = _trace_fragment(payload.get("delta"))
+        if delta:
+            return f"Commentary delta: {delta}"
+        return None
+
+    if method == "turn/started":
+        return "Turn started."
+    if method == "turn/completed":
+        return "Turn completed."
     return None
 
 
@@ -476,6 +535,12 @@ class MissionService:
             and not turn_payload.get("error")
             and not bool(merged_mission.get("last_checkpoint"))
         ):
+            await self._maybe_append_restart_safe_snapshot(
+                mission_id,
+                merged_mission,
+                force=True,
+                reason="turn_boundary",
+            )
             await self._maybe_append_continuity_snapshot(
                 mission_id,
                 merged_mission,
@@ -662,6 +727,135 @@ class MissionService:
             if str(checkpoint.get("kind") or "") == kind:
                 return checkpoint
         return None
+
+    async def _recent_thread_trace_lines(
+        self,
+        *,
+        instance_id: int,
+        thread_id: str,
+        limit: int = RECOVERY_TRACE_EVENT_LIMIT,
+    ) -> list[str]:
+        lines: list[str] = []
+        for event in await self.database.list_thread_events(
+            instance_id=instance_id,
+            thread_id=thread_id,
+            limit=limit,
+        ):
+            line = _thread_event_trace_line(event)
+            if not line:
+                continue
+            if lines and lines[-1] == line:
+                continue
+            lines.append(line)
+        return lines[-RECOVERY_TRACE_LINE_LIMIT:]
+
+    def _should_capture_restart_safe_snapshot(
+        self,
+        mission: dict[str, Any],
+        latest_snapshot: dict[str, Any] | None,
+        *,
+        force: bool,
+    ) -> bool:
+        if str(mission.get("status") or "") not in {"active", "blocked"}:
+            return False
+        if force:
+            return True
+        if not bool(mission.get("in_progress")):
+            return False
+        if not any(
+            (
+                str(mission.get("current_command") or "").strip(),
+                str(mission.get("last_commentary") or "").strip(),
+                int(mission.get("total_tokens") or 0) > 0,
+                int(mission.get("command_count") or 0) > 0,
+            )
+        ):
+            return False
+        if latest_snapshot is None:
+            return True
+        age_seconds = _seconds_since(latest_snapshot.get("created_at"))
+        if age_seconds is None:
+            return True
+        return age_seconds >= RESTART_SAFE_SNAPSHOT_MIN_SECONDS
+
+    async def _maybe_append_restart_safe_snapshot(
+        self,
+        mission_id: int,
+        mission: dict[str, Any],
+        *,
+        force: bool = False,
+        reason: str = "background",
+    ) -> bool:
+        thread_id = str(mission.get("thread_id") or "") or None
+        if thread_id is None:
+            return False
+
+        latest_snapshot = await self._latest_checkpoint_of_kind(
+            mission_id,
+            kind=RESTART_SAFE_SNAPSHOT_KIND,
+        )
+        if not self._should_capture_restart_safe_snapshot(
+            mission,
+            latest_snapshot,
+            force=force,
+        ):
+            return False
+
+        checkpoints = await self.database.list_mission_checkpoints(mission_id, limit=6)
+        continuity_inputs = [
+            checkpoint
+            for checkpoint in checkpoints
+            if str(checkpoint.get("kind") or "") != RESTART_SAFE_SNAPSHOT_KIND
+        ]
+        packet = build_continuity_packet(
+            mission,
+            instance_connected=True,
+            checkpoints=continuity_inputs,
+        )
+        trace_lines = await self._recent_thread_trace_lines(
+            instance_id=int(mission["instance_id"]),
+            thread_id=thread_id,
+        )
+
+        command_count = int(mission.get("command_count") or 0)
+        total_tokens = int(mission.get("total_tokens") or 0)
+        current_command = _truncate_text(str(mission.get("current_command") or "") or None, 260)
+        commentary = _truncate_text(str(mission.get("last_commentary") or "") or None, 420)
+
+        lines = [
+            (
+                f"Restart-safe recovery packet ({reason}) after {command_count} commands "
+                f"and {total_tokens:,} tokens."
+            ),
+            f"State: {packet.state} ({packet.score}/100).",
+            f"Anchor: {packet.anchor}",
+            f"Drift: {packet.drift}",
+            f"Next handoff: {packet.next_handoff}",
+        ]
+        if current_command:
+            lines.insert(2, f"Current command: {current_command}")
+        elif commentary:
+            lines.insert(2, f"Current focus: {commentary}")
+        if trace_lines:
+            lines.extend(["", "Recent live trace:"])
+            lines.extend(f"- {line}" for line in trace_lines)
+        summary = "\n".join(lines)
+
+        if latest_snapshot is not None and str(latest_snapshot.get("summary") or "") == summary:
+            return False
+
+        await self.database.append_mission_checkpoint(
+            mission_id=mission_id,
+            thread_id=thread_id,
+            turn_id=str(mission.get("last_turn_id") or "") or None,
+            kind=RESTART_SAFE_SNAPSHOT_KIND,
+            summary=summary,
+        )
+        await self._publish_snapshot(
+            "mission/restart-safe-snapshotted",
+            {"missionId": mission_id, "reason": reason},
+        )
+        return True
 
     def _should_capture_continuity_snapshot(
         self,
@@ -929,6 +1123,22 @@ class MissionService:
         scored.sort(key=lambda item: item[:4])
         return scored[0][4]
 
+    def _crash_safe_packet_summaries(
+        self,
+        checkpoints: list[dict[str, Any]],
+    ) -> list[str]:
+        summaries: list[str] = []
+        for checkpoint in reversed(checkpoints):
+            if str(checkpoint.get("kind") or "") not in {
+                RESTART_SAFE_SNAPSHOT_KIND,
+                CONTINUITY_SNAPSHOT_KIND,
+                "queue_yield",
+            }:
+                continue
+            summary = str(checkpoint.get("summary") or "").strip().replace("\n", " ")
+            summaries.append(f"- [{checkpoint['kind']}] {summary[:700]}")
+        return summaries
+
     def _build_failover_prompt(
         self,
         mission: dict[str, Any],
@@ -937,6 +1147,7 @@ class MissionService:
         target_name: str,
         offline_error: str,
         checkpoints: list[dict[str, Any]],
+        trace_lines: list[str],
     ) -> str:
         continuity = build_continuity_packet(
             mission,
@@ -991,7 +1202,14 @@ class MissionService:
                 f"- Safest handoff: {continuity.next_handoff}",
             ]
         )
+        if trace_lines:
+            instructions.extend(["", "Recent persisted live trace:"])
+            instructions.extend(f"- {line}" for line in trace_lines)
         if checkpoints:
+            crash_safe_packets = self._crash_safe_packet_summaries(checkpoints)
+            if crash_safe_packets:
+                instructions.extend(["", "Crash-safe relay packets:"])
+                instructions.extend(crash_safe_packets)
             instructions.extend(
                 [
                     "",
@@ -1028,6 +1246,7 @@ class MissionService:
         new_thread_id: str,
         stale_error: str,
         checkpoints: list[dict[str, Any]],
+        trace_lines: list[str],
     ) -> str:
         continuity = build_continuity_packet(
             mission,
@@ -1079,7 +1298,14 @@ class MissionService:
                 f"- Safest handoff: {continuity.next_handoff}",
             ]
         )
+        if trace_lines:
+            instructions.extend(["", "Recent persisted live trace:"])
+            instructions.extend(f"- {line}" for line in trace_lines)
         if checkpoints:
+            crash_safe_packets = self._crash_safe_packet_summaries(checkpoints)
+            if crash_safe_packets:
+                instructions.extend(["", "Crash-safe relay packets:"])
+                instructions.extend(crash_safe_packets)
             instructions.extend(
                 [
                     "",
@@ -1120,6 +1346,10 @@ class MissionService:
             return False
 
         checkpoints = await self.database.list_mission_checkpoints(mission_id, limit=4)
+        trace_lines = await self._recent_thread_trace_lines(
+            instance_id=int(mission["instance_id"]),
+            thread_id=stale_thread_id,
+        )
         try:
             thread_result = await self.manager.start_thread(
                 int(mission["instance_id"]),
@@ -1206,6 +1436,7 @@ class MissionService:
                 new_thread_id=new_thread_id,
                 stale_error=stale_error,
                 checkpoints=checkpoints,
+                trace_lines=trace_lines,
             ),
             event_type="mission/thread-recovery-started",
             allow_stale_thread_recovery=False,
@@ -1248,6 +1479,14 @@ class MissionService:
             else f"Instance {mission['instance_id']}"
         )
         checkpoints = await self.database.list_mission_checkpoints(mission_id, limit=4)
+        trace_lines = (
+            await self._recent_thread_trace_lines(
+                instance_id=int(mission["instance_id"]),
+                thread_id=str(mission.get("thread_id") or ""),
+            )
+            if str(mission.get("thread_id") or "")
+            else []
+        )
         try:
             thread_result = await self.manager.start_thread(
                 target.instance_id,
@@ -1318,6 +1557,7 @@ class MissionService:
                 target_name=target.name,
                 offline_error=offline_error,
                 checkpoints=checkpoints,
+                trace_lines=trace_lines,
             ),
             event_type="mission/failover-started",
         )
@@ -1618,6 +1858,11 @@ class MissionService:
                 return
 
             if mission["in_progress"] and not force:
+                await self._maybe_append_restart_safe_snapshot(
+                    mission_id,
+                    mission,
+                    reason="live_heartbeat",
+                )
                 await self._maybe_append_continuity_snapshot(
                     mission_id,
                     mission,
