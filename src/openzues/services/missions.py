@@ -9,15 +9,30 @@ from datetime import UTC, datetime
 from typing import Any
 
 from openzues.database import Database, utcnow
-from openzues.schemas import MissionCheckpointView, MissionCreate, MissionReflexRun, MissionView
+from openzues.schemas import (
+    MissionCheckpointView,
+    MissionCreate,
+    MissionReflexRun,
+    MissionView,
+    SkillPinView,
+)
 from openzues.services.continuity import build_continuity_packet
+from openzues.services.followups import mission_row_matches_payload
 from openzues.services.hub import BroadcastHub
 from openzues.services.manager import RuntimeManager
+from openzues.services.run_pressure import (
+    continuity_snapshot_threshold,
+    has_checkpoint_pressure,
+    has_verification_spike_pressure,
+)
+from openzues.services.scope_enforcer import ScopeAssessment, build_scope_assessment
+from openzues.services.skillbook import build_prompt_skill_lines, resolve_skill_profile
 
 logger = logging.getLogger(__name__)
 
 STALE_TURN_SECONDS = 8 * 60
-HOT_MISSION_TOKEN_THRESHOLD = 60_000
+CONTINUITY_SNAPSHOT_MIN_SECONDS = 5 * 60
+CONTINUITY_SNAPSHOT_KIND = "continuity_auto"
 
 
 def _parse_timestamp(value: str | None) -> datetime | None:
@@ -40,6 +55,13 @@ def _is_thread_not_found_error(value: str | Exception | None) -> bool:
     if value is None:
         return False
     return "thread not found" in str(value).lower()
+
+
+def _truncate_text(value: str | None, limit: int = 320) -> str:
+    text = str(value or "").strip().replace("\n", " ")
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 3)].rstrip() + "..."
 
 
 def _thread_status_type(thread_state: dict[str, Any] | None) -> str | None:
@@ -147,6 +169,33 @@ class MissionService:
         mission = await self.require_mission(mission_id)
         return await self._build_view(mission)
 
+    async def _find_duplicate_inflight_mission(
+        self,
+        payload: MissionCreate,
+        *,
+        cwd: str | None,
+    ) -> dict[str, Any] | None:
+        if not payload.thread_id:
+            return None
+        candidates = [
+            mission
+            for mission in await self.database.list_missions()
+            if mission["status"] in {"active", "blocked", "paused"}
+            and mission_row_matches_payload(mission, payload, cwd=cwd)
+        ]
+        if not candidates:
+            return None
+        status_rank = {"active": 0, "blocked": 1, "paused": 2}
+        return sorted(
+            candidates,
+            key=lambda mission: (
+                status_rank.get(str(mission.get("status") or ""), 99),
+                str(mission.get("updated_at") or ""),
+                int(mission.get("id") or 0),
+            ),
+            reverse=False,
+        )[0]
+
     async def create(self, payload: MissionCreate) -> MissionView:
         await self.manager.get(payload.instance_id)
         project = (
@@ -162,6 +211,9 @@ class MissionService:
                 raise ValueError(f"Unknown task blueprint {payload.task_blueprint_id}")
         runtime = await self.manager.get(payload.instance_id)
         cwd = payload.cwd or (project["path"] if project is not None else runtime.cwd)
+        duplicate = await self._find_duplicate_inflight_mission(payload, cwd=cwd)
+        if duplicate is not None:
+            return await self._build_view(duplicate)
         status = "active" if payload.start_immediately else "paused"
         mission_id = await self.database.create_mission(
             name=payload.name,
@@ -291,6 +343,7 @@ class MissionService:
         if mission is None:
             return
 
+        mission_id = int(mission["id"])
         updates: dict[str, Any] = {"last_activity_at": utcnow()}
         method = event["method"]
         params = event["params"]
@@ -383,18 +436,33 @@ class MissionService:
                     updates["last_checkpoint"] = summary
                     updates["status"] = "completed"
                     updates["phase"] = "completed"
+                    updates["in_progress"] = 0
+                    updates["current_command"] = None
                     await self.database.append_mission_checkpoint(
-                        mission_id=int(mission["id"]),
+                        mission_id=mission_id,
                         thread_id=thread_id,
                         turn_id=extract_turn_id(params),
                         kind="final_answer",
                         summary=summary,
                     )
 
-        await self.database.update_mission(int(mission["id"]), **updates)
+        merged_mission = {**mission, **updates}
+        await self.database.update_mission(mission_id, **updates)
+        turn_payload = params.get("turn") if isinstance(params.get("turn"), dict) else {}
+        if (
+            method == "turn/completed"
+            and not turn_payload.get("error")
+            and not bool(merged_mission.get("last_checkpoint"))
+        ):
+            await self._maybe_append_continuity_snapshot(
+                mission_id,
+                merged_mission,
+                force=True,
+                reason="turn_boundary",
+            )
         await self._publish_snapshot(
             "mission/event",
-            {"missionId": int(mission["id"]), "method": method, "threadId": thread_id},
+            {"missionId": mission_id, "method": method, "threadId": thread_id},
         )
 
     def _event_proves_thread_is_live(self, method: str, params: dict[str, Any]) -> bool:
@@ -455,9 +523,6 @@ class MissionService:
     def _stale_turn_threshold_seconds(self) -> int:
         return STALE_TURN_SECONDS
 
-    def _hot_token_threshold(self) -> int:
-        return HOT_MISSION_TOKEN_THRESHOLD
-
     def _reflex_ready(self, mission: dict[str, Any]) -> bool:
         if not bool(mission.get("allow_auto_reflexes")):
             return False
@@ -486,7 +551,11 @@ class MissionService:
             or last_activity_seconds < self._stale_turn_threshold_seconds()
         ):
             return False
-        token_hot = int(mission.get("total_tokens") or 0) >= self._hot_token_threshold()
+        token_hot = has_checkpoint_pressure(
+            total_tokens=int(mission.get("total_tokens") or 0),
+            model=str(mission.get("model") or "") or None,
+            has_checkpoint=bool(mission.get("last_checkpoint")),
+        )
         orbiting = int(mission.get("command_count") or 0) >= self._orbit_threshold(mission)
         return token_hot or orbiting
 
@@ -511,7 +580,8 @@ class MissionService:
         )
         lines = [
             (
-                f"Auto-yielded the lane after {int(mission.get('total_tokens') or 0):,} tokens "
+                "Auto-yielded the lane after a long run of "
+                f"{int(mission.get('total_tokens') or 0):,} tokens "
                 f"and {int(mission.get('command_count') or 0)} commands "
                 "without a durable checkpoint."
             ),
@@ -558,6 +628,122 @@ class MissionService:
             {"missionId": mission_id, "reason": "queue_pressure"},
         )
 
+    async def _latest_checkpoint_of_kind(
+        self,
+        mission_id: int,
+        *,
+        kind: str,
+        limit: int = 8,
+    ) -> dict[str, Any] | None:
+        checkpoints = await self.database.list_mission_checkpoints(mission_id, limit=limit)
+        for checkpoint in checkpoints:
+            if str(checkpoint.get("kind") or "") == kind:
+                return checkpoint
+        return None
+
+    def _should_capture_continuity_snapshot(
+        self,
+        mission: dict[str, Any],
+        latest_snapshot: dict[str, Any] | None,
+        *,
+        force: bool,
+    ) -> bool:
+        if str(mission.get("status") or "") != "active":
+            return False
+        if force:
+            return True
+        if bool(mission.get("last_checkpoint")):
+            return False
+        if not bool(mission.get("in_progress")):
+            return False
+        hot = int(mission.get("total_tokens") or 0) >= continuity_snapshot_threshold(
+            str(mission.get("model") or "") or None
+        )
+        orbiting = int(mission.get("command_count") or 0) >= self._orbit_threshold(mission)
+        if not hot and not orbiting:
+            return False
+        if latest_snapshot is None:
+            return True
+        age_seconds = _seconds_since(latest_snapshot.get("created_at"))
+        if age_seconds is None:
+            return True
+        return age_seconds >= CONTINUITY_SNAPSHOT_MIN_SECONDS
+
+    async def _maybe_append_continuity_snapshot(
+        self,
+        mission_id: int,
+        mission: dict[str, Any],
+        *,
+        force: bool = False,
+        reason: str = "background",
+    ) -> bool:
+        thread_id = str(mission.get("thread_id") or "") or None
+        if thread_id is None:
+            return False
+
+        latest_snapshot = await self._latest_checkpoint_of_kind(
+            mission_id,
+            kind=CONTINUITY_SNAPSHOT_KIND,
+        )
+        if not self._should_capture_continuity_snapshot(
+            mission,
+            latest_snapshot,
+            force=force,
+        ):
+            return False
+
+        checkpoints = await self.database.list_mission_checkpoints(mission_id, limit=5)
+        continuity_inputs = [
+            checkpoint
+            for checkpoint in checkpoints
+            if str(checkpoint.get("kind") or "") != CONTINUITY_SNAPSHOT_KIND
+        ]
+        packet = build_continuity_packet(
+            mission,
+            instance_connected=True,
+            checkpoints=continuity_inputs,
+        )
+
+        command_count = int(mission.get("command_count") or 0)
+        total_tokens = int(mission.get("total_tokens") or 0)
+        phase = str(mission.get("phase") or "active")
+        current_command = _truncate_text(str(mission.get("current_command") or "") or None, 260)
+        commentary = _truncate_text(str(mission.get("last_commentary") or "") or None, 420)
+
+        lines = [
+            (
+                f"Auto continuity snapshot ({reason}) after {command_count} commands and "
+                f"{total_tokens:,} tokens."
+            ),
+            f"State: {packet.state} ({packet.score}/100).",
+            f"Anchor: {packet.anchor}",
+            f"Drift: {packet.drift}",
+            f"Next handoff: {packet.next_handoff}",
+        ]
+        if current_command:
+            lines.insert(2, f"Current command: {current_command}")
+        elif commentary:
+            lines.insert(2, f"Current focus: {commentary}")
+        else:
+            lines.insert(2, f"Current phase: {phase}.")
+        summary = "\n".join(lines)
+
+        if latest_snapshot is not None and str(latest_snapshot.get("summary") or "") == summary:
+            return False
+
+        await self.database.append_mission_checkpoint(
+            mission_id=mission_id,
+            thread_id=thread_id,
+            turn_id=str(mission.get("last_turn_id") or "") or None,
+            kind=CONTINUITY_SNAPSHOT_KIND,
+            summary=summary,
+        )
+        await self._publish_snapshot(
+            "mission/continuity-snapshotted",
+            {"missionId": mission_id, "reason": reason},
+        )
+        return True
+
     def _build_governor_reflex(self, mission: dict[str, Any]) -> MissionReflexRun | None:
         if not self._reflex_ready(mission):
             return None
@@ -565,6 +751,7 @@ class MissionService:
         last_checkpoint = bool(mission.get("last_checkpoint"))
         last_activity_seconds = _seconds_since(mission.get("last_activity_at"))
         status = str(mission.get("status") or "")
+        scope = build_scope_assessment(mission)
 
         if (
             status == "failed"
@@ -594,6 +781,13 @@ class MissionService:
                 ),
             )
 
+        if status == "active" and scope.drift_level in {"drifting", "critical"}:
+            return MissionReflexRun(
+                kind="scope_realign",
+                title=f"Realign {mission['name']} to its charter",
+                prompt=scope.reflex_prompt,
+            )
+
         if status != "active" or mission.get("in_progress"):
             return None
 
@@ -619,7 +813,11 @@ class MissionService:
                 ),
             )
 
-        if int(mission.get("total_tokens") or 0) >= 40000 and not last_checkpoint:
+        if has_verification_spike_pressure(
+            total_tokens=int(mission.get("total_tokens") or 0),
+            model=str(mission.get("model") or "") or None,
+            has_checkpoint=last_checkpoint,
+        ):
             return MissionReflexRun(
                 kind="verification_spike",
                 title=f"Verification spike for {mission['name']}",
@@ -1390,6 +1588,11 @@ class MissionService:
                 return
 
             if mission["in_progress"] and not force:
+                await self._maybe_append_continuity_snapshot(
+                    mission_id,
+                    mission,
+                    reason="live_orbit",
+                )
                 return
 
             thread_id = mission["thread_id"]
@@ -1435,7 +1638,7 @@ class MissionService:
                 )
                 return
 
-            prompt = self._build_turn_prompt(mission)
+            prompt = await self._build_turn_prompt(mission)
             await self._start_turn_with_prompt(
                 mission_id,
                 mission,
@@ -1455,23 +1658,56 @@ class MissionService:
             MissionCheckpointView.model_validate(item)
             for item in await self.database.list_mission_checkpoints(int(mission["id"]), limit=5)
         ]
+        scope = build_scope_assessment(mission, checkpoints=checkpoints)
         payload = {
             **mission,
             "instance_name": runtime.name if runtime is not None else None,
             "project_label": project_label,
             "checkpoints": checkpoints,
-            "suggested_action": self._suggested_action(mission),
+            "suggested_action": self._suggested_action(mission, scope),
+            "charter_summary": scope.charter_summary,
+            "charter_focus_terms": list(scope.focus_terms),
+            "objective_gravity": scope.objective_gravity,
+            "scope_drift_level": scope.drift_level,
+            "scope_drift_summary": scope.drift_summary,
         }
         return MissionView.model_validate(payload)
 
-    def _build_turn_prompt(self, mission: dict[str, Any]) -> str:
+    async def _build_turn_prompt(self, mission: dict[str, Any]) -> str:
         continuity = build_continuity_packet(mission, instance_connected=True)
+        scope = build_scope_assessment(mission)
+        project_label: str | None = None
+        project_path: str | None = None
+        explicit_pins: list[SkillPinView] = []
+        if mission["project_id"] is not None:
+            project = await self.database.get_project(int(mission["project_id"]))
+            if project is not None:
+                project_label = str(project["label"])
+                project_path = str(project["path"])
+            explicit_pins = [
+                SkillPinView.model_validate(item)
+                for item in await self.database.list_skill_pins()
+                if int(item["project_id"]) == int(mission["project_id"])
+            ]
+        skill_profile = resolve_skill_profile(
+            str(mission.get("objective") or ""),
+            explicit_pins=explicit_pins,
+            project_label=project_label,
+            project_path=project_path,
+        )
         instructions = [
             "You are running inside an OpenZues autonomous mission.",
             f"Mission: {mission['name']}",
             "",
             "Primary objective:",
             str(mission["objective"]),
+            "",
+            "Mission charter:",
+            scope.charter_summary,
+            (
+                "Objective gravity guardrail: if the current branch stops clearly serving this "
+                "charter, stop broadening scope and re-anchor before proceeding."
+            ),
             "",
             "Execution rules:",
             "- Continue from the current thread state. Do not restart finished work.",
@@ -1501,11 +1737,15 @@ class MissionService:
                 f"- Treat `{mission['cwd']}` as the primary workspace unless the thread"
                 " already established a better target."
             )
+        skill_lines = build_prompt_skill_lines(skill_profile.skills)
+        if skill_lines:
+            instructions.extend(["", *skill_lines])
         instructions.extend(
             [
                 "",
                 f"Autonomous cycle: {int(mission['turns_started']) + 1}",
                 f"Continuity relay: {continuity.state} ({continuity.score}/100)",
+                f"Objective gravity: {scope.objective_gravity}/100 ({scope.drift_level})",
                 f"Anchor: {continuity.anchor}",
                 f"Watch drift: {continuity.drift}",
                 f"Safest next handoff: {continuity.next_handoff}",
@@ -1534,7 +1774,7 @@ class MissionService:
             except Exception:
                 logger.exception("Mission event listener failed for %s", event_type)
 
-    def _suggested_action(self, mission: dict[str, Any]) -> str:
+    def _suggested_action(self, mission: dict[str, Any], scope: ScopeAssessment) -> str:
         last_error = str(mission.get("last_error") or "")
         if str(mission.get("status")) == "blocked":
             if last_error.startswith("Waiting for approval:"):
@@ -1561,6 +1801,13 @@ class MissionService:
             return "Inspect the failure checkpoint, adjust the mission, and run it again."
         if str(mission.get("status")) == "paused":
             return "Resume the mission when you want Codex to continue."
+        if scope.drift_level in {"drifting", "critical"}:
+            if bool(mission.get("in_progress")):
+                return (
+                    "Let the current turn finish, then force a charter realignment checkpoint "
+                    "before more work fans out."
+                )
+            return scope.recommended_action
         if bool(mission.get("in_progress")):
             if mission.get("phase") == "executing":
                 return "Let the current command finish unless it is clearly stuck."

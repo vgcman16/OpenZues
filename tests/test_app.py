@@ -39,9 +39,7 @@ class FakeControlPlaneLease(ControlPlaneLease):
     def acquire(self, *, metadata: dict[str, object] | None = None) -> bool:
         self.metadata = dict(metadata or {})
         self.acquired = self._owner
-        self.owner_pid = (
-            self._simulated_owner_pid if not self._owner else 1001
-        )
+        self.owner_pid = self._simulated_owner_pid if not self._owner else 1001
         return self.acquired
 
     def release(self) -> None:
@@ -69,6 +67,9 @@ def make_instance_view(
     instance_id: int = 1,
     name: str = "Local Codex Desktop",
     connected: bool = True,
+    apps: list[dict[str, object]] | None = None,
+    plugins: list[dict[str, object]] | None = None,
+    mcp_servers: list[dict[str, object]] | None = None,
     unresolved_requests: list[dict[str, object]] | None = None,
 ) -> InstanceView:
     return InstanceView(
@@ -81,6 +82,9 @@ def make_instance_view(
         cwd="C:/workspace",
         auto_connect=False,
         connected=connected,
+        apps=apps or [],
+        plugins=plugins or [],
+        mcp_servers=mcp_servers or [],
         unresolved_requests=unresolved_requests or [],
     )
 
@@ -105,6 +109,7 @@ def make_mission_view(
     *,
     mission_id: int,
     name: str,
+    objective: str = "Keep shipping.",
     status: str = "active",
     phase: str | None = "ready",
     instance_id: int = 1,
@@ -115,6 +120,8 @@ def make_mission_view(
     project_label: str | None = None,
     last_checkpoint: str | None = None,
     last_error: str | None = None,
+    current_command: str | None = None,
+    last_commentary: str | None = None,
     last_activity_at: str | None = None,
     suggested_action: str | None = "Inspect the mission and keep it moving.",
     model: str = "gpt-5.4",
@@ -139,7 +146,7 @@ def make_mission_view(
     return MissionView(
         id=mission_id,
         name=name,
-        objective="Keep shipping.",
+        objective=objective,
         status=status,  # type: ignore[arg-type]
         instance_id=instance_id,
         instance_name="Local Codex Desktop",
@@ -161,12 +168,12 @@ def make_mission_view(
         reflex_cooldown_seconds=reflex_cooldown_seconds,
         in_progress=in_progress,
         phase=phase,
-        current_command=None,
+        current_command=current_command,
         command_count=command_count,
         total_tokens=total_tokens,
         output_tokens=0,
         reasoning_tokens=0,
-        last_commentary=None,
+        last_commentary=last_commentary,
         suggested_action=suggested_action,
         turns_started=0,
         turns_completed=turns_completed,
@@ -295,6 +302,35 @@ def make_dashboard_view(
                 "opportunities": opportunities or [],
             },
             "radar": {"posture": "steady", "summary": "Radar summary", "signals": []},
+            "gateway_bootstrap": {
+                "status": "unconfigured",
+                "headline": "Gateway bootstrap is not configured",
+                "summary": "QuickStart has not been run yet.",
+                "warnings": ["No gateway bootstrap profile has been saved yet."],
+                "setup_mode": "local",
+                "setup_flow": "quickstart",
+                "instance": None,
+                "project": None,
+                "team": None,
+                "operator": None,
+                "task_blueprint": None,
+                "default_cwd": None,
+                "model": "gpt-5.4",
+                "max_turns": 4,
+                "use_builtin_agents": True,
+                "run_verification": True,
+                "auto_commit": False,
+                "pause_on_approval": True,
+                "allow_auto_reflexes": True,
+                "auto_recover": True,
+                "auto_recover_limit": 2,
+                "reflex_cooldown_seconds": 900,
+                "allow_failover": True,
+                "launch_defaults_summary": (
+                    "Verification on, built-in agents on, approvals paused, "
+                    "and auto-commit off."
+                ),
+            },
             "ops_mesh": {
                 "headline": "Ops mesh ready",
                 "summary": "Ops summary",
@@ -313,6 +349,22 @@ def make_dashboard_view(
                     "operator_count": 0,
                     "api_key_count": 0,
                     "recent_remote_request_count": 0,
+                },
+                "integrations_inventory": {
+                    "headline": "Integration inventory is idle",
+                    "summary": "No inventory yet",
+                    "ready_count": 0,
+                    "gap_count": 0,
+                    "tracked_count": 0,
+                    "observed_count": 0,
+                    "items": [],
+                },
+                "skills_registry": {
+                    "headline": "Skills registry is idle",
+                    "summary": "No live skills",
+                    "lanes": [],
+                    "projects": [],
+                    "gaps": [],
                 },
                 "skillbooks": [],
                 "teams": [],
@@ -372,6 +424,84 @@ def test_health_endpoint(tmp_path) -> None:
     assert response.json()["control_plane"] == "leader"
 
 
+def test_dashboard_merges_repeated_plugin_warning_events(tmp_path) -> None:
+    duplicate_warning = (
+        "\x1b[2m2026-04-11T01:37:30.455301Z\x1b[0m \x1b[33m WARN\x1b[0m "
+        "\x1b[2mcodex_core::plugins::manager\x1b[0m\x1b[2m:\x1b[0m skipping duplicate "
+        'plugin MCP server name \x1b[3mplugin\x1b[0m\x1b[2m=\x1b[0m"vercel@openai-curated" '
+        '\x1b[3mprevious_plugin\x1b[0m\x1b[2m=\x1b[0m"build-web-apps@openai-curated" '
+        '\x1b[3mserver\x1b[0m\x1b[2m=\x1b[0m"vercel"'
+    )
+    prompt_warning_a = (
+        "\x1b[2m2026-04-11T01:37:30.459624Z\x1b[0m \x1b[33m WARN\x1b[0m "
+        "\x1b[2mcodex_core::plugins::manifest\x1b[0m\x1b[2m:\x1b[0m ignoring "
+        "interface.defaultPrompt: prompt must be at most 128 characters "
+        "path=C:\\Users\\skull\\.codex\\.tmp\\plugins\\plugins\\build-ios-apps\\.codex-plugin\\plugin.json"
+    )
+    prompt_warning_b = (
+        "\x1b[2m2026-04-11T01:37:30.460228Z\x1b[0m \x1b[33m WARN\x1b[0m "
+        "\x1b[2mcodex_core::plugins::manifest\x1b[0m\x1b[2m:\x1b[0m ignoring "
+        "interface.defaultPrompt: prompt must be at most 128 characters "
+        "path=C:\\Users\\skull\\.codex\\.tmp\\plugins\\plugins\\life-science-research\\.codex-plugin\\plugin.json"
+    )
+
+    with make_client(tmp_path) as client:
+        database = client.app.state.database
+        asyncio.run(
+            database.append_event(
+                instance_id=2,
+                thread_id=None,
+                method="server/stderr",
+                payload={"line": duplicate_warning},
+            )
+        )
+        asyncio.run(
+            database.append_event(
+                instance_id=2,
+                thread_id=None,
+                method="server/stderr",
+                payload={"line": duplicate_warning},
+            )
+        )
+        asyncio.run(
+            database.append_event(
+                instance_id=2,
+                thread_id=None,
+                method="server/stderr",
+                payload={"line": prompt_warning_a},
+            )
+        )
+        asyncio.run(
+            database.append_event(
+                instance_id=2,
+                thread_id=None,
+                method="server/stderr",
+                payload={"line": prompt_warning_b},
+            )
+        )
+        response = client.get("/api/dashboard")
+
+    assert response.status_code == 200
+    payload = response.json()
+    stderr_events = [event for event in payload["events"] if event["method"] == "server/stderr"]
+    assert len(stderr_events) == 2
+
+    duplicate_event = next(
+        event
+        for event in stderr_events
+        if "duplicate plugin MCP server name" in event["payload"]["line"]
+    )
+    assert duplicate_event["payload"]["repeatCount"] == 2
+    assert duplicate_event["payload"]["line"].startswith("WARN codex_core::plugins::manager:")
+
+    prompt_event = next(
+        event for event in stderr_events if "interface.defaultPrompt" in event["payload"]["line"]
+    )
+    assert prompt_event["payload"]["repeatCount"] == 2
+    assert prompt_event["payload"]["pathCount"] == 2
+    assert len(prompt_event["payload"]["paths"]) == 2
+
+
 def test_observer_mode_blocks_mutating_requests(tmp_path) -> None:
     lease = FakeControlPlaneLease(owner=False, owner_pid=4242)
     with make_client(tmp_path, control_plane_lease=lease) as client:
@@ -420,12 +550,15 @@ def test_playbook_creation_and_diagnostics_endpoint(tmp_path) -> None:
                 "kind": "command",
                 "template": "git status --short --branch",
                 "instance_id": None,
+                "cadence_minutes": 60,
+                "enabled": True,
                 "cwd": str(tmp_path),
                 "model": None,
                 "reasoning_effort": None,
                 "collaboration_mode": None,
                 "timeout_ms": 10000,
                 "thread_id": None,
+                "default_variables": {"branch": "main"},
             },
         )
         dashboard_response = client.get("/api/dashboard")
@@ -434,6 +567,8 @@ def test_playbook_creation_and_diagnostics_endpoint(tmp_path) -> None:
     assert create_response.status_code == 200
     created = create_response.json()
     assert created["name"] == "Status check"
+    assert created["cadence_minutes"] == 60
+    assert created["default_variables"] == {"branch": "main"}
     dashboard = dashboard_response.json()
     assert dashboard["brief"]["summary"]
     assert dashboard["missions"] == []
@@ -460,6 +595,433 @@ def test_desktop_instance_creation_is_supported(tmp_path) -> None:
     assert created["command"] is None
     assert created["args"] is None
     assert created["resolved_transport"] is None
+
+
+def test_onboarding_bootstrap_creates_first_run_bundle_and_launch_draft(tmp_path) -> None:
+    with make_client(tmp_path) as client:
+        response = client.post(
+            "/api/onboarding/bootstrap",
+            json={
+                "setup_mode": "local",
+                "setup_flow": "quickstart",
+                "instance_mode": "create_desktop",
+                "instance_name": "Bootstrap Lane",
+                "project_path": str(tmp_path),
+                "project_label": "Bootstrap Workspace",
+                "operator_name": "Remote Builder",
+                "operator_email": "builder@example.com",
+                "issue_api_key": True,
+                "vault_secret_label": "GITHUB_TOKEN",
+                "vault_secret_value": "ghp_example_123",
+                "integration_name": "GitHub Inventory",
+                "integration_kind": "github",
+                "integration_base_url": "https://api.github.com",
+                "skill_name": "Browser Verify",
+                "skill_prompt_hint": "Use it after meaningful UI changes.",
+                "skill_source": "agent-browser",
+                "task_name": "Autonomous Ship Loop",
+                "objective_template": (
+                    "Inspect the repo, ship the next verified slice, and checkpoint it."
+                ),
+                "cadence_minutes": 180,
+                "model": "gpt-5.4",
+                "max_turns": 4,
+                "use_builtin_agents": True,
+                "run_verification": True,
+                "auto_commit": False,
+                "pause_on_approval": True,
+                "allow_auto_reflexes": True,
+                "auto_recover": True,
+                "auto_recover_limit": 2,
+                "reflex_cooldown_seconds": 900,
+                "allow_failover": True,
+                "enabled": True,
+            },
+        )
+        dashboard_response = client.get("/api/dashboard")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["instance"]["created"] is True
+    assert payload["project"]["created"] is True
+    assert payload["team"]["label"] == "Local Control"
+    assert payload["operator"]["label"] == "Remote Builder"
+    assert payload["vault_secret"]["label"] == "GITHUB_TOKEN"
+    assert payload["integration"]["label"] == "GitHub Inventory"
+    assert payload["skill_pin"]["label"] == "Browser Verify"
+    assert payload["task_blueprint"]["label"] == "Autonomous Ship Loop"
+    assert payload["api_key"].startswith("ozk_")
+    assert payload["mission_draft"]["name"] == "Kick off Autonomous Ship Loop"
+    assert "Project skillbook:" in payload["mission_draft"]["objective"]
+    assert "Known integration inventory:" in payload["mission_draft"]["objective"]
+
+    dashboard = dashboard_response.json()
+    assert dashboard["projects"][0]["label"] == "Bootstrap Workspace"
+    assert dashboard["instances"][0]["name"] == "Bootstrap Lane"
+    assert dashboard["ops_mesh"]["access_posture"]["api_key_count"] == 1
+    assert dashboard["ops_mesh"]["vault_secrets"][0]["label"] == "GITHUB_TOKEN"
+    assert dashboard["ops_mesh"]["integrations"][0]["name"] == "GitHub Inventory"
+    assert dashboard["ops_mesh"]["skillbooks"][0]["skills"][0]["name"] == "Browser Verify"
+    assert dashboard["task_blueprints"][0]["name"] == "Autonomous Ship Loop"
+    assert dashboard["gateway_bootstrap"]["status"] == "staged"
+    assert dashboard["gateway_bootstrap"]["setup_mode"] == "local"
+    assert dashboard["gateway_bootstrap"]["setup_flow"] == "quickstart"
+    assert dashboard["gateway_bootstrap"]["project"]["label"] == "Bootstrap Workspace"
+    assert dashboard["gateway_bootstrap"]["operator"]["label"] == "Remote Builder"
+    assert dashboard["gateway_bootstrap"]["task_blueprint"]["label"] == "Autonomous Ship Loop"
+    assert dashboard["gateway_bootstrap"]["run_verification"] is True
+    assert dashboard["gateway_bootstrap"]["auto_commit"] is False
+
+
+def test_onboarding_bootstrap_remote_mode_can_stage_without_default_lane(tmp_path) -> None:
+    with make_client(tmp_path) as client:
+        response = client.post(
+            "/api/onboarding/bootstrap",
+            json={
+                "setup_mode": "remote",
+                "setup_flow": "advanced",
+                "instance_mode": "existing",
+                "instance_id": None,
+                "project_path": str(tmp_path),
+                "project_label": "Remote Workspace",
+                "operator_name": "Remote Builder",
+                "issue_api_key": True,
+                "task_name": "Remote Ship Loop",
+                "objective_template": "Keep the remote workspace moving.",
+            },
+        )
+        dashboard_response = client.get("/api/dashboard")
+        setup_response = client.get("/api/setup")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["instance"] is None
+    assert payload["mission_draft"] is None
+    assert "no lane available yet" in payload["warnings"][-1].lower()
+    assert "Add or reconnect a lane" in payload["summary"]
+
+    dashboard = dashboard_response.json()
+    assert dashboard["gateway_bootstrap"]["setup_mode"] == "remote"
+    assert dashboard["gateway_bootstrap"]["setup_flow"] == "advanced"
+    assert dashboard["gateway_bootstrap"]["instance"] is None
+    assert dashboard["gateway_bootstrap"]["task_blueprint"]["label"] == "Remote Ship Loop"
+
+    setup = setup_response.json()
+    assert setup["wizard_session"]["mode"] == "remote"
+    assert setup["wizard_session"]["flow"] == "advanced"
+    assert setup["wizard_session"]["remote_probe"]["status"] == "ready"
+
+
+def test_setup_endpoint_reports_reentrant_posture_after_bootstrap(tmp_path) -> None:
+    with make_client(tmp_path) as client:
+        client.post(
+            "/api/onboarding/bootstrap",
+            json={
+                "setup_mode": "local",
+                "setup_flow": "quickstart",
+                "instance_mode": "create_desktop",
+                "instance_name": "Bootstrap Lane",
+                "project_path": str(tmp_path),
+                "project_label": "Bootstrap Workspace",
+                "operator_name": "Remote Builder",
+                "issue_api_key": True,
+                "task_name": "Autonomous Ship Loop",
+                "objective_template": (
+                    "Inspect the repo, ship the next verified slice, and "
+                    "checkpoint it."
+                ),
+            },
+        )
+        setup_response = client.get("/api/setup")
+
+    assert setup_response.status_code == 200
+    payload = setup_response.json()
+    assert payload["recommended_action"] == "modify"
+    assert payload["available_actions"] == ["keep", "modify", "reset"]
+    assert payload["gateway_bootstrap"]["status"] == "staged"
+    assert payload["footprint"]["instance"]["label"] == "Bootstrap Lane"
+    assert payload["wizard_session"]["mode"] == "local"
+    assert payload["launch_handoff"]["status"] == "staged"
+    assert payload["launch_handoff"]["recommended_action"] == "connect_lane"
+    assert payload["launch_handoff"]["mission_draft"]["task_blueprint_id"] is not None
+    assert payload["launch_handoff"]["mission_draft"]["instance_id"] == 1
+    assert "Reconnect the default lane" in payload["next_entrypoint"]
+    assert "Saved setup handoff:" in payload["handoff_summary"]
+
+
+def test_setup_wizard_endpoint_updates_saved_mode_and_flow(tmp_path) -> None:
+    with make_client(tmp_path) as client:
+        update_response = client.put(
+            "/api/setup/wizard",
+            json={"mode": "remote", "flow": "quickstart"},
+        )
+        setup_response = client.get("/api/setup")
+
+    assert update_response.status_code == 200
+    payload = update_response.json()
+    assert payload["mode"] == "remote"
+    assert payload["flow"] == "advanced"
+    assert payload["recommended_flow"] in {"quickstart", "advanced"}
+    setup = setup_response.json()
+    assert setup["wizard_session"]["mode"] == "remote"
+    assert setup["wizard_session"]["flow"] == "advanced"
+
+
+def test_setup_launch_endpoint_reports_saved_remote_handoff_gap(tmp_path) -> None:
+    with make_client(tmp_path) as client:
+        client.post(
+            "/api/onboarding/bootstrap",
+            json={
+                "setup_mode": "remote",
+                "setup_flow": "advanced",
+                "instance_mode": "existing",
+                "project_path": str(tmp_path),
+                "project_label": "Remote Workspace",
+                "operator_name": "Remote Builder",
+                "issue_api_key": True,
+                "task_name": "Remote Ship Loop",
+                "objective_template": (
+                    "Inspect the repo, ship the next verified slice, and "
+                    "checkpoint it."
+                ),
+            },
+        )
+        launch_response = client.get("/api/setup/launch")
+
+    assert launch_response.status_code == 200
+    payload = launch_response.json()
+    assert payload["status"] == "staged"
+    assert payload["recommended_action"] == "connect_lane"
+    assert payload["mission_draft"] is None
+    assert payload["task_blueprint"]["label"] == "Remote Ship Loop"
+    assert "Connect or quick-connect a lane" in payload["next_entrypoint"]
+
+
+def test_setup_reset_config_and_credentials_clears_profile_and_api_key(tmp_path) -> None:
+    with make_client(tmp_path) as client:
+        client.post(
+            "/api/onboarding/bootstrap",
+            json={
+                "setup_mode": "local",
+                "setup_flow": "quickstart",
+                "instance_mode": "create_desktop",
+                "instance_name": "Bootstrap Lane",
+                "project_path": str(tmp_path),
+                "project_label": "Bootstrap Workspace",
+                "operator_name": "Remote Builder",
+                "issue_api_key": True,
+                "task_name": "Autonomous Ship Loop",
+                "objective_template": (
+                    "Inspect the repo, ship the next verified slice, and "
+                    "checkpoint it."
+                ),
+            },
+        )
+        reset_response = client.post(
+            "/api/setup/reset",
+            json={"scope": "config+creds+sessions"},
+        )
+        gateway_response = client.get("/api/gateway/bootstrap")
+        dashboard_response = client.get("/api/dashboard")
+
+    assert reset_response.status_code == 200
+    payload = reset_response.json()
+    assert payload["scope"] == "config+creds+sessions"
+    assert "gateway bootstrap profile" in payload["cleared"]
+    assert "operator API key" in payload["cleared"]
+    assert "setup wizard session" in payload["cleared"]
+    assert gateway_response.status_code == 200
+    assert gateway_response.json()["status"] == "unconfigured"
+    dashboard = dashboard_response.json()
+    assert dashboard["ops_mesh"]["access_posture"]["api_key_count"] == 0
+
+
+def test_setup_reset_full_removes_bootstrap_managed_resources(tmp_path) -> None:
+    with make_client(tmp_path) as client:
+        bootstrap_response = client.post(
+            "/api/onboarding/bootstrap",
+            json={
+                "setup_mode": "local",
+                "setup_flow": "quickstart",
+                "instance_mode": "create_desktop",
+                "instance_name": "Bootstrap Lane",
+                "project_path": str(tmp_path),
+                "project_label": "Bootstrap Workspace",
+                "operator_name": "Remote Builder",
+                "operator_email": "builder@example.com",
+                "issue_api_key": True,
+                "vault_secret_label": "GITHUB_TOKEN",
+                "vault_secret_value": "ghp_example_123",
+                "integration_name": "GitHub Inventory",
+                "integration_kind": "github",
+                "integration_base_url": "https://api.github.com",
+                "skill_name": "Browser Verify",
+                "skill_prompt_hint": "Use it after meaningful UI changes.",
+                "skill_source": "agent-browser",
+                "task_name": "Autonomous Ship Loop",
+                "objective_template": (
+                    "Inspect the repo, ship the next verified slice, and "
+                    "checkpoint it."
+                ),
+            },
+        )
+        reset_response = client.post("/api/setup/reset", json={"scope": "full"})
+        dashboard_response = client.get("/api/dashboard")
+        setup_response = client.get("/api/setup")
+
+    assert bootstrap_response.status_code == 200
+    assert reset_response.status_code == 200
+    payload = reset_response.json()
+    assert payload["scope"] == "full"
+    assert "task blueprint 'Autonomous Ship Loop'" in payload["cleared"]
+    assert "integration 'GitHub Inventory'" in payload["cleared"]
+    assert "skill pin 'Browser Verify'" in payload["cleared"]
+    assert "vault secret 'GITHUB_TOKEN'" in payload["cleared"]
+    assert "setup footprint" in payload["cleared"]
+
+    dashboard = dashboard_response.json()
+    assert dashboard["task_blueprints"] == []
+    assert dashboard["ops_mesh"]["vault_secrets"] == []
+    assert dashboard["ops_mesh"]["integrations"] == []
+    assert all(
+        operator["name"] != "Remote Builder" for operator in dashboard["ops_mesh"]["operators"]
+    )
+    setup = setup_response.json()
+    assert setup["recommended_action"] == "bootstrap"
+    assert setup["footprint"] is None
+
+
+def test_gateway_bootstrap_endpoint_updates_saved_launch_profile(tmp_path) -> None:
+    with make_client(tmp_path) as client:
+        project_response = client.post(
+            "/api/projects",
+            json={"path": str(tmp_path), "label": "Gateway Workspace"},
+        )
+        instance_response = client.post(
+            "/api/instances",
+            json={
+                "name": "Gateway Lane",
+                "transport": "desktop",
+                "cwd": str(tmp_path),
+                "auto_connect": False,
+            },
+        )
+        task_response = client.post(
+            "/api/tasks",
+            json={
+                "name": "Gateway Loop",
+                "summary": "Keep the gateway profile fresh.",
+                "objective_template": "Ship the next verified slice.",
+                "instance_id": instance_response.json()["id"],
+                "project_id": project_response.json()["id"],
+                "cadence_minutes": 120,
+                "cwd": str(tmp_path),
+                "model": "gpt-5.4-mini",
+                "reasoning_effort": None,
+                "collaboration_mode": None,
+                "max_turns": 3,
+                "use_builtin_agents": False,
+                "run_verification": True,
+                "auto_commit": False,
+                "pause_on_approval": True,
+                "allow_auto_reflexes": True,
+                "auto_recover": True,
+                "auto_recover_limit": 2,
+                "reflex_cooldown_seconds": 900,
+                "allow_failover": True,
+                "enabled": True,
+            },
+        )
+        profile_response = client.put(
+            "/api/gateway/bootstrap",
+            json={
+                "preferred_instance_id": instance_response.json()["id"],
+                "preferred_project_id": project_response.json()["id"],
+                "team_id": 1,
+                "operator_id": 1,
+                "task_blueprint_id": task_response.json()["id"],
+                "default_cwd": str(tmp_path),
+                "model": "gpt-5.4-mini",
+                "max_turns": 3,
+                "use_builtin_agents": False,
+                "run_verification": True,
+                "auto_commit": False,
+                "pause_on_approval": True,
+                "allow_auto_reflexes": True,
+                "auto_recover": True,
+                "auto_recover_limit": 2,
+                "reflex_cooldown_seconds": 900,
+                "allow_failover": True,
+            },
+        )
+        read_response = client.get("/api/gateway/bootstrap")
+
+    assert profile_response.status_code == 200
+    profile = profile_response.json()
+    assert profile["status"] == "staged"
+    assert profile["instance"]["label"] == "Gateway Lane"
+    assert profile["project"]["label"] == "Gateway Workspace"
+    assert profile["task_blueprint"]["label"] == "Gateway Loop"
+    assert profile["model"] == "gpt-5.4-mini"
+    assert profile["use_builtin_agents"] is False
+    assert "local-only" in profile["operator"]["detail"]
+
+    assert read_response.status_code == 200
+    assert read_response.json()["task_blueprint"]["label"] == "Gateway Loop"
+
+
+def test_dashboard_backfills_gateway_bootstrap_from_existing_quickstart_artifacts(tmp_path) -> None:
+    with make_client(tmp_path) as client:
+        project_response = client.post(
+            "/api/projects",
+            json={"path": str(tmp_path), "label": "Backfill Workspace"},
+        )
+        instance_response = client.post(
+            "/api/instances",
+            json={
+                "name": "Backfill Lane",
+                "transport": "desktop",
+                "cwd": str(tmp_path),
+                "auto_connect": False,
+            },
+        )
+        client.post(
+            "/api/tasks",
+            json={
+                "name": "Backfill Loop",
+                "summary": "Recover the gateway profile from existing state.",
+                "objective_template": "Ship the next verified slice.",
+                "instance_id": instance_response.json()["id"],
+                "project_id": project_response.json()["id"],
+                "cadence_minutes": 90,
+                "cwd": str(tmp_path),
+                "model": "gpt-5.4-mini",
+                "reasoning_effort": None,
+                "collaboration_mode": None,
+                "max_turns": 3,
+                "use_builtin_agents": True,
+                "run_verification": True,
+                "auto_commit": False,
+                "pause_on_approval": True,
+                "allow_auto_reflexes": True,
+                "auto_recover": True,
+                "auto_recover_limit": 2,
+                "reflex_cooldown_seconds": 900,
+                "allow_failover": True,
+                "enabled": True,
+            },
+        )
+        dashboard_response = client.get("/api/dashboard")
+        profile_response = client.get("/api/gateway/bootstrap")
+
+    assert dashboard_response.status_code == 200
+    dashboard = dashboard_response.json()
+    assert dashboard["gateway_bootstrap"]["status"] == "staged"
+    assert dashboard["gateway_bootstrap"]["task_blueprint"]["label"] == "Backfill Loop"
+    assert dashboard["gateway_bootstrap"]["project"]["label"] == "Backfill Workspace"
+
+    assert profile_response.status_code == 200
+    assert profile_response.json()["task_blueprint"]["label"] == "Backfill Loop"
 
 
 def test_dashboard_bootstraps_remote_access_foundations(tmp_path) -> None:
@@ -619,6 +1181,26 @@ def test_control_chat_builds_new_mission_from_freeform_request() -> None:
     assert decision.mission_payload.start_immediately is True
 
 
+def test_control_chat_uses_loop_and_frontend_skill_profile_for_open_ended_ui_work() -> None:
+    dashboard = make_dashboard_view(
+        instances=[make_instance_view()],
+        projects=[make_project_view(project_id=3, label="OpenZues")],
+    )
+
+    decision = plan_control_chat(
+        (
+            "Keep improving the frontend dashboard chat interface until it looks cleaner "
+            "and feels polished"
+        ),
+        dashboard,
+    )
+
+    assert decision.action_kind == "create_mission"
+    assert decision.mission_payload is not None
+    assert decision.mission_payload.reasoning_effort == "high"
+    assert decision.mission_payload.max_turns == 8
+
+
 def test_attention_queue_plans_recovery_from_failed_signal() -> None:
     failed = make_mission_view(
         mission_id=61,
@@ -691,6 +1273,99 @@ def test_attention_queue_plans_recovery_from_failed_signal() -> None:
     assert decision.opportunity_id == "recover-61"
     assert decision.mission_payload is not None
     assert decision.status == "executed"
+
+
+def test_attention_queue_reuses_existing_hardener_instead_of_launching_duplicate() -> None:
+    source = make_mission_view(
+        mission_id=71,
+        name="OpenClaw Total Parity Program",
+        status="completed",
+        phase="completed",
+        project_id=11,
+        project_label="OpenZues",
+        last_checkpoint="Checkpoint landed.",
+    )
+    existing = make_mission_view(
+        mission_id=72,
+        name="Harden OpenZues",
+        status="blocked",
+        phase="queued",
+        project_id=11,
+        project_label="OpenZues",
+        thread_id="thread_71",
+    ).model_copy(
+        update={
+            "objective": (
+                "Continue from the latest checkpoint in the mission "
+                "'OpenClaw Total Parity Program'. First read the existing handoff in the "
+                "thread, verify what is already true, close the biggest gaps, and leave a "
+                "stronger checkpoint with validation."
+            )
+        }
+    )
+    dashboard = make_dashboard_view(
+        instances=[make_instance_view()],
+        missions=[source, existing],
+        projects=[make_project_view(project_id=11, label="OpenZues")],
+    )
+    dashboard = dashboard.model_copy(
+        update={
+            "radar": build_radar(
+                dashboard.instances,
+                dashboard.missions,
+                dashboard.projects,
+            ),
+            "launchpad": build_launchpad(
+                dashboard.instances,
+                dashboard.missions,
+                dashboard.projects,
+            ),
+        }
+    )
+
+    decision = plan_attention_queue(dashboard)
+
+    assert decision is not None
+    assert decision.action_kind == "run_mission"
+    assert decision.mission_id == 72
+    assert "reused the existing hardener" in decision.reply
+
+
+def test_attention_queue_does_not_harden_a_hardener_again() -> None:
+    hardener = make_mission_view(
+        mission_id=81,
+        name="Harden OpenZues Workspace",
+        status="completed",
+        phase="completed",
+        project_id=5,
+        project_label="OpenZues Workspace",
+        thread_id="thread_source",
+        last_checkpoint="Verification is green and the checkpoint is already durable.",
+    ).model_copy(
+        update={
+            "objective": (
+                "Continue from the latest checkpoint in the mission "
+                "'OpenClaw Total Parity Program'. First read the existing handoff in the "
+                "thread, verify what is already true, close the biggest gaps, and leave a "
+                "stronger checkpoint with validation."
+            )
+        }
+    )
+    dashboard = make_dashboard_view(
+        missions=[hardener],
+        opportunities=[],
+    ).model_copy(
+        update={
+            "radar": build_radar([], [hardener], []),
+        }
+    )
+
+    decision = plan_attention_queue(dashboard)
+
+    assert decision is not None
+    assert decision.action_kind == "observe"
+    assert decision.mission_id == 81
+    assert "hardening a hardener again" in decision.reply
 
 
 def test_attention_queue_escalates_unsafe_orphan_approval_once(tmp_path) -> None:
@@ -812,9 +1487,7 @@ def test_attention_queue_auto_approves_safe_orphan_request(tmp_path, monkeypatch
         monkeypatch.setattr(manager, "resolve_request", fake_resolve)
 
         dashboard = DashboardView.model_validate(client.get("/api/dashboard").json())
-        acted = asyncio.run(
-            client.app.state.control_chat_service.tick_attention_queue(dashboard)
-        )
+        acted = asyncio.run(client.app.state.control_chat_service.tick_attention_queue(dashboard))
         actions = asyncio.run(database.list_attention_queue_actions())
         messages = asyncio.run(database.list_control_chat_messages())
 
@@ -833,7 +1506,7 @@ def test_attention_queue_auto_approves_safe_orphan_request(tmp_path, monkeypatch
     assert messages[-1]["action_kind"] == "resolve_request"
 
 
-def test_attention_queue_pauses_hot_stale_mission_to_free_queue(tmp_path) -> None:
+def test_attention_queue_pauses_long_stale_mission_to_free_queue(tmp_path) -> None:
     with make_client(tmp_path, attention_queue_enabled=False) as client:
         instance_response = client.post(
             "/api/instances",
@@ -883,7 +1556,7 @@ def test_attention_queue_pauses_hot_stale_mission_to_free_queue(tmp_path) -> Non
                 phase="thinking",
                 in_progress=1,
                 command_count=4,
-                total_tokens=77089,
+                total_tokens=770089,
                 last_activity_at=(datetime.now(UTC) - timedelta(minutes=12)).isoformat(),
             )
         )
@@ -921,9 +1594,7 @@ def test_attention_queue_pauses_hot_stale_mission_to_free_queue(tmp_path) -> Non
         )
 
         dashboard = DashboardView.model_validate(client.get("/api/dashboard").json())
-        acted = asyncio.run(
-            client.app.state.control_chat_service.tick_attention_queue(dashboard)
-        )
+        acted = asyncio.run(client.app.state.control_chat_service.tick_attention_queue(dashboard))
         hot = asyncio.run(database.get_mission(hot_id))
         actions = asyncio.run(database.list_attention_queue_actions())
         messages = asyncio.run(database.list_control_chat_messages())
@@ -932,7 +1603,9 @@ def test_attention_queue_pauses_hot_stale_mission_to_free_queue(tmp_path) -> Non
     assert hot is not None
     assert hot["status"] == "paused"
     assert hot["in_progress"] == 0
-    assert hot["last_checkpoint"].startswith("Auto-yielded the lane after 77,089 tokens")
+    assert hot["last_checkpoint"].startswith(
+        "Auto-yielded the lane after a long run of 770,089 tokens"
+    )
     assert actions[0]["action_kind"] == "pause_mission"
     assert actions[0]["status"] == "executed"
     assert "cooled `ForumForge Inbox + Queue Build` into a paused relay" in actions[0]["summary"]
@@ -1351,8 +2024,7 @@ def test_build_radar_prioritizes_operator_risks() -> None:
         last_error="Waiting for approval: approval/request",
         last_activity_at=(now - timedelta(minutes=2)).isoformat(),
         suggested_action=(
-            "Review the approval request and decide whether to let the mission "
-            "continue."
+            "Review the approval request and decide whether to let the mission continue."
         ),
     )
     burn_mission = make_mission_view(
@@ -1361,7 +2033,7 @@ def test_build_radar_prioritizes_operator_risks() -> None:
         status="active",
         phase="thinking",
         in_progress=True,
-        total_tokens=72000,
+        total_tokens=720000,
         last_checkpoint=None,
         last_activity_at=(now - timedelta(minutes=1)).isoformat(),
     )
@@ -1373,6 +2045,58 @@ def test_build_radar_prioritizes_operator_risks() -> None:
     assert "mission-1-approval" in signal_ids
     assert "mission-2-burn" in signal_ids
     assert radar.signals[0].level == "critical"
+    assert any(
+        signal.title == "Long runner is on a long run without a handoff" for signal in radar.signals
+    )
+
+
+def test_build_radar_does_not_flag_normal_gpt5_run_as_context_burn() -> None:
+    now = datetime.now(UTC)
+    radar = build_radar(
+        [make_instance_view()],
+        [
+            make_mission_view(
+                mission_id=2,
+                name="Long runner",
+                status="active",
+                phase="thinking",
+                in_progress=True,
+                total_tokens=72000,
+                last_checkpoint=None,
+                last_activity_at=(now - timedelta(minutes=1)).isoformat(),
+            )
+        ],
+        [make_project_view()],
+    )
+
+    signal_ids = [signal.id for signal in radar.signals]
+    assert "mission-2-burn" not in signal_ids
+
+
+def test_build_radar_surfaces_scope_drift_signal() -> None:
+    mission = make_mission_view(
+        mission_id=5,
+        name="Moderation queue",
+        objective="Build the forum moderation queue end to end.",
+        status="active",
+        phase="executing",
+        in_progress=True,
+        current_command=(
+            'powershell.exe -Command "Get-Content src\\\\openzues\\\\web\\\\static\\\\app.css"'
+        ),
+        last_commentary=(
+            "Polishing gradients, font weight, and chat bubble spacing before returning "
+            "to the queue."
+        ),
+        total_tokens=24000,
+    )
+
+    radar = build_radar([make_instance_view()], [mission], [make_project_view()])
+
+    scope_signal = next(signal for signal in radar.signals if signal.id == "mission-5-scope")
+    assert "drifting away from its charter" in scope_signal.title
+    assert scope_signal.level in {"warn", "critical"}
+    assert "Objective gravity" in scope_signal.detail
 
 
 def test_build_radar_reports_ready_capacity_when_lane_is_clear() -> None:
@@ -1380,6 +2104,69 @@ def test_build_radar_reports_ready_capacity_when_lane_is_clear() -> None:
 
     assert radar.posture == "steady"
     assert any(signal.id == "capacity/idle-connected" for signal in radar.signals)
+
+
+def test_build_radar_collapses_large_ready_handoff_backlog() -> None:
+    now = datetime.now(UTC)
+    missions = [
+        make_mission_view(
+            mission_id=31,
+            name="OpenClaw Total Parity Program",
+            status="completed",
+            phase="completed",
+            project_id=5,
+            project_label="OpenZues",
+            last_checkpoint="Checkpoint ready.",
+            last_activity_at=(now - timedelta(minutes=2)).isoformat(),
+        ),
+        make_mission_view(
+            mission_id=32,
+            name="Harden OpenZues Workspace",
+            status="completed",
+            phase="completed",
+            project_id=5,
+            project_label="OpenZues",
+            last_checkpoint="Checkpoint ready.",
+            last_activity_at=(now - timedelta(minutes=5)).isoformat(),
+        ),
+        make_mission_view(
+            mission_id=33,
+            name="Vault Mesh Finish",
+            status="paused",
+            phase="paused",
+            project_id=5,
+            project_label="OpenZues",
+            last_checkpoint="Checkpoint ready.",
+            last_activity_at=(now - timedelta(minutes=8)).isoformat(),
+        ),
+    ]
+
+    radar = build_radar([make_instance_view()], missions, [make_project_view()])
+
+    assert radar.posture == "steady"
+    assert "ready handoffs are parked in reserve" in radar.summary
+    assert any(signal.id == "attention/handoff-backlog" for signal in radar.signals)
+    assert not any(signal.id == "mission-31-handoff" for signal in radar.signals)
+    backlog = next(signal for signal in radar.signals if signal.id == "attention/handoff-backlog")
+    assert "OpenClaw Total Parity Program" in backlog.detail
+    assert "Harden OpenZues Workspace" in backlog.detail
+
+
+def test_build_radar_keeps_small_ready_handoff_set_expanded() -> None:
+    mission = make_mission_view(
+        mission_id=34,
+        name="Ship checkout",
+        status="completed",
+        phase="completed",
+        project_id=5,
+        project_label="Checkout",
+        last_checkpoint="Milestone ready.",
+    )
+
+    radar = build_radar([make_instance_view()], [mission], [make_project_view()])
+
+    assert any(signal.id == "mission-34-handoff" for signal in radar.signals)
+    assert not any(signal.id == "attention/handoff-backlog" for signal in radar.signals)
 
 
 def test_build_launchpad_suggests_workspace_scout_without_projects() -> None:
@@ -1407,6 +2194,71 @@ def test_build_launchpad_prioritizes_checkpoint_hardener() -> None:
     assert launchpad.opportunities[0].kind == "checkpoint_hardener"
     assert launchpad.opportunities[0].mission_draft.thread_id == "thread_7"
     assert launchpad.opportunities[0].mission_draft.project_id == 5
+
+
+def test_build_launchpad_skips_duplicate_checkpoint_hardener_when_followup_exists() -> None:
+    source = make_mission_view(
+        mission_id=7,
+        name="Ship checkout",
+        status="completed",
+        phase="completed",
+        project_id=5,
+        project_label="Checkout",
+        last_checkpoint="Implemented the first milestone.",
+    )
+    existing = make_mission_view(
+        mission_id=8,
+        name="Harden Checkout",
+        status="blocked",
+        phase="queued",
+        project_id=5,
+        project_label="Checkout",
+        thread_id="thread_7",
+    ).model_copy(
+        update={
+            "objective": (
+                "Continue from the latest checkpoint in the mission 'Ship checkout'. "
+                "First read the existing handoff in the thread, verify what is already true, "
+                "close the biggest gaps, and leave a stronger checkpoint with validation."
+            )
+        }
+    )
+    project = make_project_view(project_id=5, label="Checkout")
+
+    launchpad = build_launchpad([make_instance_view()], [source, existing], [project])
+
+    assert not any(
+        opportunity.kind == "checkpoint_hardener" for opportunity in launchpad.opportunities
+    )
+
+
+def test_build_launchpad_skips_recursive_checkpoint_hardener_for_followup_mission() -> None:
+    followup = make_mission_view(
+        mission_id=9,
+        name="Harden OpenZues Workspace",
+        status="completed",
+        phase="completed",
+        project_id=5,
+        project_label="OpenZues Workspace",
+        thread_id="thread_source",
+        last_checkpoint="Verified the previous checkpoint and tightened the handoff.",
+    ).model_copy(
+        update={
+            "objective": (
+                "Continue from the latest checkpoint in the mission "
+                "'OpenClaw Total Parity Program'. First read the existing handoff in the "
+                "thread, verify what is already true, close the biggest gaps, and leave a "
+                "stronger checkpoint with validation."
+            )
+        }
+    )
+    project = make_project_view(project_id=5, label="OpenZues Workspace")
+
+    launchpad = build_launchpad([make_instance_view()], [followup], [project])
+
+    assert not any(
+        opportunity.kind == "checkpoint_hardener" for opportunity in launchpad.opportunities
+    )
 
 
 def test_build_launchpad_uses_drift_sweep_for_dirty_projects() -> None:
@@ -1550,7 +2402,7 @@ def test_build_economy_marks_high_burn_scope_as_leaking() -> None:
         phase="thinking",
         project_id=10,
         project_label="Checkout",
-        total_tokens=76000,
+        total_tokens=760000,
         command_count=18,
         last_checkpoint=None,
     )
@@ -1582,6 +2434,40 @@ def test_build_economy_marks_high_burn_scope_as_leaking() -> None:
     assert economy.headline == "Autonomy economy is leaking"
     assert economy.scopes[0].state == "leaking"
     assert "compress" in economy.scopes[0].capital_prompt.lower()
+
+
+def test_build_economy_docks_scope_drifted_work() -> None:
+    project = make_project_view(project_id=11, label="ForumForge")
+    aligned = make_mission_view(
+        mission_id=71,
+        name="Forum queue",
+        objective="Build the forum moderation queue end to end.",
+        status="active",
+        project_id=11,
+        project_label="ForumForge",
+        current_command='powershell.exe -Command "Get-Content src\\\\forumforge\\\\queue.py"',
+        last_commentary="Wiring the moderation queue route and verifying the filter logic.",
+    )
+    drifting = make_mission_view(
+        mission_id=72,
+        name="Forum queue",
+        objective="Build the forum moderation queue end to end.",
+        status="active",
+        project_id=11,
+        project_label="ForumForge",
+        current_command=(
+            'powershell.exe -Command "Get-Content src\\\\openzues\\\\web\\\\static\\\\app.css"'
+        ),
+        last_commentary="Tuning gradients, shadows, and bubble spacing in the dashboard shell.",
+    )
+
+    aligned_economy = build_economy([aligned], [project], [], [])
+    drifting_economy = build_economy([drifting], [project], [], [])
+
+    assert (
+        aligned_economy.scopes[0].objective_gravity > drifting_economy.scopes[0].objective_gravity
+    )
+    assert aligned_economy.scopes[0].score > drifting_economy.scopes[0].score
 
 
 def test_dashboard_and_project_economy_endpoint_surface_scope_profile(tmp_path) -> None:
@@ -1750,8 +2636,31 @@ def test_build_cortex_learns_project_doctrine() -> None:
     assert doctrine.project_id == 4
     assert doctrine.recommended_model == "gpt-5.4"
     assert doctrine.recommended_max_turns == 4
-    assert doctrine.run_verification is True
-    assert doctrine.confidence in {"solid", "strong"}
+
+
+def test_build_reflex_deck_arms_scope_realign_for_drifting_mission() -> None:
+    mission = make_mission_view(
+        mission_id=81,
+        name="Moderation queue",
+        objective="Build the forum moderation queue end to end.",
+        status="active",
+        phase="executing",
+        in_progress=True,
+        current_command=(
+            'powershell.exe -Command "Get-Content src\\\\openzues\\\\web\\\\static\\\\app.css"'
+        ),
+        last_commentary="Polishing gradients and chat bubble spacing in the dashboard shell.",
+        total_tokens=18000,
+    )
+
+    reflex_deck = build_reflex_deck(
+        [make_instance_view()],
+        [mission],
+        [make_project_view()],
+    )
+
+    assert reflex_deck.reflexes[0].kind == "scope_realign"
+    assert "charter" in reflex_deck.reflexes[0].title.lower()
 
 
 def test_build_cortex_surfaces_orbit_and_approval_inoculations() -> None:

@@ -12,6 +12,7 @@ OpenZues is optimized to beat "assistant wrapper" products on operator UX:
 - checkpoint memory that captures each final-answer handoff from autonomous runs
 - approval-aware continuation so long builds pause cleanly and resume without losing context
 - live thread and turn telemetry
+- operator inboxes, lane snapshots, and capability maps for supervising multiple autonomous lanes
 - approval inbox for command and file-change prompts
 - reusable playbooks with variable interpolation for recurring operator flows
 - environment diagnostics for Codex, GitHub CLI, Python, and workspace health
@@ -31,6 +32,9 @@ OpenZues is optimized to beat "assistant wrapper" products on operator UX:
 - save and run command, turn, thread+turn, and review playbooks
 - launch autonomous missions that keep a Codex thread moving until blocked, paused, or complete
 - capture mission checkpoints from final answers so users have a durable memory stream
+- synthesize an operator inbox from approvals, fragile missions, reflexes, due runs, and ready handoffs
+- map repo skill coverage and integration readiness across connected lanes
+- capture checkpoint-aware lane snapshots with continuity and safest-handoff context
 - inspect live diagnostics before debugging connection failures by hand
 - browse models, apps, plugins, skills, MCP status, config, and thread history
 - register local projects and inspect git status, branches, commits, and PRs through `gh`
@@ -93,6 +97,8 @@ Or connect to a WebSocket endpoint when you have one available.
 - `src/openzues/services/codex_rpc.py`: protocol client and transport handling
 - `src/openzues/services/manager.py`: runtime state, persistence wiring, broadcast hub
 - `src/openzues/services/missions.py`: autonomous mission runner, checkpoint capture, and continuation logic
+- `src/openzues/services/ops_mesh.py`: operator inbox, lane snapshots, skill coverage, and integration readiness
+- `src/openzues/services/skillbook.py`: claw-style builtin mission skillbooks and project skill pin resolution
 - `src/openzues/services/github.py`: local git and GitHub CLI integration
 - `src/openzues/app.py`: FastAPI app and API surface
 - `src/openzues/web/`: operator UI

@@ -220,6 +220,27 @@ class AccessService:
             api_key=api_key,
         )
 
+    async def revoke_api_key(self, operator_id: int) -> OperatorView:
+        operator = await self.database.get_operator(operator_id)
+        if operator is None:
+            raise ValueError(f"Unknown operator {operator_id}")
+        team = await self.database.get_team(int(operator["team_id"]))
+        if team is None:
+            raise ValueError(f"Operator {operator_id} is attached to a missing team.")
+        await self.database.update_operator(
+            operator_id,
+            api_key_hash=None,
+            api_key_preview=None,
+            api_key_issued_at=None,
+            api_key_last_used_at=None,
+        )
+        updated = await self.database.get_operator(operator_id)
+        assert updated is not None
+        return self._serialize_operator(
+            updated,
+            team=TeamView.model_validate({**team, "member_count": 0}),
+        )
+
     async def authenticate_api_key(
         self,
         api_key: str,

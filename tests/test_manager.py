@@ -102,6 +102,19 @@ def test_compact_event_payload_truncates_long_server_logs() -> None:
     assert compact["lineLength"] == len(line)
 
 
+def test_compact_event_payload_strips_ansi_and_timestamp_from_server_logs() -> None:
+    line = (
+        "\x1b[2m2026-04-11T01:37:30.455301Z\x1b[0m "
+        "\x1b[33mWARN\x1b[0m codex_core::plugins::manifest: ignoring interface.defaultPrompt"
+    )
+
+    compact = compact_event_payload("server/stderr", {"line": line})
+
+    assert compact["line"] == (
+        "WARN codex_core::plugins::manifest: ignoring interface.defaultPrompt"
+    )
+
+
 def test_compact_event_payload_drops_empty_catalog_items() -> None:
     compact = compact_event_payload("skill/list/updated", {"data": [{"name": "Checks"}, {}]})
 

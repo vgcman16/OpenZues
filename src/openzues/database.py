@@ -123,7 +123,12 @@ class Database:
                     description TEXT,
                     kind TEXT NOT NULL,
                     instance_id INTEGER,
+                    cadence_minutes INTEGER,
+                    enabled INTEGER NOT NULL DEFAULT 1,
                     payload_json TEXT NOT NULL,
+                    last_run_at TEXT,
+                    last_status TEXT,
+                    last_result_summary TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );
@@ -139,6 +144,42 @@ class Database:
                     last_launched_at TEXT,
                     last_status TEXT,
                     last_result_summary TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS gateway_bootstrap (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    setup_mode TEXT NOT NULL DEFAULT 'local',
+                    setup_flow TEXT NOT NULL DEFAULT 'quickstart',
+                    preferred_instance_id INTEGER,
+                    preferred_project_id INTEGER,
+                    team_id INTEGER,
+                    operator_id INTEGER,
+                    task_blueprint_id INTEGER,
+                    default_cwd TEXT,
+                    model TEXT NOT NULL,
+                    max_turns INTEGER,
+                    use_builtin_agents INTEGER NOT NULL DEFAULT 1,
+                    run_verification INTEGER NOT NULL DEFAULT 1,
+                    auto_commit INTEGER NOT NULL DEFAULT 0,
+                    pause_on_approval INTEGER NOT NULL DEFAULT 1,
+                    allow_auto_reflexes INTEGER NOT NULL DEFAULT 1,
+                    auto_recover INTEGER NOT NULL DEFAULT 1,
+                    auto_recover_limit INTEGER NOT NULL DEFAULT 2,
+                    reflex_cooldown_seconds INTEGER NOT NULL DEFAULT 900,
+                    allow_failover INTEGER NOT NULL DEFAULT 1,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS setup_footprint (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    footprint_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS setup_wizard_session (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    session_json TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );
@@ -310,6 +351,20 @@ class Database:
             await self._ensure_column(db, "missions", "last_reflex_kind", "TEXT")
             await self._ensure_column(db, "missions", "last_reflex_at", "TEXT")
             await self._ensure_column(db, "missions", "task_blueprint_id", "INTEGER")
+            await self._ensure_column(db, "playbooks", "cadence_minutes", "INTEGER")
+            await self._ensure_column(db, "playbooks", "enabled", "INTEGER NOT NULL DEFAULT 1")
+            await self._ensure_column(db, "playbooks", "last_run_at", "TEXT")
+            await self._ensure_column(db, "playbooks", "last_status", "TEXT")
+            await self._ensure_column(db, "playbooks", "last_result_summary", "TEXT")
+            await self._ensure_column(
+                db, "gateway_bootstrap", "setup_mode", "TEXT NOT NULL DEFAULT 'local'"
+            )
+            await self._ensure_column(
+                db,
+                "gateway_bootstrap",
+                "setup_flow",
+                "TEXT NOT NULL DEFAULT 'quickstart'",
+            )
             await self._ensure_column(db, "notification_routes", "vault_secret_id", "INTEGER")
             await self._ensure_column(db, "integrations", "vault_secret_id", "INTEGER")
             await db.execute(
@@ -393,6 +448,12 @@ class Database:
             row = await cursor.fetchone()
             return dict(row) if row else None
 
+    async def delete_instance(self, instance_id: int) -> None:
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute("DELETE FROM server_requests WHERE instance_id = ?", (instance_id,))
+            await db.execute("DELETE FROM instances WHERE id = ?", (instance_id,))
+            await db.commit()
+
     async def list_projects(self) -> list[dict[str, Any]]:
         async with aiosqlite.connect(self.path) as db:
             db.row_factory = aiosqlite.Row
@@ -405,6 +466,11 @@ class Database:
             cursor = await db.execute("SELECT * FROM projects WHERE id = ?", (project_id,))
             row = await cursor.fetchone()
             return dict(row) if row else None
+
+    async def delete_project(self, project_id: int) -> None:
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute("DELETE FROM projects WHERE id = ?", (project_id,))
+            await db.commit()
 
     async def list_teams(self) -> list[dict[str, Any]]:
         async with aiosqlite.connect(self.path) as db:
@@ -456,6 +522,11 @@ class Database:
                 f"UPDATE teams SET {assignments} WHERE id = ?",
                 values,
             )
+            await db.commit()
+
+    async def delete_team(self, team_id: int) -> None:
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute("DELETE FROM teams WHERE id = ?", (team_id,))
             await db.commit()
 
     async def list_operators(self) -> list[dict[str, Any]]:
@@ -545,6 +616,11 @@ class Database:
             )
             await db.commit()
 
+    async def delete_operator(self, operator_id: int) -> None:
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute("DELETE FROM operators WHERE id = ?", (operator_id,))
+            await db.commit()
+
     async def list_playbooks(self) -> list[dict[str, Any]]:
         async with aiosqlite.connect(self.path) as db:
             db.row_factory = aiosqlite.Row
@@ -592,6 +668,8 @@ class Database:
         description: str | None,
         kind: str,
         instance_id: int | None,
+        cadence_minutes: int | None,
+        enabled: bool,
         payload: dict[str, Any],
     ) -> int:
         now = utcnow()
@@ -603,17 +681,21 @@ class Database:
                     description,
                     kind,
                     instance_id,
+                    cadence_minutes,
+                    enabled,
                     payload_json,
                     created_at,
                     updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     name,
                     description,
                     kind,
                     instance_id,
+                    cadence_minutes,
+                    int(enabled),
                     json.dumps(payload),
                     now,
                     now,
@@ -622,6 +704,19 @@ class Database:
             await db.commit()
             assert cursor.lastrowid is not None
             return int(cursor.lastrowid)
+
+    async def update_playbook(self, playbook_id: int, **fields: Any) -> None:
+        if not fields:
+            return
+        fields["updated_at"] = utcnow()
+        assignments = ", ".join(f"{key} = ?" for key in fields)
+        values = list(fields.values()) + [playbook_id]
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute(
+                f"UPDATE playbooks SET {assignments} WHERE id = ?",
+                values,
+            )
+            await db.commit()
 
     async def list_task_blueprints(self) -> list[dict[str, Any]]:
         async with aiosqlite.connect(self.path) as db:
@@ -705,9 +800,218 @@ class Database:
             )
             await db.commit()
 
+    async def update_task_blueprint_payload(self, task_id: int, **payload_fields: Any) -> None:
+        if not payload_fields:
+            return
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT payload_json FROM task_blueprints WHERE id = ?",
+                (task_id,),
+            )
+            row = await cursor.fetchone()
+            if row is None:
+                raise ValueError(f"Unknown task blueprint {task_id}")
+            payload = json.loads(str(row["payload_json"]) or "{}")
+            payload.update(payload_fields)
+            await db.execute(
+                """
+                UPDATE task_blueprints
+                SET payload_json = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (json.dumps(payload), utcnow(), task_id),
+            )
+            await db.commit()
+
     async def delete_task_blueprint(self, task_id: int) -> None:
         async with aiosqlite.connect(self.path) as db:
             await db.execute("DELETE FROM task_blueprints WHERE id = ?", (task_id,))
+            await db.commit()
+
+    async def get_gateway_bootstrap(self) -> dict[str, Any] | None:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute("SELECT * FROM gateway_bootstrap WHERE id = 1")
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+
+    async def clear_gateway_bootstrap(self) -> None:
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute("DELETE FROM gateway_bootstrap WHERE id = 1")
+            await db.commit()
+
+    async def upsert_gateway_bootstrap(
+        self,
+        *,
+        setup_mode: str,
+        setup_flow: str,
+        preferred_instance_id: int | None,
+        preferred_project_id: int | None,
+        team_id: int | None,
+        operator_id: int | None,
+        task_blueprint_id: int | None,
+        default_cwd: str | None,
+        model: str,
+        max_turns: int | None,
+        use_builtin_agents: bool,
+        run_verification: bool,
+        auto_commit: bool,
+        pause_on_approval: bool,
+        allow_auto_reflexes: bool,
+        auto_recover: bool,
+        auto_recover_limit: int,
+        reflex_cooldown_seconds: int,
+        allow_failover: bool,
+    ) -> None:
+        now = utcnow()
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute(
+                """
+                INSERT INTO gateway_bootstrap (
+                    id,
+                    setup_mode,
+                    setup_flow,
+                    preferred_instance_id,
+                    preferred_project_id,
+                    team_id,
+                    operator_id,
+                    task_blueprint_id,
+                    default_cwd,
+                    model,
+                    max_turns,
+                    use_builtin_agents,
+                    run_verification,
+                    auto_commit,
+                    pause_on_approval,
+                    allow_auto_reflexes,
+                    auto_recover,
+                    auto_recover_limit,
+                    reflex_cooldown_seconds,
+                    allow_failover,
+                    created_at,
+                    updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    setup_mode = excluded.setup_mode,
+                    setup_flow = excluded.setup_flow,
+                    preferred_instance_id = excluded.preferred_instance_id,
+                    preferred_project_id = excluded.preferred_project_id,
+                    team_id = excluded.team_id,
+                    operator_id = excluded.operator_id,
+                    task_blueprint_id = excluded.task_blueprint_id,
+                    default_cwd = excluded.default_cwd,
+                    model = excluded.model,
+                    max_turns = excluded.max_turns,
+                    use_builtin_agents = excluded.use_builtin_agents,
+                    run_verification = excluded.run_verification,
+                    auto_commit = excluded.auto_commit,
+                    pause_on_approval = excluded.pause_on_approval,
+                    allow_auto_reflexes = excluded.allow_auto_reflexes,
+                    auto_recover = excluded.auto_recover,
+                    auto_recover_limit = excluded.auto_recover_limit,
+                    reflex_cooldown_seconds = excluded.reflex_cooldown_seconds,
+                    allow_failover = excluded.allow_failover,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    1,
+                    setup_mode,
+                    setup_flow,
+                    preferred_instance_id,
+                    preferred_project_id,
+                    team_id,
+                    operator_id,
+                    task_blueprint_id,
+                    default_cwd,
+                    model,
+                    max_turns,
+                    int(use_builtin_agents),
+                    int(run_verification),
+                    int(auto_commit),
+                    int(pause_on_approval),
+                    int(allow_auto_reflexes),
+                    int(auto_recover),
+                    auto_recover_limit,
+                    reflex_cooldown_seconds,
+                    int(allow_failover),
+                    now,
+                    now,
+                ),
+            )
+            await db.commit()
+
+    async def get_setup_footprint(self) -> dict[str, Any] | None:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute("SELECT * FROM setup_footprint WHERE id = 1")
+            row = await cursor.fetchone()
+            if row is None:
+                return None
+            item = dict(row)
+            item["footprint"] = json.loads(item.pop("footprint_json"))
+            return item
+
+    async def upsert_setup_footprint(self, footprint: dict[str, Any]) -> None:
+        now = utcnow()
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute(
+                """
+                INSERT INTO setup_footprint (
+                    id,
+                    footprint_json,
+                    created_at,
+                    updated_at
+                )
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    footprint_json = excluded.footprint_json,
+                    updated_at = excluded.updated_at
+                """,
+                (1, json.dumps(footprint), now, now),
+            )
+            await db.commit()
+
+    async def clear_setup_footprint(self) -> None:
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute("DELETE FROM setup_footprint WHERE id = 1")
+            await db.commit()
+
+    async def get_setup_wizard_session(self) -> dict[str, Any] | None:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute("SELECT * FROM setup_wizard_session WHERE id = 1")
+            row = await cursor.fetchone()
+            if row is None:
+                return None
+            item = dict(row)
+            item["session"] = json.loads(item.pop("session_json"))
+            return item
+
+    async def upsert_setup_wizard_session(self, session: dict[str, Any]) -> None:
+        now = utcnow()
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute(
+                """
+                INSERT INTO setup_wizard_session (
+                    id,
+                    session_json,
+                    created_at,
+                    updated_at
+                )
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    session_json = excluded.session_json,
+                    updated_at = excluded.updated_at
+                """,
+                (1, json.dumps(session), now, now),
+            )
+            await db.commit()
+
+    async def clear_setup_wizard_session(self) -> None:
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute("DELETE FROM setup_wizard_session WHERE id = 1")
             await db.commit()
 
     async def list_notification_routes(self) -> list[dict[str, Any]]:
@@ -1114,7 +1418,24 @@ class Database:
         async with aiosqlite.connect(self.path) as db:
             db.row_factory = aiosqlite.Row
             cursor = await db.execute(
-                "SELECT * FROM missions WHERE instance_id = ? AND thread_id = ?",
+                """
+                SELECT *
+                FROM missions
+                WHERE instance_id = ? AND thread_id = ?
+                ORDER BY
+                    CASE status
+                        WHEN 'active' THEN 0
+                        WHEN 'blocked' THEN 1
+                        WHEN 'paused' THEN 2
+                        WHEN 'failed' THEN 3
+                        WHEN 'completed' THEN 4
+                        ELSE 5
+                    END,
+                    CASE WHEN in_progress = 1 THEN 0 ELSE 1 END,
+                    updated_at DESC,
+                    id DESC
+                LIMIT 1
+                """,
                 (instance_id, thread_id),
             )
             row = await cursor.fetchone()
@@ -1412,6 +1733,11 @@ class Database:
                 """,
                 (status, utcnow(), instance_id, request_id),
             )
+            await db.commit()
+
+    async def clear_server_requests_for_instance(self, instance_id: int) -> None:
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute("DELETE FROM server_requests WHERE instance_id = ?", (instance_id,))
             await db.commit()
 
     async def list_unresolved_server_requests(self, instance_id: int) -> list[dict[str, Any]]:

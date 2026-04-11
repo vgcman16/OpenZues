@@ -7,16 +7,24 @@ from pydantic import BaseModel, Field
 
 TransportType = Literal["desktop", "stdio", "websocket"]
 PlaybookKind = Literal["command", "turn", "thread_turn", "review"]
+PlaybookStatus = Literal["completed", "failed"]
 DiagnosticStatus = Literal["ok", "warn", "fail", "info"]
 MissionStatus = Literal["active", "paused", "blocked", "completed", "failed"]
 SignalLevel = Literal["critical", "warn", "ready", "info"]
 SignalLane = Literal["attention", "throughput", "reliability", "capacity"]
 LaunchImpact = Literal["high", "medium", "low"]
 ContinuityState = Literal["anchored", "warming", "fragile"]
+ScopeDriftLevel = Literal["aligned", "watch", "drifting", "critical"]
 DreamStatus = Literal["forming", "ready", "fresh"]
 EconomyState = Literal["compounding", "balanced", "speculative", "leaking", "hibernating"]
 TaskStatus = Literal["idle", "due", "running", "attention", "completed", "disabled"]
 NotificationRouteKind = Literal["webhook"]
+GatewayBootstrapStatus = Literal["unconfigured", "staged", "ready", "degraded"]
+SetupRecommendedAction = Literal["bootstrap", "keep", "modify", "reset"]
+SetupResetScope = Literal["config", "config+creds+sessions", "full"]
+SetupMode = Literal["local", "remote"]
+SetupFlow = Literal["quickstart", "advanced"]
+SetupWizardStatus = Literal["unconfigured", "staged", "ready"]
 LaunchKind = Literal[
     "workspace_scout",
     "ship_slice",
@@ -31,11 +39,29 @@ ReflexKind = Literal[
     "heartbeat_nudge",
     "recovery_triangle",
     "resume_handoff",
+    "scope_realign",
 ]
 IntegrationAuthStatus = Literal["satisfied", "missing", "degraded"]
+IntegrationInventorySourceKind = Literal[
+    "integration",
+    "app",
+    "plugin",
+    "mcp_server",
+    "capability",
+]
+IntegrationInventoryReadiness = Literal[
+    "ready",
+    "auth_gap",
+    "lane_gap",
+    "degraded",
+    "observed",
+    "disabled",
+]
+LaneCapabilityStatus = Literal["ready", "auth_gap", "missing", "offline", "degraded", "disabled"]
 OperatorRole = Literal["owner", "admin", "operator", "viewer"]
 RemoteRequestKind = Literal["mission.create", "task.trigger"]
 RemoteRequestStatus = Literal["accepted", "completed", "failed", "denied", "dry_run"]
+BootstrapInstanceMode = Literal["quick_connect_desktop", "create_desktop", "existing"]
 InterferenceKind = Literal[
     "lane_braid",
     "checkpoint_eclipse",
@@ -246,16 +272,22 @@ class PlaybookCreate(BaseModel):
     kind: PlaybookKind
     template: str
     instance_id: int | None = None
+    cadence_minutes: int | None = Field(default=None, ge=1)
+    enabled: bool = True
     cwd: str | None = None
     model: str | None = None
     reasoning_effort: str | None = None
     collaboration_mode: str | None = None
     timeout_ms: int | None = 10000
     thread_id: str | None = None
+    default_variables: dict[str, str] = Field(default_factory=dict)
 
 
 class PlaybookView(PlaybookCreate):
     id: int
+    last_run_at: str | None = None
+    last_status: PlaybookStatus | None = None
+    last_result_summary: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -297,6 +329,9 @@ class TaskBlueprintCreate(BaseModel):
     instance_id: int | None = None
     project_id: int | None = None
     cadence_minutes: int | None = Field(default=None, ge=1)
+    run_until_complete: bool = False
+    continuation_cooldown_minutes: int = Field(default=10, ge=1)
+    completion_marker: str | None = None
     cwd: str | None = None
     model: str = "gpt-5.4"
     reasoning_effort: str | None = None
@@ -418,6 +453,256 @@ class SkillPinView(SkillPinCreate):
     updated_at: datetime
 
 
+class OnboardingBootstrapCreate(BaseModel):
+    setup_mode: SetupMode = "local"
+    setup_flow: SetupFlow = "quickstart"
+    instance_mode: BootstrapInstanceMode = "quick_connect_desktop"
+    instance_id: int | None = None
+    instance_name: str = "Local Codex Desktop"
+    project_path: str
+    project_label: str | None = None
+    team_name: str | None = None
+    team_slug: str | None = None
+    team_description: str | None = None
+    operator_name: str
+    operator_email: str | None = None
+    operator_role: OperatorRole = "operator"
+    issue_api_key: bool = True
+    vault_secret_label: str | None = None
+    vault_secret_value: str | None = None
+    vault_secret_kind: str = "token"
+    vault_secret_notes: str | None = None
+    integration_name: str | None = None
+    integration_kind: str | None = None
+    integration_base_url: str | None = None
+    integration_auth_scheme: str = "token"
+    integration_notes: str | None = None
+    skill_name: str | None = None
+    skill_prompt_hint: str | None = None
+    skill_source: str | None = None
+    task_name: str
+    task_summary: str | None = None
+    objective_template: str
+    cadence_minutes: int = Field(default=180, ge=1)
+    completion_marker: str | None = None
+    model: str = "gpt-5.4"
+    max_turns: int | None = Field(default=4, ge=1)
+    use_builtin_agents: bool = True
+    run_verification: bool = True
+    auto_commit: bool = False
+    pause_on_approval: bool = True
+    allow_auto_reflexes: bool = True
+    auto_recover: bool = True
+    auto_recover_limit: int = Field(default=2, ge=0)
+    reflex_cooldown_seconds: int = Field(default=900, ge=60)
+    allow_failover: bool = True
+    enabled: bool = True
+
+
+class OnboardingBootstrapResourceView(BaseModel):
+    kind: str
+    id: int
+    label: str
+    created: bool = False
+    detail: str | None = None
+
+
+class OnboardingBootstrapResultView(BaseModel):
+    headline: str
+    summary: str
+    warnings: list[str] = Field(default_factory=list)
+    next_entrypoint: str
+    instance: OnboardingBootstrapResourceView | None = None
+    project: OnboardingBootstrapResourceView
+    team: OnboardingBootstrapResourceView
+    operator: OnboardingBootstrapResourceView
+    vault_secret: OnboardingBootstrapResourceView | None = None
+    integration: OnboardingBootstrapResourceView | None = None
+    skill_pin: OnboardingBootstrapResourceView | None = None
+    task_blueprint: OnboardingBootstrapResourceView
+    api_key: str | None = None
+    mission_draft: MissionDraftView | None = None
+
+
+class GatewayBootstrapResourceView(BaseModel):
+    id: int
+    label: str
+    detail: str | None = None
+    connected: bool | None = None
+
+
+class GatewayBootstrapUpdate(BaseModel):
+    setup_mode: SetupMode = "local"
+    setup_flow: SetupFlow = "quickstart"
+    preferred_instance_id: int | None = None
+    preferred_project_id: int | None = None
+    team_id: int | None = None
+    operator_id: int | None = None
+    task_blueprint_id: int | None = None
+    default_cwd: str | None = None
+    model: str = "gpt-5.4"
+    max_turns: int | None = Field(default=4, ge=1)
+    use_builtin_agents: bool = True
+    run_verification: bool = True
+    auto_commit: bool = False
+    pause_on_approval: bool = True
+    allow_auto_reflexes: bool = True
+    auto_recover: bool = True
+    auto_recover_limit: int = Field(default=2, ge=0)
+    reflex_cooldown_seconds: int = Field(default=900, ge=60)
+    allow_failover: bool = True
+
+
+class GatewayBootstrapView(BaseModel):
+    status: GatewayBootstrapStatus
+    headline: str
+    summary: str
+    warnings: list[str] = Field(default_factory=list)
+    setup_mode: SetupMode = "local"
+    setup_flow: SetupFlow = "quickstart"
+    instance: GatewayBootstrapResourceView | None = None
+    project: GatewayBootstrapResourceView | None = None
+    team: GatewayBootstrapResourceView | None = None
+    operator: GatewayBootstrapResourceView | None = None
+    task_blueprint: GatewayBootstrapResourceView | None = None
+    default_cwd: str | None = None
+    model: str = "gpt-5.4"
+    max_turns: int | None = 4
+    use_builtin_agents: bool = True
+    run_verification: bool = True
+    auto_commit: bool = False
+    pause_on_approval: bool = True
+    allow_auto_reflexes: bool = True
+    auto_recover: bool = True
+    auto_recover_limit: int = 2
+    reflex_cooldown_seconds: int = 900
+    allow_failover: bool = True
+    launch_defaults_summary: str
+
+
+class SetupFootprintResourceView(BaseModel):
+    kind: str
+    id: int
+    label: str
+    created: bool = False
+
+
+class SetupFootprintView(BaseModel):
+    instance: SetupFootprintResourceView | None = None
+    project: SetupFootprintResourceView | None = None
+    team: SetupFootprintResourceView | None = None
+    operator: SetupFootprintResourceView | None = None
+    vault_secret: SetupFootprintResourceView | None = None
+    integration: SetupFootprintResourceView | None = None
+    skill_pin: SetupFootprintResourceView | None = None
+    task_blueprint: SetupFootprintResourceView | None = None
+    updated_at: datetime | None = None
+
+
+class SetupWizardProbeView(BaseModel):
+    status: Literal["ready", "warn", "missing"]
+    headline: str
+    summary: str
+
+
+class SetupWizardSessionView(BaseModel):
+    status: SetupWizardStatus
+    headline: str
+    summary: str
+    warnings: list[str] = Field(default_factory=list)
+    mode: SetupMode = "local"
+    flow: SetupFlow = "quickstart"
+    recommended_mode: SetupMode = "local"
+    recommended_flow: SetupFlow = "quickstart"
+    instance_mode: BootstrapInstanceMode = "quick_connect_desktop"
+    instance_id: int | None = None
+    instance_name: str = "Local Codex Desktop"
+    project_path: str | None = None
+    project_label: str | None = None
+    team_name: str | None = None
+    operator_name: str | None = None
+    operator_email: str | None = None
+    task_name: str | None = None
+    cadence_minutes: int = 180
+    model: str = "gpt-5.4"
+    max_turns: int | None = 4
+    objective_template: str | None = None
+    local_probe: SetupWizardProbeView
+    remote_probe: SetupWizardProbeView
+    updated_at: datetime | None = None
+
+
+class SetupWizardSessionUpdate(BaseModel):
+    mode: SetupMode | None = None
+    flow: SetupFlow | None = None
+    instance_mode: BootstrapInstanceMode | None = None
+    instance_id: int | None = None
+    instance_name: str | None = None
+    project_path: str | None = None
+    project_label: str | None = None
+    team_name: str | None = None
+    operator_name: str | None = None
+    operator_email: str | None = None
+    task_name: str | None = None
+    cadence_minutes: int | None = Field(default=None, ge=1)
+    model: str | None = None
+    max_turns: int | None = Field(default=None, ge=1)
+    objective_template: str | None = None
+
+
+SetupLaunchHandoffStatus = Literal["ready", "staged", "repair", "bootstrap"]
+SetupLaunchHandoffAction = Literal[
+    "load_draft",
+    "connect_lane",
+    "repair_access",
+    "restage_setup",
+    "bootstrap",
+]
+
+
+class SetupLaunchHandoffView(BaseModel):
+    status: SetupLaunchHandoffStatus
+    headline: str
+    summary: str
+    recommended_action: SetupLaunchHandoffAction
+    action_label: str
+    warnings: list[str] = Field(default_factory=list)
+    next_entrypoint: str
+    instance: GatewayBootstrapResourceView | None = None
+    project: GatewayBootstrapResourceView | None = None
+    operator: GatewayBootstrapResourceView | None = None
+    task_blueprint: GatewayBootstrapResourceView | None = None
+    mission_draft: MissionDraftView | None = None
+
+
+class SetupStatusView(BaseModel):
+    headline: str
+    summary: str
+    recommended_action: SetupRecommendedAction
+    available_actions: list[SetupRecommendedAction] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    next_entrypoint: str
+    handoff_summary: str
+    launch_handoff: SetupLaunchHandoffView
+    gateway_bootstrap: GatewayBootstrapView
+    wizard_session: SetupWizardSessionView
+    footprint: SetupFootprintView | None = None
+
+
+class SetupResetRequest(BaseModel):
+    scope: SetupResetScope = "config+creds+sessions"
+
+
+class SetupResetResultView(BaseModel):
+    headline: str
+    summary: str
+    scope: SetupResetScope
+    warnings: list[str] = Field(default_factory=list)
+    cleared: list[str] = Field(default_factory=list)
+    preserved: list[str] = Field(default_factory=list)
+    setup: SetupStatusView
+
+
 class LaneSnapshotView(BaseModel):
     id: int
     instance_id: int
@@ -428,6 +713,20 @@ class LaneSnapshotView(BaseModel):
     model_count: int = 0
     skill_count: int = 0
     thread_count: int = 0
+    approvals_pending_count: int = 0
+    mission_id: int | None = None
+    mission_name: str | None = None
+    project_label: str | None = None
+    thread_id: str | None = None
+    mission_status: MissionStatus | None = None
+    phase: str | None = None
+    current_command: str | None = None
+    command_burn: int = 0
+    token_burn: int = 0
+    last_checkpoint_summary: str | None = None
+    continuity_state: ContinuityState | None = None
+    continuity_score: int | None = None
+    safest_handoff: str | None = None
     note: str | None = None
     created_at: datetime
 
@@ -548,6 +847,11 @@ class MissionView(BaseModel):
     last_reflex_kind: str | None = None
     last_reflex_at: str | None = None
     last_activity_at: str | None = None
+    charter_summary: str | None = None
+    charter_focus_terms: list[str] = Field(default_factory=list)
+    objective_gravity: int = Field(default=100, ge=0, le=100)
+    scope_drift_level: ScopeDriftLevel = "aligned"
+    scope_drift_summary: str | None = None
     checkpoints: list[MissionCheckpointView] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
@@ -679,9 +983,30 @@ class DashboardTaskView(BaseModel):
     mission_draft: MissionDraftView
 
 
+class DashboardTaskInboxItemView(BaseModel):
+    id: str
+    kind: str
+    source: str
+    urgency: SignalLevel
+    lane_label: str | None = None
+    project_label: str | None = None
+    title: str
+    summary: str
+    recommended_action: str
+    jump_label: str
+    mission_id: int | None = None
+    task_id: int | None = None
+    playbook_id: int | None = None
+    instance_id: int | None = None
+    request_id: str | None = None
+    freshness_minutes: int | None = None
+    reflex: MissionReflexRun | None = None
+
+
 class DashboardTaskInboxView(BaseModel):
     headline: str
     summary: str
+    items: list[DashboardTaskInboxItemView] = Field(default_factory=list)
     tasks: list[DashboardTaskView] = Field(default_factory=list)
 
 
@@ -701,6 +1026,8 @@ class DashboardEconomyScopeView(BaseModel):
     approval_count: int = 0
     task_pressure_count: int = 0
     remote_pressure_count: int = 0
+    drift_mission_count: int = 0
+    objective_gravity: int = Field(default=100, ge=0, le=100)
     token_burn: int = 0
     command_burn: int = 0
     checkpoint_efficiency: float = 0.0
@@ -742,6 +1069,99 @@ class DashboardSkillbookView(BaseModel):
     skills: list[SkillPinView] = Field(default_factory=list)
 
 
+class DashboardSkillRegistrySkillView(BaseModel):
+    name: str
+    source: str | None = None
+    status: str | None = None
+    lane_count: int = 0
+    lanes: list[str] = Field(default_factory=list)
+    successful_run_count: int = 0
+    pinned_projects: list[str] = Field(default_factory=list)
+
+
+class DashboardSkillRegistryLaneView(BaseModel):
+    instance_id: int
+    instance_name: str
+    connected: bool
+    cwd: str | None = None
+    project_labels: list[str] = Field(default_factory=list)
+    skill_count: int = 0
+    relevant_skill_count: int = 0
+    successful_run_count: int = 0
+    gap_count: int = 0
+    skills: list[DashboardSkillRegistrySkillView] = Field(default_factory=list)
+
+
+class DashboardSkillRegistryProjectView(BaseModel):
+    project_id: int
+    project_label: str
+    lane_count: int = 0
+    mission_count: int = 0
+    successful_run_count: int = 0
+    pinned_skill_count: int = 0
+    live_skill_count: int = 0
+    matched_skill_count: int = 0
+    missing_skills: list[str] = Field(default_factory=list)
+    skills: list[DashboardSkillRegistrySkillView] = Field(default_factory=list)
+
+
+class DashboardSkillGapView(BaseModel):
+    mission_id: int
+    mission_name: str
+    lane_label: str | None = None
+    project_label: str | None = None
+    missing_skills: list[str] = Field(default_factory=list)
+    recommended_action: str
+
+
+class DashboardSkillsRegistryView(BaseModel):
+    headline: str
+    summary: str
+    lanes: list[DashboardSkillRegistryLaneView] = Field(default_factory=list)
+    projects: list[DashboardSkillRegistryProjectView] = Field(default_factory=list)
+    gaps: list[DashboardSkillGapView] = Field(default_factory=list)
+
+
+class DashboardIntegrationLaneView(BaseModel):
+    instance_id: int
+    instance_name: str
+    connected: bool
+    status: LaneCapabilityStatus
+    match_types: list[IntegrationInventorySourceKind] = Field(default_factory=list)
+    summary: str
+
+
+class DashboardIntegrationInventoryItemView(BaseModel):
+    id: str
+    name: str
+    kind: str
+    tracked: bool = False
+    source_kinds: list[IntegrationInventorySourceKind] = Field(default_factory=list)
+    project_labels: list[str] = Field(default_factory=list)
+    base_url: str | None = None
+    auth_scheme: str | None = None
+    auth_status: IntegrationAuthStatus | None = None
+    readiness: IntegrationInventoryReadiness = "observed"
+    level: SignalLevel = "info"
+    lane_ready_count: int = 0
+    lane_match_count: int = 0
+    summary: str
+    recommended_action: str
+    notes: str | None = None
+    capabilities: list[str] = Field(default_factory=list)
+    lanes: list[DashboardIntegrationLaneView] = Field(default_factory=list)
+
+
+class DashboardIntegrationsInventoryView(BaseModel):
+    headline: str
+    summary: str
+    ready_count: int = 0
+    gap_count: int = 0
+    tracked_count: int = 0
+    observed_count: int = 0
+    items: list[DashboardIntegrationInventoryItemView] = Field(default_factory=list)
+
+
 class DashboardAuthPostureView(BaseModel):
     headline: str
     summary: str
@@ -765,6 +1185,8 @@ class DashboardOpsMeshView(BaseModel):
     task_inbox: DashboardTaskInboxView
     auth_posture: DashboardAuthPostureView
     access_posture: DashboardAccessPostureView
+    integrations_inventory: DashboardIntegrationsInventoryView
+    skills_registry: DashboardSkillsRegistryView
     skillbooks: list[DashboardSkillbookView] = Field(default_factory=list)
     teams: list[TeamView] = Field(default_factory=list)
     operators: list[OperatorView] = Field(default_factory=list)
@@ -849,6 +1271,7 @@ class DashboardView(BaseModel):
     attention_queue: DashboardAttentionQueueView
     launchpad: DashboardLaunchpadView
     radar: DashboardRadarView
+    gateway_bootstrap: GatewayBootstrapView
     ops_mesh: DashboardOpsMeshView
     economy: DashboardEconomyView
     interference: DashboardInterferenceView

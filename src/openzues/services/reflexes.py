@@ -13,6 +13,8 @@ from openzues.schemas import (
     SignalLevel,
 )
 from openzues.services.cortex import doctrine_index
+from openzues.services.run_pressure import has_verification_spike_pressure
+from openzues.services.scope_enforcer import build_scope_assessment
 
 
 def _parse_timestamp(value: str | None) -> datetime | None:
@@ -99,6 +101,20 @@ def build_reflex_deck(
             continue
         doctrine = project_doctrine_index.get(mission.project_id or -1)
         doctrine_hint = _doctrine_hint(doctrine)
+        scope = build_scope_assessment(mission, checkpoints=mission.checkpoints)
+
+        if mission.status == "active" and scope.drift_level in {"drifting", "critical"}:
+            add_reflex(
+                mission,
+                reflex_id=f"{mission.id}:scope-realign",
+                kind="scope_realign",
+                level="critical" if scope.drift_level == "critical" else "warn",
+                title=f"Realign {mission.name} to its charter",
+                summary=scope.drift_summary,
+                prompt=scope.reflex_prompt,
+                action_label="Realign scope",
+            )
+            continue
 
         if mission.status == "active" and _is_orbiting(mission):
             add_reflex(
@@ -133,10 +149,10 @@ def build_reflex_deck(
                 action_label="Force landing",
             )
 
-        if (
-            mission.status == "active"
-            and mission.total_tokens >= 40000
-            and not mission.last_checkpoint
+        if mission.status == "active" and has_verification_spike_pressure(
+            total_tokens=mission.total_tokens,
+            model=mission.model,
+            has_checkpoint=bool(mission.last_checkpoint),
         ):
             add_reflex(
                 mission,
@@ -145,8 +161,8 @@ def build_reflex_deck(
                 level="warn",
                 title=f"Trigger a verification spike for {mission.name}",
                 summary=(
-                    "Token burn is climbing without a durable handoff. This reflex redirects the "
-                    "next turn toward proof instead of further sprawl."
+                    "Long-run continuity risk is climbing without a durable handoff. This reflex "
+                    "redirects the next turn toward proof instead of further sprawl."
                 ),
                 prompt="\n".join(
                     [

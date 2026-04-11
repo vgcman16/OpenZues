@@ -27,6 +27,21 @@ def resolve_thread_id(payload: dict[str, Any]) -> str | None:
     return extract_thread_id(payload)
 
 
+def summarize_playbook_result(
+    playbook: dict[str, Any],
+    result: PlaybookRunResult,
+) -> str:
+    name = str(playbook.get("name") or "Playbook")
+    kind = result.kind.replace("_", " ")
+    detail = f"Ran {name} ({kind}) on instance {result.resolved_instance_id}"
+    if result.thread_id:
+        detail += f" using {result.thread_id}"
+    exit_code = result.result.get("exitCode") if isinstance(result.result, dict) else None
+    if isinstance(exit_code, int):
+        detail += f" with exit code {exit_code}"
+    return f"{detail}."
+
+
 @dataclass(slots=True)
 class PlaybookService:
     async def execute(
@@ -160,5 +175,14 @@ class PlaybookService:
             "thread_id": run.thread_id or playbook.get("thread_id") or "",
             "cwd": run.cwd or playbook.get("cwd") or "",
         }
+        raw_default_variables = playbook.get("default_variables")
+        if isinstance(raw_default_variables, dict):
+            variables.update(
+                {
+                    str(key): str(value)
+                    for key, value in raw_default_variables.items()
+                    if value is not None
+                }
+            )
         variables.update(run.variables)
         return variables

@@ -147,9 +147,21 @@
                   <div class="section-header">
                     <div>
                       <p class="eyebrow">Task Inbox</p>
-                      <h2 id="task-inbox-headline">No task blueprints yet</h2>
+                      <h2 id="task-inbox-headline">Operator inbox is quiet</h2>
                     </div>
                     <p id="task-inbox-summary" class="panel-lede"></p>
+                  </div>
+
+                  <div id="task-inbox-items" class="stack library-list"></div>
+
+                  <div class="section-header">
+                    <div>
+                      <p class="eyebrow">Schedules</p>
+                      <h2>Save repeated mission launches</h2>
+                    </div>
+                    <p class="panel-lede">
+                      Reuse the same objective with a cadence instead of rebuilding it by hand.
+                    </p>
                   </div>
 
                   <form id="task-form" class="stack form-grid">
@@ -200,7 +212,7 @@
                         Pause on approvals
                       </label>
                     </div>
-                    <button type="submit">Save Task Blueprint</button>
+                    <button type="submit">Save Scheduled Task</button>
                   </form>
 
                   <div id="task-blueprints" class="stack library-list"></div>
@@ -209,6 +221,18 @@
                 <section class="subsection-panel ops-section">
                   <div class="ops-grid">
                     <section class="stack">
+                      <div class="section-header">
+                        <div>
+                          <p class="eyebrow">Skills Registry</p>
+                          <h2 id="skills-registry-headline">Skills registry is idle</h2>
+                        </div>
+                        <p id="skills-registry-summary" class="panel-lede"></p>
+                      </div>
+
+                      <div id="skills-registry-gaps" class="stack library-list"></div>
+                      <div id="skills-registry-projects" class="stack library-list"></div>
+                      <div id="skills-registry-lanes" class="stack library-list"></div>
+
                       <div class="section-header">
                         <div>
                           <p class="eyebrow">Skillbooks</p>
@@ -262,6 +286,29 @@
                           Add integrations to start tracking credential posture.
                         </div>
                       </article>
+
+                      <article class="library-card">
+                        <div class="row">
+                          <strong id="integrations-inventory-headline">
+                            Integration inventory is idle
+                          </strong>
+                          <div class="pill-row">
+                            <span id="integrations-inventory-ready-count" class="pill">
+                              0 ready
+                            </span>
+                            <span id="integrations-inventory-gap-count" class="pill">0 gaps</span>
+                            <span id="integrations-inventory-observed-count" class="pill">
+                              0 observed
+                            </span>
+                          </div>
+                        </div>
+                        <div id="integrations-inventory-summary" class="small-muted">
+                          Add tracked integrations or connect live lane capability catalogs to build
+                          the readiness map.
+                        </div>
+                      </article>
+
+                      <div id="integrations-inventory-list" class="stack library-list"></div>
 
                       <form id="integration-form" class="stack compact-form">
                         <input name="name" type="text" placeholder="Integration name" required />
@@ -432,7 +479,7 @@
                           <input
                             name="events"
                             type="text"
-                            placeholder="mission/completed, mission/failed, task/*"
+                            placeholder="ops/inbox/*, mission/completed, mission/failed, task/*"
                           />
                           <input
                             name="secret_header_name"
@@ -580,6 +627,200 @@
               </summary>
 
               <div class="shell-body">
+                <section class="subsection-panel bootstrap-panel">
+                  <div class="section-header">
+                    <div>
+                      <p class="eyebrow">QuickStart</p>
+                      <h2 id="onboarding-headline">Bootstrap the first autonomous loop</h2>
+                    </div>
+                    <p id="onboarding-summary" class="panel-lede">
+                      Collapse the current setup sprawl into one pass, then hand the first verified
+                      mission draft straight to the composer.
+                    </p>
+                  </div>
+
+                  <div class="section-callout compact-callout stack">
+                    <div class="row">
+                      <strong id="onboarding-mode-label">Local-first bootstrap</strong>
+                      <span id="onboarding-flow-pill" class="pill ok">QuickStart</span>
+                    </div>
+                    <p id="onboarding-mode-summary" class="small-muted">
+                      This path reuses the existing control plane. It can stage or reuse a Desktop
+                      lane, register the workspace, issue remote operator access, vault a secret,
+                      pin a project skill, schedule the first recurring task, and preload the launch
+                      draft without inventing another config layer.
+                    </p>
+                  </div>
+
+                  <div id="onboarding-checklist" class="bootstrap-checklist"></div>
+                  <div id="gateway-bootstrap-profile" class="stack"></div>
+
+                  <form id="onboarding-form" class="stack bootstrap-form">
+                    <div class="form-grid">
+                      <select name="setup_mode" id="onboarding-setup-mode">
+                        <option value="local">Local bootstrap</option>
+                        <option value="remote">Remote bootstrap</option>
+                      </select>
+                      <select name="setup_flow" id="onboarding-setup-flow">
+                        <option value="quickstart">QuickStart</option>
+                        <option value="advanced">Advanced</option>
+                      </select>
+                    </div>
+
+                    <div class="form-grid">
+                      <input
+                        name="project_path"
+                        type="text"
+                        placeholder="Workspace path, e.g. C:\path\to\repo"
+                        required
+                      />
+                      <input name="project_label" type="text" placeholder="Workspace label" />
+                      <select name="instance_mode" id="onboarding-instance-mode">
+                        <option value="quick_connect_desktop">Quick-connect Desktop bridge</option>
+                        <option value="create_desktop">Create Desktop lane only</option>
+                        <option value="existing">Reuse an existing lane</option>
+                      </select>
+                      <select name="instance_id" id="onboarding-instance-select"></select>
+                      <input
+                        name="instance_name"
+                        type="text"
+                        placeholder="Lane name"
+                        value="Local Codex Desktop"
+                      />
+                      <input
+                        name="operator_name"
+                        type="text"
+                        placeholder="Remote operator name"
+                        required
+                      />
+                      <input
+                        name="operator_email"
+                        type="email"
+                        placeholder="Remote operator email (optional)"
+                      />
+                      <input name="team_name" type="text" placeholder="Operator team (optional)" />
+                    </div>
+
+                    <div class="toggle-row">
+                      <label class="checkbox">
+                        <input name="issue_api_key" type="checkbox" checked />
+                        Issue remote API key
+                      </label>
+                      <label class="checkbox">
+                        <input name="enabled" type="checkbox" checked />
+                        Enable recurring task
+                      </label>
+                    </div>
+
+                    <div class="form-grid">
+                      <input
+                        name="vault_secret_label"
+                        type="text"
+                        placeholder="Vault secret label, e.g. GITHUB_TOKEN"
+                      />
+                      <input
+                        name="integration_name"
+                        type="text"
+                        placeholder="Integration name"
+                        value="GitHub Inventory"
+                      />
+                      <input
+                        name="integration_kind"
+                        type="text"
+                        placeholder="Integration kind"
+                        value="github"
+                      />
+                      <input
+                        name="integration_base_url"
+                        type="text"
+                        placeholder="Integration base URL"
+                        value="https://api.github.com"
+                      />
+                      <input
+                        name="skill_name"
+                        type="text"
+                        placeholder="Project skill name"
+                        value="Browser Verify"
+                      />
+                      <input
+                        name="skill_source"
+                        type="text"
+                        placeholder="Skill source"
+                        value="agent-browser"
+                      />
+                    </div>
+
+                    <textarea
+                      name="vault_secret_value"
+                      placeholder="Optional secret value. Leave blank to skip vault storage and integration auth."
+                    ></textarea>
+                    <textarea
+                      name="skill_prompt_hint"
+                      placeholder="Skill hint"
+                    >Use this after meaningful UI changes or dashboard flows that need visual confirmation.</textarea>
+
+                    <div class="form-grid">
+                      <input
+                        name="task_name"
+                        type="text"
+                        placeholder="First recurring task name"
+                        value="Autonomous Ship Loop"
+                        required
+                      />
+                      <input
+                        name="cadence_minutes"
+                        type="number"
+                        min="1"
+                        placeholder="Cadence minutes"
+                        value="180"
+                        required
+                      />
+                      <input
+                        name="model"
+                        type="text"
+                        placeholder="Model"
+                        value="gpt-5.4"
+                      />
+                      <input
+                        name="max_turns"
+                        type="number"
+                        min="1"
+                        placeholder="Max turns"
+                        value="4"
+                      />
+                    </div>
+
+                    <textarea
+                      name="objective_template"
+                      placeholder="Describe the recurring autonomous objective."
+                      required
+                    >Inspect the workspace, ship the next verified slice, run the relevant checks, and leave a concise operator handoff: completed, verified, next step, blockers.</textarea>
+
+                    <div class="toggle-row">
+                      <label class="checkbox">
+                        <input name="run_verification" type="checkbox" checked />
+                        Run verification
+                      </label>
+                      <label class="checkbox">
+                        <input name="use_builtin_agents" type="checkbox" checked />
+                        Use built-in agents
+                      </label>
+                      <label class="checkbox">
+                        <input name="auto_commit" type="checkbox" />
+                        Auto-commit milestones
+                      </label>
+                      <label class="checkbox">
+                        <input name="pause_on_approval" type="checkbox" checked />
+                        Pause on approvals
+                      </label>
+                    </div>
+
+                    <button type="submit">Bootstrap Workspace</button>
+                  </form>
+
+                  <div id="onboarding-result" class="stack"></div>
+                </section>
+
                 <div class="ops-grid">
                   <section class="subsection-panel">
                     <div class="section-header">
@@ -606,6 +847,12 @@
                         min="1"
                         placeholder="Instance ID (optional)"
                       />
+                      <input
+                        name="cadence_minutes"
+                        type="number"
+                        min="1"
+                        placeholder="Cadence minutes (blank = manual)"
+                      />
                       <input name="cwd" type="text" placeholder="CWD template (optional)" />
                       <input name="model" type="text" placeholder="Model (thread-turn only)" />
                       <input
@@ -619,6 +866,14 @@
                         placeholder="Template. Supports {date}, {datetime}, {cwd}, {thread_id}, and custom variables."
                         required
                       ></textarea>
+                      <textarea
+                        name="default_variables"
+                        placeholder='Default variables as JSON, e.g. {"branch":"main","goal":"triage failing tests"}'
+                      >{}</textarea>
+                      <label class="checkbox">
+                        <input name="enabled" type="checkbox" checked />
+                        Enabled
+                      </label>
                       <button type="submit">Save Playbook</button>
                     </form>
 

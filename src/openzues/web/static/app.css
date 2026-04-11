@@ -416,6 +416,66 @@ a {
   line-height: 1.45;
 }
 
+.signal-action-stack {
+  display: grid;
+  gap: 10px;
+}
+
+.signal-toggle,
+.signal-inline-action {
+  width: fit-content;
+}
+
+.signal-toggle {
+  border: 1px solid rgba(139, 255, 202, 0.18);
+  background: rgba(139, 255, 202, 0.08);
+  color: #e8fff5;
+}
+
+.signal-toggle:hover {
+  background: rgba(139, 255, 202, 0.14);
+}
+
+.signal-reserve {
+  grid-column: span 2;
+}
+
+.signal-open {
+  gap: 14px;
+}
+
+.signal-reserve-list {
+  display: grid;
+  gap: 10px;
+  padding-top: 6px;
+}
+
+.signal-reserve-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: rgba(9, 19, 32, 0.34);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.signal-reserve-copy {
+  display: grid;
+  gap: 4px;
+}
+
+.signal-reserve-copy strong {
+  font-size: 0.95rem;
+}
+
+.signal-reserve-copy span,
+.signal-reserve-footer {
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
 .signal-fresh {
   color: var(--muted);
   font-size: 0.82rem;
@@ -533,6 +593,51 @@ a {
 
 .subsection-panel .section-header h2 {
   font-size: 1.34rem;
+}
+
+.bootstrap-panel {
+  background:
+    radial-gradient(circle at top right, rgba(139, 255, 202, 0.08), transparent 28%),
+    linear-gradient(180deg, rgba(93, 168, 255, 0.06), transparent 48%),
+    rgba(255, 255, 255, 0.02);
+}
+
+.bootstrap-checklist,
+.bootstrap-resource-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+}
+
+.bootstrap-check,
+.bootstrap-resource,
+.bootstrap-result {
+  padding: 14px;
+  border-radius: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.bootstrap-result {
+  display: grid;
+  gap: 14px;
+}
+
+.bootstrap-check p,
+.bootstrap-resource p {
+  margin: 0;
+}
+
+.bootstrap-form {
+  margin-top: 6px;
+}
+
+.gateway-bootstrap-profile {
+  margin-top: 4px;
+}
+
+.bootstrap-policy-pills {
+  flex-wrap: wrap;
 }
 
 .launch-deck {
@@ -2114,6 +2219,15 @@ pre {
   .chat-card-grid,
   .launch-console .preset-strip {
     grid-template-columns: 1fr;
+  }
+
+  .signal-reserve {
+    grid-column: span 1;
+  }
+
+  .signal-reserve-item {
+    flex-direction: column;
+    align-items: stretch;
   }
 
   .toggle-row {

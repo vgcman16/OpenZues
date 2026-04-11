@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from ipaddress import ip_address
@@ -34,6 +35,8 @@ from openzues.schemas import (
     DashboardView,
     DiagnosticsView,
     EventView,
+    GatewayBootstrapUpdate,
+    GatewayBootstrapView,
     InstanceCreate,
     InstanceView,
     IntegrationCreate,
@@ -45,6 +48,8 @@ from openzues.schemas import (
     MissionView,
     NotificationRouteCreate,
     NotificationRouteView,
+    OnboardingBootstrapCreate,
+    OnboardingBootstrapResultView,
     OperatorCreate,
     OperatorCredentialView,
     PlaybookCreate,
@@ -58,6 +63,12 @@ from openzues.schemas import (
     RemoteTaskTrigger,
     RequestResolution,
     ReviewCreate,
+    SetupLaunchHandoffView,
+    SetupResetRequest,
+    SetupResetResultView,
+    SetupStatusView,
+    SetupWizardSessionUpdate,
+    SetupWizardSessionView,
     SkillPinCreate,
     SkillPinView,
     TaskBlueprintCreate,
@@ -83,20 +94,37 @@ from openzues.services.cortex import (
 from openzues.services.dreams import build_dream_deck
 from openzues.services.economy import build_economy
 from openzues.services.environment import EnvironmentService
+from openzues.services.followups import mission_followup_kind, mission_matches_payload
+from openzues.services.gateway_bootstrap import GatewayBootstrapService
 from openzues.services.github import GitHubService
 from openzues.services.hub import BroadcastHub
 from openzues.services.interference import build_interference
 from openzues.services.manager import RuntimeManager, compact_event_payload
 from openzues.services.missions import MissionService
+from openzues.services.onboarding import OnboardingService
 from openzues.services.ops_mesh import OpsMeshService, build_ops_mesh
-from openzues.services.playbooks import PlaybookService
+from openzues.services.playbooks import PlaybookService, summarize_playbook_result
 from openzues.services.projects import ProjectService
 from openzues.services.reflexes import build_reflex_deck
 from openzues.services.remote_ops import RemoteOpsService
+from openzues.services.run_pressure import has_checkpoint_pressure
+from openzues.services.scope_enforcer import build_scope_assessment
+from openzues.services.setup import SetupService
 from openzues.services.vault import VaultService
 from openzues.settings import Settings, settings
 
 configure_logging()
+
+PLUGIN_DUPLICATE_SERVER_RE = re.compile(
+    r"skipping duplicate plugin MCP server name.*?plugin\s*=\s*\"(?P<plugin>[^\"]+)\""
+    r".*?previous_plugin\s*=\s*\"(?P<previous>[^\"]+)\".*?server\s*=\s*\"(?P<server>[^\"]+)\"",
+    re.IGNORECASE,
+)
+PLUGIN_DEFAULT_PROMPT_RE = re.compile(
+    r"ignoring interface\.defaultPrompt: prompt must be at most 128 characters"
+    r"(?:\s+path\s*=\s*(?P<path>.+))?",
+    re.IGNORECASE,
+)
 
 
 def _parse_timestamp(value: str | None) -> datetime | None:
@@ -214,6 +242,7 @@ def build_radar(
     projects: list[ProjectView],
 ) -> DashboardRadarView:
     signals: list[DashboardSignalView] = []
+    ready_handoffs: list[MissionView] = []
     missions_by_instance: dict[int, list[MissionView]] = {}
     for mission in missions:
         missions_by_instance.setdefault(mission.instance_id, []).append(mission)
@@ -272,6 +301,7 @@ def build_radar(
     for mission in missions:
         age_minutes = _minutes_since(mission.last_activity_at)
         last_error = str(mission.last_error or "")
+        scope = build_scope_assessment(mission, checkpoints=mission.checkpoints)
 
         if mission.status == "blocked" and mission.phase == "approval":
             add_signal(
@@ -351,22 +381,37 @@ def build_radar(
             )
             continue
 
-        if (
-            mission.status == "active"
-            and mission.total_tokens >= 60000
-            and not mission.last_checkpoint
+        if mission.status == "active" and scope.drift_level in {"drifting", "critical"}:
+            add_signal(
+                f"mission-{mission.id}-scope",
+                lane="attention",
+                level="critical" if scope.drift_level == "critical" else "warn",
+                title=f"{mission.name} is drifting away from its charter",
+                detail=scope.drift_summary,
+                action=scope.recommended_action,
+                mission_id=mission.id,
+                instance_id=mission.instance_id,
+                freshness_minutes=age_minutes,
+            )
+            continue
+
+        if mission.status == "active" and has_checkpoint_pressure(
+            total_tokens=mission.total_tokens,
+            model=mission.model,
+            has_checkpoint=bool(mission.last_checkpoint),
         ):
             add_signal(
                 f"mission-{mission.id}-burn",
                 lane="throughput",
                 level="warn",
-                title=f"{mission.name} is burning hot without a handoff",
+                title=f"{mission.name} is on a long run without a handoff",
                 detail=(
                     f"The mission has consumed {mission.total_tokens:,} tokens "
                     "without producing a durable checkpoint yet."
                 ),
                 action=(
-                    "Review the live commentary and checkpoint strategy before it keeps looping."
+                    "Review the live commentary and checkpoint strategy before continuity "
+                    "gets fuzzy."
                 ),
                 mission_id=mission.id,
                 instance_id=mission.instance_id,
@@ -396,17 +441,7 @@ def build_radar(
             continue
 
         if mission.status in {"paused", "completed"} and mission.last_checkpoint:
-            add_signal(
-                f"mission-{mission.id}-handoff",
-                lane="attention",
-                level="ready",
-                title=f"Handoff ready from {mission.name}",
-                detail="A fresh checkpoint is available for review or continuation.",
-                action=mission.suggested_action,
-                mission_id=mission.id,
-                instance_id=mission.instance_id,
-                freshness_minutes=age_minutes,
-            )
+            ready_handoffs.append(mission)
 
     idle_connected = [
         instance
@@ -455,6 +490,44 @@ def build_radar(
                 instance_id=instance.id,
             )
 
+    ready_handoffs = sorted(
+        ready_handoffs,
+        key=lambda mission: (
+            _minutes_since(mission.last_activity_at)
+            if _minutes_since(mission.last_activity_at) is not None
+            else 9999,
+            mission.name.lower(),
+        ),
+    )
+    if len(ready_handoffs) > 2:
+        focus_names = ", ".join(mission.name for mission in ready_handoffs[:2])
+        remainder = len(ready_handoffs) - 2
+        suffix = f", and {remainder} more" if remainder > 0 else ""
+        add_signal(
+            "attention/handoff-backlog",
+            lane="attention",
+            level="ready",
+            title=f"{len(ready_handoffs)} checkpoint handoffs are parked in reserve",
+            detail=(
+                f"{focus_names}{suffix} already have durable checkpoints ready for continuation."
+            ),
+            action="Open the mission list or transcript and pick the next relay to resume.",
+            freshness_minutes=_minutes_since(ready_handoffs[0].last_activity_at),
+        )
+    else:
+        for mission in ready_handoffs:
+            add_signal(
+                f"mission-{mission.id}-handoff",
+                lane="attention",
+                level="ready",
+                title=f"Handoff ready from {mission.name}",
+                detail="A fresh checkpoint is available for review or continuation.",
+                action=mission.suggested_action,
+                mission_id=mission.id,
+                instance_id=mission.instance_id,
+                freshness_minutes=_minutes_since(mission.last_activity_at),
+            )
+
     level_rank = {"critical": 0, "warn": 1, "ready": 2, "info": 3}
     lane_rank = {"attention": 0, "reliability": 1, "throughput": 2, "capacity": 3}
     sorted_signals = sorted(
@@ -485,7 +558,15 @@ def build_radar(
         )
     else:
         posture = "steady"
-        summary = "Autonomy lanes are clear. Use the ready signals to keep momentum up."
+        ready_count = len(ready_handoffs)
+        if ready_count > 2:
+            summary = (
+                "Autonomy lanes are clear. "
+                f"{ready_count} ready handoff{'s are' if ready_count != 1 else ' is'} "
+                "parked in reserve."
+            )
+        else:
+            summary = "Autonomy lanes are clear. Use the ready signals to keep momentum up."
 
     if not sorted_signals:
         sorted_signals = [
@@ -518,6 +599,13 @@ def build_launchpad(
     }
     seen_ids: set[str] = set()
 
+    def has_equivalent_live_draft(draft: MissionDraftView) -> bool:
+        return any(
+            mission.status in {"active", "blocked", "paused"}
+            and mission_matches_payload(mission, draft)
+            for mission in missions
+        )
+
     def add_opportunity(
         opportunity_id: str,
         *,
@@ -536,6 +624,8 @@ def build_launchpad(
         draft: MissionDraftView,
         action_label: str = "Load draft",
     ) -> None:
+        if kind in {"checkpoint_hardener", "recovery_run"} and has_equivalent_live_draft(draft):
+            return
         if opportunity_id in seen_ids:
             return
         seen_ids.add(opportunity_id)
@@ -611,6 +701,8 @@ def build_launchpad(
         reverse=True,
     )
     for mission in checkpoint_missions[:3]:
+        if mission_followup_kind(mission) is not None:
+            continue
         target_instance = next(
             (
                 instance
@@ -880,6 +972,7 @@ def create_app(
     ops_mesh_service: OpsMeshService | None = None,
     vault_service: VaultService | None = None,
     access_service: AccessService | None = None,
+    gateway_bootstrap_service: GatewayBootstrapService | None = None,
     remote_ops_service: RemoteOpsService | None = None,
     control_chat_service: ControlChatService | None = None,
     control_plane_lease: ControlPlaneLease | None = None,
@@ -903,6 +996,11 @@ def create_app(
     )
     active_vault_service = vault_service or VaultService(active_database, active_settings)
     active_access_service = access_service or AccessService(active_database)
+    active_gateway_bootstrap_service = gateway_bootstrap_service or GatewayBootstrapService(
+        active_database,
+        active_manager,
+        active_access_service,
+    )
     active_mission_service = mission_service or MissionService(
         active_database,
         active_manager,
@@ -914,6 +1012,22 @@ def create_app(
         active_mission_service,
         active_hub,
         active_vault_service,
+        playbooks=active_playbook_service,
+    )
+    active_setup_service = SetupService(
+        active_database,
+        active_manager,
+        active_access_service,
+        active_gateway_bootstrap_service,
+        active_ops_mesh_service,
+    )
+    active_onboarding_service = OnboardingService(
+        active_database,
+        active_manager,
+        active_access_service,
+        active_ops_mesh_service,
+        active_gateway_bootstrap_service,
+        active_setup_service,
     )
     active_remote_ops_service = remote_ops_service or RemoteOpsService(
         active_database,
@@ -988,6 +1102,9 @@ def create_app(
     fastapi_app.state.manager = active_manager
     fastapi_app.state.mission_service = active_mission_service
     fastapi_app.state.control_chat_service = active_control_chat_service
+    fastapi_app.state.onboarding_service = active_onboarding_service
+    fastapi_app.state.gateway_bootstrap_service = active_gateway_bootstrap_service
+    fastapi_app.state.setup_service = active_setup_service
     fastapi_app.state.control_plane_role = "leader"
     fastapi_app.state.control_plane_owner_pid = None
     fastapi_app.state.control_plane_lock_path = str(active_control_plane_lease.path)
@@ -1042,6 +1159,84 @@ def create_app(
             actions=[],
         )
 
+    def _event_merge_key(
+        row: dict[str, Any],
+        payload: dict[str, Any],
+    ) -> tuple[Any, ...] | None:
+        if row.get("method") != "server/stderr":
+            return None
+        line = str(payload.get("line") or "")
+        duplicate_match = PLUGIN_DUPLICATE_SERVER_RE.search(line)
+        if duplicate_match:
+            return (
+                "plugin-duplicate-server",
+                row.get("instance_id"),
+                row.get("thread_id"),
+                duplicate_match.group("plugin"),
+                duplicate_match.group("previous"),
+                duplicate_match.group("server"),
+            )
+        if PLUGIN_DEFAULT_PROMPT_RE.search(line):
+            return (
+                "plugin-default-prompt",
+                row.get("instance_id"),
+                row.get("thread_id"),
+            )
+        return None
+
+    def _merge_event_payload(
+        existing_payload: dict[str, Any],
+        incoming_payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        merged = dict(existing_payload)
+        merged["repeatCount"] = int(existing_payload.get("repeatCount") or 1) + 1
+        merged["line"] = str(incoming_payload.get("line") or merged.get("line") or "")
+
+        default_prompt_match = PLUGIN_DEFAULT_PROMPT_RE.search(merged["line"])
+        if default_prompt_match:
+            existing_paths = [
+                str(path)
+                for path in merged.get("paths", [])
+                if isinstance(path, str) and path.strip()
+            ]
+            incoming_path = default_prompt_match.group("path")
+            if incoming_path:
+                unique_paths = list(dict.fromkeys([*existing_paths, incoming_path.strip()]))
+                merged["paths"] = unique_paths[:6]
+                merged["pathCount"] = len(unique_paths)
+        return merged
+
+    async def build_dashboard_events() -> list[EventView]:
+        merged_events: dict[tuple[Any, ...], EventView] = {}
+        passthrough_events: list[EventView] = []
+        for row in await active_database.list_events(250):
+            compact_payload = compact_event_payload(row["method"], row["payload"])
+            event = EventView.model_validate({**row, "payload": compact_payload})
+            merge_key = _event_merge_key(row, compact_payload)
+            if merge_key is None:
+                passthrough_events.append(event)
+                continue
+            existing = merged_events.get(merge_key)
+            if existing is None:
+                payload = dict(compact_payload)
+                payload["repeatCount"] = 1
+                default_prompt_match = PLUGIN_DEFAULT_PROMPT_RE.search(
+                    str(payload.get("line") or "")
+                )
+                if default_prompt_match:
+                    path = default_prompt_match.group("path")
+                    if path:
+                        payload["paths"] = [path.strip()]
+                        payload["pathCount"] = 1
+                merged_events[merge_key] = event.model_copy(update={"payload": payload})
+                continue
+            merged_payload = _merge_event_payload(existing.payload, compact_payload)
+            merged_events[merge_key] = existing.model_copy(
+                update={"payload": merged_payload, "created_at": event.created_at}
+            )
+        events = [*passthrough_events, *merged_events.values()]
+        return sorted(events, key=lambda item: item.created_at)
+
     async def build_dashboard() -> DashboardView:
         project_rows = await active_database.list_projects()
         playbook_rows = await active_database.list_playbooks()
@@ -1059,15 +1254,7 @@ def create_app(
         operators = await active_access_service.list_operator_views()
         remote_requests = await active_remote_ops_service.list_remote_request_views()
         access_posture = build_access_posture(teams, operators, remote_requests)
-        events = [
-            EventView.model_validate(
-                {
-                    **row,
-                    "payload": compact_event_payload(row["method"], row["payload"]),
-                }
-            )
-            for row in await active_database.list_events(250)
-        ]
+        events = await build_dashboard_events()
         instances = await active_manager.list_views()
         missions = await active_mission_service.list_views()
         doctrines = build_doctrines(missions, projects)
@@ -1079,10 +1266,12 @@ def create_app(
             attention_queue=empty_attention_queue_view(),
             launchpad=build_launchpad(instances, missions, projects, doctrines=doctrines),
             radar=build_radar(instances, missions, projects),
+            gateway_bootstrap=await active_gateway_bootstrap_service.get_view(),
             ops_mesh=build_ops_mesh(
                 instances,
                 missions,
                 projects,
+                playbooks,
                 task_blueprints,
                 skill_pins,
                 vault_secrets,
@@ -1441,6 +1630,63 @@ def create_app(
             raise HTTPException(status_code=500, detail="Failed to create project.")
         return ProjectView.model_validate(active_project_service.inspect(row))
 
+    @fastapi_app.post("/api/onboarding/bootstrap")
+    async def bootstrap_onboarding(
+        request: Request,
+        payload: OnboardingBootstrapCreate,
+    ) -> OnboardingBootstrapResultView:
+        await require_management_access(request, "team.manage")
+        try:
+            return await active_onboarding_service.bootstrap(payload)
+        except (KeyError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @fastapi_app.get("/api/setup")
+    async def get_setup() -> SetupStatusView:
+        return await active_setup_service.inspect()
+
+    @fastapi_app.get("/api/setup/launch")
+    async def get_setup_launch() -> SetupLaunchHandoffView:
+        return await active_setup_service.get_launch_handoff()
+
+    @fastapi_app.get("/api/setup/wizard")
+    async def get_setup_wizard() -> SetupWizardSessionView:
+        return await active_setup_service.get_wizard_session()
+
+    @fastapi_app.put("/api/setup/wizard")
+    async def update_setup_wizard(
+        request: Request,
+        payload: SetupWizardSessionUpdate,
+    ) -> SetupWizardSessionView:
+        await require_management_access(request, "team.manage")
+        return await active_setup_service.save_wizard_session(payload)
+
+    @fastapi_app.post("/api/setup/reset")
+    async def reset_setup(
+        request: Request,
+        payload: SetupResetRequest,
+    ) -> SetupResetResultView:
+        await require_management_access(request, "team.manage")
+        try:
+            return await active_setup_service.reset(payload.scope)
+        except (KeyError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @fastapi_app.get("/api/gateway/bootstrap")
+    async def get_gateway_bootstrap() -> GatewayBootstrapView:
+        return await active_gateway_bootstrap_service.get_view()
+
+    @fastapi_app.put("/api/gateway/bootstrap")
+    async def update_gateway_bootstrap(
+        request: Request,
+        payload: GatewayBootstrapUpdate,
+    ) -> GatewayBootstrapView:
+        await require_management_access(request, "team.manage")
+        try:
+            return await active_gateway_bootstrap_service.save(payload)
+        except (KeyError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     @fastapi_app.post("/api/teams")
     async def create_team(request: Request, payload: TeamCreate) -> TeamView:
         await require_management_access(request, "team.manage")
@@ -1639,7 +1885,18 @@ def create_app(
             description=payload.description,
             kind=payload.kind,
             instance_id=payload.instance_id,
-            payload=payload.model_dump(exclude={"name", "description", "kind", "instance_id"}),
+            cadence_minutes=payload.cadence_minutes,
+            enabled=payload.enabled,
+            payload=payload.model_dump(
+                exclude={
+                    "name",
+                    "description",
+                    "kind",
+                    "instance_id",
+                    "cadence_minutes",
+                    "enabled",
+                }
+            ),
         )
         row = await active_database.get_playbook(playbook_id)
         if row is None:
@@ -1657,8 +1914,21 @@ def create_app(
         if playbook is None:
             raise HTTPException(status_code=404, detail="Playbook not found.")
         try:
-            return await active_playbook_service.execute(playbook, payload, active_manager)
+            result = await active_playbook_service.execute(playbook, payload, active_manager)
+            await active_database.update_playbook(
+                playbook_id,
+                last_run_at=datetime.now(UTC).isoformat(),
+                last_status="completed",
+                last_result_summary=summarize_playbook_result(playbook, result)[:240],
+            )
+            return result
         except ValueError as exc:
+            await active_database.update_playbook(
+                playbook_id,
+                last_run_at=datetime.now(UTC).isoformat(),
+                last_status="failed",
+                last_result_summary=str(exc)[:240],
+            )
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @fastapi_app.websocket("/ws")

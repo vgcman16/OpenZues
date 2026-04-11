@@ -15,6 +15,8 @@ from openzues.schemas import (
     ProjectView,
 )
 from openzues.services.cortex import doctrine_index
+from openzues.services.run_pressure import has_verification_spike_pressure
+from openzues.services.scope_enforcer import build_scope_assessment
 
 MissionRecord = MissionView | Mapping[str, Any]
 CheckpointRecord = MissionCheckpointView | Mapping[str, Any]
@@ -98,6 +100,7 @@ def _build_drift_signatures(
     instance_connected: bool,
     freshness_minutes: int | None,
     has_checkpoint: bool,
+    scope_drift_level: str,
 ) -> list[str]:
     status = str(_mission_value(mission, "status", "") or "")
     phase = str(_mission_value(mission, "phase", "") or "")
@@ -116,8 +119,14 @@ def _build_drift_signatures(
         signatures.append("queue drag")
     if _is_orbiting(mission):
         signatures.append("orbiting scope")
-    if total_tokens >= 40000 and not has_checkpoint:
-        signatures.append("token heat")
+    if scope_drift_level in {"drifting", "critical"}:
+        signatures.append("scope drift")
+    if has_verification_spike_pressure(
+        total_tokens=total_tokens,
+        model=str(_mission_value(mission, "model", "") or "") or None,
+        has_checkpoint=has_checkpoint,
+    ):
+        signatures.append("checkpoint pressure")
     if (
         freshness_minutes is not None
         and freshness_minutes >= 8
@@ -152,6 +161,8 @@ def _build_drift(
     freshness_minutes: int | None,
     has_checkpoint: bool,
     drift_signatures: Sequence[str],
+    scope_drift_level: str,
+    scope_drift_summary: str,
 ) -> str:
     status = str(_mission_value(mission, "status", "") or "")
     phase = str(_mission_value(mission, "phase", "") or "")
@@ -174,6 +185,8 @@ def _build_drift(
             "A human approval is gating the next move, so context can drift if "
             "the resume step is not tightly framed."
         )
+    if scope_drift_level in {"drifting", "critical"}:
+        return scope_drift_summary
     if _is_orbiting(mission):
         return (
             "Command volume is outrunning checkpoint quality, so the mission risks "
@@ -208,6 +221,8 @@ def _build_next_handoff(
     instance_connected: bool,
     freshness_minutes: int | None,
     has_checkpoint: bool,
+    scope_drift_level: str,
+    scope_recommended_action: str,
 ) -> str:
     status = str(_mission_value(mission, "status", "") or "")
     phase = str(_mission_value(mission, "phase", "") or "")
@@ -242,6 +257,8 @@ def _build_next_handoff(
             "Treat the current checkpoint as a clean baton-pass and branch only "
             "into the next visible milestone."
         )
+    if scope_drift_level in {"drifting", "critical"}:
+        return scope_recommended_action
     if _is_orbiting(mission):
         return (
             "Force a landing turn that verifies one concrete claim and ends with "
@@ -363,6 +380,7 @@ def build_continuity_packet(
     in_progress = bool(_mission_value(mission, "in_progress", False))
     failure_count = int(_mission_value(mission, "failure_count", 0) or 0)
     total_tokens = int(_mission_value(mission, "total_tokens", 0) or 0)
+    scope = build_scope_assessment(mission, checkpoints=checkpoints)
 
     score = 38
     if thread_id:
@@ -390,7 +408,15 @@ def build_continuity_packet(
         score -= 9
     if _is_orbiting(mission):
         score -= 14
-    if total_tokens >= 40000 and not has_checkpoint:
+    if scope.drift_level == "drifting":
+        score -= 14
+    elif scope.drift_level == "critical":
+        score -= 22
+    if has_verification_spike_pressure(
+        total_tokens=total_tokens,
+        model=str(_mission_value(mission, "model", "") or "") or None,
+        has_checkpoint=has_checkpoint,
+    ):
         score -= 10
     if (
         freshness_minutes is not None
@@ -417,6 +443,7 @@ def build_continuity_packet(
         instance_connected=instance_connected,
         freshness_minutes=freshness_minutes,
         has_checkpoint=has_checkpoint,
+        scope_drift_level=scope.drift_level,
     )
     anchor = _build_anchor(mission, checkpoint_summaries)
     drift = _build_drift(
@@ -425,12 +452,16 @@ def build_continuity_packet(
         freshness_minutes=freshness_minutes,
         has_checkpoint=has_checkpoint,
         drift_signatures=drift_signatures,
+        scope_drift_level=scope.drift_level,
+        scope_drift_summary=scope.drift_summary,
     )
     next_handoff = _build_next_handoff(
         mission,
         instance_connected=instance_connected,
         freshness_minutes=freshness_minutes,
         has_checkpoint=has_checkpoint,
+        scope_drift_level=scope.drift_level,
+        scope_recommended_action=scope.recommended_action,
     )
 
     return DashboardContinuityPacketView(

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any, Literal, cast
@@ -17,6 +18,10 @@ RuntimeListener = Callable[[int, dict[str, Any]], Awaitable[None]]
 
 CATALOG_SAMPLE_LIMIT = 8
 LOG_LINE_PREVIEW_LIMIT = 360
+ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+LOG_TIMESTAMP_RE = re.compile(
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z\s+"
+)
 
 
 def _pick_fields(item: dict[str, Any], keys: tuple[str, ...]) -> dict[str, Any]:
@@ -73,6 +78,11 @@ def _summarize_named_items(
     ]
 
 
+def _sanitize_log_line(line: str) -> str:
+    cleaned = ANSI_ESCAPE_RE.sub("", line).strip()
+    return LOG_TIMESTAMP_RE.sub("", cleaned)
+
+
 def compact_event_payload(method: str, payload: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(payload, dict):
         return payload
@@ -81,9 +91,12 @@ def compact_event_payload(method: str, payload: dict[str, Any]) -> dict[str, Any
 
     if method in {"server/stderr", "server/stdout"}:
         line = payload.get("line")
-        if isinstance(line, str) and len(line) > LOG_LINE_PREVIEW_LIMIT:
-            compact["line"] = f"{line[:LOG_LINE_PREVIEW_LIMIT]} ... [truncated]"
-            compact["lineLength"] = len(line)
+        if isinstance(line, str):
+            clean_line = _sanitize_log_line(line)
+            compact["line"] = clean_line
+            if len(clean_line) > LOG_LINE_PREVIEW_LIMIT:
+                compact["line"] = f"{clean_line[:LOG_LINE_PREVIEW_LIMIT]} ... [truncated]"
+                compact["lineLength"] = len(clean_line)
         return compact
 
     if method == "account/updated":
@@ -341,6 +354,14 @@ class RuntimeManager:
         runtime.initialized = False
         runtime.pid = None
         await self.publish_snapshot("instance/disconnected", {"instanceId": instance_id})
+
+    async def delete_instance(self, instance_id: int) -> None:
+        runtime = await self.get(instance_id)
+        if runtime.client is not None:
+            await runtime.client.close()
+        self.instances.pop(instance_id, None)
+        await self.database.delete_instance(instance_id)
+        await self.publish_snapshot("instance/deleted", {"instanceId": instance_id})
 
     async def quick_connect_desktop(
         self,

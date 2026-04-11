@@ -22,9 +22,12 @@ from openzues.schemas import (
     MissionCreate,
     MissionView,
 )
+from openzues.services.followups import mission_followup_kind, mission_matches_payload
 from openzues.services.hub import BroadcastHub
 from openzues.services.manager import RuntimeManager
 from openzues.services.missions import MissionService
+from openzues.services.run_pressure import has_checkpoint_pressure
+from openzues.services.skillbook import resolve_skill_profile
 
 logger = logging.getLogger(__name__)
 
@@ -238,6 +241,20 @@ def _create_prompt_mission(prompt: str, dashboard: DashboardView) -> MissionCrea
     objective = prompt.strip()
     if objective and objective[-1] not in ".!?":
         objective = f"{objective}."
+    skillbook = next(
+        (
+            item
+            for item in dashboard.ops_mesh.skillbooks
+            if project_id is not None and item.project_id == project_id
+        ),
+        None,
+    )
+    skill_profile = resolve_skill_profile(
+        objective,
+        explicit_pins=skillbook.skills if skillbook is not None else [],
+        project_label=project.label if project is not None else None,
+        project_path=project.path if project is not None else None,
+    )
     return MissionCreate(
         name=_derive_mission_name(prompt),
         objective=objective,
@@ -249,9 +266,9 @@ def _create_prompt_mission(prompt: str, dashboard: DashboardView) -> MissionCrea
             else (instance.cwd if instance is not None else None)
         ),
         model="gpt-5.4",
-        reasoning_effort=None,
+        reasoning_effort=skill_profile.reasoning_effort,
         collaboration_mode=None,
-        max_turns=5,
+        max_turns=max(5, skill_profile.max_turns_floor or 0),
         use_builtin_agents=True,
         run_verification=True,
         auto_commit=False,
@@ -308,14 +325,18 @@ def _find_queued_followers(dashboard: DashboardView, mission: MissionView) -> li
     )
 
 
-def _should_pause_hot_mission_for_queue(mission: MissionView) -> bool:
+def _should_pause_long_run_mission_for_queue(mission: MissionView) -> bool:
     if mission.status != "active" or mission.last_checkpoint:
         return False
     quiet_minutes = _minutes_since(mission.last_activity_at)
     if quiet_minutes is None or quiet_minutes < 8:
         return False
     orbit_threshold = max(6, mission.turns_completed * 4 + 4)
-    return mission.total_tokens >= 60000 or mission.command_count >= orbit_threshold
+    return has_checkpoint_pressure(
+        total_tokens=mission.total_tokens,
+        model=mission.model,
+        has_checkpoint=bool(mission.last_checkpoint),
+    ) or mission.command_count >= orbit_threshold
 
 
 def _find_signal_mission_fingerprint(
@@ -373,6 +394,95 @@ def _find_signal_opportunity(
             if opportunity.kind == kind
         ),
         None,
+    )
+
+
+def _matches_mission_payload(mission: MissionView, payload: MissionCreate) -> bool:
+    return mission.status in {"active", "blocked", "paused"} and mission_matches_payload(
+        mission,
+        payload,
+    )
+
+
+def _find_existing_followup_mission(
+    dashboard: DashboardView,
+    payload: MissionCreate,
+) -> MissionView | None:
+    candidates = [
+        mission
+        for mission in dashboard.missions
+        if _matches_mission_payload(mission, payload)
+    ]
+    if not candidates:
+        return None
+    status_rank = {"active": 0, "blocked": 1, "paused": 2}
+    return sorted(
+        candidates,
+        key=lambda mission: (
+            status_rank.get(mission.status, 99),
+            mission.updated_at,
+        ),
+        reverse=False,
+    )[0]
+
+
+def _build_recovery_payload(mission: MissionView) -> MissionCreate:
+    return MissionCreate(
+        name=f"Recover {mission.name}",
+        objective=(
+            f"Continue the mission '{mission.name}' from its existing thread. Start by "
+            "reading the last checkpoint and failure context, fix the blocker, verify the "
+            "path forward, and leave a cleaner checkpoint when done."
+        ),
+        instance_id=mission.instance_id,
+        project_id=mission.project_id,
+        task_blueprint_id=None,
+        cwd=mission.cwd,
+        thread_id=mission.thread_id,
+        model=mission.model,
+        reasoning_effort=mission.reasoning_effort,
+        collaboration_mode=mission.collaboration_mode,
+        max_turns=3,
+        use_builtin_agents=mission.use_builtin_agents,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=mission.pause_on_approval,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        start_immediately=True,
+    )
+
+
+def _build_hardener_payload(mission: MissionView) -> MissionCreate:
+    return MissionCreate(
+        name=f"Harden {mission.project_label or mission.name}",
+        objective=(
+            f"Continue from the latest checkpoint in the mission '{mission.name}'. "
+            "First read the existing handoff in the thread, verify what is already true, "
+            "close the biggest gaps, and leave a stronger checkpoint with validation."
+        ),
+        instance_id=mission.instance_id,
+        project_id=mission.project_id,
+        task_blueprint_id=None,
+        cwd=mission.cwd,
+        thread_id=mission.thread_id,
+        model=mission.model,
+        reasoning_effort=mission.reasoning_effort,
+        collaboration_mode=mission.collaboration_mode,
+        max_turns=3,
+        use_builtin_agents=mission.use_builtin_agents,
+        run_verification=True,
+        auto_commit=True,
+        pause_on_approval=mission.pause_on_approval,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        start_immediately=True,
     )
 
 
@@ -682,7 +792,7 @@ def plan_attention_queue(dashboard: DashboardView) -> AttentionQueuePlan | None:
         if signal.mission_id is None or not signal.id.endswith(("-burn", "-orbit")):
             continue
         mission = _find_mission(dashboard, signal.mission_id)
-        if mission is None or not _should_pause_hot_mission_for_queue(mission):
+        if mission is None or not _should_pause_long_run_mission_for_queue(mission):
             continue
         queued_followers = _find_queued_followers(dashboard, mission)
         if not queued_followers:
@@ -698,7 +808,7 @@ def plan_attention_queue(dashboard: DashboardView) -> AttentionQueuePlan | None:
             target_label=mission.name,
             reply=(
                 f"I cooled `{mission.name}` into a paused relay because it was blocking "
-                f"`{next_target.name}` after a hot run without a durable checkpoint. The lane is "
+                f"`{next_target.name}` after a long run without a durable checkpoint. The lane is "
                 "free for the next queued mission to advance automatically."
             ),
         )
@@ -713,6 +823,44 @@ def plan_attention_queue(dashboard: DashboardView) -> AttentionQueuePlan | None:
             target_label = recovery.title if recovery is not None else (
                 mission.name if mission is not None else signal.title
             )
+            recovery_payload = (
+                MissionCreate.model_validate(recovery.mission_draft.model_dump())
+                if recovery is not None
+                else (_build_recovery_payload(mission) if mission is not None else None)
+            )
+            existing_followup = (
+                _find_existing_followup_mission(dashboard, recovery_payload)
+                if recovery_payload is not None
+                else None
+            )
+            if existing_followup is not None:
+                if existing_followup.status == "active":
+                    return AttentionQueuePlan(
+                        signal_id=signal.id,
+                        signal_fingerprint=_find_signal_mission_fingerprint(signal, dashboard),
+                        signal_level=signal.level,
+                        action_kind="observe",
+                        status="observed",
+                        mission_id=existing_followup.id,
+                        target_label=existing_followup.name,
+                        reply=(
+                            f"`{existing_followup.name}` is already in flight, so I did not "
+                            "spawn another recovery loop for the same checkpoint."
+                        ),
+                    )
+                return AttentionQueuePlan(
+                    signal_id=signal.id,
+                    signal_fingerprint=_find_signal_mission_fingerprint(signal, dashboard),
+                    signal_level=signal.level,
+                    action_kind="run_mission",
+                    status="executed",
+                    mission_id=existing_followup.id,
+                    target_label=existing_followup.name,
+                    reply=(
+                        f"I reused the existing recovery mission `{existing_followup.name}` "
+                        "instead of launching a duplicate loop for the same failure."
+                    ),
+                )
             if recovery is not None:
                 return AttentionQueuePlan(
                     signal_id=signal.id,
@@ -746,11 +894,63 @@ def plan_attention_queue(dashboard: DashboardView) -> AttentionQueuePlan | None:
             )
 
         if signal.mission_id is not None and signal.id.endswith("-handoff"):
-            hardener = _find_signal_opportunity(dashboard, signal, kind="checkpoint_hardener")
             mission = _find_mission(dashboard, signal.mission_id)
+            if mission is not None and mission_followup_kind(mission) is not None:
+                return AttentionQueuePlan(
+                    signal_id=signal.id,
+                    signal_fingerprint=_find_signal_mission_fingerprint(signal, dashboard),
+                    signal_level=signal.level,
+                    action_kind="observe",
+                    status="observed",
+                    mission_id=mission.id,
+                    target_label=mission.name,
+                    reply=(
+                        f"`{mission.name}` already is a follow-up mission, so I held the queue "
+                        "instead of hardening a hardener again."
+                    ),
+                )
+            hardener = _find_signal_opportunity(dashboard, signal, kind="checkpoint_hardener")
             target_label = hardener.title if hardener is not None else (
                 mission.name if mission is not None else signal.title
             )
+            hardener_payload = (
+                MissionCreate.model_validate(hardener.mission_draft.model_dump())
+                if hardener is not None
+                else (_build_hardener_payload(mission) if mission is not None else None)
+            )
+            existing_followup = (
+                _find_existing_followup_mission(dashboard, hardener_payload)
+                if hardener_payload is not None
+                else None
+            )
+            if existing_followup is not None:
+                if existing_followup.status == "active":
+                    return AttentionQueuePlan(
+                        signal_id=signal.id,
+                        signal_fingerprint=_find_signal_mission_fingerprint(signal, dashboard),
+                        signal_level=signal.level,
+                        action_kind="observe",
+                        status="observed",
+                        mission_id=existing_followup.id,
+                        target_label=existing_followup.name,
+                        reply=(
+                            f"`{existing_followup.name}` is already hardening this checkpoint, "
+                            "so I did not spawn another duplicate follow-up."
+                        ),
+                    )
+                return AttentionQueuePlan(
+                    signal_id=signal.id,
+                    signal_fingerprint=_find_signal_mission_fingerprint(signal, dashboard),
+                    signal_level=signal.level,
+                    action_kind="run_mission",
+                    status="executed",
+                    mission_id=existing_followup.id,
+                    target_label=existing_followup.name,
+                    reply=(
+                        f"I reused the existing hardener `{existing_followup.name}` instead of "
+                        "launching another follow-up for the same checkpoint."
+                    ),
+                )
             if hardener is not None:
                 return AttentionQueuePlan(
                     signal_id=signal.id,

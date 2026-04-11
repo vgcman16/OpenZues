@@ -14,6 +14,8 @@ from openzues.schemas import (
     RemoteRequestView,
     TaskBlueprintView,
 )
+from openzues.services.run_pressure import scope_checkpoint_pressure_threshold
+from openzues.services.scope_enforcer import build_scope_assessment
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,6 +133,9 @@ def _score_scope(
     remote_pressure_count: int,
     token_burn: int,
     command_burn: int,
+    checkpoint_pressure_tokens: int,
+    objective_gravity: int,
+    drift_mission_count: int,
 ) -> int:
     score = 45
     score += min(checkpoint_count, 4) * 10
@@ -140,14 +145,18 @@ def _score_scope(
         score += min(task_pressure_count, 2) * 3
     score -= min(failure_count, 3) * 12
     score -= min(approval_count, 3) * 7
-    if token_burn >= 60000 and checkpoint_count == 0:
+    if token_burn >= checkpoint_pressure_tokens and checkpoint_count == 0:
         score -= 12
+    if objective_gravity < 70:
+        score -= min(18, (70 - objective_gravity) // 2)
     if command_burn >= 12 and checkpoint_count == 0:
         score -= 8
     if active_count >= 2:
         score -= 6
     if remote_pressure_count >= 3:
         score -= 5
+    if drift_mission_count:
+        score -= min(18, drift_mission_count * 6)
     if task_pressure_count >= 2 and checkpoint_count == 0:
         score -= 5
     return max(0, min(100, score))
@@ -163,13 +172,17 @@ def _state_for_scope(
     command_burn: int,
     freshness_minutes: int | None,
     remote_pressure_count: int,
+    checkpoint_pressure_tokens: int,
+    objective_gravity: int,
+    drift_mission_count: int,
 ) -> EconomyState:
     if checkpoint_count >= 2 and score >= 72 and failure_count == 0:
         return "compounding"
     if checkpoint_count == 0 and (
         failure_count > 0
-        or (token_burn >= 60000 and command_burn >= 12)
+        or (token_burn >= checkpoint_pressure_tokens and command_burn >= 12)
         or remote_pressure_count >= 3
+        or (drift_mission_count > 0 and objective_gravity < 55)
     ):
         return "leaking"
     if active_count > 0 and checkpoint_count == 0:
@@ -194,7 +207,14 @@ def _state_text(
     task_pressure_count: int,
     remote_pressure_count: int,
     checkpoint_efficiency: float,
+    objective_gravity: int,
+    drift_mission_count: int,
 ) -> tuple[str, str, str]:
+    drift_clause = (
+        f" {drift_mission_count} drifting mission(s) are pulling it off-mandate."
+        if drift_mission_count
+        else ""
+    )
     if state == "compounding":
         return (
             f"{label} is converting prior checkpoints into durable progress efficiently.",
@@ -206,11 +226,15 @@ def _state_text(
         )
     if state == "leaking":
         return (
-            f"{label} is burning autonomy capital without earning durable anchors back.",
+            (
+                f"{label} is spending autonomy capital faster than it is earning durable anchors "
+                f"back. Objective gravity is {objective_gravity}/100.{drift_clause}"
+            ),
             "Stop broad exploration and compress this scope until it can land a checkpoint.",
             (
-                f"Compress {label} to a 2-turn loop, disable speculative fan-out, and require a "
-                "verified checkpoint before any further expansion."
+                f"Compress {label} to a 2-turn loop, disable speculative fan-out, realign the "
+                "scope to the original charter, and require a verified checkpoint before any "
+                "further expansion."
             ),
         )
     if state == "speculative":
@@ -300,6 +324,10 @@ def build_economy(
         scoped_missions = grouped_missions.get(scope_key, [])
         scoped_tasks = grouped_tasks.get(scope_key, [])
         scoped_requests = grouped_requests.get(scope_key, [])
+        scope_assessments = [
+            build_scope_assessment(mission, checkpoints=mission.checkpoints)
+            for mission in scoped_missions
+        ]
 
         checkpoint_count = sum(1 for mission in scoped_missions if mission.last_checkpoint)
         active_count = sum(
@@ -312,6 +340,21 @@ def build_economy(
         )
         token_burn = sum(mission.total_tokens for mission in scoped_missions)
         command_burn = sum(mission.command_count for mission in scoped_missions)
+        objective_gravity = (
+            round(
+                sum(assessment.objective_gravity for assessment in scope_assessments)
+                / len(scope_assessments)
+            )
+            if scope_assessments
+            else 100
+        )
+        drift_mission_count = sum(
+            assessment.drift_level in {"drifting", "critical"}
+            for assessment in scope_assessments
+        )
+        checkpoint_pressure_tokens = scope_checkpoint_pressure_threshold(
+            mission.model for mission in scoped_missions
+        )
         task_pressure_count = len(scoped_tasks)
         remote_pressure_count = len(scoped_requests)
         freshness_minutes = _freshness_minutes(scoped_missions)
@@ -332,6 +375,9 @@ def build_economy(
             remote_pressure_count=remote_pressure_count,
             token_burn=token_burn,
             command_burn=command_burn,
+            checkpoint_pressure_tokens=checkpoint_pressure_tokens,
+            objective_gravity=objective_gravity,
+            drift_mission_count=drift_mission_count,
         )
         state = _state_for_scope(
             score=score,
@@ -342,6 +388,9 @@ def build_economy(
             command_burn=command_burn,
             freshness_minutes=freshness_minutes,
             remote_pressure_count=remote_pressure_count,
+            checkpoint_pressure_tokens=checkpoint_pressure_tokens,
+            objective_gravity=objective_gravity,
+            drift_mission_count=drift_mission_count,
         )
         summary, arbitrage_edge, capital_prompt = _state_text(
             state,
@@ -352,6 +401,8 @@ def build_economy(
             task_pressure_count=task_pressure_count,
             remote_pressure_count=remote_pressure_count,
             checkpoint_efficiency=checkpoint_efficiency,
+            objective_gravity=objective_gravity,
+            drift_mission_count=drift_mission_count,
         )
         scopes.append(
             DashboardEconomyScopeView(
@@ -370,6 +421,8 @@ def build_economy(
                 approval_count=approval_count,
                 task_pressure_count=task_pressure_count,
                 remote_pressure_count=remote_pressure_count,
+                drift_mission_count=drift_mission_count,
+                objective_gravity=objective_gravity,
                 token_burn=token_burn,
                 command_burn=command_burn,
                 checkpoint_efficiency=checkpoint_efficiency,
@@ -409,7 +462,7 @@ def build_economy(
     if leaking:
         headline = "Autonomy economy is leaking"
         summary = (
-            f"{leaking} scope(s) are burning capital faster than they are earning durable "
+            f"{leaking} scope(s) are spending capital faster than they are earning durable "
             "checkpoints."
         )
     elif compounding:

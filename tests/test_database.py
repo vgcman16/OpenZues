@@ -30,8 +30,15 @@ async def test_database_round_trip(tmp_path) -> None:
         description=None,
         kind="command",
         instance_id=instance_id,
-        payload={"template": "git status", "cwd": str(tmp_path)},
+        cadence_minutes=60,
+        enabled=True,
+        payload={
+            "template": "git status",
+            "cwd": str(tmp_path),
+            "default_variables": {"branch": "main"},
+        },
     )
+    project_id = await database.create_project(path=str(tmp_path), label="Sandbox")
     team_id = await database.create_team(
         name="Remote Ops",
         slug="remote-ops",
@@ -92,6 +99,61 @@ async def test_database_round_trip(tmp_path) -> None:
         result={"summary": "Mission created."},
         resolved_at="2026-04-10T00:01:00+00:00",
     )
+    task_id = await database.create_task_blueprint(
+        name="Nightly loop",
+        summary="Keep shipping.",
+        project_id=project_id,
+        instance_id=instance_id,
+        cadence_minutes=180,
+        enabled=True,
+        payload={
+            "objective_template": "Ship the next slice.",
+            "cwd": str(tmp_path),
+            "model": "gpt-5.4",
+            "max_turns": 4,
+            "use_builtin_agents": True,
+            "run_verification": True,
+            "auto_commit": False,
+            "pause_on_approval": True,
+            "allow_auto_reflexes": True,
+            "auto_recover": True,
+            "auto_recover_limit": 2,
+            "reflex_cooldown_seconds": 900,
+            "allow_failover": True,
+            "run_until_complete": False,
+            "continuation_cooldown_minutes": 10,
+        },
+    )
+    await database.upsert_gateway_bootstrap(
+        setup_mode="local",
+        setup_flow="quickstart",
+        preferred_instance_id=instance_id,
+        preferred_project_id=project_id,
+        team_id=team_id,
+        operator_id=operator_id,
+        task_blueprint_id=task_id,
+        default_cwd=str(tmp_path),
+        model="gpt-5.4",
+        max_turns=4,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+    )
+    await database.upsert_setup_wizard_session(
+        {
+            "mode": "remote",
+            "flow": "advanced",
+            "project_path": str(tmp_path),
+            "task_name": "Nightly loop",
+            "updated_at": "2026-04-11T00:00:00+00:00",
+        }
+    )
     attention_action_id = await database.append_attention_queue_action(
         signal_id="mission-1-failed",
         signal_fingerprint="mission-1-failed|failed|thread not found",
@@ -113,12 +175,17 @@ async def test_database_round_trip(tmp_path) -> None:
     checkpoints = await database.list_mission_checkpoints(mission_id)
     remote_requests = await database.list_remote_requests()
     attention_actions = await database.list_attention_queue_actions()
+    gateway_bootstrap = await database.get_gateway_bootstrap()
+    wizard_session = await database.get_setup_wizard_session()
 
     assert instances[0]["name"] == "Local Codex"
     assert teams[0]["slug"] == "remote-ops"
     assert operators[0]["api_key_preview"] == "ozk_abcd...1234"
     assert events[0]["payload"]["ok"] is True
     assert playbook_id == playbooks[0]["id"]
+    assert playbooks[0]["cadence_minutes"] == 60
+    assert playbooks[0]["enabled"] == 1
+    assert playbooks[0]["default_variables"] == {"branch": "main"}
     assert missions[0]["name"] == "Nightly builder"
     assert missions[0]["allow_failover"] == 1
     assert checkpoints[0]["summary"] == "Verified the first milestone."
@@ -127,3 +194,70 @@ async def test_database_round_trip(tmp_path) -> None:
     assert remote_requests[0]["result"]["summary"] == "Mission created."
     assert attention_action_id == attention_actions[0]["id"]
     assert attention_actions[0]["target_label"] == "Recover Nightly builder"
+    assert gateway_bootstrap is not None
+    assert gateway_bootstrap["setup_mode"] == "local"
+    assert gateway_bootstrap["setup_flow"] == "quickstart"
+    assert gateway_bootstrap["preferred_project_id"] == project_id
+    assert gateway_bootstrap["task_blueprint_id"] == task_id
+    assert gateway_bootstrap["model"] == "gpt-5.4"
+    assert wizard_session is not None
+    assert wizard_session["session"]["mode"] == "remote"
+    assert wizard_session["session"]["flow"] == "advanced"
+
+
+@pytest.mark.asyncio
+async def test_get_mission_by_thread_prefers_active_shared_owner(tmp_path) -> None:
+    database = Database(tmp_path / "test.db")
+    await database.initialize()
+
+    active_id = await database.create_mission(
+        name="Shared hardener",
+        objective="Continue the live thread.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread_shared",
+        cwd=str(tmp_path),
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=2,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+    )
+    completed_id = await database.create_mission(
+        name="Shared checkpoint",
+        objective="Finished already.",
+        status="completed",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread_shared",
+        cwd=str(tmp_path),
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=2,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+    )
+    await database.update_mission(completed_id, last_checkpoint="Finished parity slice.")
+    await database.update_mission(active_id, in_progress=1)
+
+    mission = await database.get_mission_by_thread(7, "thread_shared")
+
+    assert mission is not None
+    assert mission["id"] == active_id

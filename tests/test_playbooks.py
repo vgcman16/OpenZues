@@ -80,6 +80,26 @@ async def test_command_playbook_renders_variables() -> None:
     assert manager.exec_calls[0]["cwd"] == "C:/repo"
 
 
+async def test_playbook_merges_default_variables_before_runtime_overrides() -> None:
+    manager = FakeManager()
+    service = PlaybookService()
+    playbook = {
+        "name": "Branch check",
+        "kind": "command",
+        "instance_id": 7,
+        "template": "git log {branch} --grep {goal}",
+        "cwd": "{cwd}",
+        "timeout_ms": 10000,
+        "default_variables": {"branch": "main", "goal": "baseline"},
+    }
+    run = PlaybookRun(cwd="C:/repo", variables={"goal": "triage"})
+
+    result = await service.execute(playbook, run, manager)
+
+    assert result.rendered_template == "git log main --grep triage"
+    assert manager.exec_calls[0]["command"] == ["git", "log", "main", "--grep", "triage"]
+
+
 async def test_thread_turn_playbook_creates_thread_then_turn() -> None:
     manager = FakeManager()
     service = PlaybookService()

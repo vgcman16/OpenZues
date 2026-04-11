@@ -141,10 +141,163 @@ async def test_run_now_creates_thread_and_turn(tmp_path) -> None:
     assert manager.thread_calls[0]["model"] == "gpt-5.4"
     assert "Autonomous cycle: 1" in manager.turn_calls[0]["text"]
     assert "Continuity relay:" in manager.turn_calls[0]["text"]
+    assert "Mission charter:" in manager.turn_calls[0]["text"]
+    assert "Objective gravity:" in manager.turn_calls[0]["text"]
     assert "Safest next handoff:" in manager.turn_calls[0]["text"]
     assert stored is not None
     assert stored["thread_id"] == "thread_auto_7"
     assert stored["in_progress"] == 1
+
+
+@pytest.mark.asyncio
+async def test_create_reuses_duplicate_inflight_thread_bound_mission(tmp_path) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    manager = FakeManager()
+    service = MissionService(database, manager, BroadcastHub(), poll_interval_seconds=3600)
+
+    first = await service.create(
+        MissionCreate(
+            name="Harden Checkout",
+            objective=(
+                "Continue from the latest checkpoint in the mission 'Ship checkout'. "
+                "First read the existing handoff in the thread, verify what is already true, "
+                "close the biggest gaps, and leave a stronger checkpoint with validation."
+            ),
+            instance_id=7,
+            project_id=None,
+            cwd="C:/workspace",
+            thread_id="thread_checkout",
+            start_immediately=False,
+        )
+    )
+
+    second = await service.create(
+        MissionCreate(
+            name="Harden Checkout",
+            objective=(
+                "Continue from the latest checkpoint in the mission 'Ship checkout'. "
+                "First read the existing handoff in the thread, verify what is already true, "
+                "close the biggest gaps, and leave a stronger checkpoint with validation."
+            ),
+            instance_id=7,
+            project_id=None,
+            cwd="C:/workspace",
+            thread_id="thread_checkout",
+            start_immediately=False,
+        )
+    )
+
+    missions = await database.list_missions()
+
+    assert first.id == second.id
+    assert len(missions) == 1
+
+
+@pytest.mark.asyncio
+async def test_create_reuses_thread_bound_hardener_even_if_source_mission_shifts(tmp_path) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    manager = FakeManager()
+    service = MissionService(database, manager, BroadcastHub(), poll_interval_seconds=3600)
+
+    first = await service.create(
+        MissionCreate(
+            name="Harden OpenZues Workspace",
+            objective=(
+                "Continue from the latest checkpoint in the mission "
+                "'OpenClaw Total Parity Program'. First read the existing handoff in the "
+                "thread, verify what is already true, close the biggest gaps, and leave a "
+                "stronger checkpoint with validation."
+            ),
+            instance_id=7,
+            project_id=None,
+            cwd="C:/workspace",
+            thread_id="thread_source",
+            start_immediately=False,
+        )
+    )
+
+    second = await service.create(
+        MissionCreate(
+            name="Harden OpenZues Workspace",
+            objective=(
+                "Continue from the latest checkpoint in the mission "
+                "'Harden OpenZues Workspace'. First read the existing handoff in the thread, "
+                "verify what is already true, close the biggest gaps, and leave a stronger "
+                "checkpoint with validation."
+            ),
+            instance_id=7,
+            project_id=None,
+            cwd="C:/workspace",
+            thread_id="thread_source",
+            start_immediately=False,
+        )
+    )
+
+    missions = await database.list_missions()
+
+    assert first.id == second.id
+    assert len(missions) == 1
+
+
+@pytest.mark.asyncio
+async def test_run_now_includes_auto_skillbook_for_looping_frontend_work(tmp_path) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    manager = FakeManager()
+    service = MissionService(database, manager, BroadcastHub(), poll_interval_seconds=3600)
+
+    mission = await service.create(
+        MissionCreate(
+            name="Frontend polish loop",
+            objective=(
+                "Keep improving the frontend chat interface until the UI feels cleaner, "
+                "more polished, and more autonomous."
+            ),
+            instance_id=7,
+            cwd="C:/workspace",
+            max_turns=2,
+            start_immediately=False,
+        )
+    )
+
+    await service.run_now(mission.id)
+
+    prompt = manager.turn_calls[0]["text"]
+    assert "Mission skillbook:" in prompt
+    assert "Superhuman Skill" in prompt
+    assert "Loop Skill" in prompt
+    assert "Front-end / UX UI Pro Skill" in prompt
+
+
+@pytest.mark.asyncio
+async def test_run_now_includes_contract_guard_for_setup_bootstrap_work(tmp_path) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    manager = FakeManager()
+    service = MissionService(database, manager, BroadcastHub(), poll_interval_seconds=3600)
+
+    mission = await service.create(
+        MissionCreate(
+            name="Setup parity",
+            objective=(
+                "Close the onboarding and gateway bootstrap setup seam so QuickStart, API, "
+                "CLI, and dashboard flows stay aligned."
+            ),
+            instance_id=7,
+            cwd="C:/workspace",
+            max_turns=2,
+            start_immediately=False,
+        )
+    )
+
+    await service.run_now(mission.id)
+
+    prompt = manager.turn_calls[0]["text"]
+    assert "Mission skillbook:" in prompt
+    assert "Control Plane Contract Guard" in prompt
+    assert "tests/test_app.py tests/test_database.py tests/test_manager.py" in prompt
 
 
 @pytest.mark.asyncio
@@ -228,6 +381,93 @@ async def test_final_answer_event_creates_checkpoint(tmp_path) -> None:
     assert mission["last_checkpoint"].startswith("Implemented the first milestone")
     assert mission["status"] == "completed"
     assert mission["phase"] == "completed"
+    assert mission["in_progress"] == 0
+
+
+@pytest.mark.asyncio
+async def test_shared_thread_event_updates_active_mission_owner(tmp_path) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    manager = FakeManager()
+    service = MissionService(database, manager, BroadcastHub(), poll_interval_seconds=3600)
+
+    completed_id = await database.create_mission(
+        name="Finished parity slice",
+        objective="Leave the validated checkpoint intact.",
+        status="completed",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread_shared",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=3,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+    )
+    active_id = await database.create_mission(
+        name="Shared hardener",
+        objective="Continue from the checkpoint on the same thread.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread_shared",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=2,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+    )
+    await database.update_mission(
+        completed_id,
+        last_checkpoint="Finished parity slice.",
+    )
+    await database.update_mission(
+        active_id,
+        in_progress=1,
+    )
+
+    await service.handle_event(
+        7,
+        {
+            "method": "item/completed",
+            "threadId": "thread_shared",
+            "params": {
+                "threadId": "thread_shared",
+                "turnId": "turn_shared",
+                "item": {
+                    "type": "agentMessage",
+                    "phase": "commentary",
+                    "text": "Hardener is validating the checkpoint.",
+                },
+            },
+        },
+    )
+
+    completed = await database.get_mission(completed_id)
+    active = await database.get_mission(active_id)
+
+    assert completed is not None
+    assert active is not None
+    assert completed["last_commentary"] is None
+    assert active["last_commentary"] == "Hardener is validating the checkpoint."
 
 
 @pytest.mark.asyncio
@@ -298,6 +538,67 @@ async def test_turn_completed_after_final_answer_does_not_launch_another_cycle(t
     assert mission["phase"] == "completed"
     assert mission["turns_completed"] == 1
     assert manager.turn_calls == []
+
+
+@pytest.mark.asyncio
+async def test_turn_completed_without_final_answer_creates_continuity_snapshot(tmp_path) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    manager = FakeManager()
+    service = MissionService(database, manager, BroadcastHub(), poll_interval_seconds=3600)
+
+    mission_id = await database.create_mission(
+        name="Relay memory",
+        objective="Keep state durable between turns.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread_relay",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=4,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=True,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+    )
+    await database.update_mission(
+        mission_id,
+        phase="reporting",
+        in_progress=1,
+        command_count=5,
+        total_tokens=52200,
+        last_commentary="I verified the scheduler path and I am packaging the next handoff.",
+    )
+
+    await service.handle_event(
+        7,
+        {
+            "method": "turn/completed",
+            "threadId": "thread_relay",
+            "params": {
+                "threadId": "thread_relay",
+                "turnId": "turn_relay",
+                "turn": {"id": "turn_relay"},
+            },
+        },
+    )
+
+    checkpoints = await database.list_mission_checkpoints(mission_id)
+    mission = await database.get_mission(mission_id)
+
+    assert mission is not None
+    assert mission["last_checkpoint"] is None
+    assert mission["turns_completed"] == 1
+    assert checkpoints[0]["kind"] == "continuity_auto"
+    assert "turn_boundary" in checkpoints[0]["summary"]
+    assert "Next handoff:" in checkpoints[0]["summary"]
 
 
 @pytest.mark.asyncio
@@ -576,6 +877,117 @@ async def test_reconcile_uses_auto_reflex_for_orbiting_mission(tmp_path) -> None
 
 
 @pytest.mark.asyncio
+async def test_reconcile_uses_scope_realign_reflex_for_drifting_mission(tmp_path) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    manager = FakeManager()
+    manager.instances[7].connected = True
+    manager.instances[7].threads = [{"id": "thread_scope", "status": {"type": "idle"}}]
+    service = MissionService(database, manager, BroadcastHub(), poll_interval_seconds=3600)
+
+    mission_id = await database.create_mission(
+        name="Moderation queue",
+        objective="Build the forum moderation queue end to end.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread_scope",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=True,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+    )
+    await database.update_mission(
+        mission_id,
+        phase="executing",
+        current_command=(
+            'powershell.exe -Command "Get-Content '
+            'src\\\\openzues\\\\web\\\\static\\\\app.css"'
+        ),
+        last_commentary="Polishing gradients and chat bubble spacing in the dashboard shell.",
+    )
+
+    await service._reconcile_mission(mission_id)
+    mission = await database.get_mission(mission_id)
+    checkpoints = await database.list_mission_checkpoints(mission_id)
+
+    assert mission is not None
+    assert mission["last_reflex_kind"] == "scope_realign"
+    assert "Restate the charter" in manager.turn_calls[0]["text"]
+    assert checkpoints[0]["kind"] == "reflex_auto"
+
+
+@pytest.mark.asyncio
+async def test_reconcile_creates_background_continuity_snapshot_for_hot_live_turn(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    manager = FakeManager()
+    manager.instances[7].connected = True
+    manager.instances[7].threads = [{"id": "thread_live_hot", "status": {"type": "active"}}]
+    service = MissionService(database, manager, BroadcastHub(), poll_interval_seconds=3600)
+
+    mission_id = await database.create_mission(
+        name="Hot live mission",
+        objective="Keep building while preserving thread memory.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread_live_hot",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=True,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+    )
+    await database.update_mission(
+        mission_id,
+        in_progress=1,
+        phase="executing",
+        command_count=8,
+        total_tokens=340000,
+        current_command='powershell.exe -Command "Get-Content src\\\\openzues\\\\app.py"',
+        last_commentary="I am validating the existing scheduler path before editing it.",
+        last_activity_at=datetime.now(UTC).isoformat(),
+    )
+
+    await service._reconcile_mission(mission_id)
+    mission = await database.get_mission(mission_id)
+    checkpoints = await database.list_mission_checkpoints(mission_id)
+
+    assert mission is not None
+    assert mission["in_progress"] == 1
+    assert mission["last_checkpoint"] is None
+    assert manager.turn_calls == []
+    assert checkpoints[0]["kind"] == "continuity_auto"
+    assert "live_orbit" in checkpoints[0]["summary"]
+    assert "Current command:" in checkpoints[0]["summary"]
+
+    await service._reconcile_mission(mission_id)
+    repeated_checkpoints = await database.list_mission_checkpoints(mission_id)
+
+    assert len([item for item in repeated_checkpoints if item["kind"] == "continuity_auto"]) == 1
+
+
+@pytest.mark.asyncio
 async def test_reconcile_auto_yields_stale_hot_mission_and_releases_queue(tmp_path) -> None:
     database = Database(tmp_path / "missions.db")
     await database.initialize()
@@ -609,7 +1021,7 @@ async def test_reconcile_auto_yields_stale_hot_mission_and_releases_queue(tmp_pa
         hot_id,
         in_progress=1,
         phase="thinking",
-        total_tokens=77089,
+        total_tokens=770089,
         command_count=4,
         last_activity_at=(datetime.now(UTC) - timedelta(minutes=11)).isoformat(),
     )
@@ -648,7 +1060,9 @@ async def test_reconcile_auto_yields_stale_hot_mission_and_releases_queue(tmp_pa
     assert hot is not None
     assert hot["status"] == "paused"
     assert hot["in_progress"] == 0
-    assert hot["last_checkpoint"].startswith("Auto-yielded the lane after 77,089 tokens")
+    assert hot["last_checkpoint"].startswith(
+        "Auto-yielded the lane after a long run of 770,089 tokens"
+    )
     assert hot_checkpoints[0]["kind"] == "queue_yield"
 
     await service._reconcile_mission(queued_id)

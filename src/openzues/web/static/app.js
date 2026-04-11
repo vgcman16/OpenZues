@@ -1,8 +1,11 @@
 const state = {
   dashboard: null,
   diagnostics: null,
+  setup: null,
   socket: null,
   refreshTimer: null,
+  radarReserveExpanded: false,
+  lastBootstrapResult: null,
 };
 
 const heroStatsEl = document.querySelector("#hero-stats");
@@ -33,11 +36,28 @@ const opsIntegrationCountEl = document.querySelector("#ops-integration-count");
 const opsSnapshotCountEl = document.querySelector("#ops-snapshot-count");
 const taskInboxHeadlineEl = document.querySelector("#task-inbox-headline");
 const taskInboxSummaryEl = document.querySelector("#task-inbox-summary");
+const taskInboxItemsEl = document.querySelector("#task-inbox-items");
 const authPostureHeadlineEl = document.querySelector("#auth-posture-headline");
 const authPostureSummaryEl = document.querySelector("#auth-posture-summary");
 const authSatisfiedCountEl = document.querySelector("#auth-satisfied-count");
 const authMissingCountEl = document.querySelector("#auth-missing-count");
 const authDegradedCountEl = document.querySelector("#auth-degraded-count");
+const integrationsInventoryHeadlineEl = document.querySelector(
+  "#integrations-inventory-headline",
+);
+const integrationsInventorySummaryEl = document.querySelector(
+  "#integrations-inventory-summary",
+);
+const integrationsInventoryReadyCountEl = document.querySelector(
+  "#integrations-inventory-ready-count",
+);
+const integrationsInventoryGapCountEl = document.querySelector(
+  "#integrations-inventory-gap-count",
+);
+const integrationsInventoryObservedCountEl = document.querySelector(
+  "#integrations-inventory-observed-count",
+);
+const integrationsInventoryListEl = document.querySelector("#integrations-inventory-list");
 const accessPostureHeadlineEl = document.querySelector("#access-posture-headline");
 const accessPostureSummaryEl = document.querySelector("#access-posture-summary");
 const accessTeamCountEl = document.querySelector("#access-team-count");
@@ -45,6 +65,11 @@ const accessOperatorCountEl = document.querySelector("#access-operator-count");
 const accessKeyCountEl = document.querySelector("#access-key-count");
 const accessRequestCountEl = document.querySelector("#access-request-count");
 const taskBlueprintsEl = document.querySelector("#task-blueprints");
+const skillsRegistryHeadlineEl = document.querySelector("#skills-registry-headline");
+const skillsRegistrySummaryEl = document.querySelector("#skills-registry-summary");
+const skillsRegistryGapsEl = document.querySelector("#skills-registry-gaps");
+const skillsRegistryProjectsEl = document.querySelector("#skills-registry-projects");
+const skillsRegistryLanesEl = document.querySelector("#skills-registry-lanes");
 const skillbooksEl = document.querySelector("#skillbooks");
 const teamsListEl = document.querySelector("#teams-list");
 const operatorsListEl = document.querySelector("#operators-list");
@@ -92,6 +117,19 @@ const notificationRouteFormEl = document.querySelector("#notification-route-form
 const notificationRouteVaultSecretSelectEl = document.querySelector(
   "#notification-route-vault-secret-select",
 );
+const onboardingHeadlineEl = document.querySelector("#onboarding-headline");
+const onboardingSummaryEl = document.querySelector("#onboarding-summary");
+const onboardingChecklistEl = document.querySelector("#onboarding-checklist");
+const onboardingModeLabelEl = document.querySelector("#onboarding-mode-label");
+const onboardingFlowPillEl = document.querySelector("#onboarding-flow-pill");
+const onboardingModeSummaryEl = document.querySelector("#onboarding-mode-summary");
+const gatewayBootstrapProfileEl = document.querySelector("#gateway-bootstrap-profile");
+const onboardingResultEl = document.querySelector("#onboarding-result");
+const onboardingFormEl = document.querySelector("#onboarding-form");
+const onboardingSetupModeEl = document.querySelector("#onboarding-setup-mode");
+const onboardingSetupFlowEl = document.querySelector("#onboarding-setup-flow");
+const onboardingInstanceModeEl = document.querySelector("#onboarding-instance-mode");
+const onboardingInstanceSelectEl = document.querySelector("#onboarding-instance-select");
 const libraryShellEl = document.querySelector("#library-shell");
 const libraryShellSummaryEl = document.querySelector("#library-shell-summary");
 const libraryPlaybookCountEl = document.querySelector("#library-playbook-count");
@@ -228,6 +266,20 @@ function formatRelativeTimestamp(value) {
 
 function summarizeCount(count, singular, plural = `${singular}s`) {
   return `${count} ${count === 1 ? singular : plural}`;
+}
+
+function computeNextRunAt(lastRunAt, cadenceMinutes) {
+  if (!cadenceMinutes) {
+    return null;
+  }
+  if (!lastRunAt) {
+    return new Date().toISOString();
+  }
+  const parsed = new Date(lastRunAt);
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+  return new Date(parsed.getTime() + cadenceMinutes * 60000).toISOString();
 }
 
 function clipText(value, maxLength = 220) {
@@ -475,10 +527,17 @@ async function loadDiagnostics() {
   renderDiagnostics();
 }
 
+async function loadSetup() {
+  state.setup = await api("/api/setup");
+  renderOnboarding();
+}
+
 function scheduleRefresh() {
   clearTimeout(state.refreshTimer);
   state.refreshTimer = setTimeout(() => {
-    loadDashboard().catch((error) => showToast(normalizeError(error), true));
+    Promise.all([loadDashboard(), loadSetup()]).catch((error) =>
+      showToast(normalizeError(error), true),
+    );
   }, 250);
 }
 
@@ -850,20 +909,16 @@ function renderChat() {
   });
 
   if (opsMesh) {
-    const taskCards = (opsMesh.task_inbox?.tasks ?? []).slice(0, 3).map((task) =>
+    const taskCards = (opsMesh.task_inbox?.items ?? []).slice(0, 3).map((item) =>
       renderChatCard({
-        title: task.name,
+        title: item.title,
         meta: [
-          pill(task.status, toneForTaskStatus(task.status)),
-          pill(task.cadence_label),
-          task.project_label ? pill(task.project_label) : "",
+          pill(item.source),
+          pill(item.urgency, toneForInboxUrgency(item.urgency)),
+          item.project_label ? pill(item.project_label) : "",
         ],
-        body: task.summary,
-        note: task.last_result_summary
-          ? clipText(task.last_result_summary, 160)
-          : task.next_run_at
-            ? `Next run ${formatRelativeTimestamp(task.next_run_at)}`
-            : "No schedule attached",
+        body: item.summary,
+        note: clipText(item.recommended_action, 160),
       }),
     );
     const remoteCards = (opsMesh.remote_requests ?? []).slice(-2).reverse().map((request) =>
@@ -891,15 +946,15 @@ function renderChat() {
           stamp: "OP",
           lane: "Ops mesh",
           tone:
-            opsMesh.task_inbox.tasks.some((task) => task.status === "attention") ||
+            opsMesh.task_inbox.items.some((item) => item.urgency === "critical") ||
             opsMesh.auth_posture.degraded_count
               ? "warn"
               : "ok",
           title: opsMesh.headline,
           meta: [
             pill(
-              `${opsMesh.task_inbox.tasks.length} tasks`,
-              opsMesh.task_inbox.tasks.length ? "ok" : "",
+              `${opsMesh.task_inbox.items.length} inbox`,
+              opsMesh.task_inbox.items.length ? "ok" : "",
             ),
             pill(
               `${opsMesh.remote_requests.length} remote`,
@@ -1115,8 +1170,10 @@ function renderChat() {
     .filter((event) => !isNoiseEvent(event))
     .slice(-6)
     .map(
-      (event) =>
-        `[${formatRelativeTimestamp(event.created_at)}] ${event.method}${event.thread_id ? ` | ${event.thread_id}` : ""}${event.instance_id ? ` | instance ${event.instance_id}` : ""}`,
+      (event) => {
+        const repeatCount = Number(event.payload?.repeatCount ?? 1);
+        return `[${formatRelativeTimestamp(event.created_at)}] ${event.method}${repeatCount > 1 ? ` x${repeatCount}` : ""}${event.thread_id ? ` | ${event.thread_id}` : ""}${event.instance_id ? ` | instance ${event.instance_id}` : ""}`;
+      },
     );
   if (eventLines.length) {
     messages.push(
@@ -1150,28 +1207,99 @@ function renderRadar() {
   };
   radarHeadlineEl.textContent = titles[radar.posture] || "Autonomy Radar";
   radarSummaryEl.textContent = radar.summary;
-  radarSignalsEl.innerHTML = radar.signals
-    .map(
-      (signal) => `
-        <article class="signal signal-${escapeHtml(signal.level)}">
-          <div class="signal-meta">
-            ${pill(signal.level, toneForSignal(signal.level))}
-            ${pill(signal.lane)}
-            ${
-              signal.freshness_minutes != null
-                ? `<span class="signal-fresh">${escapeHtml(formatRelativeTimestamp(Date.now() - signal.freshness_minutes * 60000))}</span>`
-                : ""
-            }
-          </div>
-          <h4>${escapeHtml(signal.title)}</h4>
-          <p>${escapeHtml(signal.detail)}</p>
+  const reserveSignal = radar.signals.find((signal) => signal.id === "attention/handoff-backlog");
+  if (!reserveSignal) {
+    state.radarReserveExpanded = false;
+  }
+  const renderStandardSignal = (signal) => `
+    <article class="signal signal-${escapeHtml(signal.level)}">
+      <div class="signal-meta">
+        ${pill(signal.level, toneForSignal(signal.level))}
+        ${pill(signal.lane)}
+        ${
+          signal.freshness_minutes != null
+            ? `<span class="signal-fresh">${escapeHtml(formatRelativeTimestamp(Date.now() - signal.freshness_minutes * 60000))}</span>`
+            : ""
+        }
+      </div>
+      <h4>${escapeHtml(signal.title)}</h4>
+      <p>${escapeHtml(signal.detail)}</p>
+      ${
+        signal.action
+          ? `<div class="signal-action">${escapeHtml(signal.action)}</div>`
+          : `<div class="signal-action">No immediate action required.</div>`
+      }
+    </article>
+  `;
+  const renderReserveSignal = (signal) => {
+    const reserveMissions = getReadyReserveMissions();
+    const visibleMissions = state.radarReserveExpanded ? reserveMissions.slice(0, 8) : [];
+    const hiddenCount = Math.max(0, reserveMissions.length - visibleMissions.length);
+    return `
+      <article class="signal signal-${escapeHtml(signal.level)} signal-reserve${state.radarReserveExpanded ? " signal-open" : ""}">
+        <div class="signal-meta">
+          ${pill(signal.level, toneForSignal(signal.level))}
+          ${pill(signal.lane)}
           ${
-            signal.action
-              ? `<div class="signal-action">${escapeHtml(signal.action)}</div>`
-              : `<div class="signal-action">No immediate action required.</div>`
+            signal.freshness_minutes != null
+              ? `<span class="signal-fresh">${escapeHtml(formatRelativeTimestamp(Date.now() - signal.freshness_minutes * 60000))}</span>`
+              : ""
           }
-        </article>
-      `,
+        </div>
+        <h4>${escapeHtml(signal.title)}</h4>
+        <p>${escapeHtml(signal.detail)}</p>
+        <div class="signal-action signal-action-stack">
+          <span>${escapeHtml(signal.action || "No immediate action required.")}</span>
+          <button
+            type="button"
+            class="signal-toggle"
+            data-action="toggle-radar-reserve"
+            aria-expanded="${state.radarReserveExpanded ? "true" : "false"}"
+          >
+            ${state.radarReserveExpanded ? "Hide reserve" : "Show reserve"}
+          </button>
+        </div>
+        ${
+          state.radarReserveExpanded
+            ? `
+              <div class="signal-reserve-list">
+                ${visibleMissions
+                  .map(
+                    (mission) => `
+                      <div class="signal-reserve-item">
+                        <div class="signal-reserve-copy">
+                          <strong>${escapeHtml(mission.name)}</strong>
+                          <span>${escapeHtml(formatRelativeTimestamp(mission.last_activity_at || mission.updated_at))}</span>
+                        </div>
+                        <button
+                          type="button"
+                          class="ghost signal-inline-action"
+                          data-action="open-mission"
+                          data-mission-id="${mission.id}"
+                        >
+                          Open
+                        </button>
+                      </div>
+                    `,
+                  )
+                  .join("")}
+                ${
+                  hiddenCount
+                    ? `<div class="signal-reserve-footer">${escapeHtml(`${hiddenCount} more handoff${hiddenCount === 1 ? "" : "s"} stay available in the mission fleet.`)}</div>`
+                    : ""
+                }
+              </div>
+            `
+            : ""
+        }
+      </article>
+    `;
+  };
+  radarSignalsEl.innerHTML = radar.signals
+    .map((signal) =>
+      signal.id === "attention/handoff-backlog"
+        ? renderReserveSignal(signal)
+        : renderStandardSignal(signal),
     )
     .join("");
 }
@@ -1180,6 +1308,46 @@ function getTaskById(taskId) {
   return (state.dashboard?.ops_mesh?.task_inbox?.tasks ?? []).find(
     (task) => String(task.id) === String(taskId),
   );
+}
+
+function getTaskInboxItemById(itemId) {
+  return (state.dashboard?.ops_mesh?.task_inbox?.items ?? []).find((item) => item.id === itemId);
+}
+
+function getPlaybookById(playbookId) {
+  return (state.dashboard?.playbooks ?? []).find(
+    (playbook) => String(playbook.id) === String(playbookId),
+  );
+}
+
+function getMissionById(missionId) {
+  return (state.dashboard?.missions ?? []).find((mission) => String(mission.id) === String(missionId));
+}
+
+function getReadyReserveMissions() {
+  return [...(state.dashboard?.missions ?? [])]
+    .filter((mission) => ["paused", "completed"].includes(mission.status) && mission.last_checkpoint)
+    .sort((left, right) => {
+      const leftTime = new Date(left.last_activity_at || left.updated_at || 0).getTime();
+      const rightTime = new Date(right.last_activity_at || right.updated_at || 0).getTime();
+      return rightTime - leftTime;
+    });
+}
+
+function openShell(shellId) {
+  const shell = document.querySelector(`#${shellId}`);
+  if (shell && "open" in shell) {
+    shell.open = true;
+  }
+}
+
+function focusCard(selector, shellId) {
+  openShell(shellId);
+  const element = document.querySelector(selector);
+  if (!element) {
+    throw new Error("That item is no longer visible on the dashboard.");
+  }
+  element.scrollIntoView({ behavior: "smooth", block: "center" });
 }
 
 function toneForTaskStatus(status) {
@@ -1195,6 +1363,20 @@ function toneForTaskStatus(status) {
   return "";
 }
 
+function toneForInboxUrgency(urgency) {
+  return toneForSignal(urgency);
+}
+
+function taskCardClassForInboxUrgency(urgency) {
+  if (urgency === "critical" || urgency === "warn") {
+    return "task-attention";
+  }
+  if (urgency === "ready") {
+    return "task-due";
+  }
+  return "task-running";
+}
+
 function toneForAuthStatus(status) {
   if (status === "satisfied") {
     return "ok";
@@ -1203,6 +1385,35 @@ function toneForAuthStatus(status) {
     return "warn";
   }
   if (status === "degraded") {
+    return "bad";
+  }
+  return "";
+}
+
+function toneForIntegrationReadiness(readiness) {
+  if (readiness === "ready") {
+    return "ok";
+  }
+  if (readiness === "observed" || readiness === "disabled") {
+    return "";
+  }
+  if (readiness === "auth_gap" || readiness === "lane_gap") {
+    return "warn";
+  }
+  if (readiness === "degraded") {
+    return "bad";
+  }
+  return "";
+}
+
+function toneForLaneCapabilityStatus(status) {
+  if (status === "ready") {
+    return "ok";
+  }
+  if (status === "auth_gap" || status === "missing") {
+    return "warn";
+  }
+  if (status === "offline" || status === "degraded" || status === "disabled") {
     return "bad";
   }
   return "";
@@ -1265,11 +1476,278 @@ function syncVaultSecretOptions(opsMesh) {
   });
 }
 
+function renderBootstrapResource(resource) {
+  if (!resource) {
+    return "";
+  }
+  const resourceKind = resource.kind || "saved";
+  const created = Boolean(resource.created);
+  return `
+    <article class="bootstrap-resource">
+      <div class="row">
+        <strong>${escapeHtml(resource.label)}</strong>
+        <div class="pill-row">
+          ${pill(String(resourceKind).replaceAll("_", " "), created ? "ok" : "")}
+          ${created ? pill("created", "ok") : pill("saved")}
+        </div>
+      </div>
+      ${resource.detail ? `<p class="small-muted">${escapeHtml(resource.detail)}</p>` : ""}
+    </article>
+  `;
+}
+
+function renderBootstrapResult() {
+  const result = state.lastBootstrapResult || state.setup?.launch_handoff;
+  if (!onboardingResultEl) {
+    return;
+  }
+  if (!result) {
+    onboardingResultEl.innerHTML = "";
+    return;
+  }
+  const resources = [
+    result.instance,
+    result.project,
+    result.operator,
+    result.task_blueprint,
+  ].filter(Boolean);
+  const sourceLabel = state.lastBootstrapResult ? "Launch Handoff" : "Saved Launch Handoff";
+  const actionLabel = state.lastBootstrapResult ? "Load launch draft" : "Load saved launch draft";
+  const actionKey = state.lastBootstrapResult ? "apply-bootstrap-draft" : "apply-setup-launch-draft";
+  onboardingResultEl.innerHTML = `
+    <article class="bootstrap-result">
+      <div class="section-header">
+        <div>
+          <p class="eyebrow">${escapeHtml(sourceLabel)}</p>
+          <h2>${escapeHtml(result.headline)}</h2>
+        </div>
+        <p class="panel-lede">${escapeHtml(result.summary)}</p>
+      </div>
+      ${
+        result.warnings?.length
+          ? `<div class="ops-note">${result.warnings.map((warning) => escapeHtml(warning)).join(" ")}</div>`
+          : ""
+      }
+      <div class="bootstrap-resource-grid">
+        ${resources.map((resource) => renderBootstrapResource(resource)).join("")}
+      </div>
+      <div class="chat-actions">
+        ${result.mission_draft ? chatActionButton(actionLabel, actionKey) : ""}
+      </div>
+      <p class="small-muted">${escapeHtml(result.next_entrypoint || "")}</p>
+    </article>
+  `;
+}
+
+function renderGatewayBootstrapProfile() {
+  if (!gatewayBootstrapProfileEl) {
+    return;
+  }
+  const profile = state.dashboard?.gateway_bootstrap;
+  if (!profile) {
+    gatewayBootstrapProfileEl.innerHTML = "";
+    return;
+  }
+  const resources = [
+    profile.instance,
+    profile.project,
+    profile.team,
+    profile.operator,
+    profile.task_blueprint,
+  ].filter(Boolean);
+  gatewayBootstrapProfileEl.innerHTML = `
+    <article class="bootstrap-result gateway-bootstrap-profile">
+      <div class="section-header">
+        <div>
+          <p class="eyebrow">Gateway Profile</p>
+          <h2>${escapeHtml(profile.headline)}</h2>
+        </div>
+        <p class="panel-lede">${escapeHtml(profile.summary)}</p>
+      </div>
+      ${
+        profile.warnings?.length
+          ? `<div class="ops-note">${profile.warnings.map((warning) => escapeHtml(warning)).join(" ")}</div>`
+          : ""
+      }
+      <div class="bootstrap-resource-grid">
+        ${resources.map((resource) => renderBootstrapResource(resource)).join("")}
+      </div>
+      <div class="pill-row bootstrap-policy-pills">
+        ${pill(profile.status, profile.status === "ready" ? "ok" : profile.status === "degraded" ? "bad" : "warn")}
+        ${pill(profile.setup_mode, profile.setup_mode === "remote" ? "warn" : "ok")}
+        ${pill(profile.setup_flow)}
+        ${pill(profile.model)}
+        ${profile.max_turns ? pill(`max ${profile.max_turns} turns`) : ""}
+        ${pill(profile.run_verification ? "verification on" : "verification off", profile.run_verification ? "ok" : "warn")}
+        ${pill(profile.use_builtin_agents ? "agents on" : "agents off", profile.use_builtin_agents ? "ok" : "warn")}
+        ${pill(profile.pause_on_approval ? "approval pause" : "no approval pause", profile.pause_on_approval ? "ok" : "warn")}
+      </div>
+      <p class="small-muted">${escapeHtml(profile.launch_defaults_summary)}</p>
+    </article>
+  `;
+}
+
+function applyWizardSessionToForm(force = false) {
+  if (!onboardingFormEl) {
+    return;
+  }
+  const wizard = state.setup?.wizard_session;
+  if (!wizard) {
+    return;
+  }
+  if (!force && onboardingFormEl.dataset.prefilled === "true") {
+    return;
+  }
+  const setValue = (name, value) => {
+    const field = onboardingFormEl.querySelector(`[name="${name}"]`);
+    if (!field || value == null) {
+      return;
+    }
+    field.value = String(value);
+  };
+  setValue("setup_mode", wizard.mode);
+  setValue("setup_flow", wizard.flow);
+  setValue("project_path", wizard.project_path);
+  setValue("project_label", wizard.project_label);
+  setValue("instance_mode", wizard.instance_mode);
+  setValue("instance_id", wizard.instance_id ?? "");
+  setValue("instance_name", wizard.instance_name);
+  setValue("team_name", wizard.team_name);
+  setValue("operator_name", wizard.operator_name);
+  setValue("operator_email", wizard.operator_email);
+  setValue("task_name", wizard.task_name);
+  setValue("cadence_minutes", wizard.cadence_minutes);
+  setValue("model", wizard.model);
+  setValue("max_turns", wizard.max_turns ?? "");
+  setValue("objective_template", wizard.objective_template);
+  onboardingFormEl.dataset.prefilled = "true";
+}
+
+function renderOnboardingModeCallout(wizard) {
+  if (!onboardingModeLabelEl || !onboardingFlowPillEl || !onboardingModeSummaryEl) {
+    return;
+  }
+  if (!wizard) {
+    onboardingModeLabelEl.textContent = "Local-first bootstrap";
+    onboardingFlowPillEl.textContent = "QuickStart";
+    onboardingModeSummaryEl.textContent =
+      "This path reuses the existing control plane. It can stage or reuse a Desktop lane, register the workspace, issue remote operator access, vault a secret, pin a project skill, schedule the first recurring task, and preload the launch draft without inventing another config layer.";
+    return;
+  }
+  onboardingModeLabelEl.textContent =
+    wizard.mode === "remote" ? "Remote-first bootstrap" : "Local-first bootstrap";
+  onboardingFlowPillEl.textContent = wizard.flow === "advanced" ? "Advanced" : "QuickStart";
+  onboardingFlowPillEl.className = `pill ${wizard.mode === "remote" ? "warn" : "ok"}`;
+  onboardingModeSummaryEl.textContent = wizard.summary;
+}
+
+function renderOnboarding() {
+  const instances = state.dashboard?.instances ?? [];
+  const projects = state.dashboard?.projects ?? [];
+  const tasks = state.dashboard?.task_blueprints ?? [];
+  const opsMesh = state.dashboard?.ops_mesh ?? {};
+  const wizard = state.setup?.wizard_session;
+  const teams = opsMesh.teams ?? [];
+  const operators = opsMesh.operators ?? [];
+  const secrets = opsMesh.vault_secrets ?? [];
+  const connected = instances.filter((instance) => instance.connected).length;
+  const apiKeyCount = opsMesh.access_posture?.api_key_count ?? 0;
+
+  if (!onboardingHeadlineEl || !onboardingSummaryEl || !onboardingChecklistEl) {
+    return;
+  }
+
+  applyWizardSessionToForm();
+  renderOnboardingModeCallout(wizard);
+
+  const allReady =
+    connected > 0 && projects.length > 0 && operators.length > 0 && apiKeyCount > 0 && tasks.length > 0;
+  if (allReady) {
+    onboardingHeadlineEl.textContent = "QuickStart spine is in place";
+    onboardingSummaryEl.textContent =
+      "A live lane, workspace, remote access path, and recurring task already exist. Re-run bootstrap to tighten or extend the setup without rebuilding it by hand.";
+  } else {
+    onboardingHeadlineEl.textContent = "Bootstrap the first autonomous loop";
+    onboardingSummaryEl.textContent =
+      "Collapse lane setup, workspace registration, remote access, vaulting, skill pinning, and recurring task creation into one controlled pass.";
+  }
+
+  const checklist = [
+    {
+      label: wizard?.mode === "remote" ? "Lane Pool" : "Lane",
+      detail:
+        wizard?.mode === "remote"
+          ? connected > 0
+            ? `${connected} connected lane${connected === 1 ? "" : "s"} available for remote launches`
+            : instances.length
+              ? `${instances.length} saved lane${instances.length === 1 ? "" : "s"} can be bound later`
+              : "No lane saved yet for the first remote launch"
+          : connected > 0
+            ? `${connected} connected lane${connected === 1 ? "" : "s"} ready`
+            : instances.length
+              ? `${instances.length} lane${instances.length === 1 ? "" : "s"} saved but not connected`
+              : "No lane configured yet",
+      tone:
+        connected > 0
+          ? "ok"
+          : instances.length
+            ? "warn"
+            : wizard?.mode === "remote"
+              ? "warn"
+              : "bad",
+    },
+    {
+      label: "Workspace",
+      detail: projects.length ? `${projects.length} workspace${projects.length === 1 ? "" : "s"} registered` : "No workspace registered yet",
+      tone: projects.length ? "ok" : "bad",
+    },
+    {
+      label: "Remote Access",
+      detail:
+        apiKeyCount > 0
+          ? `${apiKeyCount} operator key${apiKeyCount === 1 ? "" : "s"} active`
+          : `${teams.length} team${teams.length === 1 ? "" : "s"}, ${operators.length} operator${operators.length === 1 ? "" : "s"} but no active key`,
+      tone: apiKeyCount > 0 ? "ok" : operators.length ? "warn" : "bad",
+    },
+    {
+      label: "Vault",
+      detail: secrets.length ? `${secrets.length} secret${secrets.length === 1 ? "" : "s"} stored` : "No vault secret stored yet",
+      tone: secrets.length ? "ok" : "warn",
+    },
+    {
+      label: "Recurring Task",
+      detail: tasks.length ? `${tasks.length} task blueprint${tasks.length === 1 ? "" : "s"} available` : "No recurring task saved yet",
+      tone: tasks.length ? "ok" : "bad",
+    },
+  ];
+
+  onboardingChecklistEl.innerHTML = checklist
+    .map(
+      (item) => `
+        <article class="bootstrap-check">
+          <div class="row">
+            <strong>${escapeHtml(item.label)}</strong>
+            ${pill(item.tone === "bad" ? "missing" : item.tone === "warn" ? "partial" : "ready", item.tone)}
+          </div>
+          <p class="small-muted">${escapeHtml(item.detail)}</p>
+        </article>
+      `,
+    )
+    .join("");
+
+  renderGatewayBootstrapProfile();
+  renderBootstrapResult();
+  syncOnboardingMode();
+}
+
 function renderOpsMesh() {
   const opsMesh = state.dashboard?.ops_mesh;
   if (!opsMesh) {
-    taskInboxHeadlineEl.textContent = "No task blueprints yet";
+    taskInboxHeadlineEl.textContent = "Operator inbox is quiet";
     taskInboxSummaryEl.textContent = "";
+    if (taskInboxItemsEl) {
+      taskInboxItemsEl.innerHTML = "";
+    }
     if (authPostureHeadlineEl) {
       authPostureHeadlineEl.textContent = "Integration auth is idle";
     }
@@ -1287,6 +1765,28 @@ function renderOpsMesh() {
     if (authDegradedCountEl) {
       authDegradedCountEl.textContent = "0 degraded";
       authDegradedCountEl.className = "pill";
+    }
+    if (integrationsInventoryHeadlineEl) {
+      integrationsInventoryHeadlineEl.textContent = "Integration inventory is idle";
+    }
+    if (integrationsInventorySummaryEl) {
+      integrationsInventorySummaryEl.textContent =
+        "Add tracked integrations or connect live lane capability catalogs to build the readiness map.";
+    }
+    if (integrationsInventoryReadyCountEl) {
+      integrationsInventoryReadyCountEl.textContent = "0 ready";
+      integrationsInventoryReadyCountEl.className = "pill";
+    }
+    if (integrationsInventoryGapCountEl) {
+      integrationsInventoryGapCountEl.textContent = "0 gaps";
+      integrationsInventoryGapCountEl.className = "pill";
+    }
+    if (integrationsInventoryObservedCountEl) {
+      integrationsInventoryObservedCountEl.textContent = "0 observed";
+      integrationsInventoryObservedCountEl.className = "pill";
+    }
+    if (integrationsInventoryListEl) {
+      integrationsInventoryListEl.innerHTML = "";
     }
     if (accessPostureHeadlineEl) {
       accessPostureHeadlineEl.textContent = "Remote ingress is local-only";
@@ -1328,6 +1828,74 @@ function renderOpsMesh() {
 
   taskInboxHeadlineEl.textContent = opsMesh.task_inbox.headline;
   taskInboxSummaryEl.textContent = opsMesh.task_inbox.summary;
+  if (taskInboxItemsEl) {
+    taskInboxItemsEl.innerHTML = opsMesh.task_inbox.items.length
+      ? opsMesh.task_inbox.items
+          .map(
+            (item) => `
+              <article class="task-card ${taskCardClassForInboxUrgency(item.urgency)}">
+                <div class="row">
+                  <strong>${escapeHtml(item.title)}</strong>
+                  <div class="pill-row">
+                    ${pill(item.source)}
+                    ${pill(item.urgency, toneForInboxUrgency(item.urgency))}
+                    ${item.lane_label ? pill(item.lane_label) : ""}
+                    ${item.project_label ? pill(item.project_label) : ""}
+                  </div>
+                </div>
+                <p>${escapeHtml(item.summary)}</p>
+                <div class="small-muted">
+                  ${
+                    item.freshness_minutes != null
+                      ? `Freshness ${escapeHtml(formatRelativeTimestamp(Date.now() - item.freshness_minutes * 60000))}.`
+                      : "Live derived operator item."
+                  }
+                </div>
+                <div class="ops-note">${escapeHtml(item.recommended_action)}</div>
+                <div class="actions">
+                  ${
+                    item.mission_id
+                      ? `<button type="button" class="ghost" data-action="open-mission" data-mission-id="${item.mission_id}">${escapeHtml(item.jump_label)}</button>`
+                      : item.instance_id
+                        ? `<button type="button" class="ghost" data-action="open-instance" data-instance-id="${item.instance_id}">${escapeHtml(item.jump_label)}</button>`
+                        : item.playbook_id
+                          ? `<button type="button" class="ghost" data-action="open-playbook" data-playbook-id="${item.playbook_id}">${escapeHtml(item.jump_label)}</button>`
+                        : ""
+                  }
+                  ${
+                    item.task_id
+                      ? `<button type="button" class="ghost" data-action="apply-task" data-task-id="${item.task_id}">Load draft</button>`
+                      : ""
+                  }
+                  ${
+                    item.task_id
+                      ? `<button type="button" data-action="run-task" data-task-id="${item.task_id}">Run now</button>`
+                      : ""
+                  }
+                  ${
+                    item.playbook_id
+                      ? `<button type="button" data-action="run-playbook-now" data-playbook-id="${item.playbook_id}">Run now</button>`
+                      : ""
+                  }
+                  ${
+                    item.reflex
+                      ? `<button type="button" data-action="fire-inbox-reflex" data-inbox-item-id="${escapeHtml(item.id)}">Fire reflex</button>`
+                      : ""
+                  }
+                </div>
+              </article>
+            `,
+          )
+          .join("")
+      : `
+          <article class="task-card empty-state">
+            <strong>No operator interrupts right now.</strong>
+            <p class="small-muted">
+              Approvals, fragile continuity, reflexes, and schedule pressure will surface here as soon as they need judgment.
+            </p>
+          </article>
+        `;
+  }
   if (authPostureHeadlineEl) {
     authPostureHeadlineEl.textContent = opsMesh.auth_posture.headline;
   }
@@ -1345,6 +1913,110 @@ function renderOpsMesh() {
   if (authDegradedCountEl) {
     authDegradedCountEl.textContent = `${opsMesh.auth_posture.degraded_count} degraded`;
     authDegradedCountEl.className = opsMesh.auth_posture.degraded_count ? "pill bad" : "pill";
+  }
+  if (integrationsInventoryHeadlineEl) {
+    integrationsInventoryHeadlineEl.textContent = opsMesh.integrations_inventory.headline;
+  }
+  if (integrationsInventorySummaryEl) {
+    integrationsInventorySummaryEl.textContent = opsMesh.integrations_inventory.summary;
+  }
+  if (integrationsInventoryReadyCountEl) {
+    integrationsInventoryReadyCountEl.textContent = `${opsMesh.integrations_inventory.ready_count} ready`;
+    integrationsInventoryReadyCountEl.className = opsMesh.integrations_inventory.ready_count
+      ? "pill ok"
+      : "pill";
+  }
+  if (integrationsInventoryGapCountEl) {
+    integrationsInventoryGapCountEl.textContent = `${opsMesh.integrations_inventory.gap_count} gaps`;
+    integrationsInventoryGapCountEl.className = opsMesh.integrations_inventory.gap_count
+      ? "pill warn"
+      : "pill";
+  }
+  if (integrationsInventoryObservedCountEl) {
+    integrationsInventoryObservedCountEl.textContent = `${opsMesh.integrations_inventory.observed_count} observed`;
+    integrationsInventoryObservedCountEl.className = opsMesh.integrations_inventory.observed_count
+      ? "pill"
+      : "pill";
+  }
+  if (integrationsInventoryListEl) {
+    integrationsInventoryListEl.innerHTML = opsMesh.integrations_inventory.items.length
+      ? opsMesh.integrations_inventory.items
+          .map(
+            (item) => `
+              <article class="library-card">
+                <div class="row">
+                  <strong>${escapeHtml(item.name)}</strong>
+                  <div class="pill-row">
+                    ${pill(item.kind)}
+                    ${pill(item.readiness, toneForIntegrationReadiness(item.readiness))}
+                    ${item.tracked ? pill("tracked", "ok") : pill("observed")}
+                    ${pill(`${item.lane_ready_count}/${item.lane_match_count} lanes`, item.lane_ready_count ? "ok" : item.lane_match_count ? "warn" : "")}
+                  </div>
+                </div>
+                <div class="small-muted">
+                  ${
+                    item.project_labels.length
+                      ? `Scope: ${escapeHtml(item.project_labels.join(", "))}. `
+                      : "Scope: global or lane-observed. "
+                  }
+                  ${item.base_url ? `Endpoint ${escapeHtml(item.base_url)}. ` : ""}
+                  ${
+                    item.source_kinds.length
+                      ? `Signals: ${escapeHtml(item.source_kinds.join(", ").replaceAll("_", " "))}.`
+                      : ""
+                  }
+                </div>
+                ${
+                  item.auth_status
+                    ? `<div class="small-muted">Auth ${escapeHtml(item.auth_status)}${item.auth_scheme ? ` via ${escapeHtml(item.auth_scheme)}` : ""}.</div>`
+                    : ""
+                }
+                <div class="ops-note">${escapeHtml(item.summary)}</div>
+                <div class="small-muted">${escapeHtml(item.recommended_action)}</div>
+                ${
+                  item.capabilities.length
+                    ? `<div class="small-muted">Catalog: ${escapeHtml(item.capabilities.join(", "))}</div>`
+                    : ""
+                }
+                ${
+                  item.notes
+                    ? `<div class="small-muted">Notes: ${escapeHtml(item.notes)}</div>`
+                    : ""
+                }
+                ${
+                  item.lanes.length
+                    ? `<div class="stack">${item.lanes
+                        .map(
+                          (lane) => `
+                            <div class="ops-chip">
+                              <div>
+                                <strong>${escapeHtml(lane.instance_name)}</strong>
+                                <div class="small-muted">${escapeHtml(lane.summary)}</div>
+                                ${
+                                  lane.match_types.length
+                                    ? `<div class="small-muted">${escapeHtml(lane.match_types.join(", ").replaceAll("_", " "))}</div>`
+                                    : ""
+                                }
+                              </div>
+                              <span class="pill ${toneForLaneCapabilityStatus(lane.status)}">${escapeHtml(lane.status)}</span>
+                            </div>
+                          `,
+                        )
+                        .join("")}</div>`
+                    : `<div class="small-muted">No live lane is mapped to this capability yet.</div>`
+                }
+              </article>
+            `,
+          )
+          .join("")
+      : `
+          <article class="library-card empty-state">
+            <strong>No integration readiness map yet.</strong>
+            <p class="small-muted">
+              Track an integration or refresh a live lane catalog to start mapping capability readiness.
+            </p>
+          </article>
+        `;
   }
   if (accessPostureHeadlineEl) {
     accessPostureHeadlineEl.textContent = opsMesh.access_posture.headline;
@@ -1374,7 +2046,7 @@ function renderOpsMesh() {
     ? opsMesh.task_inbox.tasks
         .map(
           (task) => `
-            <article class="task-card task-${escapeHtml(task.status)}">
+            <article id="task-card-${task.id}" class="task-card task-${escapeHtml(task.status)}">
               <div class="row">
                 <strong>${escapeHtml(task.name)}</strong>
                 <div class="pill-row">
@@ -1422,6 +2094,174 @@ function renderOpsMesh() {
           </p>
         </article>
       `;
+
+  if (skillsRegistryHeadlineEl) {
+    skillsRegistryHeadlineEl.textContent = opsMesh.skills_registry.headline;
+  }
+  if (skillsRegistrySummaryEl) {
+    skillsRegistrySummaryEl.textContent = opsMesh.skills_registry.summary;
+  }
+  if (skillsRegistryGapsEl) {
+    skillsRegistryGapsEl.innerHTML = opsMesh.skills_registry.gaps.length
+      ? opsMesh.skills_registry.gaps
+          .map(
+            (gap) => `
+              <article class="library-card">
+                <div class="row">
+                  <strong>${escapeHtml(gap.mission_name)}</strong>
+                  <div class="pill-row">
+                    ${pill(`${gap.missing_skills.length} missing`, "bad")}
+                    ${gap.project_label ? pill(gap.project_label, "warn") : ""}
+                    ${gap.lane_label ? pill(gap.lane_label) : ""}
+                  </div>
+                </div>
+                <div class="small-muted">
+                  Missing ${escapeHtml(gap.missing_skills.join(", "))}.
+                </div>
+                <div class="ops-note">${escapeHtml(gap.recommended_action)}</div>
+              </article>
+            `,
+          )
+          .join("")
+      : `
+          <article class="library-card empty-state">
+            <strong>No live skill gaps.</strong>
+            <p class="small-muted">
+              Active lanes appear to cover the pinned repo skills they are carrying.
+            </p>
+          </article>
+        `;
+  }
+
+  if (skillsRegistryProjectsEl) {
+    skillsRegistryProjectsEl.innerHTML = opsMesh.skills_registry.projects.length
+      ? opsMesh.skills_registry.projects
+          .map(
+            (project) => `
+              <article class="library-card">
+                <div class="row">
+                  <strong>${escapeHtml(project.project_label)}</strong>
+                  <div class="pill-row">
+                    ${pill(`${project.live_skill_count} live skills`, project.live_skill_count ? "ok" : "")}
+                    ${pill(`${project.matched_skill_count}/${project.pinned_skill_count} pinned matched`, project.missing_skills.length ? "warn" : "ok")}
+                    ${pill(`${project.successful_run_count} successful runs`, project.successful_run_count ? "ok" : "")}
+                  </div>
+                </div>
+                <div class="small-muted">
+                  ${project.lane_count} lane(s), ${project.mission_count} mission(s).
+                  ${
+                    project.missing_skills.length
+                      ? ` Missing ${escapeHtml(project.missing_skills.join(", "))}.`
+                      : " Pinned skills are covered on attached lanes."
+                  }
+                </div>
+                ${
+                  project.skills.length
+                    ? `<div class="stack">${project.skills
+                        .slice(0, 8)
+                        .map(
+                          (skill) => `
+                            <div class="ops-chip">
+                              <div>
+                                <strong>${escapeHtml(skill.name)}</strong>
+                                <div class="small-muted">
+                                  ${escapeHtml(skill.lanes.join(", ") || "No lanes")} · ${escapeHtml(`${skill.successful_run_count} successful runs`)}
+                                </div>
+                                ${
+                                  skill.source
+                                    ? `<div class="small-muted">${escapeHtml(skill.source)}</div>`
+                                    : ""
+                                }
+                              </div>
+                            </div>
+                          `,
+                        )
+                        .join("")}</div>`
+                    : ""
+                }
+              </article>
+            `,
+          )
+          .join("")
+      : `
+          <article class="library-card empty-state">
+            <strong>No project registry yet.</strong>
+            <p class="small-muted">
+              Register a repo and connect a lane with live skills to see workspace coverage.
+            </p>
+          </article>
+        `;
+  }
+
+  if (skillsRegistryLanesEl) {
+    skillsRegistryLanesEl.innerHTML = opsMesh.skills_registry.lanes.length
+      ? opsMesh.skills_registry.lanes
+          .map(
+            (lane) => `
+              <article class="library-card">
+                <div class="row">
+                  <strong>${escapeHtml(lane.instance_name)}</strong>
+                  <div class="pill-row">
+                    ${pill(lane.connected ? "connected" : "offline", lane.connected ? "ok" : "bad")}
+                    ${pill(`${lane.skill_count} skills`, lane.skill_count ? "ok" : "")}
+                    ${pill(`${lane.relevant_skill_count} repo-matched`, lane.relevant_skill_count ? "warn" : "")}
+                    ${lane.gap_count ? pill(`${lane.gap_count} gaps`, "bad") : ""}
+                  </div>
+                </div>
+                <div class="small-muted">
+                  ${
+                    lane.project_labels.length
+                      ? `Attached to ${escapeHtml(lane.project_labels.join(", "))}.`
+                      : "No attached repo inferred yet."
+                  }
+                  ${lane.cwd ? ` Workspace: ${escapeHtml(lane.cwd)}.` : ""}
+                </div>
+                ${
+                  lane.skills.length
+                    ? `<div class="stack">${lane.skills
+                        .slice(0, 10)
+                        .map(
+                          (skill) => `
+                            <div class="ops-chip">
+                              <div>
+                                <strong>${escapeHtml(skill.name)}</strong>
+                                <div class="small-muted">
+                                  ${
+                                    skill.pinned_projects.length
+                                      ? `Relevant to ${escapeHtml(skill.pinned_projects.join(", "))}`
+                                      : "No pinned repo match yet"
+                                  }
+                                </div>
+                                ${
+                                  skill.source
+                                    ? `<div class="small-muted">${escapeHtml(skill.source)}</div>`
+                                    : ""
+                                }
+                              </div>
+                              ${
+                                skill.successful_run_count
+                                  ? `<span class="pill ok">${escapeHtml(`${skill.successful_run_count} runs`)}</span>`
+                                  : ""
+                              }
+                            </div>
+                          `,
+                        )
+                        .join("")}</div>`
+                    : `<div class="small-muted">No live skills published on this lane yet.</div>`
+                }
+              </article>
+            `,
+          )
+          .join("")
+      : `
+          <article class="library-card empty-state">
+            <strong>No lanes in the skills registry yet.</strong>
+            <p class="small-muted">
+              Connect a lane and refresh its skill catalog to build the operator map.
+            </p>
+          </article>
+        `;
+  }
 
   skillbooksEl.innerHTML = opsMesh.skillbooks.length
     ? opsMesh.skillbooks
@@ -1782,7 +2622,76 @@ function renderOpsMesh() {
                 ${pill(`${snapshot.model_count} models`)}
                 ${pill(`${snapshot.skill_count} skills`)}
                 ${pill(`${snapshot.thread_count} threads`)}
+                ${snapshot.approvals_pending_count ? pill(`${snapshot.approvals_pending_count} approvals`, "warn") : ""}
               </div>
+              ${
+                snapshot.mission_name
+                  ? `
+                    <div class="ops-chip">
+                      <div>
+                        <strong>${escapeHtml(snapshot.mission_name)}</strong>
+                        <div class="small-muted">
+                          ${
+                            snapshot.project_label
+                              ? escapeHtml(snapshot.project_label)
+                              : "No project attached."
+                          }
+                          ${snapshot.thread_id ? ` • ${escapeHtml(snapshot.thread_id)}` : ""}
+                        </div>
+                      </div>
+                      <div class="pill-row">
+                        ${snapshot.mission_status ? pill(snapshot.mission_status, toneForMissionStatus(snapshot.mission_status)) : ""}
+                        ${snapshot.phase ? pill(snapshot.phase) : ""}
+                        ${
+                          snapshot.continuity_state
+                            ? pill(
+                                `${snapshot.continuity_state}${snapshot.continuity_score != null ? ` ${snapshot.continuity_score}` : ""}`,
+                                snapshot.continuity_state === "anchored"
+                                  ? "ok"
+                                  : snapshot.continuity_state === "warming"
+                                    ? "warn"
+                                    : "bad",
+                              )
+                            : ""
+                        }
+                      </div>
+                    </div>
+                  `
+                  : ""
+              }
+              ${
+                snapshot.current_command
+                  ? `
+                    <article class="mission-focus stack">
+                      <div class="row">
+                        <strong>Current command</strong>
+                        <span class="mission-freshness">live</span>
+                      </div>
+                      <pre>${escapeHtml(snapshot.current_command)}</pre>
+                    </article>
+                  `
+                  : ""
+              }
+              ${
+                snapshot.mission_name
+                  ? `
+                    <div class="pill-row">
+                      ${pill(`${formatNumber(snapshot.command_burn)} commands`)}
+                      ${pill(`${formatNumber(snapshot.token_burn)} tokens`)}
+                    </div>
+                  `
+                  : ""
+              }
+              ${
+                snapshot.last_checkpoint_summary
+                  ? `<div class="ops-note">${escapeHtml(snapshot.last_checkpoint_summary)}</div>`
+                  : ""
+              }
+              ${
+                snapshot.safest_handoff
+                  ? `<div class="small-muted">Safest handoff: ${escapeHtml(snapshot.safest_handoff)}</div>`
+                  : ""
+              }
               ${
                 snapshot.note ? `<div class="ops-note">${escapeHtml(snapshot.note)}</div>` : ""
               }
@@ -2193,6 +3102,31 @@ function applyMissionDraft(draft) {
   );
 }
 
+function syncOnboardingMode() {
+  if (!onboardingInstanceModeEl || !onboardingInstanceSelectEl) {
+    return;
+  }
+  const isRemote = onboardingSetupModeEl?.value === "remote";
+  if (onboardingSetupFlowEl) {
+    if (isRemote) {
+      onboardingSetupFlowEl.value = "advanced";
+    }
+    onboardingSetupFlowEl.disabled = isRemote;
+  }
+  if (isRemote) {
+    onboardingInstanceModeEl.value = "existing";
+  }
+  onboardingInstanceModeEl.hidden = isRemote;
+  const instanceNameField = onboardingFormEl?.querySelector('input[name="instance_name"]');
+  if (instanceNameField) {
+    instanceNameField.hidden = isRemote;
+    instanceNameField.disabled = isRemote;
+  }
+  const useExisting = isRemote || onboardingInstanceModeEl.value === "existing";
+  onboardingInstanceSelectEl.hidden = !useExisting;
+  onboardingInstanceSelectEl.toggleAttribute("required", useExisting && !isRemote);
+}
+
 function syncMissionOptions() {
   const instances = state.dashboard?.instances ?? [];
   const projects = state.dashboard?.projects ?? [];
@@ -2204,6 +3138,7 @@ function syncMissionOptions() {
   const selectedOperatorTeam = operatorTeamSelectEl.value;
   const selectedSkillProject = skillProjectSelectEl.value;
   const selectedIntegrationProject = integrationProjectSelectEl.value;
+  const selectedBootstrapInstance = onboardingInstanceSelectEl?.value;
   const instanceOptions = instances.length
     ? instances
         .map(
@@ -2234,6 +3169,28 @@ function syncMissionOptions() {
     instances.some((instance) => String(instance.id) === selectedTaskInstance)
   ) {
     taskInstanceSelectEl.value = selectedTaskInstance;
+  }
+  if (onboardingInstanceSelectEl) {
+    const remoteMode = onboardingSetupModeEl?.value === "remote";
+    onboardingInstanceSelectEl.innerHTML = instances.length
+      ? `
+        <option value="">${remoteMode ? "No default lane yet" : "Select an existing lane"}</option>
+        ${instances
+          .map(
+            (instance) =>
+              `<option value="${instance.id}">${escapeHtml(
+                `${instance.name}${instance.connected ? " (connected)" : ""}`,
+              )}</option>`,
+          )
+          .join("")}
+      `
+      : `<option value="">No lanes available yet</option>`;
+    if (
+      selectedBootstrapInstance &&
+      instances.some((instance) => String(instance.id) === selectedBootstrapInstance)
+    ) {
+      onboardingInstanceSelectEl.value = selectedBootstrapInstance;
+    }
   }
   missionProjectSelectEl.innerHTML = `
     <option value="">Project (optional)</option>
@@ -2292,6 +3249,7 @@ function syncMissionOptions() {
   if (selectedOperatorTeam && teams.some((team) => String(team.id) === selectedOperatorTeam)) {
     operatorTeamSelectEl.value = selectedOperatorTeam;
   }
+  syncOnboardingMode();
 }
 
 function renderDiagnostics() {
@@ -2358,6 +3316,7 @@ function renderShellChrome() {
   const opsMesh = state.dashboard?.ops_mesh;
   const missions = state.dashboard?.missions ?? [];
   const tasks = opsMesh?.task_inbox?.tasks ?? [];
+  const inboxItems = opsMesh?.task_inbox?.items ?? [];
   const remoteRequests = opsMesh?.remote_requests ?? [];
   const routes = opsMesh?.notification_routes ?? [];
   const meshIntegrations = opsMesh?.integrations ?? [];
@@ -2374,12 +3333,12 @@ function renderShellChrome() {
   const events = state.dashboard?.events ?? [];
 
   if (opsTaskCountEl) {
-    opsTaskCountEl.textContent = summarizeCount(tasks.length, "task");
-    opsTaskCountEl.className = tasks.some((task) => task.status === "attention")
+    opsTaskCountEl.textContent = summarizeCount(inboxItems.length, "item");
+    opsTaskCountEl.className = inboxItems.some((item) => item.urgency === "critical")
       ? "pill bad"
-      : tasks.some((task) => task.status === "due")
+      : inboxItems.some((item) => item.urgency === "warn")
         ? "pill warn"
-        : tasks.length
+        : inboxItems.length
           ? "pill ok"
           : "pill";
   }
@@ -2402,9 +3361,15 @@ function renderShellChrome() {
     opsSnapshotCountEl.className = snapshots.length ? "pill warn" : "pill";
   }
   if (opsShellSummaryEl) {
-    if (tasks.some((task) => task.status === "attention")) {
+    if (inboxItems.some((item) => item.urgency === "critical")) {
+      opsShellSummaryEl.textContent =
+        "The operator inbox has critical work waiting across approvals, lane health, or failed missions.";
+    } else if (tasks.some((task) => task.status === "attention")) {
       opsShellSummaryEl.textContent =
         "A recurring workflow needs attention before the always-on layer can be trusted again.";
+    } else if (inboxItems.some((item) => item.urgency === "warn")) {
+      opsShellSummaryEl.textContent =
+        "The sidecar is surfacing derived watch items so you can steer lanes before they hard-block.";
     } else if (tasks.some((task) => task.status === "due" || task.status === "running")) {
       opsShellSummaryEl.textContent =
         "Scheduled work is in motion. This layer now owns repeated objectives, outward alerts, and lane memory.";
@@ -2420,7 +3385,7 @@ function renderShellChrome() {
     } else if (authPosture?.missing_count) {
       opsShellSummaryEl.textContent =
         "Integration inventory exists, but some entries still need credentials attached from the vault.";
-    } else if (tasks.length || routes.length || meshIntegrations.length || snapshots.length) {
+    } else if (tasks.length || inboxItems.length || routes.length || meshIntegrations.length || snapshots.length) {
       opsShellSummaryEl.textContent =
         "The operational mesh is configured and ready, but it stays tucked away until you need to steer it.";
     } else {
@@ -2571,7 +3536,7 @@ function renderMissions() {
         : `<p class="mono">No checkpoints yet.</p>`;
 
       return `
-        <article class="mission stack phase-${escapeHtml(mission.phase || "ready")}">
+        <article id="mission-card-${mission.id}" class="mission stack phase-${escapeHtml(mission.phase || "ready")}">
           <div class="mission-kicker">
             ${pill(mission.status, toneForMissionStatus(mission.status))}
             ${mission.phase ? pill(mission.phase) : ""}
@@ -2783,7 +3748,7 @@ function renderInstances() {
         .join("");
 
       return `
-        <article class="instance stack">
+        <article id="instance-card-${instance.id}" class="instance stack">
           <div class="instance-top">
             <div>
               <div class="instance-meta">
@@ -2914,17 +3879,39 @@ function renderPlaybooks() {
 
   playbooksEl.innerHTML = playbooks
     .map(
-      (playbook) => `
-        <article class="playbook library-card">
+      (playbook) => {
+        const nextRunAt = computeNextRunAt(playbook.last_run_at, playbook.cadence_minutes);
+        const defaultVariables = JSON.stringify(playbook.default_variables || {}, null, 2);
+        return `
+        <article id="playbook-card-${playbook.id}" class="playbook library-card">
           <div class="row">
             <strong>${escapeHtml(playbook.name)}</strong>
             <div class="playbook-meta">
               ${pill(playbook.kind)}
               ${playbook.instance_id ? pill(`instance ${playbook.instance_id}`) : pill("instance at run time", "warn")}
               ${playbook.thread_id ? pill(`thread ${playbook.thread_id}`) : ""}
+              ${playbook.cadence_minutes ? pill(`every ${playbook.cadence_minutes}m`, "ok") : pill("manual only")}
+              ${playbook.last_status ? pill(playbook.last_status, playbook.last_status === "failed" ? "bad" : "ok") : ""}
             </div>
           </div>
           ${playbook.description ? `<div class="small-muted">${escapeHtml(playbook.description)}</div>` : ""}
+          <div class="small-muted">
+            ${
+              nextRunAt
+                ? `Next run ${escapeHtml(formatRelativeTimestamp(nextRunAt))}.`
+                : "No recurring schedule attached."
+            }
+            ${
+              playbook.last_run_at
+                ? ` Last run ${escapeHtml(formatRelativeTimestamp(playbook.last_run_at))}.`
+                : ""
+            }
+          </div>
+          ${
+            playbook.last_result_summary
+              ? `<div class="ops-note">${escapeHtml(playbook.last_result_summary)}</div>`
+              : ""
+          }
           <pre>${escapeHtml(playbook.template)}</pre>
           <div class="subgrid">
             <input
@@ -2947,7 +3934,7 @@ function renderPlaybooks() {
           <textarea
             data-playbook-vars="${playbook.id}"
             placeholder='Variables as JSON, e.g. {"branch":"main","goal":"triage failing tests"}'
-          >{}</textarea>
+          >${escapeHtml(defaultVariables)}</textarea>
           <div class="actions">
             <button type="button" data-action="run-playbook" data-playbook-id="${playbook.id}">
               Run
@@ -2957,7 +3944,8 @@ function renderPlaybooks() {
             </button>
           </div>
         </article>
-      `,
+      `;
+      },
     )
     .join("");
 }
@@ -3045,6 +4033,11 @@ function renderEvents() {
           <div class="event-top">
             <div class="event-meta">
               ${pill(event.method, "ok")}
+              ${
+                Number(event.payload?.repeatCount ?? 1) > 1
+                  ? pill(`x${Number(event.payload.repeatCount)}`, "warn")
+                  : ""
+              }
               ${event.thread_id ? pill(event.thread_id) : ""}
               ${event.instance_id ? pill(`instance ${event.instance_id}`) : ""}
             </div>
@@ -3063,6 +4056,7 @@ function render() {
   renderChat();
   renderLaunchpad();
   renderRadar();
+  renderOnboarding();
   renderOpsMesh();
   renderContinuity();
   renderDreams();
@@ -3083,7 +4077,7 @@ async function submitJson(url, payload, method = "POST") {
     method,
     body: JSON.stringify(payload),
   });
-  await loadDashboard();
+  await Promise.all([loadDashboard(), loadSetup()]);
   return result;
 }
 
@@ -3118,11 +4112,13 @@ function syncTransportFields() {
 }
 
 async function refreshAll() {
-  await Promise.all([loadDashboard(), loadDiagnostics()]);
+  await Promise.all([loadDashboard(), loadDiagnostics(), loadSetup()]);
 }
 
 document.querySelector("#refresh-dashboard").addEventListener("click", () => {
-  loadDashboard().catch((error) => showToast(normalizeError(error), true));
+  Promise.all([loadDashboard(), loadSetup()]).catch((error) =>
+    showToast(normalizeError(error), true),
+  );
 });
 
 document.querySelector("#refresh-diagnostics").addEventListener("click", () => {
@@ -3229,6 +4225,113 @@ transportSelectEl.addEventListener("change", () => {
   syncTransportFields();
 });
 
+async function persistSetupWizardSelection() {
+  if (!onboardingSetupModeEl || !onboardingSetupFlowEl) {
+    return;
+  }
+  const result = await submitJson(
+    "/api/setup/wizard",
+    {
+      mode: onboardingSetupModeEl.value,
+      flow: onboardingSetupFlowEl.value,
+    },
+    "PUT",
+  );
+  state.setup = state.setup || {};
+  state.setup.wizard_session = result;
+  if (onboardingFormEl) {
+    onboardingFormEl.dataset.prefilled = "";
+  }
+  renderOnboarding();
+}
+
+if (onboardingSetupModeEl) {
+  onboardingSetupModeEl.addEventListener("change", () => {
+    syncOnboardingMode();
+    persistSetupWizardSelection().catch((error) => showToast(normalizeError(error), true));
+  });
+}
+
+if (onboardingSetupFlowEl) {
+  onboardingSetupFlowEl.addEventListener("change", () => {
+    syncOnboardingMode();
+    persistSetupWizardSelection().catch((error) => showToast(normalizeError(error), true));
+  });
+}
+
+if (onboardingInstanceModeEl) {
+  onboardingInstanceModeEl.addEventListener("change", () => {
+    syncOnboardingMode();
+  });
+}
+
+if (onboardingFormEl) {
+  onboardingFormEl.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    try {
+      const setupMode = onboardingSetupModeEl?.value || "local";
+      const setupFlow = onboardingSetupFlowEl?.value || "quickstart";
+      const result = await submitJson("/api/onboarding/bootstrap", {
+        setup_mode: setupMode,
+        setup_flow: setupMode === "remote" ? "advanced" : setupFlow,
+        instance_mode: setupMode === "remote" ? "existing" : form.get("instance_mode"),
+        instance_id: form.get("instance_id") ? Number(form.get("instance_id")) : null,
+        instance_name: form.get("instance_name") || "Local Codex Desktop",
+        project_path: form.get("project_path"),
+        project_label: form.get("project_label") || null,
+        team_name: form.get("team_name") || null,
+        team_slug: null,
+        team_description: null,
+        operator_name: form.get("operator_name"),
+        operator_email: form.get("operator_email") || null,
+        operator_role: "operator",
+        issue_api_key: form.get("issue_api_key") === "on",
+        vault_secret_label: form.get("vault_secret_label") || null,
+        vault_secret_value: form.get("vault_secret_value") || null,
+        vault_secret_kind: "token",
+        vault_secret_notes: null,
+        integration_name: form.get("integration_name") || null,
+        integration_kind: form.get("integration_kind") || null,
+        integration_base_url: form.get("integration_base_url") || null,
+        integration_auth_scheme: "token",
+        integration_notes: null,
+        skill_name: form.get("skill_name") || null,
+        skill_prompt_hint: form.get("skill_prompt_hint") || null,
+        skill_source: form.get("skill_source") || null,
+        task_name: form.get("task_name"),
+        task_summary: null,
+        objective_template: form.get("objective_template"),
+        cadence_minutes: form.get("cadence_minutes") ? Number(form.get("cadence_minutes")) : 180,
+        completion_marker: null,
+        model: form.get("model") || "gpt-5.4",
+        max_turns: form.get("max_turns") ? Number(form.get("max_turns")) : 4,
+        use_builtin_agents: form.get("use_builtin_agents") === "on",
+        run_verification: form.get("run_verification") === "on",
+        auto_commit: form.get("auto_commit") === "on",
+        pause_on_approval: form.get("pause_on_approval") === "on",
+        allow_auto_reflexes: true,
+        auto_recover: true,
+        auto_recover_limit: 2,
+        reflex_cooldown_seconds: 900,
+        allow_failover: true,
+        enabled: form.get("enabled") === "on",
+      });
+      state.lastBootstrapResult = result;
+      render();
+      if (result.mission_draft) {
+        applyMissionDraft(result.mission_draft);
+      }
+      if (result.api_key) {
+        revealApiKey(result.api_key, result.operator?.label || "operator");
+      }
+      showToast(result.headline || "Bootstrap complete.");
+    } catch (error) {
+      showToast(normalizeError(error), true);
+    }
+  });
+}
+
 document.querySelector("#playbook-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = new FormData(event.currentTarget);
@@ -3239,9 +4342,12 @@ document.querySelector("#playbook-form").addEventListener("submit", async (event
       kind: form.get("kind"),
       template: form.get("template"),
       instance_id: form.get("instance_id") ? Number(form.get("instance_id")) : null,
+      cadence_minutes: form.get("cadence_minutes") ? Number(form.get("cadence_minutes")) : null,
+      enabled: form.get("enabled") === "on",
       cwd: form.get("cwd") || null,
       model: form.get("model") || null,
       thread_id: form.get("thread_id") || null,
+      default_variables: parseVariables(form.get("default_variables") || "{}"),
       reasoning_effort: null,
       collaboration_mode: null,
       timeout_ms: 10000,
@@ -3407,7 +4513,9 @@ notificationRouteFormEl.addEventListener("submit", async (event) => {
       name: form.get("name"),
       kind: "webhook",
       target: form.get("target"),
-      events: events.length ? events : ["mission/completed", "mission/failed", "task/*"],
+      events: events.length
+        ? events
+        : ["ops/inbox/*", "mission/completed", "mission/failed", "task/*"],
       enabled: form.get("enabled") === "on",
       secret_header_name: form.get("secret_header_name") || null,
       vault_secret_id: form.get("vault_secret_id") ? Number(form.get("vault_secret_id")) : null,
@@ -3425,10 +4533,29 @@ document.addEventListener("click", async (event) => {
   if (!target) {
     return;
   }
+  if (target.dataset.action === "toggle-radar-reserve") {
+    state.radarReserveExpanded = !state.radarReserveExpanded;
+    renderRadar();
+    return;
+  }
   const instanceId = target.dataset.instanceId;
   try {
     if (target.dataset.action === "apply-mission-preset") {
       applyMissionPreset(target.dataset.presetId);
+    }
+    if (target.dataset.action === "apply-bootstrap-draft") {
+      if (!state.lastBootstrapResult?.mission_draft) {
+        throw new Error("The bootstrap draft is no longer available.");
+      }
+      applyMissionDraft(state.lastBootstrapResult.mission_draft);
+      showToast("Loaded the bootstrap launch draft.");
+    }
+    if (target.dataset.action === "apply-setup-launch-draft") {
+      if (!state.setup?.launch_handoff?.mission_draft) {
+        throw new Error("The saved launch draft is no longer available.");
+      }
+      applyMissionDraft(state.setup.launch_handoff.mission_draft);
+      showToast("Loaded the saved launch draft.");
     }
     if (target.dataset.action === "apply-task") {
       const task = getTaskById(target.dataset.taskId);
@@ -3442,6 +4569,26 @@ document.addEventListener("click", async (event) => {
       await submitJson(`/api/tasks/${target.dataset.taskId}/run`, {});
       showToast("Task launched.");
       resetMissionForm();
+    }
+    if (target.dataset.action === "open-mission") {
+      const mission = getMissionById(target.dataset.missionId);
+      if (!mission) {
+        throw new Error("That mission is no longer available.");
+      }
+      focusCard(`#mission-card-${mission.id}`, "backstage-shell");
+      showToast(`Moved to mission: ${mission.name}`);
+    }
+    if (target.dataset.action === "open-instance") {
+      focusCard(`#instance-card-${target.dataset.instanceId}`, "health-shell");
+      showToast("Moved to lane controls.");
+    }
+    if (target.dataset.action === "fire-inbox-reflex") {
+      const item = getTaskInboxItemById(target.dataset.inboxItemId);
+      if (!item?.reflex || !item.mission_id) {
+        throw new Error("That inbox reflex is no longer available.");
+      }
+      await submitJson(`/api/missions/${item.mission_id}/reflex`, item.reflex);
+      showToast(`Reflex fired into ${item.title}.`);
     }
     if (target.dataset.action === "delete-task") {
       await api(`/api/tasks/${target.dataset.taskId}`, { method: "DELETE" });
@@ -3537,6 +4684,14 @@ document.addEventListener("click", async (event) => {
       await loadDashboard();
       showToast("Playbook deleted.");
     }
+    if (target.dataset.action === "open-playbook") {
+      const playbook = getPlaybookById(target.dataset.playbookId);
+      if (!playbook) {
+        throw new Error("That playbook is no longer available.");
+      }
+      focusCard(`#playbook-card-${playbook.id}`, "library-shell");
+      showToast(`Moved to playbook: ${playbook.name}`);
+    }
     if (target.dataset.action === "delete-skill-pin") {
       await api(`/api/skill-pins/${target.dataset.skillPinId}`, { method: "DELETE" });
       await loadDashboard();
@@ -3571,6 +4726,17 @@ document.addEventListener("click", async (event) => {
         variables,
       };
       const result = await submitJson(`/api/playbooks/${playbookId}/run`, payload);
+      const threadSuffix = result.thread_id ? ` on ${result.thread_id}` : "";
+      showToast(`Playbook ran${threadSuffix}.`);
+    }
+    if (target.dataset.action === "run-playbook-now") {
+      const playbookId = target.dataset.playbookId;
+      const result = await submitJson(`/api/playbooks/${playbookId}/run`, {
+        instance_id: null,
+        thread_id: null,
+        cwd: null,
+        variables: {},
+      });
       const threadSuffix = result.thread_id ? ` on ${result.thread_id}` : "";
       showToast(`Playbook ran${threadSuffix}.`);
     }
@@ -3668,4 +4834,5 @@ function connectSocket() {
 restoreDisclosureState();
 refreshAll().catch((error) => showToast(normalizeError(error), true));
 syncTransportFields();
+syncOnboardingMode();
 connectSocket();
