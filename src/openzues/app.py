@@ -147,6 +147,17 @@ def _minutes_since(value: str | None) -> int | None:
     return max(0, int((datetime.now(UTC) - parsed).total_seconds() // 60))
 
 
+def _mission_is_streaming(mission: MissionView) -> bool:
+    return bool(mission.live_telemetry.streaming)
+
+
+def _mission_thread_quiet(mission: MissionView, *, threshold_seconds: int = 180) -> bool:
+    if _mission_is_streaming(mission):
+        return False
+    age_seconds = mission.live_telemetry.last_thread_event_age_seconds
+    return age_seconds is None or age_seconds >= threshold_seconds
+
+
 def _is_loopback_host(host: str | None) -> bool:
     if not host:
         return False
@@ -306,6 +317,7 @@ def build_radar(
         age_minutes = _minutes_since(mission.last_activity_at)
         last_error = str(mission.last_error or "")
         scope = build_scope_assessment(mission, checkpoints=mission.checkpoints)
+        streaming = _mission_is_streaming(mission)
 
         if mission.status == "blocked" and mission.phase == "approval":
             add_signal(
@@ -369,6 +381,7 @@ def build_radar(
         if (
             mission.status == "active"
             and not mission.in_progress
+            and not streaming
             and age_minutes is not None
             and age_minutes >= 8
         ):
@@ -438,6 +451,23 @@ def build_radar(
                     f"{mission.command_count} commands have run without a checkpointed handoff."
                 ),
                 action="Check whether the objective is too broad and tighten the next cycle.",
+                mission_id=mission.id,
+                instance_id=mission.instance_id,
+                freshness_minutes=age_minutes,
+            )
+            continue
+
+        if mission.status == "active" and mission.in_progress and _mission_thread_quiet(mission):
+            add_signal(
+                f"mission-{mission.id}-thread-quiet",
+                lane="reliability",
+                level="warn",
+                title=f"{mission.name} is in progress but the live thread went quiet",
+                detail=mission.live_telemetry.summary,
+                action=(
+                    "Inspect the active thread before assuming the run is healthy, then steer it "
+                    "toward one verified next step."
+                ),
                 mission_id=mission.id,
                 instance_id=mission.instance_id,
                 freshness_minutes=age_minutes,

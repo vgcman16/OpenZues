@@ -1033,6 +1033,146 @@ async def test_ops_mesh_service_stops_continuous_task_when_completion_marker_see
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_appends_verified_parity_checkpoint_once(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_project(path=str(tmp_path), label="OpenZues Workspace")
+    await database.create_task_blueprint(
+        name="OpenClaw Total Parity Program",
+        summary="Keep closing OpenClaw parity until the product is genuinely done.",
+        project_id=1,
+        instance_id=1,
+        cadence_minutes=60,
+        enabled=True,
+        payload={
+            "objective_template": "Keep iterating until parity is complete.",
+            "run_until_complete": True,
+            "completion_marker": "PARITY COMPLETE",
+            "cwd": str(tmp_path),
+            "model": "gpt-5.4",
+            "reasoning_effort": "high",
+            "collaboration_mode": None,
+            "max_turns": 8,
+            "use_builtin_agents": True,
+            "run_verification": True,
+            "auto_commit": False,
+            "pause_on_approval": True,
+            "allow_auto_reflexes": True,
+            "auto_recover": True,
+            "auto_recover_limit": 2,
+            "reflex_cooldown_seconds": 900,
+            "allow_failover": True,
+        },
+    )
+    mission_id = await database.create_mission(
+        name="OpenClaw Total Parity Program",
+        objective="Keep iterating until OpenClaw parity is complete.",
+        status="completed",
+        instance_id=1,
+        project_id=1,
+        task_blueprint_id=1,
+        thread_id="thread_parity",
+        cwd=str(tmp_path),
+        model="gpt-5.4",
+        reasoning_effort="high",
+        collaboration_mode=None,
+        max_turns=8,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+    )
+    summary = (
+        "Completed: shipped the next verified parity slice.\n\n"
+        "Verified: targeted checks passed and the dashboard rendered cleanly.\n\n"
+        "Next step: keep pushing the next gateway parity seam.\n\n"
+        "Blockers: none."
+    )
+    await database.update_mission(
+        mission_id,
+        last_checkpoint=summary,
+        last_activity_at=datetime.now(UTC).isoformat(),
+    )
+    checkpoint_path = tmp_path / "docs" / "openclaw-parity-checkpoint-2026-04-10.md"
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        parity_checkpoint_path=checkpoint_path,
+    )
+
+    await service.handle_mission_event("mission/completed", {"missionId": mission_id})
+    await service.handle_mission_event("mission/completed", {"missionId": mission_id})
+
+    content = checkpoint_path.read_text(encoding="utf-8")
+    assert "## Update: OpenClaw Total Parity Program" in content
+    assert summary in content
+    assert content.count(f"<!-- OPENZUES_PARITY_MISSION:{mission_id} -->") == 1
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_skips_unverified_parity_checkpoint_append(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    mission_id = await database.create_mission(
+        name="OpenClaw Total Parity Program",
+        objective="Keep iterating until OpenClaw parity is complete.",
+        status="completed",
+        instance_id=1,
+        project_id=1,
+        task_blueprint_id=None,
+        thread_id="thread_parity",
+        cwd=str(tmp_path),
+        model="gpt-5.4",
+        reasoning_effort="high",
+        collaboration_mode=None,
+        max_turns=8,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+    )
+    await database.update_mission(
+        mission_id,
+        last_checkpoint="Completed: made progress, but verification has not landed yet.",
+        last_activity_at=datetime.now(UTC).isoformat(),
+    )
+    checkpoint_path = tmp_path / "docs" / "openclaw-parity-checkpoint-2026-04-10.md"
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        parity_checkpoint_path=checkpoint_path,
+    )
+
+    await service.handle_mission_event("mission/completed", {"missionId": mission_id})
+
+    assert not checkpoint_path.exists()
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_emits_derived_inbox_notifications_once(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

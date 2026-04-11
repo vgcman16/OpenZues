@@ -2035,6 +2035,7 @@ class OpsMeshService:
     launch_routing: LaunchRoutingService | None = None
     poll_interval_seconds: float = 20.0
     snapshot_interval_seconds: float = 1800.0
+    parity_checkpoint_path: Path | None = None
     _task: asyncio.Task[None] | None = field(init=False, default=None)
     _stop_event: asyncio.Event = field(init=False, default_factory=asyncio.Event)
     _notified_inbox_items: dict[str, str] = field(init=False, default_factory=dict)
@@ -2448,8 +2449,111 @@ class OpsMeshService:
                                 "marker": _task_completion_marker(task),
                             },
                         )
+                await self._maybe_append_parity_checkpoint_ledger(mission, task=task_row)
+            elif mission is not None:
+                await self._maybe_append_parity_checkpoint_ledger(mission, task=None)
         await self._deliver_notifications(event_type, event)
         await self._publish_derived_task_inbox_notifications()
+
+    def _mission_targets_openclaw_parity(
+        self,
+        mission: dict[str, Any],
+        *,
+        task: dict[str, Any] | None,
+    ) -> bool:
+        values = [
+            mission.get("name"),
+            mission.get("objective"),
+            mission.get("last_checkpoint"),
+        ]
+        if task is not None:
+            values.extend(
+                [
+                    task.get("name"),
+                    task.get("summary"),
+                    task.get("objective_template"),
+                    task.get("completion_marker"),
+                ]
+            )
+        blob = " ".join(str(value or "") for value in values).lower()
+        return "parity" in blob and ("openclaw" in blob or "parity complete" in blob)
+
+    def _checkpoint_is_verified_parity_handoff(self, summary: str) -> bool:
+        lowered = summary.lower()
+        return "verified:" in lowered and ("next step:" in lowered or "blockers:" in lowered)
+
+    def _resolve_parity_checkpoint_path(self, mission: dict[str, Any]) -> Path | None:
+        if self.parity_checkpoint_path is not None:
+            return self.parity_checkpoint_path
+        cwd = str(mission.get("cwd") or "").strip()
+        if not cwd:
+            return None
+        docs_dir = Path(cwd) / "docs"
+        if not docs_dir.exists():
+            return None
+        candidates = sorted(
+            docs_dir.glob("openclaw-parity-checkpoint-*.md"),
+            key=lambda path: path.stat().st_mtime_ns,
+        )
+        if candidates:
+            return candidates[-1]
+        return None
+
+    def _build_parity_checkpoint_entry(self, mission: dict[str, Any]) -> str:
+        mission_id = int(mission["id"])
+        title = str(mission.get("name") or "Parity Slice").strip() or "Parity Slice"
+        updated = _parse_timestamp(str(mission.get("updated_at") or "")) or datetime.now(UTC)
+        summary = str(mission.get("last_checkpoint") or "").strip()
+        return "\n".join(
+            [
+                f"<!-- OPENZUES_PARITY_MISSION:{mission_id} -->",
+                "",
+                f"## Update: {title}",
+                "",
+                f"Date: {updated.date().isoformat()}",
+                "",
+                "### Operator handoff",
+                "",
+                summary,
+            ]
+        )
+
+    async def _maybe_append_parity_checkpoint_ledger(
+        self,
+        mission: dict[str, Any],
+        *,
+        task: dict[str, Any] | None,
+    ) -> None:
+        if str(mission.get("status") or "") != "completed":
+            return
+        summary = str(mission.get("last_checkpoint") or "").strip()
+        if not summary or not self._checkpoint_is_verified_parity_handoff(summary):
+            return
+        if not self._mission_targets_openclaw_parity(mission, task=task):
+            return
+        path = self._resolve_parity_checkpoint_path(mission)
+        if path is None:
+            return
+        marker = f"<!-- OPENZUES_PARITY_MISSION:{int(mission['id'])} -->"
+        if path.exists():
+            existing = path.read_text(encoding="utf-8")
+            if marker in existing:
+                return
+            base = existing.rstrip()
+        else:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            base = "# OpenClaw Parity Checkpoint"
+        entry = self._build_parity_checkpoint_entry(mission)
+        content = f"{base}\n\n{entry}\n"
+        path.write_text(content, encoding="utf-8")
+        await self._publish_ops_event(
+            "parity/checkpoint-updated",
+            {
+                "missionId": int(mission["id"]),
+                "missionName": str(mission.get("name") or ""),
+                "path": str(path),
+            },
+        )
 
     async def tick_once(self) -> None:
         tasks = await self.list_task_blueprint_views()

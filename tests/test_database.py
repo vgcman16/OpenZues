@@ -219,6 +219,45 @@ async def test_database_round_trip(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_thread_event_metrics_capture_recent_activity(tmp_path) -> None:
+    database = Database(tmp_path / "test.db")
+    await database.initialize()
+
+    instance_id = await database.create_instance(
+        name="Local Codex",
+        transport="stdio",
+        command="codex",
+        args="app-server",
+        websocket_url=None,
+        cwd=str(tmp_path),
+        auto_connect=False,
+    )
+    await database.append_event(
+        instance_id=instance_id,
+        thread_id="thread_metrics",
+        method="item/started",
+        payload={"item": {"type": "commandExecution", "command": "Get-Date"}},
+    )
+    await database.append_event(
+        instance_id=instance_id,
+        thread_id="thread_metrics",
+        method="item/commandExecution/outputDelta",
+        payload={"delta": "Saturday"},
+    )
+
+    metrics = await database.get_thread_event_metrics(
+        instance_id=instance_id,
+        thread_id="thread_metrics",
+    )
+
+    assert metrics["last_event_at"] is not None
+    assert metrics["recent_event_count_30s"] >= 2
+    assert metrics["recent_event_count_5m"] >= 2
+    assert metrics["recent_output_delta_count_30s"] >= 1
+    assert metrics["recent_turn_activity_count_30s"] >= 2
+
+
+@pytest.mark.asyncio
 async def test_get_mission_by_thread_prefers_active_shared_owner(tmp_path) -> None:
     database = Database(tmp_path / "test.db")
     await database.initialize()

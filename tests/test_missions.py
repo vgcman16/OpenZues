@@ -749,6 +749,81 @@ async def test_restart_safe_snapshot_uses_recent_thread_trace(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_restart_safe_snapshot_prefers_green_evidence_over_stale_blocker_commentary(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    manager = FakeManager()
+    service = MissionService(database, manager, BroadcastHub(), poll_interval_seconds=3600)
+
+    mission_id = await database.create_mission(
+        name="Parity hardener",
+        objective="Verify the branch, clear the blocker, and checkpoint it.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread_green",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=4,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+    )
+    await database.update_mission(
+        mission_id,
+        in_progress=1,
+        phase="thinking",
+        total_tokens=42000,
+        command_count=4,
+        last_commentary=(
+            "The repo is not fully green yet: one route-selection regression is still live "
+            "in the current worktree."
+        ),
+    )
+    await database.append_event(
+        instance_id=7,
+        thread_id="thread_green",
+        method="item/started",
+        payload={
+            "item": {
+                "type": "commandExecution",
+                "command": 'powershell.exe -Command "pytest tests/test_app.py -q"',
+            }
+        },
+    )
+    await database.append_event(
+        instance_id=7,
+        thread_id="thread_green",
+        method="item/commandExecution/outputDelta",
+        payload={"delta": "1 passed, 67 deselected in 2.03s"},
+    )
+
+    mission = await database.get_mission(mission_id)
+    assert mission is not None
+
+    appended = await service._maybe_append_restart_safe_snapshot(
+        mission_id,
+        mission,
+        force=True,
+        reason="evidence_test",
+    )
+    checkpoints = await database.list_mission_checkpoints(mission_id)
+
+    assert appended is True
+    assert "Current focus: Recent verification looks green:" in checkpoints[0]["summary"]
+    assert "Earlier blocker language may already be stale" in checkpoints[0]["summary"]
+
+
+@pytest.mark.asyncio
 async def test_token_and_commentary_events_update_mission_telemetry(tmp_path) -> None:
     database = Database(tmp_path / "missions.db")
     await database.initialize()
@@ -818,6 +893,224 @@ async def test_token_and_commentary_events_update_mission_telemetry(tmp_path) ->
     assert mission["output_tokens"] == 220
     assert mission["reasoning_tokens"] == 90
     assert mission["last_commentary"] == "I am verifying the main workflow now."
+
+
+@pytest.mark.asyncio
+async def test_get_view_surfaces_live_thread_telemetry(tmp_path) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    manager = FakeManager()
+    manager.instances[7].connected = True
+    manager.instances[7].threads = [{"id": "thread_live", "status": {"type": "active"}}]
+    service = MissionService(database, manager, BroadcastHub(), poll_interval_seconds=3600)
+
+    mission_id = await database.create_mission(
+        name="Live telemetry",
+        objective="Show whether the thread is still moving.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread_live",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=True,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+    )
+    await database.update_mission(mission_id, in_progress=1)
+    await database.append_event(
+        instance_id=7,
+        thread_id="thread_live",
+        method="item/started",
+        payload={"item": {"type": "commandExecution", "command": "Get-Date"}},
+    )
+    await database.append_event(
+        instance_id=7,
+        thread_id="thread_live",
+        method="item/commandExecution/outputDelta",
+        payload={"delta": "Saturday"},
+    )
+
+    view = await service.get_view(mission_id)
+
+    assert view.live_telemetry.streaming is True
+    assert view.live_telemetry.thread_status == "active"
+    assert view.live_telemetry.recent_event_count_30s >= 2
+    assert view.live_telemetry.recent_output_delta_count_30s >= 1
+    assert view.live_telemetry.token_rollup_pending is True
+
+
+@pytest.mark.asyncio
+async def test_get_view_softens_stale_blocker_commentary(tmp_path) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    manager = FakeManager()
+    manager.instances[7].connected = True
+    service = MissionService(database, manager, BroadcastHub(), poll_interval_seconds=3600)
+
+    mission_id = await database.create_mission(
+        name="Commentary drift",
+        objective="Keep the operator story aligned with evidence.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread_commentary",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+    )
+    await database.update_mission(
+        mission_id,
+        in_progress=1,
+        phase="thinking",
+        command_count=8,
+        last_commentary=(
+            "The repo is not fully green yet: one route-selection regression is still live "
+            "in the current worktree."
+        ),
+    )
+    await database.append_event(
+        instance_id=7,
+        thread_id="thread_commentary",
+        method="item/started",
+        payload={
+            "item": {
+                "type": "commandExecution",
+                "command": 'powershell.exe -Command "Get-Content src/openzues/services/setup.py"',
+            }
+        },
+    )
+    await database.append_event(
+        instance_id=7,
+        thread_id="thread_commentary",
+        method="item/commandExecution/outputDelta",
+        payload={"delta": "async def inspect(self) -> SetupStatusView:"},
+    )
+
+    view = await service.get_view(mission_id)
+
+    assert view.commentary_summary is not None
+    assert "not been reconfirmed" in view.commentary_summary
+    assert view.last_commentary != view.commentary_summary
+
+
+@pytest.mark.asyncio
+async def test_get_view_surfaces_adaptive_delegation_brief(tmp_path) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    manager = FakeManager()
+    manager.instances[7].connected = True
+    service = MissionService(database, manager, BroadcastHub(), poll_interval_seconds=3600)
+
+    mission_id = await database.create_mission(
+        name="OpenClaw parity hardener",
+        objective=(
+            "Verify the current parity slice, design the next gateway seam, plan the work, "
+            "implement the bounded change, and audit the result."
+        ),
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread_agents",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=4,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+    )
+    await database.update_mission(
+        mission_id,
+        turns_started=2,
+        command_count=5,
+        in_progress=1,
+        last_commentary="Checking whether the current parity seam is complete before broadening.",
+    )
+
+    view = await service.get_view(mission_id)
+
+    assert view.delegation_brief.enabled is True
+    assert (
+        view.delegation_brief.mode
+        == "conductor_architect_planner_coder_auditor"
+    )
+    assert view.delegation_brief.activation == "ready_now"
+    role_names = [role.name for role in view.delegation_brief.roles]
+    assert role_names == ["Architect", "Planner", "Coder", "Auditor"]
+
+
+@pytest.mark.asyncio
+async def test_build_turn_prompt_emits_agent_stack_roles(tmp_path) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    manager = FakeManager()
+    manager.instances[7].connected = True
+    service = MissionService(database, manager, BroadcastHub(), poll_interval_seconds=3600)
+
+    mission_id = await database.create_mission(
+        name="Design and ship gateway doctor",
+        objective=(
+            "Brainstorm a cleaner gateway doctor surface, design the seam, plan the slice, "
+            "build it, and audit the result."
+        ),
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread_prompt",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=4,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+    )
+
+    mission = await database.get_mission(mission_id)
+    assert mission is not None
+
+    prompt = await service._build_turn_prompt(mission)
+
+    assert "Built-in agent stack:" in prompt
+    assert "The main lane is the conductor" in prompt
+    assert "Brainstormer:" in prompt
+    assert "Architect:" in prompt
+    assert "Planner:" in prompt
+    assert "Coder:" in prompt
+    assert "Auditor:" in prompt
 
 
 @pytest.mark.asyncio

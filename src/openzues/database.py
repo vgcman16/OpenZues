@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -1624,6 +1624,78 @@ class Database:
                 item["payload"] = json.loads(item.pop("payload_json"))
                 output.append(item)
             return list(reversed(output))
+
+    async def get_thread_event_metrics(
+        self,
+        *,
+        instance_id: int,
+        thread_id: str,
+    ) -> dict[str, Any]:
+        now = datetime.now(UTC)
+        cutoff_30s = (now - timedelta(seconds=30)).isoformat()
+        cutoff_5m = (now - timedelta(minutes=5)).isoformat()
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                """
+                SELECT
+                    MAX(created_at) AS last_event_at,
+                    COALESCE(SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END), 0)
+                        AS recent_event_count_30s,
+                    COALESCE(SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END), 0)
+                        AS recent_event_count_5m,
+                    COALESCE(
+                        SUM(
+                            CASE
+                                WHEN created_at >= ?
+                                AND method = 'item/commandExecution/outputDelta'
+                                THEN 1
+                                ELSE 0
+                            END
+                        ),
+                        0
+                    ) AS recent_output_delta_count_30s,
+                    COALESCE(
+                        SUM(
+                            CASE
+                                WHEN created_at >= ?
+                                AND method IN (
+                                    'item/commandExecution/outputDelta',
+                                    'item/started',
+                                    'item/completed',
+                                    'turn/started',
+                                    'turn/completed'
+                                )
+                                THEN 1
+                                ELSE 0
+                            END
+                        ),
+                        0
+                    ) AS recent_turn_activity_count_30s
+                FROM events
+                WHERE instance_id = ? AND thread_id = ?
+                """,
+                (cutoff_30s, cutoff_5m, cutoff_30s, cutoff_30s, instance_id, thread_id),
+            )
+            row = await cursor.fetchone()
+            if row is None:
+                return {
+                    "last_event_at": None,
+                    "recent_event_count_30s": 0,
+                    "recent_event_count_5m": 0,
+                    "recent_output_delta_count_30s": 0,
+                    "recent_turn_activity_count_30s": 0,
+                }
+            item = dict(row)
+            item["recent_event_count_30s"] = int(item.get("recent_event_count_30s") or 0)
+            item["recent_event_count_5m"] = int(item.get("recent_event_count_5m") or 0)
+            item["recent_output_delta_count_30s"] = int(
+                item.get("recent_output_delta_count_30s") or 0
+            )
+            item["recent_turn_activity_count_30s"] = int(
+                item.get("recent_turn_activity_count_30s") or 0
+            )
+            return item
 
     async def append_control_chat_message(
         self,

@@ -258,6 +258,94 @@ Browser verification passed on a live local server at `http://127.0.0.1:8877` us
 - `agent-browser console` returned no console output
 - browser artifact refreshed at `openzues-browser-check.png`
 
+## Update: Launch Routing and Session-Key Parity
+
+Date: 2026-04-11
+
+### Completed this turn
+
+- Landed a dedicated launch-routing kernel in OpenZues that mirrors the highest-leverage OpenClaw routing seam: one resolver now owns lane selection, provenance, and stable launch session keys.
+- Added `LaunchRoutingService` and threaded it through onboarding, setup handoff, gateway bootstrap, Ops Mesh draft generation, and mission creation instead of leaving lane choice spread across ad hoc heuristics.
+- Gateway bootstrap state now persists routing policy and continuity hints: `route_binding_mode`, `last_route_instance_id`, and `last_route_resolved_at`.
+- Mission drafts and stored missions now carry a durable `session_key`, so repeated launches can keep a stable logical routing identity even when runtime thread ids change.
+- Remote-first launches now prefer the last healthy workspace lane, otherwise a connected lane already attached to the saved workspace, before falling back to a generic connected lane.
+- The dashboard/setup UI now renders the resolved launch route directly: route mode, match provenance, session key, warnings, and candidate lanes.
+
+Primary files carrying this slice:
+
+- `src/openzues/services/launch_routing.py`
+- `src/openzues/services/gateway_bootstrap.py`
+- `src/openzues/services/onboarding.py`
+- `src/openzues/services/setup.py`
+- `src/openzues/services/ops_mesh.py`
+- `src/openzues/services/missions.py`
+- `src/openzues/database.py`
+- `src/openzues/schemas.py`
+- `src/openzues/web/static/app.js`
+- `src/openzues/web/static/app.css`
+- `tests/test_app.py`
+- `tests/test_database.py`
+
+### Verification
+
+Focused contract pack passed:
+
+- `.\.venv\Scripts\python.exe -m pytest tests/test_app.py tests/test_database.py tests/test_manager.py tests/test_ops_mesh.py -q`
+- Result: `94 passed`
+
+Mission persistence/regression coverage also passed:
+
+- `.\.venv\Scripts\python.exe -m pytest tests/test_missions.py -q`
+- Result: `29 passed`
+
+Static/runtime checks passed:
+
+- `node --check src/openzues/web/static/app.js`
+- `.\.venv\Scripts\python.exe -m compileall src/openzues`
+
+Browser verification passed on an isolated local server at `http://127.0.0.1:8766` using `agent-browser.cmd`:
+
+- the page loaded successfully in a writable verification environment
+- bootstrap API returned both `launch_route` and `mission_draft.session_key`
+- DOM evaluation confirmed the new route card rendered: `document.body.innerHTML.includes("Launch Route") === true`
+- DOM evaluation confirmed the rendered HTML contains the resolved session key for the staged launch
+
+### What remains
+
+OpenZues still does not have OpenClaw parity for:
+
+- gateway method-registry and doctor-style capability inventory
+- broader CLI parity
+- channel runtimes and channel/account routing
+- browser-control runtime
+- canvas runtime
+- nodes and companion apps
+- voice surfaces
+- packaging and release-channel parity
+
+### Next best slice
+
+Do not jump to channels, nodes, or native apps next. The next best slice is a gateway capability contract that makes the now-deterministic launch routing observable everywhere an operator touches it.
+
+Recommended next slice:
+
+- add a gateway capability/doctor view across API, dashboard, and CLI that summarizes connected lane health, apps/plugins/MCP inventory, approval posture, and launch-policy warnings
+- anchor the slice on existing `RuntimeManager`, diagnostics, Ops Mesh integration inventory, and `gateway_bootstrap` state instead of inventing a second gateway subsystem
+- keep the output operator-facing and verifiable: one stable capability summary, one warning surface, and one CLI/API/dashboard contract
+
+This is the next smallest useful parity step because routing is now deterministic; the remaining leverage is to expose the gateway surface as a coherent contract before cloning OpenClaw's broader channel/browser ecosystems.
+
+### Blockers
+
+No credential or approval blocker hit during this turn.
+
+### Operator handoff
+
+- Completed: landed the routing/session-key parity slice, persisted launch-route continuity in the gateway profile, threaded session keys into mission drafts and stored missions, and surfaced the route contract in the setup/dashboard UI.
+- Verified: `94 passed` across app/database/manager/ops-mesh tests, `29 passed` for mission regressions, `node --check` passed, `compileall` passed, and browser verification confirmed the new launch-route card rendered on a live local server.
+- Next step: implement a gateway capability/doctor seam that exposes lane health, plugin/app/MCP inventory, approval posture, and routing warnings consistently across API, dashboard, and CLI.
+- Blockers: none.
+
 Browser note:
 
 - single-command `agent-browser` invocations were unreliable because the local daemon restarted during a version mismatch; shared-session batch mode produced stable verification and should be preferred for the next browser pass.
@@ -603,4 +691,321 @@ Recommended next slice:
 - Completed: shipped explicit local/remote setup modes, durable wizard-session persistence, remote-first bootstrap staging, gateway profile mode/flow persistence, CLI wizard inspection/update commands, and dashboard QuickStart mode controls.
 - Verified: `64 passed` across app and database tests; Python compile passed; `node --check` passed; CLI wizard smoke passed; browser verification passed on live local servers with no overlay errors, with the new setup mode/flow controls present and remote-mode behavior confirmed.
 - Next step: bind the staged wizard/gateway posture into a stronger post-setup launch handoff, then pivot into routing/session-key parity.
+- Blockers: none.
+
+## Update: Persistent Setup Launch Handoff
+
+Date: 2026-04-11
+
+### Completed this turn
+
+- Closed the next setup parity seam by turning the saved setup posture into a persistent launch handoff instead of leaving the next mission entrypoint implicit.
+- `SetupService.inspect()` now returns a machine-readable `launch_handoff` alongside the broader setup posture, including status, recommended action, concrete next entrypoint text, the saved task/operator/project references, and a reloadable mission draft when one can be materialized.
+- Promoted task-draft rebuilding into a reusable `OpsMeshService.build_task_draft(...)` path so onboarding and later setup re-entry both use the same launch-draft logic.
+- Added a dedicated `GET /api/setup/launch` surface plus `openzues setup launch` so the saved handoff is addressable from API, dashboard, and CLI instead of being trapped in the one-shot bootstrap response.
+- The dashboard QuickStart area now reloads the saved launch handoff after refresh and exposes a `Load saved launch draft` action when the saved posture can still materialize a draft.
+
+Primary files carrying this slice:
+
+- `src/openzues/services/setup.py`
+- `src/openzues/services/ops_mesh.py`
+- `src/openzues/services/onboarding.py`
+- `src/openzues/schemas.py`
+- `src/openzues/app.py`
+- `src/openzues/cli.py`
+- `src/openzues/web/static/app.js`
+- `tests/test_app.py`
+
+### Verification
+
+Targeted automated verification passed:
+
+- `.\.venv\Scripts\python.exe -m pytest tests/test_app.py -q`
+- Result: `63 passed`
+
+Static integrity checks passed:
+
+- `.\.venv\Scripts\python.exe -m compileall src/openzues`
+- `node --check src/openzues/web/static/app.js`
+
+CLI smoke verification passed against an isolated temp data dir using `OPENZUES_DATA_DIR`:
+
+- `python -m openzues.cli setup bootstrap --project-path . --operator-name "CLI Builder" --task-name "CLI Ship Loop" --objective-template "Inspect the repo, ship the next verified slice, and checkpoint it." --json`
+- `python -m openzues.cli setup launch --json`
+
+Observed CLI behavior:
+
+- `setup launch` returned a staged saved handoff instead of only generic setup prose
+- the saved handoff included `recommended_action: "connect_lane"` plus a concrete `mission_draft` that can be reloaded once the lane reconnects
+
+Browser verification passed on a live local server at `http://127.0.0.1:8879` using `agent-browser.cmd`:
+
+- page content rendered
+- no framework error overlay was detected
+- the saved handoff card rendered with heading `Saved launch handoff is ready`
+- the dashboard exposed a `Load saved launch draft` button after refresh instead of losing the bootstrap draft
+- browser artifact refreshed at `openzues-browser-check.png`
+
+### What remains
+
+OpenZues still lacks the larger OpenClaw parity surfaces:
+
+- routing and session-key policy parity
+- broader CLI parity beyond setup/bootstrap/control-plane commands
+- channel runtime and channel/account routing
+- browser-control runtime parity
+- canvas runtime
+- nodes, voice, companion apps, and packaging matrix
+
+### Next best slice
+
+Do not jump to channels or companion apps next. The next smallest verified slice should stay on the control-plane kernel that now has explicit setup re-entry.
+
+Recommended next slice:
+
+- carry the new saved launch handoff into routing/session-key policy so recurring tasks and follow-on launches bind to the correct lane/account posture explicitly
+- reuse the existing `gateway_bootstrap`, `setup`, `ops_mesh`, and mission-draft machinery instead of adding a second routing bootstrap layer
+- verify that remote-first staged setups without a default lane still produce the right binding instructions once a lane appears
+
+### Blockers
+
+- No credential blocker hit during this turn.
+- Browser verification required a narrower command set because the dashboard continuously polls `/api/setup` and `/api/dashboard`, so idle-style waits do not settle; the product itself still rendered correctly.
+
+### Operator handoff
+
+- Completed: landed a persistent saved launch handoff across setup inspection, API, CLI, and dashboard re-entry, and unified setup/onboarding draft rebuilding through Ops Mesh.
+- Verified: `63 passed` in targeted app tests; Python compile passed; `node --check` passed; CLI `setup launch` smoke passed; browser verification confirmed the saved handoff card and `Load saved launch draft` action on a live local server with no overlay errors.
+- Next step: bind the saved launch handoff into routing/session-key policy so launch targeting becomes explicit for the next recurring cycle, especially in remote-first staged setups.
+- Blockers: no product blocker; only the expected browser-harness caveat that polling pages never reach true network-idle.
+
+## Update: Mission Live Thread Telemetry
+
+Date: 2026-04-11
+
+### Completed this turn
+
+- Re-entered from stale-thread recovery, rebuilt context from the parity checkpoint trail, and verified that the previously checkpointed launch-routing and setup-handoff slices are still true in the worktree.
+- Confirmed that the current uncommitted slice hardens the operator-supervision layer instead of starting a new parity branch: missions now expose live thread telemetry derived from persisted event traffic plus runtime thread state.
+- Added a `Database.get_thread_event_metrics(...)` read path so OpenZues can summarize recent thread activity without replaying raw events in the UI.
+- Added `MissionLiveTelemetryView` and wired `MissionService.get_view()` to surface whether a mission is actively streaming, how recently the thread moved, recent event/output counts, and whether token rollup is still pending.
+- Confirmed the dashboard consumes that contract: active-loop stats now distinguish live streaming runs, mission cards show live-thread status and recent event rates, and the transcript surface compresses repeated control-chat messages instead of wasting operator attention on duplicates.
+
+Primary files carrying this slice:
+
+- `src/openzues/database.py`
+- `src/openzues/schemas.py`
+- `src/openzues/services/missions.py`
+- `src/openzues/web/static/app.js`
+- `src/openzues/web/static/app.css`
+- `src/openzues/web/templates/index.html`
+- `tests/test_database.py`
+- `tests/test_missions.py`
+- `tests/test_app.py`
+
+### Verification
+
+Focused verification passed from the workspace root:
+
+- `.\.venv\Scripts\python.exe -m pytest tests/test_database.py tests/test_missions.py tests/test_app.py -q`
+- Result: `98 passed`
+
+Static integrity checks passed:
+
+- `.\.venv\Scripts\python.exe -m compileall src/openzues`
+- `node --check src/openzues/web/static/app.js`
+
+Observed verification outcome:
+
+- the new thread-event metric queries returned recent activity as expected
+- mission views reported `live_telemetry.streaming == True` when fresh output deltas existed on an active thread
+- the broader app pack that already covers onboarding, setup handoff, and launch-route parity stayed green, so this telemetry slice did not regress the earlier control-plane work
+
+### What remains
+
+OpenZues still lacks the larger OpenClaw parity surfaces:
+
+- live telemetry is visible, but radar/reflex logic does not consume it yet to distinguish healthy streaming runs from silent stalled turns
+- broader CLI parity beyond setup/bootstrap/control-plane commands
+- channel runtime and channel/account routing
+- browser-control runtime parity
+- canvas runtime
+- nodes, voice, companion apps, and packaging matrix
+
+### Next best slice
+
+Do not branch into channels or packaging next. The highest-leverage follow-on now is to make the new telemetry actionable.
+
+Recommended next slice:
+
+- feed `live_telemetry` into radar, launchpad, and reflex heuristics so actively streaming missions stop looking stale while quiet in-progress turns surface earlier
+- reuse the existing `missions`, `ops_mesh`, `run_pressure`, and `reflexes` seams instead of inventing a separate monitoring subsystem
+- keep verification tight by extending the focused mission and ops-mesh test packs before broadening back toward channel/runtime parity
+
+### Blockers
+
+- No credential blocker hit during this turn.
+- No approval blocker hit during this turn.
+
+### Operator handoff
+
+- Completed: recovered the latest trusted parity checkpoint, verified the in-flight live-thread telemetry slice already present in the worktree, and turned that verified state into a durable checkpoint.
+- Verified: `98 passed` across `tests/test_database.py`, `tests/test_missions.py`, and `tests/test_app.py`; Python compile passed; `node --check` passed.
+- Next step: consume `live_telemetry` in radar/reflex policy so OpenZues can tell the difference between healthy streaming work and a mission that only looks active on paper.
+- Blockers: none.
+
+## Update: Telemetry-Aware Operator Policy
+
+Date: 2026-04-11
+
+### Completed this turn
+
+- Re-entered from stale-thread recovery, rebuilt context from the parity ledger, and verified the current uncommitted worktree before broadening scope.
+- Fixed a workspace-affinity routing regression in `LaunchRoutingService`: route selection now falls back to the saved project path and gateway default cwd when the task row does not carry a cwd, so remote-first launch drafts keep preferring the correct workspace lane.
+- Closed the next smallest parity seam behind the live-thread telemetry slice: radar and reflex policy now treat `live_telemetry.streaming` as healthy active work instead of generic stale activity.
+- Added an earlier operator-warning path for in-progress missions whose live thread has gone quiet, while preserving higher-priority drift and checkpoint-pressure signals.
+
+Primary files carrying this slice:
+
+- `src/openzues/services/launch_routing.py`
+- `src/openzues/app.py`
+- `src/openzues/services/reflexes.py`
+- `tests/test_app.py`
+
+### Verification
+
+Targeted regression checks passed:
+
+- `.\.venv\Scripts\python.exe -m pytest tests/test_app.py -q -k "remote_workspace_affinity_prefers_project_lane_and_persists_last_route or build_radar_flags_quiet_in_progress_thread_earlier or build_radar_does_not_flag_streaming_thread_as_quiet or build_reflex_deck_arms_thread_heartbeat_for_quiet_in_progress_run or build_reflex_deck_skips_thread_heartbeat_for_streaming_run"`
+- Result: `5 passed`
+
+Broader changed-surface verification also passed:
+
+- `.\.venv\Scripts\python.exe -m pytest tests/test_database.py tests/test_missions.py tests/test_app.py tests/test_ops_mesh.py -q`
+- Result: `123 passed`
+
+Static integrity check passed:
+
+- `.\.venv\Scripts\python.exe -m compileall src/openzues`
+
+### What remains
+
+OpenZues still lacks the larger OpenClaw parity surfaces:
+
+- telemetry now informs operator policy, but it is still not folded into launchpad or interference planning
+- gateway method-registry / doctor-style capability inventory
+- broader CLI parity beyond setup/bootstrap/control-plane commands
+- channel runtime and channel/account routing
+- browser-control runtime parity
+- canvas runtime
+- nodes, voice, companion apps, and packaging matrix
+
+### Next best slice
+
+Do not jump to channels or packaging next. The highest-leverage next step remains the gateway capability / doctor seam that the routing and telemetry work now makes easier to explain and verify.
+
+Recommended next slice:
+
+- expose one operator-facing gateway capability summary across API, dashboard, and CLI
+- include connected-lane health, app/plugin/MCP inventory, approval posture, and launch-policy warnings
+- reuse existing `RuntimeManager`, diagnostics, Ops Mesh inventory, and gateway bootstrap state instead of inventing a second gateway subsystem
+
+### Blockers
+
+- No credential blocker hit during this turn.
+- No approval blocker hit during this turn.
+
+### Operator handoff
+
+- Completed: recovered the trusted parity seam, fixed the workspace-affinity route regression, and made live-thread telemetry actionable in radar and reflex policy.
+- Verified: targeted radar/reflex/route tests passed, the broader changed-file pack passed at `123 passed`, and `compileall` passed.
+- Next step: build the gateway capability / doctor contract across API, dashboard, and CLI without broadening into channel runtime work.
+- Blockers: none.
+
+## Update: Recovery Verification Landing
+
+Date: 2026-04-11
+
+### Completed this turn
+
+- Re-entered from stale-thread recovery and rebuilt context from the parity ledger, current diffs, and the route-selection telemetry seam named in the relay packet before making new changes.
+- Verified that the earlier blocker language about a live route-selection regression is now stale in this worktree: the `LaunchRoutingService` workspace-affinity fallback, mission live-telemetry views, and telemetry-aware radar/reflex policy are already present together.
+- Added one focused hardening delta instead of reopening the seam broadly: a dedicated regression test now proves the `gateway.default_cwd` fallback branch used by workspace-affinity routing when a task carries no `cwd`, no project binding, and no pinned lane.
+- Kept the rest of the turn on verification and checkpoint quality instead of widening scope into a new product slice.
+
+Primary files re-verified this turn:
+
+- `src/openzues/services/launch_routing.py`
+- `src/openzues/services/missions.py`
+- `src/openzues/services/reflexes.py`
+- `src/openzues/app.py`
+- `tests/test_app.py`
+- `tests/test_missions.py`
+- `tests/test_database.py`
+- `tests/test_ops_mesh.py`
+
+### Verification
+
+Targeted stale-blocker recovery checks passed:
+
+- `.\.venv\Scripts\python.exe -m pytest tests/test_app.py -q -k "remote_workspace_affinity_prefers_project_lane_and_persists_last_route or setup_endpoint_reports_reentrant_posture_after_bootstrap or setup_launch_endpoint_reports_saved_remote_handoff_gap or build_radar_flags_quiet_in_progress_thread_earlier or build_radar_does_not_flag_streaming_thread_as_quiet or build_reflex_deck_arms_thread_heartbeat_for_quiet_in_progress_run or build_reflex_deck_skips_thread_heartbeat_for_streaming_run"`
+- Result: `7 passed`
+
+Isolated route-fallback regression coverage now passes:
+
+- `.\.venv\Scripts\python.exe -m pytest tests/test_app.py -q -k "launch_routing_uses_gateway_default_cwd_when_task_has_no_workspace_context or remote_workspace_affinity_prefers_project_lane_and_persists_last_route or setup_endpoint_reports_reentrant_posture_after_bootstrap or setup_launch_endpoint_reports_saved_remote_handoff_gap"`
+- Result: `4 passed`
+
+Targeted mission-telemetry recovery checks passed:
+
+- `.\.venv\Scripts\python.exe -m pytest tests/test_missions.py -q -k "restart_safe_snapshot_prefers_green_evidence_over_stale_blocker_commentary or get_view_softens_stale_blocker_commentary or get_view_surfaces_live_thread_telemetry or get_view_surfaces_adaptive_delegation_brief or build_turn_prompt_emits_agent_stack_roles"`
+- Result: `5 passed`
+
+Broader changed-surface verification passed:
+
+- `.\.venv\Scripts\python.exe -m pytest tests/test_database.py tests/test_missions.py tests/test_app.py tests/test_ops_mesh.py -q`
+- Result: `125 passed`
+
+Control-plane contract pack passed:
+
+- `.\.venv\Scripts\python.exe -m pytest tests/test_app.py tests/test_database.py tests/test_manager.py tests/test_ops_mesh.py -q`
+- Result: `102 passed`
+
+Static integrity checks passed:
+
+- `node --check src/openzues/web/static/app.js`
+- `.\.venv\Scripts\python.exe -m compileall src/openzues`
+
+### What remains
+
+The route-selection seam is no longer the highest-risk gap. OpenZues still lacks the larger OpenClaw parity surfaces:
+
+- gateway method-registry / doctor-style capability inventory
+- launchpad and interference planning still do not consume the newer telemetry/routing posture
+- broader CLI parity beyond setup/bootstrap/control-plane commands
+- channel runtime and channel/account routing
+- browser-control runtime parity
+- canvas runtime
+- nodes, voice, companion apps, and packaging matrix
+
+### Next best slice
+
+Do not reopen route selection next. The highest-leverage next step is still the gateway capability / doctor seam.
+
+Recommended next slice:
+
+- expose one operator-facing gateway capability summary across API, dashboard, and CLI
+- include connected-lane health, app/plugin/MCP inventory, approval posture, and launch-policy warnings
+- reuse existing `RuntimeManager`, diagnostics, Ops Mesh inventory, and gateway bootstrap state instead of inventing a second gateway subsystem
+
+### Blockers
+
+- No credential blocker hit during this turn.
+- No approval blocker hit during this turn.
+
+### Operator handoff
+
+- Completed: recovered context from the stale-thread relay, proved the named route-selection blocker is no longer live in the current worktree, added a dedicated `default_cwd` route-fallback regression test, and refreshed the parity ledger with a tighter verified landing.
+- Verified: `7 passed` targeted route/radar/reflex/setup checks, `4 passed` isolated route-fallback checks, `5 passed` targeted mission recovery/telemetry checks, `102 passed` in the control-plane contract pack, `125 passed` across the broader changed surface, `node --check` passed, and `compileall` passed.
+- Next step: build the gateway capability / doctor contract across API, dashboard, and CLI, then decide whether launchpad/interference should consume the same capability summary before broadening further.
 - Blockers: none.

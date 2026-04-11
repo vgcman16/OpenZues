@@ -19,6 +19,7 @@ from openzues.app import (
 from openzues.schemas import (
     DashboardView,
     InstanceView,
+    MissionLiveTelemetryView,
     MissionView,
     ProjectView,
     RemoteRequestView,
@@ -27,6 +28,7 @@ from openzues.schemas import (
 from openzues.services.control_chat import plan_attention_queue, plan_control_chat
 from openzues.services.control_plane import ControlPlaneLease
 from openzues.services.dreams import build_dream_deck
+from openzues.services.launch_routing import LaunchRoutingService
 from openzues.settings import Settings
 
 
@@ -655,6 +657,11 @@ def test_onboarding_bootstrap_creates_first_run_bundle_and_launch_draft(tmp_path
     assert payload["mission_draft"]["name"] == "Kick off Autonomous Ship Loop"
     assert "Project skillbook:" in payload["mission_draft"]["objective"]
     assert "Known integration inventory:" in payload["mission_draft"]["objective"]
+    assert payload["mission_draft"]["session_key"].startswith("launch:mode:task_lane:task:")
+    assert payload["launch_route"]["mode"] == "task_lane"
+    assert payload["launch_route"]["matched_by"] == "task.instance"
+    assert payload["launch_route"]["resolved_instance"]["label"] == "Bootstrap Lane"
+    assert payload["launch_route"]["session_key"] == payload["mission_draft"]["session_key"]
 
     dashboard = dashboard_response.json()
     assert dashboard["projects"][0]["label"] == "Bootstrap Workspace"
@@ -670,8 +677,10 @@ def test_onboarding_bootstrap_creates_first_run_bundle_and_launch_draft(tmp_path
     assert dashboard["gateway_bootstrap"]["project"]["label"] == "Bootstrap Workspace"
     assert dashboard["gateway_bootstrap"]["operator"]["label"] == "Remote Builder"
     assert dashboard["gateway_bootstrap"]["task_blueprint"]["label"] == "Autonomous Ship Loop"
+    assert dashboard["gateway_bootstrap"]["route_binding_mode"] == "saved_lane"
     assert dashboard["gateway_bootstrap"]["run_verification"] is True
     assert dashboard["gateway_bootstrap"]["auto_commit"] is False
+    assert dashboard["gateway_bootstrap"]["launch_route"]["mode"] == "task_lane"
 
 
 def test_onboarding_bootstrap_remote_mode_can_stage_without_default_lane(tmp_path) -> None:
@@ -704,13 +713,160 @@ def test_onboarding_bootstrap_remote_mode_can_stage_without_default_lane(tmp_pat
     dashboard = dashboard_response.json()
     assert dashboard["gateway_bootstrap"]["setup_mode"] == "remote"
     assert dashboard["gateway_bootstrap"]["setup_flow"] == "advanced"
+    assert dashboard["gateway_bootstrap"]["route_binding_mode"] == "workspace_affinity"
     assert dashboard["gateway_bootstrap"]["instance"] is None
     assert dashboard["gateway_bootstrap"]["task_blueprint"]["label"] == "Remote Ship Loop"
+    assert dashboard["gateway_bootstrap"]["launch_route"]["mode"] == "workspace_affinity"
+    assert dashboard["gateway_bootstrap"]["launch_route"]["resolved_instance"] is None
 
     setup = setup_response.json()
     assert setup["wizard_session"]["mode"] == "remote"
     assert setup["wizard_session"]["flow"] == "advanced"
     assert setup["wizard_session"]["remote_probe"]["status"] == "ready"
+    assert setup["launch_handoff"]["launch_route"]["mode"] == "workspace_affinity"
+
+
+def test_remote_workspace_affinity_prefers_project_lane_and_persists_last_route(tmp_path) -> None:
+    workspace_path = tmp_path / "workspace"
+    workspace_path.mkdir()
+    other_path = tmp_path / "other"
+    other_path.mkdir()
+
+    with make_client(tmp_path) as client:
+        first_instance = client.post(
+            "/api/instances",
+            json={
+                "name": "Fallback Lane",
+                "transport": "desktop",
+                "cwd": str(other_path),
+                "auto_connect": False,
+            },
+        ).json()
+        matching_instance = client.post(
+            "/api/instances",
+            json={
+                "name": "Workspace Lane",
+                "transport": "desktop",
+                "cwd": str(workspace_path),
+                "auto_connect": False,
+            },
+        ).json()
+
+        manager = client.app.state.manager
+        manager.instances[first_instance["id"]].connected = True
+        manager.instances[matching_instance["id"]].connected = True
+
+        bootstrap_response = client.post(
+            "/api/onboarding/bootstrap",
+            json={
+                "setup_mode": "remote",
+                "setup_flow": "advanced",
+                "instance_mode": "existing",
+                "instance_id": None,
+                "project_path": str(workspace_path),
+                "project_label": "Remote Workspace",
+                "operator_name": "Remote Builder",
+                "issue_api_key": True,
+                "task_name": "Remote Ship Loop",
+                "objective_template": "Keep the remote workspace moving.",
+            },
+        )
+        launch_response = client.get("/api/setup/launch")
+
+    assert bootstrap_response.status_code == 200
+    payload = bootstrap_response.json()
+    assert payload["mission_draft"]["instance_id"] == matching_instance["id"]
+    assert payload["mission_draft"]["session_key"].startswith("launch:mode:workspace_affinity:")
+    assert payload["launch_route"]["mode"] == "workspace_affinity"
+    assert payload["launch_route"]["matched_by"] == "workspace.last_route"
+    assert payload["launch_route"]["resolved_instance"]["label"] == "Workspace Lane"
+    assert payload["launch_route"]["candidates"][0]["label"] == "Workspace Lane"
+
+    assert launch_response.status_code == 200
+    handoff = launch_response.json()
+    assert handoff["mission_draft"]["instance_id"] == matching_instance["id"]
+    assert handoff["mission_draft"]["session_key"] == payload["mission_draft"]["session_key"]
+    assert handoff["launch_route"]["mode"] == "workspace_affinity"
+    assert handoff["launch_route"]["matched_by"] == "workspace.last_route"
+    assert handoff["launch_route"]["resolved_instance"]["label"] == "Workspace Lane"
+    assert handoff["launch_route"]["last_resolved_at"] is not None
+
+
+def test_launch_routing_uses_gateway_default_cwd_when_task_has_no_workspace_context(
+    tmp_path,
+) -> None:
+    workspace_path = tmp_path / "workspace"
+    workspace_path.mkdir()
+    other_path = tmp_path / "other"
+    other_path.mkdir()
+
+    with make_client(tmp_path) as client:
+        fallback_instance = client.post(
+            "/api/instances",
+            json={
+                "name": "Fallback Lane",
+                "transport": "desktop",
+                "cwd": str(other_path),
+                "auto_connect": False,
+            },
+        ).json()
+        matching_instance = client.post(
+            "/api/instances",
+            json={
+                "name": "Gateway Workspace Lane",
+                "transport": "desktop",
+                "cwd": str(workspace_path),
+                "auto_connect": False,
+            },
+        ).json()
+
+        manager = client.app.state.manager
+        manager.instances[fallback_instance["id"]].connected = True
+        manager.instances[matching_instance["id"]].connected = True
+
+        database = client.app.state.database
+        asyncio.run(
+            database.upsert_gateway_bootstrap(
+                setup_mode="remote",
+                setup_flow="advanced",
+                route_binding_mode="workspace_affinity",
+                preferred_instance_id=None,
+                preferred_project_id=None,
+                team_id=None,
+                operator_id=1,
+                task_blueprint_id=77,
+                default_cwd=str(workspace_path),
+                model="gpt-5.4",
+                max_turns=8,
+                use_builtin_agents=True,
+                run_verification=True,
+                auto_commit=False,
+                pause_on_approval=True,
+                allow_auto_reflexes=True,
+                auto_recover=True,
+                auto_recover_limit=2,
+                reflex_cooldown_seconds=900,
+                allow_failover=True,
+            )
+        )
+
+        task = make_task_blueprint_view(task_id=77, name="Fallback route").model_copy(
+            update={"instance_id": None, "project_id": None, "cwd": None}
+        )
+        route = asyncio.run(
+            LaunchRoutingService(database, manager).describe(task=task)
+        )
+        gateway = asyncio.run(database.get_gateway_bootstrap())
+
+    assert route.mode == "workspace_affinity"
+    assert route.matched_by == "workspace.project_lane"
+    assert route.resolved_instance is not None
+    assert route.resolved_instance.id == matching_instance["id"]
+    assert route.candidates[0].id == matching_instance["id"]
+    assert route.session_key == "launch:mode:workspace_affinity:task:77:operator:1"
+    assert gateway is not None
+    assert gateway["last_route_instance_id"] == matching_instance["id"]
+    assert gateway["last_route_resolved_at"] is not None
 
 
 def test_setup_endpoint_reports_reentrant_posture_after_bootstrap(tmp_path) -> None:
@@ -743,9 +899,13 @@ def test_setup_endpoint_reports_reentrant_posture_after_bootstrap(tmp_path) -> N
     assert payload["footprint"]["instance"]["label"] == "Bootstrap Lane"
     assert payload["wizard_session"]["mode"] == "local"
     assert payload["launch_handoff"]["status"] == "staged"
+    assert payload["launch_handoff"]["launch_route"]["mode"] == "task_lane"
     assert payload["launch_handoff"]["recommended_action"] == "connect_lane"
     assert payload["launch_handoff"]["mission_draft"]["task_blueprint_id"] is not None
     assert payload["launch_handoff"]["mission_draft"]["instance_id"] == 1
+    assert payload["launch_handoff"]["mission_draft"]["session_key"].startswith(
+        "launch:mode:task_lane:task:"
+    )
     assert "Reconnect the default lane" in payload["next_entrypoint"]
     assert "Saved setup handoff:" in payload["handoff_summary"]
 
@@ -794,6 +954,8 @@ def test_setup_launch_endpoint_reports_saved_remote_handoff_gap(tmp_path) -> Non
     assert payload["status"] == "staged"
     assert payload["recommended_action"] == "connect_lane"
     assert payload["mission_draft"] is None
+    assert payload["launch_route"]["mode"] == "workspace_affinity"
+    assert payload["launch_route"]["resolved_instance"] is None
     assert payload["task_blueprint"]["label"] == "Remote Ship Loop"
     assert "Connect or quick-connect a lane" in payload["next_entrypoint"]
 
@@ -2074,6 +2236,60 @@ def test_build_radar_does_not_flag_normal_gpt5_run_as_context_burn() -> None:
     assert "mission-2-burn" not in signal_ids
 
 
+def test_build_radar_flags_quiet_in_progress_thread_earlier() -> None:
+    now = datetime.now(UTC)
+    mission = make_mission_view(
+        mission_id=41,
+        name="Thread watcher",
+        status="active",
+        phase="thinking",
+        in_progress=True,
+        last_activity_at=(now - timedelta(minutes=1)).isoformat(),
+    ).model_copy(
+        update={
+            "live_telemetry": MissionLiveTelemetryView(
+                streaming=False,
+                last_thread_event_age_seconds=240,
+                summary="Mission is marked in progress, but no fresh thread activity has landed recently.",
+            )
+        }
+    )
+
+    radar = build_radar([make_instance_view()], [mission], [make_project_view()])
+
+    signal = next(signal for signal in radar.signals if signal.id == "mission-41-thread-quiet")
+    assert "live thread went quiet" in signal.title
+    assert signal.level == "warn"
+
+
+def test_build_radar_does_not_flag_streaming_thread_as_quiet() -> None:
+    now = datetime.now(UTC)
+    mission = make_mission_view(
+        mission_id=42,
+        name="Streaming runner",
+        status="active",
+        phase="thinking",
+        in_progress=True,
+        last_activity_at=(now - timedelta(minutes=12)).isoformat(),
+    ).model_copy(
+        update={
+            "live_telemetry": MissionLiveTelemetryView(
+                streaming=True,
+                last_thread_event_age_seconds=10,
+                recent_event_count_30s=4,
+                recent_output_delta_count_30s=2,
+                summary="Streaming now with 4 thread events in the last 30s.",
+            )
+        }
+    )
+
+    radar = build_radar([make_instance_view()], [mission], [make_project_view()])
+
+    signal_ids = {signal.id for signal in radar.signals}
+    assert "mission-42-thread-quiet" not in signal_ids
+    assert "mission-42-quiet" not in signal_ids
+
+
 def test_build_radar_surfaces_scope_drift_signal() -> None:
     mission = make_mission_view(
         mission_id=5,
@@ -2742,6 +2958,57 @@ def test_build_reflex_deck_creates_checkpoint_reflex_for_orbiting_mission() -> N
     assert reflex.kind == "checkpoint_now"
     assert reflex.mission_id == 12
     assert "Stop expanding scope." in reflex.prompt
+
+
+def test_build_reflex_deck_arms_thread_heartbeat_for_quiet_in_progress_run() -> None:
+    mission = make_mission_view(
+        mission_id=52,
+        name="Quiet thread",
+        status="active",
+        phase="executing",
+        in_progress=True,
+        project_id=2,
+        project_label="Atlas",
+    ).model_copy(
+        update={
+            "live_telemetry": MissionLiveTelemetryView(
+                streaming=False,
+                last_thread_event_age_seconds=240,
+                summary="Mission is marked in progress, but no fresh thread activity has landed recently.",
+            )
+        }
+    )
+
+    reflex_deck = build_reflex_deck([make_instance_view()], [mission], [make_project_view()])
+
+    reflex = next(reflex for reflex in reflex_deck.reflexes if reflex.mission_id == 52)
+    assert reflex.kind == "heartbeat_nudge"
+    assert "quiet live thread" in reflex.title.lower()
+
+
+def test_build_reflex_deck_skips_thread_heartbeat_for_streaming_run() -> None:
+    mission = make_mission_view(
+        mission_id=53,
+        name="Streaming thread",
+        status="active",
+        phase="executing",
+        in_progress=True,
+        project_id=2,
+        project_label="Atlas",
+    ).model_copy(
+        update={
+            "live_telemetry": MissionLiveTelemetryView(
+                streaming=True,
+                last_thread_event_age_seconds=15,
+                recent_output_delta_count_30s=3,
+                summary="Streaming now with 3 thread events in the last 30s.",
+            )
+        }
+    )
+
+    reflex_deck = build_reflex_deck([make_instance_view()], [mission], [make_project_view()])
+
+    assert not any(reflex.mission_id == 53 for reflex in reflex_deck.reflexes)
 
 
 def test_build_reflex_deck_offers_resume_reflex_for_paused_checkpoint() -> None:

@@ -837,6 +837,41 @@ class MissionCheckpointView(BaseModel):
     created_at: datetime
 
 
+class MissionLiveTelemetryView(BaseModel):
+    streaming: bool = False
+    thread_status: str | None = None
+    last_thread_event_at: str | None = None
+    last_thread_event_age_seconds: int | None = None
+    recent_event_count_30s: int = 0
+    recent_event_count_5m: int = 0
+    recent_output_delta_count_30s: int = 0
+    recent_turn_activity_count_30s: int = 0
+    token_rollup_pending: bool = False
+    summary: str = "No live thread telemetry yet."
+
+
+class MissionDelegationRoleView(BaseModel):
+    name: str
+    objective: str
+    ownership: str
+    trigger: str | None = None
+
+
+class MissionDelegationBriefView(BaseModel):
+    enabled: bool = False
+    mode: Literal[
+        "single_lane",
+        "conductor_coder_auditor",
+        "conductor_architect_planner_coder_auditor",
+        "conductor_brainstorm_architect_planner_coder_auditor",
+    ] = "single_lane"
+    activation: Literal["disabled", "after_rebuild", "ready_now"] = "disabled"
+    confidence: Literal["low", "medium", "high"] = "low"
+    summary: str = "Built-in agents are disabled for this mission."
+    rationale: str | None = None
+    roles: list[MissionDelegationRoleView] = Field(default_factory=list)
+
+
 class MissionView(BaseModel):
     id: int
     name: str
@@ -871,6 +906,7 @@ class MissionView(BaseModel):
     output_tokens: int = 0
     reasoning_tokens: int = 0
     last_commentary: str | None = None
+    commentary_summary: str | None = None
     suggested_action: str | None = None
     turns_started: int = 0
     turns_completed: int = 0
@@ -886,6 +922,10 @@ class MissionView(BaseModel):
     objective_gravity: int = Field(default=100, ge=0, le=100)
     scope_drift_level: ScopeDriftLevel = "aligned"
     scope_drift_summary: str | None = None
+    live_telemetry: MissionLiveTelemetryView = Field(default_factory=MissionLiveTelemetryView)
+    delegation_brief: MissionDelegationBriefView = Field(
+        default_factory=MissionDelegationBriefView
+    )
     checkpoints: list[MissionCheckpointView] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime

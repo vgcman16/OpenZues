@@ -38,6 +38,17 @@ def _is_orbiting(mission: MissionView) -> bool:
     return mission.command_count >= orbit_threshold and not mission.last_checkpoint
 
 
+def _is_streaming(mission: MissionView) -> bool:
+    return bool(mission.live_telemetry.streaming)
+
+
+def _thread_is_quiet(mission: MissionView, *, threshold_seconds: int = 180) -> bool:
+    if _is_streaming(mission):
+        return False
+    age_seconds = mission.live_telemetry.last_thread_event_age_seconds
+    return age_seconds is None or age_seconds >= threshold_seconds
+
+
 def _doctrine_hint(doctrine: DashboardDoctrineView | None) -> str:
     if doctrine is None:
         return ""
@@ -178,10 +189,35 @@ def build_reflex_deck(
                 action_label="Run verify spike",
             )
 
+        if mission.status == "active" and mission.in_progress and _thread_is_quiet(mission):
+            add_reflex(
+                mission,
+                reflex_id=f"{mission.id}:thread-heartbeat",
+                kind="heartbeat_nudge",
+                level="warn",
+                title=f"Check the quiet live thread for {mission.name}",
+                summary=(
+                    "The mission still claims an active turn, but thread telemetry has gone "
+                    "quiet. Re-orient from the live thread before the turn drifts into dead air."
+                ),
+                prompt="\n".join(
+                    [
+                        f"You are still inside the OpenZues mission '{mission.name}'.",
+                        doctrine_hint,
+                        "Read the current thread state before expanding scope.",
+                        "If the turn is stalled, summarize what is already true, finish only the "
+                        "smallest blocking step, and verify one concrete claim before you stop.",
+                        "End with a concise checkpoint or a crisp blocker report.",
+                    ]
+                ).strip(),
+                action_label="Check live thread",
+            )
+
         quiet_minutes = _minutes_since(mission.last_activity_at)
         if (
             mission.status == "active"
             and not mission.in_progress
+            and not _is_streaming(mission)
             and quiet_minutes is not None
             and quiet_minutes >= 8
         ):

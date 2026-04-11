@@ -264,6 +264,23 @@ function formatRelativeTimestamp(value) {
   return `${Math.floor(diffHours / 24)}d ago`;
 }
 
+function formatAgeSeconds(value) {
+  if (value == null || Number.isNaN(Number(value))) {
+    return "unknown";
+  }
+  const seconds = Math.max(0, Number(value));
+  if (seconds < 60) {
+    return `${Math.floor(seconds)}s ago`;
+  }
+  if (seconds < 3600) {
+    return `${Math.floor(seconds / 60)}m ago`;
+  }
+  if (seconds < 86400) {
+    return `${Math.floor(seconds / 3600)}h ago`;
+  }
+  return `${Math.floor(seconds / 86400)}d ago`;
+}
+
 function summarizeCount(count, singular, plural = `${singular}s`) {
   return `${count} ${count === 1 ? singular : plural}`;
 }
@@ -335,11 +352,37 @@ function renderControlChatEntry(message) {
       !isUser && message.action_kind
         ? pill(labelizeActionKind(message.action_kind), "ok")
         : "",
+      message.repeatCount > 1 ? pill(`x${message.repeatCount}`) : "",
       message.mission_id ? pill(`mission ${message.mission_id}`) : "",
       !isUser && message.target_label ? pill(message.target_label) : "",
       `<span class="chat-age">${escapeHtml(formatRelativeTimestamp(message.created_at))}</span>`,
     ],
   });
+}
+
+function compressRepeatedMessages(messages = []) {
+  const collapsed = [];
+  for (const message of messages) {
+    const fingerprint = JSON.stringify([
+      message.role || "",
+      message.content || "",
+      message.action_kind || "",
+      message.mission_id || "",
+      message.target_label || "",
+    ]);
+    const previous = collapsed[collapsed.length - 1];
+    if (previous && previous.fingerprint === fingerprint) {
+      previous.repeatCount += 1;
+      previous.created_at = message.created_at;
+      continue;
+    }
+    collapsed.push({
+      ...message,
+      fingerprint,
+      repeatCount: 1,
+    });
+  }
+  return collapsed.map(({ fingerprint, ...message }) => message);
 }
 
 function renderChatMessage({
@@ -553,6 +596,9 @@ function renderHero() {
     0,
   );
   const activeMissions = missions.filter((mission) => mission.status === "active").length;
+  const activeStreamingMissions = missions.filter(
+    (mission) => mission.status === "active" && mission.live_telemetry?.streaming,
+  ).length;
   const blockedMissions = missions.filter((mission) => mission.status === "blocked").length;
   const readySignals = radarSignals.filter((signal) => signal.level === "ready").length;
   const stats = [
@@ -564,7 +610,10 @@ function renderHero() {
     {
       label: "Active Loops",
       value: activeMissions,
-      note: `${summarizeCount(readySignals, "ready cue")} in reserve`,
+      note:
+        activeStreamingMissions > 0
+          ? `${summarizeCount(activeStreamingMissions, "streaming run")} live`
+          : `${summarizeCount(readySignals, "ready cue")} in reserve`,
     },
     {
       label: "Attention",
@@ -759,7 +808,11 @@ function renderChat() {
   const messages = [];
 
   if (controlChat?.messages?.length) {
-    messages.push(...controlChat.messages.map((message) => renderControlChatEntry(message)));
+    messages.push(
+      ...compressRepeatedMessages(controlChat.messages).map((message) =>
+        renderControlChatEntry(message),
+      ),
+    );
   }
 
   if (attentionQueue?.actions?.length) {
@@ -874,6 +927,8 @@ function renderChat() {
     .slice(0, 6);
 
   visibleMissions.forEach((mission) => {
+    const liveTelemetry = mission.live_telemetry || {};
+    const liveSummary = mission.commentary_summary || mission.last_commentary || mission.objective;
     const progressSuffix = mission.max_turns
       ? `${mission.turns_completed}/${mission.max_turns} turns`
       : `${mission.turns_completed} turns complete`;
@@ -895,15 +950,24 @@ function renderChat() {
           pill(mission.model),
           `<span class="chat-age">${escapeHtml(formatRelativeTimestamp(mission.last_activity_at))}</span>`,
         ],
-        body: mission.last_commentary || mission.objective,
+        body: liveSummary,
         note: noteSegments.join(" "),
         code: mission.current_command || "",
         items: [
           progressSuffix,
           `${formatNumber(mission.command_count)} commands`,
           `${formatNumber(mission.total_tokens)} tokens`,
+          liveTelemetry.streaming
+            ? "streaming now"
+            : liveTelemetry.last_thread_event_age_seconds != null
+              ? `last event ${formatAgeSeconds(liveTelemetry.last_thread_event_age_seconds)}`
+              : "",
+          liveTelemetry.recent_event_count_30s
+            ? `${formatNumber(liveTelemetry.recent_event_count_30s)} events / 30s`
+            : "",
+          liveTelemetry.token_rollup_pending ? "token rollup pending" : "",
           mission.thread_id ? `thread ${mission.thread_id}` : "thread pending",
-        ],
+        ].filter(Boolean),
       }),
     );
   });
@@ -1496,6 +1560,77 @@ function renderBootstrapResource(resource) {
   `;
 }
 
+function renderLaunchRoute(route) {
+  if (!route) {
+    return "";
+  }
+  const resolvedLabel = route.resolved_instance?.label || "No lane resolved yet";
+  const preferredLabel = route.preferred_instance?.label || "No pinned lane";
+  return `
+    <article class="bootstrap-route">
+      <div class="row">
+        <div>
+          <p class="eyebrow">Launch Route</p>
+          <h3>${escapeHtml(route.headline)}</h3>
+        </div>
+        <div class="pill-row">
+          ${pill(route.status, route.status === "ready" ? "ok" : route.status === "repair" ? "bad" : "warn")}
+          ${pill(String(route.mode || "").replaceAll("_", " "))}
+          ${pill(String(route.matched_by || "").replaceAll("_", " "))}
+        </div>
+      </div>
+      <p class="small-muted">${escapeHtml(route.summary)}</p>
+      <div class="bootstrap-route-grid">
+        <div class="chat-card">
+          <strong>Resolved lane</strong>
+          <p>${escapeHtml(resolvedLabel)}</p>
+        </div>
+        <div class="chat-card">
+          <strong>Preferred lane</strong>
+          <p>${escapeHtml(preferredLabel)}</p>
+        </div>
+        <div class="chat-card">
+          <strong>Session key</strong>
+          <p class="bootstrap-route-session">${escapeHtml(route.session_key)}</p>
+        </div>
+      </div>
+      ${
+        route.warnings?.length
+          ? `<div class="ops-note">${route.warnings.map((warning) => escapeHtml(warning)).join(" ")}</div>`
+          : ""
+      }
+      ${
+        route.candidates?.length
+          ? `
+            <div class="bootstrap-route-candidates">
+              ${route.candidates
+                .map(
+                  (candidate) => `
+                    <article class="bootstrap-resource">
+                      <div class="row">
+                        <strong>${escapeHtml(candidate.label)}</strong>
+                        <div class="pill-row">
+                          ${candidate.connected ? pill("connected", "ok") : pill("saved")}
+                        </div>
+                      </div>
+                      ${candidate.detail ? `<p class="small-muted">${escapeHtml(candidate.detail)}</p>` : ""}
+                    </article>
+                  `,
+                )
+                .join("")}
+            </div>
+          `
+          : ""
+      }
+      ${
+        route.last_resolved_at
+          ? `<p class="small-muted">Last healthy resolution: ${escapeHtml(formatRelativeTimestamp(route.last_resolved_at))}</p>`
+          : ""
+      }
+    </article>
+  `;
+}
+
 function renderBootstrapResult() {
   const result = state.lastBootstrapResult || state.setup?.launch_handoff;
   if (!onboardingResultEl) {
@@ -1531,6 +1666,7 @@ function renderBootstrapResult() {
       <div class="bootstrap-resource-grid">
         ${resources.map((resource) => renderBootstrapResource(resource)).join("")}
       </div>
+      ${renderLaunchRoute(result.launch_route)}
       <div class="chat-actions">
         ${result.mission_draft ? chatActionButton(actionLabel, actionKey) : ""}
       </div>
@@ -1572,10 +1708,12 @@ function renderGatewayBootstrapProfile() {
       <div class="bootstrap-resource-grid">
         ${resources.map((resource) => renderBootstrapResource(resource)).join("")}
       </div>
+      ${renderLaunchRoute(profile.launch_route)}
       <div class="pill-row bootstrap-policy-pills">
         ${pill(profile.status, profile.status === "ready" ? "ok" : profile.status === "degraded" ? "bad" : "warn")}
         ${pill(profile.setup_mode, profile.setup_mode === "remote" ? "warn" : "ok")}
         ${pill(profile.setup_flow)}
+        ${pill(String(profile.route_binding_mode || "saved_lane").replaceAll("_", " "))}
         ${pill(profile.model)}
         ${profile.max_turns ? pill(`max ${profile.max_turns} turns`) : ""}
         ${pill(profile.run_verification ? "verification on" : "verification off", profile.run_verification ? "ok" : "warn")}
@@ -3511,6 +3649,12 @@ function renderMissions() {
 
   missionsEl.innerHTML = missions
     .map((mission) => {
+      const liveTelemetry = mission.live_telemetry || {};
+      const delegationBrief = mission.delegation_brief || {};
+      const lastThreadEventLabel =
+        liveTelemetry.last_thread_event_age_seconds != null
+          ? `last event ${formatAgeSeconds(liveTelemetry.last_thread_event_age_seconds)}`
+          : "no thread events yet";
       const progressSuffix = mission.max_turns
         ? `${mission.turns_completed}/${mission.max_turns}`
         : `${mission.turns_completed} complete`;
@@ -3534,6 +3678,22 @@ function renderMissions() {
             )
             .join("")
         : `<p class="mono">No checkpoints yet.</p>`;
+      const delegationRoles = delegationBrief.roles?.length
+        ? delegationBrief.roles
+            .map(
+              (role) => `
+                <article class="checkpoint stack">
+                  <div class="row">
+                    ${pill(role.name, "ok")}
+                    ${role.trigger ? `<span class="mission-freshness">${escapeHtml(role.trigger)}</span>` : ""}
+                  </div>
+                  <div>${escapeHtml(role.objective || "")}</div>
+                  <div class="small-muted">${escapeHtml(role.ownership || "")}</div>
+                </article>
+              `,
+            )
+            .join("")
+        : `<p class="mono">No helper-agent stack proposed yet.</p>`;
 
       return `
         <article id="mission-card-${mission.id}" class="mission stack phase-${escapeHtml(mission.phase || "ready")}">
@@ -3541,6 +3701,13 @@ function renderMissions() {
             ${pill(mission.status, toneForMissionStatus(mission.status))}
             ${mission.phase ? pill(mission.phase) : ""}
             ${mission.in_progress ? pill("turn running", "ok") : pill("idle")}
+            ${
+              liveTelemetry.streaming
+                ? pill("streaming", "ok")
+                : mission.in_progress
+                  ? pill("not streaming", "warn")
+                  : ""
+            }
             ${mission.instance_name ? pill(mission.instance_name) : pill(`instance ${mission.instance_id}`)}
             ${mission.project_label ? pill(mission.project_label) : ""}
             ${pill(mission.model)}
@@ -3599,14 +3766,18 @@ function renderMissions() {
               }
 
               ${
-                mission.last_commentary
+                (mission.commentary_summary || mission.last_commentary)
                   ? `
                     <article class="mission-focus stack">
                       <div class="row">
-                        <strong>Live commentary</strong>
+                        <strong>${
+                          mission.commentary_summary && mission.commentary_summary !== mission.last_commentary
+                            ? "Live summary"
+                            : "Live commentary"
+                        }</strong>
                         <span class="mission-freshness">${escapeHtml(formatRelativeTimestamp(mission.last_activity_at))}</span>
                       </div>
-                      <div class="mission-commentary">${escapeHtml(mission.last_commentary)}</div>
+                      <div class="mission-commentary">${escapeHtml(mission.commentary_summary || mission.last_commentary)}</div>
                     </article>
                   `
                   : ""
@@ -3657,6 +3828,28 @@ function renderMissions() {
               </article>
 
               <article class="mini-stat">
+                <span class="mini-stat-label">Live thread</span>
+                <div class="mission-pills">
+                  ${
+                    liveTelemetry.streaming
+                      ? pill("streaming now", "ok")
+                      : mission.in_progress
+                        ? pill("quiet turn", "warn")
+                        : pill("idle")
+                  }
+                  ${liveTelemetry.thread_status ? pill(`thread ${liveTelemetry.thread_status}`) : ""}
+                  ${liveTelemetry.token_rollup_pending ? pill("token rollup pending", "warn") : ""}
+                </div>
+                <div class="telemetry-grid">
+                  <span>${formatNumber(liveTelemetry.recent_event_count_30s || 0)} events / 30s</span>
+                  <span>${formatNumber(liveTelemetry.recent_event_count_5m || 0)} events / 5m</span>
+                  <span>${formatNumber(liveTelemetry.recent_output_delta_count_30s || 0)} output deltas / 30s</span>
+                  <span>${escapeHtml(lastThreadEventLabel)}</span>
+                </div>
+                <div class="small-muted">${escapeHtml(liveTelemetry.summary || "No live thread telemetry yet.")}</div>
+              </article>
+
+              <article class="mini-stat">
                 <span class="mini-stat-label">Policies</span>
                 <div class="mission-pills">
                   ${booleanBadge(mission.use_builtin_agents, "agents")}
@@ -3668,6 +3861,37 @@ function renderMissions() {
                   ${booleanBadge(mission.allow_failover, "lane failover")}
                   ${mission.last_reflex_kind ? pill(`last ${mission.last_reflex_kind}`, "warn") : ""}
                 </div>
+              </article>
+
+              <article class="mini-stat">
+                <span class="mini-stat-label">Agent stack</span>
+                <div class="mission-pills">
+                  ${
+                    delegationBrief.enabled
+                      ? pill((delegationBrief.mode || "adaptive").replaceAll("_", " "), "ok")
+                      : pill("single lane")
+                  }
+                  ${
+                    delegationBrief.activation === "after_rebuild"
+                      ? pill("delegate after rebuild", "warn")
+                      : delegationBrief.activation === "ready_now"
+                        ? pill("delegate ready", "ok")
+                        : ""
+                  }
+                  ${delegationBrief.confidence ? pill(`${delegationBrief.confidence} confidence`) : ""}
+                </div>
+                <div class="small-muted">
+                  ${escapeHtml(
+                    delegationBrief.summary ||
+                      "The main lane is staying single-threaded for now.",
+                  )}
+                </div>
+                ${
+                  delegationBrief.rationale
+                    ? `<div class="small-muted">${escapeHtml(delegationBrief.rationale)}</div>`
+                    : ""
+                }
+                <div class="checkpoint-list">${delegationRoles}</div>
               </article>
 
               <article class="mini-stat">

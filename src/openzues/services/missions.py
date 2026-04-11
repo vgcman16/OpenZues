@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+import re
 from collections import defaultdict
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
@@ -12,6 +13,9 @@ from openzues.database import Database, utcnow
 from openzues.schemas import (
     MissionCheckpointView,
     MissionCreate,
+    MissionDelegationBriefView,
+    MissionDelegationRoleView,
+    MissionLiveTelemetryView,
     MissionReflexRun,
     MissionView,
     SkillPinView,
@@ -37,6 +41,27 @@ RESTART_SAFE_SNAPSHOT_MIN_SECONDS = 90
 RESTART_SAFE_SNAPSHOT_KIND = "restart_safe"
 RECOVERY_TRACE_EVENT_LIMIT = 80
 RECOVERY_TRACE_LINE_LIMIT = 8
+VERIFICATION_PASS_PATTERNS = (
+    re.compile(r"\b\d+\s+passed\b", re.IGNORECASE),
+    re.compile(r"\bno issues found\b", re.IGNORECASE),
+    re.compile(r"\ball checks passed\b", re.IGNORECASE),
+    re.compile(r"\bbuild succeeded\b", re.IGNORECASE),
+)
+VERIFICATION_FAIL_PATTERNS = (
+    re.compile(r"\b\d+\s+failed\b", re.IGNORECASE),
+    re.compile(r"=+\s*failures\s*=+", re.IGNORECASE),
+    re.compile(r"\bassertionerror\b", re.IGNORECASE),
+    re.compile(r"\btraceback \(most recent call last\)\b", re.IGNORECASE),
+)
+STALE_BLOCKER_PATTERNS = (
+    re.compile(r"\bnot fully green\b", re.IGNORECASE),
+    re.compile(r"\bregression\b", re.IGNORECASE),
+    re.compile(r"\bstill live\b", re.IGNORECASE),
+    re.compile(r"\bstill failing\b", re.IGNORECASE),
+    re.compile(r"\bblock(?:ed|er)?\b", re.IGNORECASE),
+    re.compile(r"\bfailing\b", re.IGNORECASE),
+    re.compile(r"\bbroken\b", re.IGNORECASE),
+)
 
 
 def _parse_timestamp(value: str | None) -> datetime | None:
@@ -75,6 +100,321 @@ def _thread_status_type(thread_state: dict[str, Any] | None) -> str | None:
     if isinstance(status, dict) and isinstance(status.get("type"), str):
         return str(status["type"])
     return None
+
+
+def _thread_live_summary(
+    *,
+    streaming: bool,
+    in_progress: bool,
+    last_event_age_seconds: int | None,
+    recent_event_count_30s: int,
+    recent_output_delta_count_30s: int,
+) -> str:
+    if streaming:
+        return (
+            f"Streaming now with {recent_event_count_30s} thread event"
+            f"{'' if recent_event_count_30s == 1 else 's'} in the last 30s."
+        )
+    if in_progress and last_event_age_seconds is not None and last_event_age_seconds <= 90:
+        return (
+            "Turn is still in progress and the thread was active recently, but it is not "
+            "currently streaming command output."
+        )
+    if in_progress:
+        return (
+            "Mission is marked in progress, but no fresh thread activity has landed recently. "
+            "Inspect the live thread if this persists."
+        )
+    if last_event_age_seconds is not None:
+        return (
+            f"Last thread event arrived {last_event_age_seconds}s ago. "
+            f"{recent_output_delta_count_30s} output deltas landed in the last 30s."
+        )
+    return "No live thread telemetry has landed yet."
+
+
+def _mission_text_blob(mission: dict[str, Any]) -> str:
+    parts = [
+        mission.get("name"),
+        mission.get("objective"),
+        mission.get("last_commentary"),
+        mission.get("last_checkpoint"),
+        mission.get("current_command"),
+        mission.get("last_error"),
+    ]
+    return " ".join(str(part or "") for part in parts).lower()
+
+
+def _contains_any(text: str, terms: tuple[str, ...]) -> bool:
+    return any(term in text for term in terms)
+
+
+def _build_delegation_brief(
+    mission: dict[str, Any],
+    *,
+    scope: ScopeAssessment | None = None,
+    live_telemetry: MissionLiveTelemetryView | None = None,
+    recovery_mode: bool = False,
+) -> MissionDelegationBriefView:
+    if not bool(mission.get("use_builtin_agents")):
+        return MissionDelegationBriefView()
+
+    text = _mission_text_blob(mission)
+    command_count = int(mission.get("command_count") or 0)
+    turns_started = int(mission.get("turns_started") or 0)
+    has_workspace = bool(mission.get("project_id") is not None or mission.get("cwd"))
+    in_progress = bool(mission.get("in_progress"))
+    drifted = scope is not None and scope.drift_level in {"drifting", "critical"}
+    activation = (
+        "after_rebuild"
+        if recovery_mode or turns_started <= 1 or drifted
+        else "ready_now"
+    )
+    confidence = "high" if has_workspace and bool(mission.get("run_verification")) else "medium"
+    if command_count == 0 and turns_started <= 1:
+        confidence = "low"
+
+    needs_brainstorm = _contains_any(
+        text,
+        (
+            "brainstorm",
+            "idea",
+            "concept",
+            "ux",
+            "ui",
+            "cleaner",
+            "better",
+            "fresh",
+            "product direction",
+            "what should",
+            "design language",
+        ),
+    )
+    needs_architect = has_workspace and (
+        recovery_mode
+        or command_count <= 6
+        or _contains_any(
+            text,
+            (
+                "parity",
+                "harden",
+                "reconstruct",
+                "resume",
+                "checkpoint",
+                "routing",
+                "gateway",
+                "bootstrap",
+                "schema",
+                "api",
+                "thread",
+                "session",
+                "control plane",
+                "ops mesh",
+                "wizard",
+                "inventory",
+            ),
+        )
+    )
+    needs_planner = has_workspace and (
+        recovery_mode
+        or command_count <= 8
+        or bool(scope is not None and scope.drift_level in {"watch", "drifting", "critical"})
+        or not bool(mission.get("last_checkpoint"))
+    )
+    needs_coder = _contains_any(
+        text,
+        (
+            "build",
+            "ship",
+            "implement",
+            "land",
+            "wire",
+            "integrate",
+            "fix",
+            "refactor",
+            "close the gap",
+            "close biggest gaps",
+            "continue",
+            "harden",
+            "parity",
+        ),
+    )
+    needs_auditor = bool(mission.get("run_verification")) or _contains_any(
+        text,
+        (
+            "verify",
+            "validation",
+            "tests",
+            "regression",
+            "doctor",
+            "health",
+            "smoke",
+        ),
+    )
+
+    roles: list[MissionDelegationRoleView] = []
+    if needs_brainstorm:
+        roles.append(
+            MissionDelegationRoleView(
+                name="Brainstormer",
+                objective=(
+                    "Generate focused options, UX/product ideas, or alternate approaches without "
+                    "taking over implementation decisions."
+                ),
+                ownership="Option generation only; no code changes and no authority over scope.",
+                trigger=(
+                    "Launch only when the task is still fuzzy or the lead lane needs option space."
+                    if activation == "after_rebuild"
+                    else "Launch when the lead lane wants fast idea generation before coding."
+                ),
+            )
+        )
+    if needs_architect:
+        roles.append(
+            MissionDelegationRoleView(
+                name="Architect",
+                objective=(
+                    "Map the active seam, identify the right interfaces and file boundaries, and "
+                    "name the smallest sound system shape before edits fan out."
+                ),
+                ownership="Read-heavy architecture mapping, contracts, and file-boundary guidance.",
+                trigger=(
+                    "Launch after the lead lane re-establishes context or when the change spans "
+                    "multiple files or subsystems."
+                ),
+            )
+        )
+    if needs_planner:
+        roles.append(
+            MissionDelegationRoleView(
+                name="Planner",
+                objective=(
+                    "Turn the chosen direction into bounded slices with ownership, sequencing, "
+                    "and a concrete verification bar."
+                ),
+                ownership="Execution planning only; no code edits and no branch-wide redesign.",
+                trigger=(
+                    "Launch once the lead lane knows the seam but wants a tighter sequence before "
+                    "implementation."
+                ),
+            )
+        )
+    if needs_coder:
+        roles.append(
+            MissionDelegationRoleView(
+                name="Coder",
+                objective=(
+                    "Own one bounded implementation slice with explicit file ownership and avoid "
+                    "broad refactors outside that seam."
+                ),
+                ownership="A single code-change slice chosen by the lead lane.",
+                trigger=(
+                    "Launch only after the lead lane locks the target seam and acceptance bar."
+                ),
+            )
+        )
+    if needs_auditor:
+        roles.append(
+            MissionDelegationRoleView(
+                name="Auditor",
+                objective=(
+                    "Challenge the claimed milestone, run the tightest meaningful checks, and "
+                    "report concrete pass/fail evidence before the checkpoint lands."
+                ),
+                ownership="Verification only: tests, lint, browser checks, or focused audits.",
+                trigger=(
+                    "Launch once an implementation candidate exists or when the lead lane needs "
+                    "proof before checkpointing."
+                ),
+            )
+        )
+
+    if not roles:
+        return MissionDelegationBriefView(
+            enabled=True,
+            mode="single_lane",
+            activation=activation,
+            confidence=confidence,
+            summary=(
+                "Keep the lead lane in charge and stay single-lane unless the task opens into a "
+                "clear multi-role split."
+            ),
+            rationale=(
+                "Built-in agents are available, but this mission does not yet show a strong "
+                "parallel split."
+            ),
+        )
+
+    if needs_brainstorm:
+        mode = "conductor_brainstorm_architect_planner_coder_auditor"
+        summary = (
+            "Zues wants the main lane to conduct while a brainstormer opens option space, an "
+            "architect maps the seam, a planner sequences the work, a coder lands the slice, and "
+            "an auditor proves it before checkpoint."
+        )
+    elif needs_architect or needs_planner:
+        mode = "conductor_architect_planner_coder_auditor"
+        summary = (
+            "Zues wants the main lane to conduct while architecture, planning, coding, and "
+            "auditing stay explicitly split."
+        )
+    else:
+        mode = "conductor_coder_auditor"
+        summary = (
+            "Zues wants the main lane to conduct while a coder lands the slice and an auditor "
+            "proves it before the handoff lands."
+        )
+
+    rationale_bits: list[str] = []
+    if recovery_mode:
+        rationale_bits.append("recovery context must be rebuilt before delegation")
+    elif activation == "after_rebuild":
+        rationale_bits.append("delegation should wait until the lead lane re-anchors context")
+    if has_workspace:
+        rationale_bits.append("the mission is workspace-bound")
+    if bool(mission.get("run_verification")):
+        rationale_bits.append("verification is enabled")
+    if live_telemetry is not None and live_telemetry.streaming and in_progress:
+        rationale_bits.append("the live thread is already moving")
+    if scope is not None and scope.drift_level in {"drifting", "critical"}:
+        rationale_bits.append("scope drift risk is elevated")
+
+    return MissionDelegationBriefView(
+        enabled=True,
+        mode=mode,
+        activation=activation,
+        confidence=confidence,
+        summary=summary,
+        rationale=", ".join(rationale_bits).capitalize() + "." if rationale_bits else None,
+        roles=roles,
+    )
+
+
+def _delegation_instruction_lines(brief: MissionDelegationBriefView) -> list[str]:
+    if not brief.enabled or not brief.roles:
+        return []
+    lines = [
+        "Built-in agent stack:",
+        f"- Mode: {brief.mode.replace('_', ' ')}.",
+        (
+            "- Timing: rebuild context in the main lane first, then fan out to helper agents."
+            if brief.activation == "after_rebuild"
+            else "- Timing: the main lane may delegate now if the seam is already clear."
+        ),
+        f"- Summary: {brief.summary}",
+    ]
+    if brief.rationale:
+        lines.append(f"- Why: {brief.rationale}")
+    lines.append(
+        "- The main lane is the conductor: it keeps authority over scope, merge decisions, and "
+        "the final checkpoint."
+    )
+    for role in brief.roles:
+        role_line = f"- {role.name}: {role.objective} Ownership: {role.ownership}"
+        if role.trigger:
+            role_line += f" Trigger: {role.trigger}"
+        lines.append(role_line)
+    return lines
 
 
 def _trace_fragment(value: Any, *, limit: int = 220) -> str | None:
@@ -130,6 +470,79 @@ def _thread_event_trace_line(event: dict[str, Any]) -> str | None:
     if method == "turn/completed":
         return "Turn completed."
     return None
+
+
+def _strip_trace_label(line: str) -> str:
+    for prefix in (
+        "Output: ",
+        "Commentary: ",
+        "Commentary delta: ",
+        "Final answer: ",
+        "Command started: ",
+    ):
+        if line.startswith(prefix):
+            return line[len(prefix) :].strip()
+    return line.strip()
+
+
+def _latest_trace_match(
+    trace_lines: list[str],
+    patterns: tuple[re.Pattern[str], ...],
+) -> tuple[int, str] | None:
+    for index in range(len(trace_lines) - 1, -1, -1):
+        line = _strip_trace_label(trace_lines[index])
+        if any(pattern.search(line) for pattern in patterns):
+            return index, line
+    return None
+
+
+def _commentary_reads_as_blocker(commentary: str | None) -> bool:
+    if not commentary:
+        return False
+    return any(pattern.search(commentary) for pattern in STALE_BLOCKER_PATTERNS)
+
+
+def _derive_commentary_summary(
+    mission: dict[str, Any],
+    *,
+    trace_lines: list[str],
+) -> str | None:
+    commentary = _truncate_text(str(mission.get("last_commentary") or "") or None, 420) or None
+    latest_pass = _latest_trace_match(trace_lines, VERIFICATION_PASS_PATTERNS)
+    latest_fail = _latest_trace_match(trace_lines, VERIFICATION_FAIL_PATTERNS)
+
+    if latest_pass is not None and (latest_fail is None or latest_pass[0] > latest_fail[0]):
+        proof = _truncate_text(latest_pass[1], 220)
+        if _commentary_reads_as_blocker(commentary):
+            return _truncate_text(
+                "Recent verification looks green: "
+                f"{proof} Earlier blocker language may already be stale, so land the "
+                "checkpoint or continue from the cleared seam.",
+                420,
+            )
+        return _truncate_text(f"Recent verification looks green: {proof}", 420)
+
+    if latest_fail is not None:
+        failure = _truncate_text(latest_fail[1], 220)
+        if commentary:
+            return _truncate_text(
+                f"Recent verification still shows a failure: {failure} "
+                "Fix the newest failing assertion before broadening scope.",
+                420,
+            )
+        return _truncate_text(
+            f"Recent verification still shows a failure: {failure}",
+            420,
+        )
+
+    if _commentary_reads_as_blocker(commentary):
+        return _truncate_text(
+            "The last reported blocker has not been reconfirmed in the recent live trace. "
+            "Re-run the smallest proof step before repeating it as current truth.",
+            420,
+        )
+
+    return commentary
 
 
 def extract_thread_id(payload: dict[str, Any]) -> str | None:
@@ -816,11 +1229,11 @@ class MissionService:
             instance_id=int(mission["instance_id"]),
             thread_id=thread_id,
         )
+        commentary = _derive_commentary_summary(mission, trace_lines=trace_lines)
 
         command_count = int(mission.get("command_count") or 0)
         total_tokens = int(mission.get("total_tokens") or 0)
         current_command = _truncate_text(str(mission.get("current_command") or "") or None, 260)
-        commentary = _truncate_text(str(mission.get("last_commentary") or "") or None, 420)
 
         lines = [
             (
@@ -919,12 +1332,16 @@ class MissionService:
             instance_connected=True,
             checkpoints=continuity_inputs,
         )
+        trace_lines = await self._recent_thread_trace_lines(
+            instance_id=int(mission["instance_id"]),
+            thread_id=thread_id,
+        )
 
         command_count = int(mission.get("command_count") or 0)
         total_tokens = int(mission.get("total_tokens") or 0)
         phase = str(mission.get("phase") or "active")
         current_command = _truncate_text(str(mission.get("current_command") or "") or None, 260)
-        commentary = _truncate_text(str(mission.get("last_commentary") or "") or None, 420)
+        commentary = _derive_commentary_summary(mission, trace_lines=trace_lines)
 
         lines = [
             (
@@ -1154,6 +1571,10 @@ class MissionService:
             instance_connected=True,
             checkpoints=checkpoints,
         )
+        delegation_brief = _build_delegation_brief(
+            mission,
+            recovery_mode=True,
+        )
         instructions = [
             "You are taking over an OpenZues autonomous mission after lane failover.",
             f"Mission: {mission['name']}",
@@ -1172,11 +1593,7 @@ class MissionService:
                 "verified facts, next move, blockers."
             ),
         ]
-        if bool(mission.get("use_builtin_agents")):
-            instructions.append(
-                "- Use built-in agents for bounded parallel subtasks once "
-                "you have re-established context."
-            )
+        instructions.extend(["", *_delegation_instruction_lines(delegation_brief)])
         if bool(mission.get("run_verification")):
             instructions.append(
                 "- Run the fastest meaningful verification before broadening scope again."
@@ -1253,6 +1670,10 @@ class MissionService:
             instance_connected=True,
             checkpoints=checkpoints,
         )
+        delegation_brief = _build_delegation_brief(
+            mission,
+            recovery_mode=True,
+        )
         instructions = [
             "You are resuming an OpenZues autonomous mission after stale-thread recovery.",
             f"Mission: {mission['name']}",
@@ -1272,11 +1693,7 @@ class MissionService:
                 "next step, blockers."
             ),
         ]
-        if bool(mission.get("use_builtin_agents")):
-            instructions.append(
-                "- Use built-in agents only after you have rebuilt enough local context to "
-                "delegate safely."
-            )
+        instructions.extend(["", *_delegation_instruction_lines(delegation_brief)])
         if bool(mission.get("run_verification")):
             instructions.append(
                 "- Run the fastest meaningful verification before broadening scope again."
@@ -1934,10 +2351,30 @@ class MissionService:
             for item in await self.database.list_mission_checkpoints(int(mission["id"]), limit=5)
         ]
         scope = build_scope_assessment(mission, checkpoints=checkpoints)
+        live_telemetry = await self._build_live_telemetry(mission, runtime=runtime)
+        trace_lines: list[str] = []
+        thread_id = str(mission.get("thread_id") or "").strip()
+        if thread_id and (
+            mission.get("last_commentary")
+            or mission.get("current_command")
+            or str(mission.get("status") or "") == "active"
+        ):
+            trace_lines = await self._recent_thread_trace_lines(
+                instance_id=int(mission["instance_id"]),
+                thread_id=thread_id,
+                limit=24,
+            )
+        commentary_summary = _derive_commentary_summary(mission, trace_lines=trace_lines)
+        delegation_brief = _build_delegation_brief(
+            mission,
+            scope=scope,
+            live_telemetry=live_telemetry,
+        )
         payload = {
             **mission,
             "instance_name": runtime.name if runtime is not None else None,
             "project_label": project_label,
+            "commentary_summary": commentary_summary,
             "checkpoints": checkpoints,
             "suggested_action": self._suggested_action(mission, scope),
             "charter_summary": scope.charter_summary,
@@ -1945,8 +2382,70 @@ class MissionService:
             "objective_gravity": scope.objective_gravity,
             "scope_drift_level": scope.drift_level,
             "scope_drift_summary": scope.drift_summary,
+            "live_telemetry": live_telemetry,
+            "delegation_brief": delegation_brief,
         }
         return MissionView.model_validate(payload)
+
+    async def _build_live_telemetry(
+        self,
+        mission: dict[str, Any],
+        *,
+        runtime: Any | None,
+    ) -> MissionLiveTelemetryView:
+        thread_id = str(mission.get("thread_id") or "").strip()
+        if not thread_id:
+            return MissionLiveTelemetryView(summary="Thread not created yet.")
+
+        thread_status: str | None = None
+        if runtime is not None:
+            for thread in getattr(runtime, "threads", []):
+                if str(thread.get("id") or "") == thread_id:
+                    thread_status = _thread_status_type(thread)
+                    break
+
+        metrics = await self.database.get_thread_event_metrics(
+            instance_id=int(mission["instance_id"]),
+            thread_id=thread_id,
+        )
+        last_event_at = str(metrics.get("last_event_at") or "").strip() or None
+        last_event_age_seconds = _seconds_since(last_event_at)
+        recent_event_count_30s = int(metrics.get("recent_event_count_30s") or 0)
+        recent_event_count_5m = int(metrics.get("recent_event_count_5m") or 0)
+        recent_output_delta_count_30s = int(metrics.get("recent_output_delta_count_30s") or 0)
+        recent_turn_activity_count_30s = int(
+            metrics.get("recent_turn_activity_count_30s") or 0
+        )
+        in_progress = bool(mission.get("in_progress"))
+        streaming = bool(
+            recent_output_delta_count_30s > 0
+            or (
+                in_progress
+                and thread_status == "active"
+                and recent_turn_activity_count_30s > 0
+                and (last_event_age_seconds is None or last_event_age_seconds <= 30)
+            )
+        )
+        token_rollup_pending = bool(streaming and in_progress)
+        summary = _thread_live_summary(
+            streaming=streaming,
+            in_progress=in_progress,
+            last_event_age_seconds=last_event_age_seconds,
+            recent_event_count_30s=recent_event_count_30s,
+            recent_output_delta_count_30s=recent_output_delta_count_30s,
+        )
+        return MissionLiveTelemetryView(
+            streaming=streaming,
+            thread_status=thread_status,
+            last_thread_event_at=last_event_at,
+            last_thread_event_age_seconds=last_event_age_seconds,
+            recent_event_count_30s=recent_event_count_30s,
+            recent_event_count_5m=recent_event_count_5m,
+            recent_output_delta_count_30s=recent_output_delta_count_30s,
+            recent_turn_activity_count_30s=recent_turn_activity_count_30s,
+            token_rollup_pending=token_rollup_pending,
+            summary=summary,
+        )
 
     async def _build_turn_prompt(self, mission: dict[str, Any]) -> str:
         continuity = build_continuity_packet(mission, instance_connected=True)
@@ -1970,6 +2469,10 @@ class MissionService:
             project_label=project_label,
             project_path=project_path,
         )
+        delegation_brief = _build_delegation_brief(
+            mission,
+            scope=scope,
+        )
         instructions = [
             "You are running inside an OpenZues autonomous mission.",
             f"Mission: {mission['name']}",
@@ -1990,10 +2493,7 @@ class MissionService:
             "- Inspect the workspace before making non-trivial changes.",
             "- Keep working until you either complete meaningful progress or hit a real blocker.",
         ]
-        if bool(mission["use_builtin_agents"]):
-            instructions.append(
-                "- Use built-in agents or delegation when parallel subtasks have clear ownership."
-            )
+        instructions.extend(["", *_delegation_instruction_lines(delegation_brief)])
         if bool(mission["run_verification"]):
             instructions.append(
                 "- Run relevant tests, builds, or browser checks after meaningful changes."

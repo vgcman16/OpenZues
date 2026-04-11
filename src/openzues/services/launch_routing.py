@@ -106,7 +106,15 @@ class LaunchRoutingService:
             project = await self.database.get_project(project_id)
             if project is not None:
                 project_path = str(project["path"])
-        target_cwd = task.cwd if task is not None else project_path
+        target_cwd = (
+            (task.cwd if task is not None else None)
+            or project_path
+            or (
+                str(gateway.get("default_cwd"))
+                if gateway is not None and gateway.get("default_cwd") is not None
+                else None
+            )
+        )
         operator_id = (
             int(gateway["operator_id"])
             if gateway is not None and gateway.get("operator_id") is not None
