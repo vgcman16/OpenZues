@@ -59,6 +59,7 @@ from openzues.schemas import (
 )
 from openzues.services.continuity import build_continuity_packet
 from openzues.services.hub import BroadcastHub
+from openzues.services.launch_routing import LaunchRoutingService
 from openzues.services.manager import RuntimeManager
 from openzues.services.missions import MissionService
 from openzues.services.playbooks import PlaybookService, summarize_playbook_result
@@ -2031,6 +2032,7 @@ class OpsMeshService:
     hub: BroadcastHub
     vault: VaultService
     playbooks: PlaybookService = field(default_factory=PlaybookService)
+    launch_routing: LaunchRoutingService | None = None
     poll_interval_seconds: float = 20.0
     snapshot_interval_seconds: float = 1800.0
     _task: asyncio.Task[None] | None = field(init=False, default=None)
@@ -2567,13 +2569,23 @@ class OpsMeshService:
             if integration.enabled
             and integration.project_id in {None, task.project_id}
         ]
-        instances = await self.manager.list_views()
-        instance_id = task.instance_id
-        if instance_id is None:
-            connected = next((item.id for item in instances if item.connected), None)
-            instance_id = connected or (instances[0].id if instances else None)
-        if instance_id is None:
-            raise ValueError("No instance is available for this task blueprint.")
+        session_key = None
+        instance_id: int | None
+        if self.launch_routing is not None:
+            launch_route = await self.launch_routing.describe(task=task)
+            session_key = launch_route.session_key
+            if launch_route.resolved_instance is not None:
+                instance_id = launch_route.resolved_instance.id
+            else:
+                raise ValueError("No instance is available for this task blueprint.")
+        else:
+            instances = await self.manager.list_views()
+            instance_id = task.instance_id
+            if instance_id is None:
+                connected = next((item.id for item in instances if item.connected), None)
+                instance_id = connected or (instances[0].id if instances else None)
+            if instance_id is None:
+                raise ValueError("No instance is available for this task blueprint.")
 
         return MissionDraftView(
             name=task.name,
@@ -2587,6 +2599,7 @@ class OpsMeshService:
             task_blueprint_id=task.id,
             cwd=task.cwd or (str(project["path"]) if project is not None else None),
             thread_id=None,
+            session_key=session_key,
             model=task.model,
             reasoning_effort=task.reasoning_effort,
             collaboration_mode=task.collaboration_mode,

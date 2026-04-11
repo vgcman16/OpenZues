@@ -14,6 +14,7 @@ from openzues.services.access import AccessService
 from openzues.services.codex_desktop import CodexDesktopService
 from openzues.services.gateway_bootstrap import GatewayBootstrapService
 from openzues.services.hub import BroadcastHub
+from openzues.services.launch_routing import LaunchRoutingService
 from openzues.services.manager import RuntimeManager
 from openzues.services.missions import MissionService
 from openzues.services.onboarding import OnboardingService
@@ -63,6 +64,7 @@ async def _build_services(app_settings: Settings) -> CliServices:
     manager = RuntimeManager(database, hub, desktop_service=desktop_service)
     access = AccessService(database)
     vault = VaultService(database, app_settings)
+    launch_routing = LaunchRoutingService(database, manager)
     mission_service = MissionService(database, manager, hub)
     ops_mesh = OpsMeshService(
         database,
@@ -71,8 +73,9 @@ async def _build_services(app_settings: Settings) -> CliServices:
         hub,
         vault,
         playbooks=PlaybookService(),
+        launch_routing=launch_routing,
     )
-    gateway_bootstrap = GatewayBootstrapService(database, manager, access)
+    gateway_bootstrap = GatewayBootstrapService(database, manager, access, launch_routing)
     setup = SetupService(database, manager, access, gateway_bootstrap, ops_mesh)
     onboarding = OnboardingService(
         database,

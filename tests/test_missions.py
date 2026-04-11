@@ -242,6 +242,71 @@ async def test_create_reuses_thread_bound_hardener_even_if_source_mission_shifts
 
 
 @pytest.mark.asyncio
+async def test_create_reuses_inflight_task_blueprint_mission_without_thread_id(tmp_path) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    manager = FakeManager()
+    service = MissionService(database, manager, BroadcastHub(), poll_interval_seconds=3600)
+
+    task_id = await database.create_task_blueprint(
+        name="OpenClaw Total Parity Program",
+        summary="Keep parity moving.",
+        project_id=None,
+        instance_id=7,
+        cadence_minutes=180,
+        enabled=True,
+        payload={
+            "objective_template": "Ship the next parity slice.",
+            "cwd": "C:/workspace",
+            "model": "gpt-5.4",
+            "reasoning_effort": "high",
+            "collaboration_mode": None,
+            "max_turns": 8,
+            "use_builtin_agents": True,
+            "run_verification": True,
+            "auto_commit": False,
+            "pause_on_approval": True,
+            "allow_auto_reflexes": True,
+            "auto_recover": True,
+            "auto_recover_limit": 2,
+            "reflex_cooldown_seconds": 900,
+            "allow_failover": True,
+        },
+    )
+
+    first = await service.create(
+        MissionCreate(
+            name="OpenClaw Total Parity Program",
+            objective="Keep iterating until parity is complete.",
+            instance_id=7,
+            project_id=None,
+            task_blueprint_id=task_id,
+            cwd="C:/workspace",
+            thread_id=None,
+            start_immediately=False,
+        )
+    )
+
+    second = await service.create(
+        MissionCreate(
+            name="OpenClaw Total Parity Program",
+            objective="Keep iterating until parity is complete.",
+            instance_id=7,
+            project_id=None,
+            task_blueprint_id=task_id,
+            cwd="C:/workspace",
+            thread_id=None,
+            start_immediately=False,
+        )
+    )
+
+    missions = await database.list_missions()
+
+    assert first.id == second.id
+    assert len(missions) == 1
+
+
+@pytest.mark.asyncio
 async def test_run_now_includes_auto_skillbook_for_looping_frontend_work(tmp_path) -> None:
     database = Database(tmp_path / "missions.db")
     await database.initialize()
@@ -773,7 +838,64 @@ async def test_second_mission_waits_behind_in_progress_instance_work(tmp_path) -
 
     assert mission is not None
     assert mission["status"] == "blocked"
+    assert mission["in_progress"] == 0
     assert mission["last_error"] == "Queued behind mission: Already running"
+
+
+@pytest.mark.asyncio
+async def test_stale_queued_blocker_does_not_deadlock_next_mission(tmp_path) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    manager = FakeManager()
+    manager.instances[7].connected = True
+    service = MissionService(database, manager, BroadcastHub(), poll_interval_seconds=3600)
+
+    stale_id = await database.create_mission(
+        name="OpenClaw Total Parity Program",
+        objective="Keep iterating until parity is complete.",
+        status="blocked",
+        instance_id=7,
+        project_id=None,
+        thread_id=None,
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort="high",
+        collaboration_mode=None,
+        max_turns=8,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+    )
+    await database.update_mission(
+        stale_id,
+        phase="queued",
+        in_progress=1,
+        last_error="Queued behind mission: OpenClaw Total Parity Program",
+    )
+
+    follower = await service.create(
+        MissionCreate(
+            name="OpenClaw Total Parity Program",
+            objective="Keep iterating until parity is complete.",
+            instance_id=7,
+            cwd="C:/workspace",
+            start_immediately=False,
+        )
+    )
+
+    await service.run_now(follower.id)
+    mission = await database.get_mission(follower.id)
+
+    assert mission is not None
+    assert mission["status"] == "active"
+    assert mission["in_progress"] == 1
+    assert mission["last_error"] is None
+    assert manager.thread_calls[0]["instance_id"] == 7
 
 
 @pytest.mark.asyncio

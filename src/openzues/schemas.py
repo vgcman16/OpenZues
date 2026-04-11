@@ -20,11 +20,23 @@ EconomyState = Literal["compounding", "balanced", "speculative", "leaking", "hib
 TaskStatus = Literal["idle", "due", "running", "attention", "completed", "disabled"]
 NotificationRouteKind = Literal["webhook"]
 GatewayBootstrapStatus = Literal["unconfigured", "staged", "ready", "degraded"]
+GatewayRouteBindingMode = Literal["saved_lane", "workspace_affinity"]
 SetupRecommendedAction = Literal["bootstrap", "keep", "modify", "reset"]
 SetupResetScope = Literal["config", "config+creds+sessions", "full"]
 SetupMode = Literal["local", "remote"]
 SetupFlow = Literal["quickstart", "advanced"]
 SetupWizardStatus = Literal["unconfigured", "staged", "ready"]
+LaunchRouteStatus = Literal["ready", "staged", "repair"]
+LaunchRouteBindingMode = Literal["task_lane", "saved_lane", "workspace_affinity"]
+LaunchRouteMatch = Literal[
+    "task.instance",
+    "gateway.preferred_instance",
+    "workspace.last_route",
+    "workspace.project_lane",
+    "workspace.connected_lane",
+    "workspace.saved_lane",
+    "unavailable",
+]
 LaunchKind = Literal[
     "workspace_scout",
     "ship_slice",
@@ -522,6 +534,7 @@ class OnboardingBootstrapResultView(BaseModel):
     task_blueprint: OnboardingBootstrapResourceView
     api_key: str | None = None
     mission_draft: MissionDraftView | None = None
+    launch_route: LaunchRouteView | None = None
 
 
 class GatewayBootstrapResourceView(BaseModel):
@@ -531,9 +544,24 @@ class GatewayBootstrapResourceView(BaseModel):
     connected: bool | None = None
 
 
+class LaunchRouteView(BaseModel):
+    status: LaunchRouteStatus
+    mode: LaunchRouteBindingMode
+    matched_by: LaunchRouteMatch
+    headline: str
+    summary: str
+    session_key: str
+    warnings: list[str] = Field(default_factory=list)
+    preferred_instance: GatewayBootstrapResourceView | None = None
+    resolved_instance: GatewayBootstrapResourceView | None = None
+    candidates: list[GatewayBootstrapResourceView] = Field(default_factory=list)
+    last_resolved_at: str | None = None
+
+
 class GatewayBootstrapUpdate(BaseModel):
     setup_mode: SetupMode = "local"
     setup_flow: SetupFlow = "quickstart"
+    route_binding_mode: GatewayRouteBindingMode | None = None
     preferred_instance_id: int | None = None
     preferred_project_id: int | None = None
     team_id: int | None = None
@@ -560,6 +588,7 @@ class GatewayBootstrapView(BaseModel):
     warnings: list[str] = Field(default_factory=list)
     setup_mode: SetupMode = "local"
     setup_flow: SetupFlow = "quickstart"
+    route_binding_mode: GatewayRouteBindingMode = "saved_lane"
     instance: GatewayBootstrapResourceView | None = None
     project: GatewayBootstrapResourceView | None = None
     team: GatewayBootstrapResourceView | None = None
@@ -578,6 +607,7 @@ class GatewayBootstrapView(BaseModel):
     reflex_cooldown_seconds: int = 900
     allow_failover: bool = True
     launch_defaults_summary: str
+    launch_route: LaunchRouteView | None = None
 
 
 class SetupFootprintResourceView(BaseModel):
@@ -673,6 +703,7 @@ class SetupLaunchHandoffView(BaseModel):
     operator: GatewayBootstrapResourceView | None = None
     task_blueprint: GatewayBootstrapResourceView | None = None
     mission_draft: MissionDraftView | None = None
+    launch_route: LaunchRouteView | None = None
 
 
 class SetupStatusView(BaseModel):
@@ -739,6 +770,7 @@ class RemoteMissionCreate(BaseModel):
     task_blueprint_id: int | None = None
     cwd: str | None = None
     thread_id: str | None = None
+    session_key: str | None = None
     model: str = "gpt-5.4"
     reasoning_effort: str | None = None
     collaboration_mode: str | None = None
@@ -768,6 +800,7 @@ class MissionCreate(BaseModel):
     task_blueprint_id: int | None = None
     cwd: str | None = None
     thread_id: str | None = None
+    session_key: str | None = None
     model: str = "gpt-5.4"
     reasoning_effort: str | None = None
     collaboration_mode: str | None = None
@@ -815,6 +848,7 @@ class MissionView(BaseModel):
     project_label: str | None = None
     task_blueprint_id: int | None = None
     thread_id: str | None = None
+    session_key: str | None = None
     cwd: str | None = None
     model: str
     reasoning_effort: str | None = None

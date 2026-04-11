@@ -488,6 +488,7 @@ class SetupService:
             operator=active_gateway.operator,
             task_blueprint=active_gateway.task_blueprint,
             mission_draft=mission_draft,
+            launch_route=active_gateway.launch_route,
         )
 
     async def reset(self, scope: SetupResetScope) -> SetupResetResultView:

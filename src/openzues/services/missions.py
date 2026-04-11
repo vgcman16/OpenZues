@@ -175,13 +175,34 @@ class MissionService:
         *,
         cwd: str | None,
     ) -> dict[str, Any] | None:
+        inflight_missions = [
+            mission
+            for mission in await self.database.list_missions()
+            if mission["status"] in {"active", "blocked", "paused"}
+        ]
+        if payload.task_blueprint_id is not None:
+            candidates = [
+                mission
+                for mission in inflight_missions
+                if mission.get("task_blueprint_id") == payload.task_blueprint_id
+            ]
+            if candidates:
+                status_rank = {"active": 0, "blocked": 1, "paused": 2}
+                return sorted(
+                    candidates,
+                    key=lambda mission: (
+                        status_rank.get(str(mission.get("status") or ""), 99),
+                        str(mission.get("updated_at") or ""),
+                        int(mission.get("id") or 0),
+                    ),
+                    reverse=False,
+                )[0]
         if not payload.thread_id:
             return None
         candidates = [
             mission
-            for mission in await self.database.list_missions()
-            if mission["status"] in {"active", "blocked", "paused"}
-            and mission_row_matches_payload(mission, payload, cwd=cwd)
+            for mission in inflight_missions
+            if mission_row_matches_payload(mission, payload, cwd=cwd)
         ]
         if not candidates:
             return None
@@ -223,6 +244,7 @@ class MissionService:
             project_id=payload.project_id,
             task_blueprint_id=payload.task_blueprint_id,
             thread_id=payload.thread_id,
+            session_key=payload.session_key,
             cwd=cwd,
             model=payload.model,
             reasoning_effort=payload.reasoning_effort,
@@ -1514,7 +1536,13 @@ class MissionService:
                 for candidate in await self.database.list_missions()
                 if int(candidate["instance_id"]) == int(mission["instance_id"])
                 and int(candidate["id"]) != mission_id
-                and str(candidate["status"]) in {"active", "blocked"}
+                and (
+                    str(candidate["status"]) == "active"
+                    or (
+                        str(candidate["status"]) == "blocked"
+                        and str(candidate.get("phase") or "") != "queued"
+                    )
+                )
                 and bool(candidate["in_progress"])
             ]
             if missions_for_instance:
@@ -1523,6 +1551,8 @@ class MissionService:
                     mission_id,
                     status="blocked",
                     phase="queued",
+                    in_progress=0,
+                    current_command=None,
                     last_error=queued_reason,
                 )
                 return

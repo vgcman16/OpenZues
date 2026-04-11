@@ -101,6 +101,7 @@ from openzues.services.gateway_bootstrap import GatewayBootstrapService
 from openzues.services.github import GitHubService
 from openzues.services.hub import BroadcastHub
 from openzues.services.interference import build_interference
+from openzues.services.launch_routing import LaunchRoutingService
 from openzues.services.manager import RuntimeManager, compact_event_payload
 from openzues.services.missions import MissionService
 from openzues.services.onboarding import OnboardingService
@@ -999,10 +1000,15 @@ def create_app(
     )
     active_vault_service = vault_service or VaultService(active_database, active_settings)
     active_access_service = access_service or AccessService(active_database)
+    active_launch_routing_service = LaunchRoutingService(
+        active_database,
+        active_manager,
+    )
     active_gateway_bootstrap_service = gateway_bootstrap_service or GatewayBootstrapService(
         active_database,
         active_manager,
         active_access_service,
+        active_launch_routing_service,
     )
     active_mission_service = mission_service or MissionService(
         active_database,
@@ -1016,6 +1022,7 @@ def create_app(
         active_hub,
         active_vault_service,
         playbooks=active_playbook_service,
+        launch_routing=active_launch_routing_service,
     )
     active_setup_service = SetupService(
         active_database,
@@ -1045,7 +1052,14 @@ def create_app(
             os.execv(sys.executable, [sys.executable, *reexec_args[1:]])
         os.execv(
             sys.executable,
-            [sys.executable, "-m", "openzues.cli", "--port", str(active_settings.port)],
+            [
+                sys.executable,
+                "-m",
+                "openzues.cli",
+                "serve",
+                "--port",
+                str(active_settings.port),
+            ],
         )
 
     active_runtime_update_service = RuntimeUpdateService(

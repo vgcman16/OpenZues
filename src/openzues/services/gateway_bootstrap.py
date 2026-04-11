@@ -8,6 +8,7 @@ from openzues.schemas import (
     GatewayBootstrapStatus,
     GatewayBootstrapUpdate,
     GatewayBootstrapView,
+    GatewayRouteBindingMode,
     InstanceView,
     OperatorView,
     ProjectView,
@@ -17,6 +18,7 @@ from openzues.schemas import (
     TeamView,
 )
 from openzues.services.access import AccessService
+from openzues.services.launch_routing import LaunchRoutingService
 from openzues.services.manager import RuntimeManager
 
 
@@ -90,10 +92,12 @@ class GatewayBootstrapService:
         database: Database,
         manager: RuntimeManager,
         access: AccessService,
+        launch_routing: LaunchRoutingService | None = None,
     ) -> None:
         self.database = database
         self.manager = manager
         self.access = access
+        self.launch_routing = launch_routing
 
     async def get_view(self) -> GatewayBootstrapView:
         row = await self.database.get_gateway_bootstrap()
@@ -144,6 +148,7 @@ class GatewayBootstrapService:
                 warnings=["No gateway bootstrap profile has been saved yet."],
                 setup_mode="local",
                 setup_flow="quickstart",
+                route_binding_mode="saved_lane",
                 instance=None,
                 project=None,
                 team=None,
@@ -164,6 +169,7 @@ class GatewayBootstrapService:
                 launch_defaults_summary=(
                     "Verification on, built-in agents on, approvals paused, and auto-commit off."
                 ),
+                launch_route=None,
             )
 
         setup_mode: SetupMode = (
@@ -175,6 +181,7 @@ class GatewayBootstrapService:
         if setup_flow_value not in {"quickstart", "advanced"}:
             setup_flow_value = "advanced" if setup_mode == "remote" else "quickstart"
         setup_flow: SetupFlow = "advanced" if setup_flow_value == "advanced" else "quickstart"
+        route_binding_mode = self._resolve_route_binding_mode(row, setup_mode=setup_mode)
         instance = (
             instances.get(int(row["preferred_instance_id"]))
             if row["preferred_instance_id"]
@@ -275,6 +282,11 @@ class GatewayBootstrapService:
                 )
 
         launch_defaults_summary = self._summarize_launch_defaults(row)
+        launch_route = (
+            await self.launch_routing.describe(task=task, persist=False)
+            if self.launch_routing is not None
+            else None
+        )
         return GatewayBootstrapView(
             status=status,
             headline=headline,
@@ -282,6 +294,7 @@ class GatewayBootstrapService:
             warnings=warnings,
             setup_mode=setup_mode,
             setup_flow=setup_flow,
+            route_binding_mode=route_binding_mode,
             instance=_resource_from_instance(instance),
             project=_resource_from_project(project),
             team=_resource_from_team(team),
@@ -300,6 +313,7 @@ class GatewayBootstrapService:
             reflex_cooldown_seconds=int(row["reflex_cooldown_seconds"]),
             allow_failover=bool(row["allow_failover"]),
             launch_defaults_summary=launch_defaults_summary,
+            launch_route=launch_route,
         )
 
     async def save(self, payload: GatewayBootstrapUpdate) -> GatewayBootstrapView:
@@ -315,6 +329,9 @@ class GatewayBootstrapService:
         setup_flow = payload.setup_flow
         if setup_mode == "remote":
             setup_flow = "advanced"
+        route_binding_mode = payload.route_binding_mode or self._default_route_binding_mode(
+            setup_mode
+        )
 
         default_cwd = _normalize_path(payload.default_cwd)
         if default_cwd is None and project is not None:
@@ -326,11 +343,14 @@ class GatewayBootstrapService:
         await self.database.upsert_gateway_bootstrap(
             setup_mode=setup_mode,
             setup_flow=setup_flow,
+            route_binding_mode=route_binding_mode,
             preferred_instance_id=instance_id,
             preferred_project_id=int(project["id"]) if project is not None else None,
             team_id=int(team["id"]) if team is not None else None,
             operator_id=int(operator["id"]) if operator is not None else None,
             task_blueprint_id=int(task["id"]) if task is not None else None,
+            last_route_instance_id=None,
+            last_route_resolved_at=None,
             default_cwd=default_cwd,
             model=payload.model,
             max_turns=payload.max_turns,
@@ -351,6 +371,7 @@ class GatewayBootstrapService:
         *,
         setup_mode: SetupMode,
         setup_flow: SetupFlow,
+        route_binding_mode: GatewayRouteBindingMode | None = None,
         instance_id: int | None,
         project_id: int,
         team_id: int,
@@ -373,6 +394,7 @@ class GatewayBootstrapService:
             GatewayBootstrapUpdate(
                 setup_mode=setup_mode,
                 setup_flow=setup_flow,
+                route_binding_mode=route_binding_mode,
                 preferred_instance_id=instance_id,
                 preferred_project_id=project_id,
                 team_id=team_id,
@@ -485,11 +507,14 @@ class GatewayBootstrapService:
         await self.database.upsert_gateway_bootstrap(
             setup_mode="local",
             setup_flow="quickstart",
+            route_binding_mode="saved_lane",
             preferred_instance_id=instance.id,
             preferred_project_id=project.id,
             team_id=team.id,
             operator_id=operator.id,
             task_blueprint_id=task.id,
+            last_route_instance_id=None,
+            last_route_resolved_at=None,
             default_cwd=_normalize_path(task.cwd) or project.path or instance.cwd,
             model=task.model,
             max_turns=task.max_turns,
@@ -504,6 +529,24 @@ class GatewayBootstrapService:
             allow_failover=task.allow_failover,
         )
         return True
+
+    def _default_route_binding_mode(self, setup_mode: SetupMode) -> GatewayRouteBindingMode:
+        if self.launch_routing is not None:
+            return self.launch_routing.default_gateway_route_binding_mode(setup_mode)
+        return "workspace_affinity" if setup_mode == "remote" else "saved_lane"
+
+    def _resolve_route_binding_mode(
+        self,
+        row: dict,
+        *,
+        setup_mode: SetupMode,
+    ) -> GatewayRouteBindingMode:
+        value = str(row.get("route_binding_mode") or "").strip().lower()
+        if value == "workspace_affinity":
+            return "workspace_affinity"
+        if value == "saved_lane":
+            return "saved_lane"
+        return self._default_route_binding_mode(setup_mode)
 
     def _summarize_launch_defaults(self, row: dict) -> str:
         clauses = [

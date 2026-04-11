@@ -166,6 +166,7 @@ class OnboardingService:
         if task_view is None:
             raise ValueError("Bootstrap saved the task, but the launch draft could not be rebuilt.")
         mission_draft = None
+        launch_route = None
         try:
             mission_draft = await self.ops_mesh.build_task_draft(task_view.id)
             mission_draft.name = f"Kick off {task_view.name}"
@@ -174,6 +175,8 @@ class OnboardingService:
                 "The recurring task is saved, but there is no lane available yet to generate "
                 "a launch draft."
             )
+        gateway_view = await self.gateway_bootstrap.get_view()
+        launch_route = gateway_view.launch_route
 
         configured_parts = [
             "workspace",
@@ -229,6 +232,7 @@ class OnboardingService:
             task_blueprint=task_blueprint,
             api_key=api_key,
             mission_draft=mission_draft,
+            launch_route=launch_route,
         )
 
     async def _resolve_bootstrap_instance(

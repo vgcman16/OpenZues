@@ -61,6 +61,7 @@ async def test_database_round_trip(tmp_path) -> None:
         instance_id=instance_id,
         project_id=None,
         thread_id=None,
+        session_key="launch:mode:saved_lane:task:1:project:1:operator:1:lane:1",
         cwd=str(tmp_path),
         model="gpt-5.4",
         reasoning_effort=None,
@@ -127,11 +128,14 @@ async def test_database_round_trip(tmp_path) -> None:
     await database.upsert_gateway_bootstrap(
         setup_mode="local",
         setup_flow="quickstart",
+        route_binding_mode="saved_lane",
         preferred_instance_id=instance_id,
         preferred_project_id=project_id,
         team_id=team_id,
         operator_id=operator_id,
         task_blueprint_id=task_id,
+        last_route_instance_id=instance_id,
+        last_route_resolved_at="2026-04-11T00:05:00+00:00",
         default_cwd=str(tmp_path),
         model="gpt-5.4",
         max_turns=4,
@@ -187,6 +191,7 @@ async def test_database_round_trip(tmp_path) -> None:
     assert playbooks[0]["enabled"] == 1
     assert playbooks[0]["default_variables"] == {"branch": "main"}
     assert missions[0]["name"] == "Nightly builder"
+    assert missions[0]["session_key"] == "launch:mode:saved_lane:task:1:project:1:operator:1:lane:1"
     assert missions[0]["allow_failover"] == 1
     assert checkpoints[0]["summary"] == "Verified the first milestone."
     assert remote_request_id == remote_requests[0]["id"]
@@ -197,8 +202,10 @@ async def test_database_round_trip(tmp_path) -> None:
     assert gateway_bootstrap is not None
     assert gateway_bootstrap["setup_mode"] == "local"
     assert gateway_bootstrap["setup_flow"] == "quickstart"
+    assert gateway_bootstrap["route_binding_mode"] == "saved_lane"
     assert gateway_bootstrap["preferred_project_id"] == project_id
     assert gateway_bootstrap["task_blueprint_id"] == task_id
+    assert gateway_bootstrap["last_route_instance_id"] == instance_id
     assert gateway_bootstrap["model"] == "gpt-5.4"
     assert wizard_session is not None
     assert wizard_session["session"]["mode"] == "remote"

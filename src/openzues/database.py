@@ -151,11 +151,14 @@ class Database:
                     id INTEGER PRIMARY KEY CHECK (id = 1),
                     setup_mode TEXT NOT NULL DEFAULT 'local',
                     setup_flow TEXT NOT NULL DEFAULT 'quickstart',
+                    route_binding_mode TEXT NOT NULL DEFAULT 'saved_lane',
                     preferred_instance_id INTEGER,
                     preferred_project_id INTEGER,
                     team_id INTEGER,
                     operator_id INTEGER,
                     task_blueprint_id INTEGER,
+                    last_route_instance_id INTEGER,
+                    last_route_resolved_at TEXT,
                     default_cwd TEXT,
                     model TEXT NOT NULL,
                     max_turns INTEGER,
@@ -243,6 +246,7 @@ class Database:
                     project_id INTEGER,
                     task_blueprint_id INTEGER,
                     thread_id TEXT,
+                    session_key TEXT,
                     cwd TEXT,
                     model TEXT NOT NULL,
                     reasoning_effort TEXT,
@@ -365,12 +369,27 @@ class Database:
                 "setup_flow",
                 "TEXT NOT NULL DEFAULT 'quickstart'",
             )
+            await self._ensure_column(
+                db,
+                "gateway_bootstrap",
+                "route_binding_mode",
+                "TEXT NOT NULL DEFAULT 'saved_lane'",
+            )
+            await self._ensure_column(db, "gateway_bootstrap", "last_route_instance_id", "INTEGER")
+            await self._ensure_column(db, "gateway_bootstrap", "last_route_resolved_at", "TEXT")
             await self._ensure_column(db, "notification_routes", "vault_secret_id", "INTEGER")
             await self._ensure_column(db, "integrations", "vault_secret_id", "INTEGER")
+            await self._ensure_column(db, "missions", "session_key", "TEXT")
             await db.execute(
                 """
                 CREATE INDEX IF NOT EXISTS idx_missions_task
                 ON missions(task_blueprint_id, id DESC)
+                """
+            )
+            await db.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_missions_session_key
+                ON missions(session_key, id DESC)
                 """
             )
             await db.execute(
@@ -846,11 +865,14 @@ class Database:
         *,
         setup_mode: str,
         setup_flow: str,
+        route_binding_mode: str = "saved_lane",
         preferred_instance_id: int | None,
         preferred_project_id: int | None,
         team_id: int | None,
         operator_id: int | None,
         task_blueprint_id: int | None,
+        last_route_instance_id: int | None = None,
+        last_route_resolved_at: str | None = None,
         default_cwd: str | None,
         model: str,
         max_turns: int | None,
@@ -872,11 +894,14 @@ class Database:
                     id,
                     setup_mode,
                     setup_flow,
+                    route_binding_mode,
                     preferred_instance_id,
                     preferred_project_id,
                     team_id,
                     operator_id,
                     task_blueprint_id,
+                    last_route_instance_id,
+                    last_route_resolved_at,
                     default_cwd,
                     model,
                     max_turns,
@@ -892,15 +917,20 @@ class Database:
                     created_at,
                     updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                )
                 ON CONFLICT(id) DO UPDATE SET
                     setup_mode = excluded.setup_mode,
                     setup_flow = excluded.setup_flow,
+                    route_binding_mode = excluded.route_binding_mode,
                     preferred_instance_id = excluded.preferred_instance_id,
                     preferred_project_id = excluded.preferred_project_id,
                     team_id = excluded.team_id,
                     operator_id = excluded.operator_id,
                     task_blueprint_id = excluded.task_blueprint_id,
+                    last_route_instance_id = excluded.last_route_instance_id,
+                    last_route_resolved_at = excluded.last_route_resolved_at,
                     default_cwd = excluded.default_cwd,
                     model = excluded.model,
                     max_turns = excluded.max_turns,
@@ -919,11 +949,14 @@ class Database:
                     1,
                     setup_mode,
                     setup_flow,
+                    route_binding_mode,
                     preferred_instance_id,
                     preferred_project_id,
                     team_id,
                     operator_id,
                     task_blueprint_id,
+                    last_route_instance_id,
+                    last_route_resolved_at,
                     default_cwd,
                     model,
                     max_turns,
@@ -939,6 +972,23 @@ class Database:
                     now,
                     now,
                 ),
+            )
+            await db.commit()
+
+    async def update_gateway_bootstrap_route_state(
+        self,
+        *,
+        last_route_instance_id: int | None,
+        last_route_resolved_at: str | None,
+    ) -> None:
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute(
+                """
+                UPDATE gateway_bootstrap
+                SET last_route_instance_id = ?, last_route_resolved_at = ?, updated_at = ?
+                WHERE id = 1
+                """,
+                (last_route_instance_id, last_route_resolved_at, utcnow()),
             )
             await db.commit()
 
@@ -1281,6 +1331,7 @@ class Database:
         instance_id: int,
         project_id: int | None,
         thread_id: str | None,
+        session_key: str | None = None,
         cwd: str | None,
         model: str,
         reasoning_effort: str | None,
@@ -1309,6 +1360,7 @@ class Database:
                     project_id,
                     task_blueprint_id,
                     thread_id,
+                    session_key,
                     cwd,
                     model,
                     reasoning_effort,
@@ -1327,7 +1379,7 @@ class Database:
                     updated_at
                 )
                 VALUES (
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                 )
                 """,
                 (
@@ -1338,6 +1390,7 @@ class Database:
                     project_id,
                     task_blueprint_id,
                     thread_id,
+                    session_key,
                     cwd,
                     model,
                     reasoning_effort,
