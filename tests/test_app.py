@@ -1489,7 +1489,9 @@ def test_onboarding_bootstrap_creates_first_run_bundle_and_launch_draft(tmp_path
     assert payload["launch_route"]["matched_by"] == "task.instance"
     assert payload["launch_route"]["resolved_instance"]["label"] == "Bootstrap Lane"
     assert payload["launch_route"]["session_key"] == payload["mission_draft"]["session_key"]
-    assert payload["launch_route"]["conversation_target"] == payload["mission_draft"]["conversation_target"]
+    assert payload["launch_route"]["conversation_target"] == payload["mission_draft"][
+        "conversation_target"
+    ]
 
     dashboard = dashboard_response.json()
     assert dashboard["projects"][0]["label"] == "Bootstrap Workspace"
@@ -1523,7 +1525,10 @@ def test_onboarding_bootstrap_creates_first_run_bundle_and_launch_draft(tmp_path
     setup = setup_response.json()
     assert setup["wizard_session"]["conversation_target"]["channel"] == "slack"
     assert setup["wizard_session"]["conversation_target"]["account_id"] == "workspace-bot"
-    assert setup["launch_handoff"]["launch_route"]["conversation_target"]["peer_id"] == "deploy-room"
+    assert (
+        setup["launch_handoff"]["launch_route"]["conversation_target"]["peer_id"]
+        == "deploy-room"
+    )
 
 
 def test_dashboard_auto_attaches_matching_hermes_skill_to_task_draft(tmp_path) -> None:

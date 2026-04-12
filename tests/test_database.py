@@ -388,6 +388,40 @@ async def test_mission_roundtrip_preserves_conversation_target(tmp_path) -> None
 
 
 @pytest.mark.asyncio
+async def test_notification_route_roundtrip_preserves_conversation_target(tmp_path) -> None:
+    database = Database(tmp_path / "test.db")
+    await database.initialize()
+
+    route_id = await database.create_notification_route(
+        name="Slack approvals",
+        kind="webhook",
+        target="https://example.invalid/webhook",
+        events=["ops/inbox/*"],
+        conversation_target={
+            "channel": "slack",
+            "account_id": "workspace-bot",
+            "peer_kind": "channel",
+            "peer_id": "deploy-room",
+        },
+        enabled=True,
+        secret_header_name=None,
+        secret_token=None,
+        vault_secret_id=None,
+    )
+
+    route = next(
+        row for row in await database.list_notification_routes() if int(row["id"]) == route_id
+    )
+
+    assert route["conversation_target"] == {
+        "channel": "slack",
+        "account_id": "workspace-bot",
+        "peer_kind": "channel",
+        "peer_id": "deploy-room",
+    }
+
+
+@pytest.mark.asyncio
 async def test_get_mission_by_thread_prefers_active_shared_owner(tmp_path) -> None:
     database = Database(tmp_path / "test.db")
     await database.initialize()

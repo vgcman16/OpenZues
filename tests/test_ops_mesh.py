@@ -1537,6 +1537,7 @@ async def test_ops_mesh_service_emits_derived_inbox_notifications_once(
         kind="webhook",
         target="https://example.invalid/inbox",
         events=["ops/inbox/*"],
+        conversation_target=None,
         enabled=True,
         secret_header_name=None,
         secret_token=None,
@@ -1600,6 +1601,7 @@ async def test_ops_mesh_service_emits_reflex_and_task_attention_notifications(
         kind="webhook",
         target="https://example.invalid/inbox",
         events=["ops/inbox/*"],
+        conversation_target=None,
         enabled=True,
         secret_header_name=None,
         secret_token=None,
@@ -1701,6 +1703,12 @@ async def test_test_notification_route_delivers_webhook_ping(
         kind="webhook",
         target="https://example.invalid/inbox",
         events=["ops/inbox/*"],
+        conversation_target={
+            "channel": "slack",
+            "account_id": "workspace-bot",
+            "peer_kind": "channel",
+            "peer_id": "deploy-room",
+        },
         enabled=True,
         secret_header_name=None,
         secret_token=None,
@@ -1740,8 +1748,159 @@ async def test_test_notification_route_delivers_webhook_ping(
     assert result.route.id == route_id
     assert deliveries[0][0] == "ops/inbox/test"
     assert deliveries[0][1]["test"] is True
+    assert deliveries[0][1]["conversationTarget"]["peer_id"] == "deploy-room"
+    assert deliveries[0][1]["routeConversationTarget"]["channel"] == "slack"
     assert route_row["last_result"] == "Delivered ops/inbox/test (test)"
     assert route_row["last_error"] is None
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_filters_notification_routes_by_conversation_target(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Deploy Room",
+        kind="webhook",
+        target="https://example.invalid/deploy",
+        events=["mission/*"],
+        conversation_target={
+            "channel": "slack",
+            "account_id": "workspace-bot",
+            "peer_kind": "channel",
+            "peer_id": "deploy-room",
+        },
+        enabled=True,
+        secret_header_name=None,
+        secret_token=None,
+        vault_secret_id=None,
+    )
+    await database.create_notification_route(
+        name="QA Room",
+        kind="webhook",
+        target="https://example.invalid/qa",
+        events=["mission/*"],
+        conversation_target={
+            "channel": "slack",
+            "account_id": "workspace-bot",
+            "peer_kind": "channel",
+            "peer_id": "qa-room",
+        },
+        enabled=True,
+        secret_header_name=None,
+        secret_token=None,
+        vault_secret_id=None,
+    )
+    await database.create_notification_route(
+        name="Workspace Account",
+        kind="webhook",
+        target="https://example.invalid/account",
+        events=["mission/*"],
+        conversation_target={
+            "channel": "slack",
+            "account_id": "workspace-bot",
+        },
+        enabled=True,
+        secret_header_name=None,
+        secret_token=None,
+        vault_secret_id=None,
+    )
+    await database.create_notification_route(
+        name="Slack Channel Catchall",
+        kind="webhook",
+        target="https://example.invalid/channel",
+        events=["mission/*"],
+        conversation_target={
+            "channel": "slack",
+        },
+        enabled=True,
+        secret_header_name=None,
+        secret_token=None,
+        vault_secret_id=None,
+    )
+    await database.create_notification_route(
+        name="Other Account",
+        kind="webhook",
+        target="https://example.invalid/other-account",
+        events=["mission/*"],
+        conversation_target={
+            "channel": "slack",
+            "account_id": "other-bot",
+        },
+        enabled=True,
+        secret_header_name=None,
+        secret_token=None,
+        vault_secret_id=None,
+    )
+    mission_id = await database.create_mission(
+        name="Deploy parity slice",
+        objective="Ship the next routed parity seam.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread_route",
+        session_key="launch:mode:workspace_affinity:task:7:operator:1:channel:slack",
+        conversation_target={
+            "channel": "slack",
+            "account_id": "workspace-bot",
+            "peer_kind": "channel",
+            "peer_id": "deploy-room",
+        },
+        cwd=str(tmp_path),
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=4,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        toolsets=[],
+    )
+    deliveries: list[tuple[str, str, dict[str, object]]] = []
+
+    def fake_post_webhook(
+        self,  # noqa: ANN001
+        route: dict[str, object],
+        event_type: str,
+        event: dict[str, object],
+        secret_token: str | None,
+    ) -> None:
+        del secret_token
+        deliveries.append((str(route.get("name") or ""), event_type, event))
+
+    monkeypatch.setattr(OpsMeshService, "_post_webhook", fake_post_webhook)
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),
+        FakeMissionService([]),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    await service.handle_mission_event("mission/completed", {"missionId": mission_id})
+
+    assert [item[0] for item in deliveries] == [
+        "Deploy Room",
+        "Workspace Account",
+        "Slack Channel Catchall",
+    ]
+    assert [item[2]["routeMatch"] for item in deliveries] == ["peer", "account", "channel"]
+    assert deliveries[0][1] == "mission/completed"
+    assert deliveries[0][2]["conversationTarget"]["peer_id"] == "deploy-room"
+    assert deliveries[0][2]["routeConversationTarget"]["peer_id"] == "deploy-room"
+    assert deliveries[1][2]["routeConversationTarget"]["account_id"] == "workspace-bot"
+    assert deliveries[2][2]["routeConversationTarget"]["channel"] == "slack"
 
 
 @pytest.mark.asyncio
@@ -1860,6 +2019,12 @@ def test_dashboard_ops_mesh_crud_round_trip(tmp_path: Path) -> None:
                 "kind": "webhook",
                 "target": "https://example.invalid/webhook",
                 "events": ["task/*", "mission/completed"],
+                "conversation_target": {
+                    "channel": "slack",
+                    "account_id": "workspace-bot",
+                    "peer_kind": "channel",
+                    "peer_id": "deploy-room",
+                },
                 "enabled": True,
                 "secret_header_name": "X-OpenZues-Key",
                 "vault_secret_id": vault_secret["id"],
@@ -1896,6 +2061,7 @@ def test_dashboard_ops_mesh_crud_round_trip(tmp_path: Path) -> None:
     assert vault_secret_response.status_code == 200
     assert task_response.status_code == 200
     assert route_response.status_code == 200
+    route_payload = route_response.json()
     assert integration_response.status_code == 200
     assert skill_response.status_code == 200
     assert snapshot_response.status_code == 200
@@ -1906,6 +2072,16 @@ def test_dashboard_ops_mesh_crud_round_trip(tmp_path: Path) -> None:
     assert dashboard["ops_mesh"]["notification_routes"][0]["vault_secret_label"] == (
         "Shared automation token"
     )
+    route_summary = route_payload["conversation_target"]["summary"]
+    assert "slack" in route_summary
+    assert "workspace-bot" in route_summary
+    assert "deploy-room" in route_summary
+    dashboard_route_summary = dashboard["ops_mesh"]["notification_routes"][0][
+        "conversation_target"
+    ]["summary"]
+    assert "slack" in dashboard_route_summary
+    assert "workspace-bot" in dashboard_route_summary
+    assert "deploy-room" in dashboard_route_summary
     assert dashboard["ops_mesh"]["integrations"][0]["secret_preview"]
     assert dashboard["ops_mesh"]["integrations"][0]["vault_secret_label"] == (
         "Shared automation token"
@@ -1952,6 +2128,12 @@ def test_notification_route_test_api_updates_route_state(
                 "kind": "webhook",
                 "target": "https://example.invalid/webhook",
                 "events": ["ops/inbox/*"],
+                "conversation_target": {
+                    "channel": "slack",
+                    "account_id": "workspace-bot",
+                    "peer_kind": "channel",
+                    "peer_id": "deploy-room",
+                },
                 "enabled": True,
             },
         )
@@ -1965,6 +2147,10 @@ def test_notification_route_test_api_updates_route_state(
     assert payload["ok"] is True
     assert payload["event_type"] == "ops/inbox/test"
     assert deliveries == ["ops/inbox/test"]
+    route_summary = payload["route"]["conversation_target"]["summary"]
+    assert "slack" in route_summary
+    assert "workspace-bot" in route_summary
+    assert "deploy-room" in route_summary
     assert dashboard["ops_mesh"]["notification_routes"][0]["last_result"] == (
         "Delivered ops/inbox/test (test)"
     )

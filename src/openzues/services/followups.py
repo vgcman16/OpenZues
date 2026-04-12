@@ -144,7 +144,9 @@ def mission_row_matches_payload(
     )
     if mission_identity is not None and payload_identity is not None:
         return mission_identity == payload_identity
-    same_session_key = bool(payload.session_key) and mission.get("session_key") == payload.session_key
+    same_session_key = bool(payload.session_key) and (
+        mission.get("session_key") == payload.session_key
+    )
     return (
         int(mission.get("instance_id") or 0) == payload.instance_id
         and mission.get("project_id") == payload.project_id

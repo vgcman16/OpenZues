@@ -806,6 +806,7 @@ class NotificationRouteCreate(BaseModel):
     kind: NotificationRouteKind = "webhook"
     target: str
     events: list[str] = Field(default_factory=lambda: ["mission/completed", "mission/failed"])
+    conversation_target: ConversationTargetView | None = None
     enabled: bool = True
     secret_header_name: str | None = None
     secret_token: str | None = None
@@ -818,6 +819,7 @@ class NotificationRouteView(BaseModel):
     kind: NotificationRouteKind
     target: str
     events: list[str] = Field(default_factory=list)
+    conversation_target: ConversationTargetView | None = None
     enabled: bool = True
     secret_header_name: str | None = None
     vault_secret_id: int | None = None
@@ -998,7 +1000,7 @@ class ConversationTargetView(BaseModel):
     summary: str | None = None
 
     @model_validator(mode="after")
-    def _populate_summary(self) -> "ConversationTargetView":
+    def _populate_summary(self) -> ConversationTargetView:
         channel = str(self.channel or "").strip().lower()
         account_id = str(self.account_id or "").strip() or None
         peer_id = str(self.peer_id or "").strip() or None

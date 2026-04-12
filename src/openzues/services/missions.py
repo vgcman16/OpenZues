@@ -85,6 +85,7 @@ REPORTING_ORBIT_EVENT_LIMIT = 120
 PARITY_REPORTING_ORBIT_MIN_SECONDS = 45
 PARITY_REPORTING_ORBIT_MIN_COMMENTARY_DELTAS = 6
 INSPECTION_EXECUTION_STALL_SECONDS = 2 * 60
+UNTRACKED_IN_PROGRESS_STALL_SECONDS = 2 * 60
 RECOVERY_TRACE_EVENT_LIMIT = 80
 RECOVERY_TRACE_LINE_LIMIT = 8
 VERIFICATION_PASS_PATTERNS = (
@@ -517,11 +518,14 @@ def _uses_fast_parity_reporting_orbit_cutoff(
     mission: dict[str, Any],
     *,
     commentary_text: str | None = None,
+    anchor_command: str | None = None,
 ) -> bool:
     if not _mission_targets_openclaw_parity(mission):
         return False
     if str(mission.get("current_command") or "").strip():
         return False
+    if anchor_command and _command_is_inspection_only(anchor_command):
+        return True
     return any(
         _is_low_signal_parity_recovery_summary(candidate)
         for candidate in (commentary_text, mission.get("last_commentary"))
@@ -543,7 +547,7 @@ def _parity_recovery_rule_lines() -> list[str]:
         ),
         (
             "- Generic MCP inventory probes like `list_mcp_resources` do not count as session "
-            "search or Recall."
+            "search or Recall, and they do not satisfy the first-tool-call recovery rule."
         ),
         (
             "- If Recall is unavailable, say that once, then move straight to the ledger and one "
@@ -1310,6 +1314,19 @@ def _thread_event_is_commentary_delta(event: dict[str, Any]) -> bool:
     return _thread_event_method(event) == "item/agentMessage/delta"
 
 
+def _thread_event_command(event: dict[str, Any]) -> str | None:
+    method = _thread_event_method(event)
+    if method not in {"item/started", "item/completed"}:
+        return None
+    item = _thread_event_payload(event).get("item")
+    if not isinstance(item, dict):
+        return None
+    if str(item.get("type") or "") != "commandExecution":
+        return None
+    command = str(item.get("command") or "").strip()
+    return command or None
+
+
 def _commentary_text_from_events(
     events: list[dict[str, Any]],
     *,
@@ -1688,8 +1705,6 @@ class MissionService:
             session_key=payload.session_key,
             conversation_target=(
                 payload.conversation_target.model_dump()
-                if hasattr(payload.conversation_target, "model_dump")
-                else payload.conversation_target
                 if payload.conversation_target is not None
                 else None
             ),
@@ -2197,9 +2212,21 @@ class MissionService:
             event for event in events if _thread_event_is_commentary_delta(event)
         ]
         commentary_text = _commentary_text_from_events(events)
+        anchor_command = next(
+            (
+                command
+                for command in (
+                    _thread_event_command(event)
+                    for event in reversed(events)
+                )
+                if command
+            ),
+            None,
+        )
         fast_parity_cutoff = _uses_fast_parity_reporting_orbit_cutoff(
             mission,
             commentary_text=commentary_text,
+            anchor_command=anchor_command,
         )
         min_commentary_deltas = (
             PARITY_REPORTING_ORBIT_MIN_COMMENTARY_DELTAS
@@ -2285,6 +2312,33 @@ class MissionService:
             "thread_untracked": thread_untracked,
         }
 
+    async def _detect_untracked_in_progress_stall(
+        self,
+        mission: dict[str, Any],
+        *,
+        thread_status: str | None,
+        last_activity_seconds: int | None,
+    ) -> dict[str, Any] | None:
+        if str(mission.get("status") or "") != "active":
+            return None
+        if not bool(mission.get("in_progress")):
+            return None
+        if bool(mission.get("last_checkpoint")):
+            return None
+        if str(mission.get("current_command") or "").strip():
+            return None
+        if thread_status not in {None, "notLoaded"}:
+            return None
+        if last_activity_seconds is None:
+            return None
+        if last_activity_seconds < UNTRACKED_IN_PROGRESS_STALL_SECONDS:
+            return None
+        phase = str(mission.get("phase") or "").strip() or "thinking"
+        return {
+            "quiet_seconds": last_activity_seconds,
+            "phase": phase,
+        }
+
     def _build_reporting_orbit_recovery_prompt(
         self,
         mission: dict[str, Any],
@@ -2330,6 +2384,14 @@ class MissionService:
             ),
         ]
         if parity_mode:
+            instructions.append(
+                "- Do not emit a commentary preamble on this recovery thread. Your first emitted "
+                "item must be a tool call or the checkpoint itself."
+            )
+            instructions.append(
+                "- If Recall is unavailable, do not restate that as a preamble. Prove it with the "
+                "next tool result or the final checkpoint."
+            )
             instructions.append(
                 "- The abandoned parity lane spent too long narrating recovery. After one short "
                 "sentence, your next move must be a tool call or the checkpoint itself."
@@ -3278,7 +3340,20 @@ class MissionService:
             ),
         ]
         if parity_mode:
-            instructions.extend(["", *_parity_recovery_rule_lines()])
+            instructions.extend(
+                [
+                    "",
+                    *_parity_recovery_rule_lines(),
+                    (
+                        "- Do not spend this fresh thread on re-entry narration. Your first "
+                        "emitted item must be a tool call or the checkpoint itself."
+                    ),
+                    (
+                        "- If Recall is unavailable, do not narrate that twice. Move straight "
+                        "to the ledger command or the checkpoint."
+                    ),
+                ]
+            )
         else:
             instructions.extend(["", *_delegation_instruction_lines(delegation_brief)])
         if bool(mission.get("run_verification")):
@@ -3411,7 +3486,20 @@ class MissionService:
             ),
         ]
         if parity_mode:
-            instructions.extend(["", *_parity_recovery_rule_lines()])
+            instructions.extend(
+                [
+                    "",
+                    *_parity_recovery_rule_lines(),
+                    (
+                        "- Do not spend this fresh thread on re-entry narration. Your first "
+                        "emitted item must be a tool call or the checkpoint itself."
+                    ),
+                    (
+                        "- If Recall is unavailable, do not narrate that twice. Move straight "
+                        "to the ledger command or the checkpoint."
+                    ),
+                ]
+            )
         else:
             instructions.extend(["", *_delegation_instruction_lines(delegation_brief)])
         if bool(mission.get("run_verification")):
@@ -4005,6 +4093,22 @@ class MissionService:
                 mission_id,
                 mission,
                 stall_signal=stalled_execution,
+            ):
+                return
+            untracked_progress = await self._detect_untracked_in_progress_stall(
+                mission,
+                thread_status=thread_status,
+                last_activity_seconds=last_activity_seconds,
+            )
+            if untracked_progress is not None and await self._attempt_stale_thread_recovery(
+                mission_id,
+                mission,
+                stale_thread_id=str(mission["thread_id"]),
+                stale_error=(
+                    "The live thread stopped reporting while the mission still looked in "
+                    f"progress during {untracked_progress['phase']} for about "
+                    f"{int(untracked_progress['quiet_seconds'])} seconds."
+                ),
             ):
                 return
 

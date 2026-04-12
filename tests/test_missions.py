@@ -2575,6 +2575,9 @@ async def test_reconcile_rebinds_commentary_orbiting_thread(tmp_path) -> None:
     assert manager.turn_calls[0]["thread_id"] == "thread_auto_7"
     assert "commentary-orbit recovery" in manager.turn_calls[0]["text"]
     assert "Do not continue the abandoned narration" in manager.turn_calls[0]["text"]
+    assert "emitted item must be a tool call or the checkpoint itself" in manager.turn_calls[0][
+        "text"
+    ]
     assert checkpoints[0]["kind"] == "orbit_rebind"
     assert "thread_orbit" in checkpoints[0]["summary"]
 
@@ -2676,10 +2679,169 @@ async def test_reconcile_rebinds_low_signal_parity_orbit_early(tmp_path) -> None
     assert manager.thread_calls[0]["instance_id"] == 7
     assert manager.turn_calls[0]["thread_id"] == "thread_auto_7"
     assert "commentary-orbit recovery" in manager.turn_calls[0]["text"]
+    assert "emitted item must be a tool call or the checkpoint itself" in manager.turn_calls[0][
+        "text"
+    ]
     assert (
         "your next move must be a tool call or the checkpoint itself"
         in manager.turn_calls[0]["text"]
     )
+    assert checkpoints[0]["kind"] == "orbit_rebind"
+    assert "parity fast-cutoff guardrail" in checkpoints[0]["summary"]
+
+
+@pytest.mark.asyncio
+async def test_reconcile_rebinds_post_inspection_parity_orbit_early(tmp_path) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    manager = FakeManager()
+    manager.instances[7].connected = True
+    manager.instances[7].threads = [
+        {"id": "thread_parity_inspection_orbit", "status": {"type": "active"}}
+    ]
+    service = MissionService(database, manager, BroadcastHub(), poll_interval_seconds=3600)
+
+    mission_id = await database.create_mission(
+        name="OpenClaw parity post-inspection orbit mission",
+        objective=(
+            "Use the verified OpenClaw parity checkpoint in "
+            "`docs/openclaw-parity-checkpoint-2026-04-10.md` and land the next bounded seam."
+        ),
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread_parity_inspection_orbit",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=True,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+    )
+    await database.update_mission(
+        mission_id,
+        in_progress=1,
+        phase="reporting",
+        command_count=10,
+        turns_completed=1,
+        total_tokens=180000,
+        last_turn_id="turn_parity_inspection_orbit",
+        current_command=None,
+        last_commentary="Seam locked; now naming the next concrete move.",
+    )
+    await database.append_event(
+        instance_id=7,
+        thread_id="thread_parity_inspection_orbit",
+        method="turn/started",
+        payload={
+            "threadId": "thread_parity_inspection_orbit",
+            "turnId": "turn_parity_inspection_orbit",
+        },
+    )
+    await database.append_event(
+        instance_id=7,
+        thread_id="thread_parity_inspection_orbit",
+        method="item/started",
+        payload={
+            "item": {
+                "type": "commandExecution",
+                "id": "call_parity_ledger",
+                "command": (
+                    "powershell.exe -Command "
+                    "\"Get-Content -Raw docs/openclaw-parity-checkpoint-2026-04-10.md\""
+                ),
+            },
+            "threadId": "thread_parity_inspection_orbit",
+            "turnId": "turn_parity_inspection_orbit",
+        },
+    )
+    await database.append_event(
+        instance_id=7,
+        thread_id="thread_parity_inspection_orbit",
+        method="item/commandExecution/outputDelta",
+        payload={
+            "threadId": "thread_parity_inspection_orbit",
+            "turnId": "turn_parity_inspection_orbit",
+            "itemId": "call_parity_ledger",
+            "delta": "# OpenClaw Parity Checkpoint",
+        },
+    )
+    await database.append_event(
+        instance_id=7,
+        thread_id="thread_parity_inspection_orbit",
+        method="item/completed",
+        payload={
+            "item": {
+                "type": "commandExecution",
+                "id": "call_parity_ledger",
+                "command": (
+                    "powershell.exe -Command "
+                    "\"Get-Content -Raw docs/openclaw-parity-checkpoint-2026-04-10.md\""
+                ),
+            },
+            "threadId": "thread_parity_inspection_orbit",
+            "turnId": "turn_parity_inspection_orbit",
+        },
+    )
+    for delta in (
+        "Seam",
+        " is",
+        " explicit",
+        " and",
+        " the",
+        " next",
+        " operator",
+        " move",
+        " is",
+        " being",
+        " worded",
+    ):
+        await database.append_event(
+            instance_id=7,
+            thread_id="thread_parity_inspection_orbit",
+            method="item/agentMessage/delta",
+            payload={
+                "threadId": "thread_parity_inspection_orbit",
+                "turnId": "turn_parity_inspection_orbit",
+                "itemId": "msg_parity_inspection_orbit",
+                "delta": delta,
+            },
+        )
+
+    now = datetime.now(UTC) - timedelta(minutes=2)
+    with sqlite3.connect(database.path) as connection:
+        event_ids = [
+            row[0]
+            for row in connection.execute("SELECT id FROM events ORDER BY id ASC").fetchall()
+        ]
+        for offset, event_id in enumerate(event_ids):
+            created_at = now + timedelta(seconds=offset * 8)
+            connection.execute(
+                "UPDATE events SET created_at = ? WHERE id = ?",
+                (created_at.isoformat(), event_id),
+            )
+        connection.commit()
+
+    await service._reconcile_mission(mission_id)
+    mission = await database.get_mission(mission_id)
+    checkpoints = await database.list_mission_checkpoints(mission_id)
+
+    assert mission is not None
+    assert mission["thread_id"] == "thread_auto_7"
+    assert mission["status"] == "active"
+    assert mission["phase"] == "thinking"
+    assert mission["in_progress"] == 1
+    assert manager.interrupt_calls[0]["thread_id"] == "thread_parity_inspection_orbit"
+    assert manager.thread_calls[0]["instance_id"] == 7
+    assert manager.turn_calls[0]["thread_id"] == "thread_auto_7"
+    assert "commentary-orbit recovery" in manager.turn_calls[0]["text"]
     assert checkpoints[0]["kind"] == "orbit_rebind"
     assert "parity fast-cutoff guardrail" in checkpoints[0]["summary"]
 
@@ -2884,6 +3046,72 @@ async def test_reconcile_rebinds_not_loaded_executing_thread(tmp_path) -> None:
     assert "no longer reporting as a live runtime thread" in manager.turn_calls[0]["text"]
     assert checkpoints[0]["kind"] == "execution_rebind"
     assert "thread_exec_not_loaded" in checkpoints[0]["summary"]
+
+
+@pytest.mark.asyncio
+async def test_reconcile_rebinds_untracked_in_progress_thread_without_command(tmp_path) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    manager = FakeManager()
+    manager.instances[7].connected = True
+    manager.instances[7].threads = [
+        {
+            "id": "thread_silent_not_loaded",
+            "status": {"type": "notLoaded"},
+        }
+    ]
+    service = MissionService(database, manager, BroadcastHub(), poll_interval_seconds=3600)
+
+    mission_id = await database.create_mission(
+        name="Silent parity recovery mission",
+        objective="Resume the next parity seam without getting stranded mid-turn.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread_silent_not_loaded",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=True,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+    )
+    await database.update_mission(
+        mission_id,
+        in_progress=1,
+        phase="thinking",
+        command_count=10,
+        total_tokens=78141,
+        current_command=None,
+        last_commentary=(
+            "Recall is not available here; I'm moving straight to the ledger and the next "
+            "concrete seam."
+        ),
+        last_activity_at=(datetime.now(UTC) - timedelta(minutes=5)).isoformat(),
+    )
+
+    await service._reconcile_mission(mission_id)
+    mission = await database.get_mission(mission_id)
+    checkpoints = await database.list_mission_checkpoints(mission_id)
+
+    assert mission is not None
+    assert mission["thread_id"] == "thread_auto_7"
+    assert mission["status"] == "active"
+    assert mission["phase"] == "thinking"
+    assert mission["in_progress"] == 1
+    assert manager.thread_calls[0]["instance_id"] == 7
+    assert manager.turn_calls[0]["thread_id"] == "thread_auto_7"
+    assert "stale-thread recovery" in manager.turn_calls[0]["text"]
+    assert "live thread stopped reporting" in manager.turn_calls[0]["text"]
+    assert checkpoints[0]["kind"] == "thread_rebind"
+    assert "thread_silent_not_loaded" in checkpoints[0]["summary"]
 
 
 @pytest.mark.asyncio
@@ -3278,8 +3506,10 @@ async def test_stale_thread_recovery_prompt_is_compact_for_openclaw_parity(tmp_p
     assert "stale-thread recovery" in prompt
     assert f"Treat `{OPENCLAW_PARITY_CHECKPOINT_LEDGER}` as the recovery ledger." in prompt
     assert "Give at most two short commentary sentences before the first tool call." in prompt
+    assert "emitted item must be a tool call or the checkpoint itself" in prompt
     assert "does not count as session search" in prompt
     assert "list_mcp_resources" in prompt
+    assert "do not satisfy the first-tool-call recovery rule" in prompt
     assert "Built-in agent stack:" not in prompt
     assert "Crash-safe relay packets:" not in prompt
     assert "Recent persisted live trace:" not in prompt

@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import Any, Literal, cast
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -21,6 +21,7 @@ import uvicorn
 from openzues.app import build_brief, build_launchpad, build_radar
 from openzues.database import Database
 from openzues.schemas import (
+    ConversationTargetView,
     DashboardView,
     HermesRuntimeProfileUpdate,
     MissionCreate,
@@ -1220,7 +1221,7 @@ def _watch_lines(payload: dict[str, object]) -> list[str]:
     summary = str(payload.get("summary") or "").strip()
     if summary:
         lines.append("summary: " + summary)
-    if observer_active:
+    if isinstance(observer_posture, dict) and observer_posture.get("active"):
         leader_pid = observer_posture.get("leader_pid")
         mode_line = "mode: observer"
         if isinstance(leader_pid, int):
@@ -1805,12 +1806,13 @@ def _build_bootstrap_payload(
             raise ValueError(
                 "--conversation-peer-kind must be one of: direct, group, channel."
             )
-        conversation_target = {
-            "channel": channel,
-            "account_id": account_id,
-            "peer_kind": peer_kind,
-            "peer_id": peer_id,
-        }
+        resolved_peer_kind = cast(Literal["direct", "group", "channel"] | None, peer_kind)
+        conversation_target = ConversationTargetView(
+            channel=channel,
+            account_id=account_id,
+            peer_kind=resolved_peer_kind,
+            peer_id=peer_id,
+        )
     return OnboardingBootstrapCreate(
         setup_mode=setup_mode,  # type: ignore[arg-type]
         setup_flow=setup_flow,  # type: ignore[arg-type]

@@ -3041,6 +3041,11 @@ function renderOpsMesh() {
               </div>
               <div class="small-muted">${escapeHtml(route.target)}</div>
               ${
+                route.conversation_target?.summary
+                  ? `<div class="small-muted">Conversation: ${escapeHtml(route.conversation_target.summary)}</div>`
+                  : ""
+              }
+              ${
                 route.secret_header_name
                   ? `<div class="small-muted">Header: ${escapeHtml(route.secret_header_name)}</div>`
                   : ""
@@ -5870,6 +5875,7 @@ notificationRouteFormEl.addEventListener("submit", async (event) => {
       events: events.length
         ? events
         : ["ops/inbox/*", "mission/completed", "mission/failed", "task/*"],
+      conversation_target: buildConversationTargetPayload(form),
       enabled: form.get("enabled") === "on",
       secret_header_name: form.get("secret_header_name") || null,
       vault_secret_id: form.get("vault_secret_id") ? Number(form.get("vault_secret_id")) : null,

@@ -14,6 +14,7 @@ from urllib.request import Request, urlopen
 
 from openzues.database import Database, utcnow
 from openzues.schemas import (
+    ConversationTargetView,
     DashboardAccessPostureView,
     DashboardAuthPostureView,
     DashboardIntegrationInventoryItemView,
@@ -345,6 +346,63 @@ def _serialize_route(
             "secret_preview": secret_preview,
         }
     )
+
+
+def _normalize_conversation_target(
+    target: dict[str, Any] | ConversationTargetView | None,
+) -> dict[str, Any] | None:
+    if target is None:
+        return None
+    try:
+        return ConversationTargetView.model_validate(target).model_dump(mode="json")
+    except Exception:
+        return None
+
+
+def _conversation_target_key(
+    target: dict[str, Any] | ConversationTargetView | None,
+) -> tuple[str, str, str, str] | None:
+    normalized = _normalize_conversation_target(target)
+    if normalized is None:
+        return None
+    channel = str(normalized.get("channel") or "").strip().lower()
+    if not channel:
+        return None
+    return (
+        channel,
+        str(normalized.get("account_id") or "").strip().lower(),
+        str(normalized.get("peer_kind") or "").strip().lower(),
+        str(normalized.get("peer_id") or "").strip().lower(),
+    )
+
+
+def _conversation_target_route_match(
+    route_target: dict[str, Any] | ConversationTargetView | None,
+    event_target: dict[str, Any] | ConversationTargetView | None,
+) -> str | None:
+    route_key = _conversation_target_key(route_target)
+    event_key = _conversation_target_key(event_target)
+    if route_key is None or event_key is None:
+        return None
+
+    route_channel, route_account, route_peer_kind, route_peer_id = route_key
+    event_channel, event_account, event_peer_kind, event_peer_id = event_key
+    if route_channel != event_channel:
+        return None
+
+    if route_account not in {"", "*"} and route_account != event_account:
+        return None
+
+    if route_peer_kind not in {"", "*"} and route_peer_kind != event_peer_kind:
+        return None
+    if route_peer_id not in {"", "*"} and route_peer_id != event_peer_id:
+        return None
+
+    if route_peer_kind not in {"", "*"} or route_peer_id not in {"", "*"}:
+        return "peer"
+    if route_account not in {"", "*"}:
+        return "account"
+    return "channel"
 
 
 def _serialize_integration(
@@ -2514,6 +2572,11 @@ class OpsMeshService:
             kind=payload.kind,
             target=payload.target,
             events=payload.events,
+            conversation_target=(
+                payload.conversation_target.model_dump(mode="json")
+                if payload.conversation_target is not None
+                else None
+            ),
             enabled=payload.enabled,
             secret_header_name=payload.secret_header_name,
             secret_token=None,
@@ -2550,6 +2613,7 @@ class OpsMeshService:
             explicit_event_type=event_type,
         )
         delivered_at = utcnow()
+        route_conversation_target = _normalize_conversation_target(route.get("conversation_target"))
         payload = {
             "type": selected_event_type,
             "createdAt": delivered_at,
@@ -2559,6 +2623,9 @@ class OpsMeshService:
             "summary": "OpenZues test delivery ping.",
             "target": str(route.get("target") or ""),
         }
+        if route_conversation_target is not None:
+            payload["conversationTarget"] = route_conversation_target
+            payload["routeConversationTarget"] = route_conversation_target
         secret_id = route.get("vault_secret_id")
         secret_token = (
             await self.vault.get_secret_value(int(secret_id))
@@ -3218,6 +3285,7 @@ class OpsMeshService:
     async def _deliver_notifications(self, event_type: str, event: dict[str, Any]) -> None:
         await self._migrate_legacy_secret_refs()
         routes = await self.database.list_notification_routes()
+        event_conversation_target = await self._resolve_event_conversation_target(event)
         for route in routes:
             if not bool(route.get("enabled")):
                 continue
@@ -3226,6 +3294,19 @@ class OpsMeshService:
                 _matches_event(str(pattern), event_type) for pattern in events
             ):
                 continue
+            route_conversation_target = _normalize_conversation_target(
+                route.get("conversation_target")
+            )
+            route_match = (
+                _conversation_target_route_match(
+                    route_conversation_target,
+                    event_conversation_target,
+                )
+                if route_conversation_target is not None
+                else None
+            )
+            if route_conversation_target is not None and route_match is None:
+                continue
             try:
                 secret_id = route.get("vault_secret_id")
                 secret_token = (
@@ -3233,7 +3314,20 @@ class OpsMeshService:
                     if secret_id is not None
                     else (str(route.get("secret_token")) if route.get("secret_token") else None)
                 )
-                await asyncio.to_thread(self._post_webhook, route, event_type, event, secret_token)
+                event_payload = dict(event)
+                if event_conversation_target is not None:
+                    event_payload["conversationTarget"] = event_conversation_target
+                if route_conversation_target is not None:
+                    event_payload["routeConversationTarget"] = route_conversation_target
+                if route_match is not None:
+                    event_payload["routeMatch"] = route_match
+                await asyncio.to_thread(
+                    self._post_webhook,
+                    route,
+                    event_type,
+                    event_payload,
+                    secret_token,
+                )
                 await self.database.update_notification_route(
                     int(route["id"]),
                     last_delivery_at=utcnow(),
@@ -3247,6 +3341,30 @@ class OpsMeshService:
                     last_result=f"Failed {event_type}",
                     last_error=str(exc)[:240],
                 )
+
+    async def _resolve_event_conversation_target(
+        self, event: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        explicit = _normalize_conversation_target(event.get("conversationTarget"))
+        if explicit is not None:
+            return explicit
+        mission_id = event.get("missionId")
+        if isinstance(mission_id, int):
+            mission = await self.database.get_mission(mission_id)
+            target = _normalize_conversation_target(
+                mission.get("conversation_target") if mission is not None else None
+            )
+            if target is not None:
+                return target
+        task_id = event.get("taskId")
+        if isinstance(task_id, int):
+            task = await self.database.get_task_blueprint(task_id)
+            target = _normalize_conversation_target(
+                task.get("conversation_target") if task is not None else None
+            )
+            if target is not None:
+                return target
+        return None
 
     def _task_inbox_notification_event_type(
         self,

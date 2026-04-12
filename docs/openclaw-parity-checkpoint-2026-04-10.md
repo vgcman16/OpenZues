@@ -2040,6 +2040,175 @@ Next step: implement routed session identity and conversation reuse on top of th
 
 Blockers: none.
 
+## Update: Conversation-Target Delivery Route Matching
+
+Date: 2026-04-12
+
+### Recovered context
+
+- Re-entered from the adapter-neutral `conversation_target` checkpoint and OpenZues Recall instead of reopening the broader OpenClaw inventory.
+- Verified the existing adapter-facing seam was already real but narrower than the next parity target: notification routes could consume saved `conversation_target` state for exact-match webhook delivery and test pings.
+- Locked the next bounded missing seam from the same routing lane: fallback delivery matching so saved routed identity can resolve at peer, account, or channel scope instead of only exact peer equality.
+
+### Completed this turn
+
+- Extended Ops Mesh notification delivery to match routed conversation identity by scope:
+  - peer-scoped routes still match exact peer targets
+  - account-scoped routes now match any peer within the same channel/account
+  - channel-scoped routes now match any routed conversation on that channel
+- Added wildcard-aware matching for route tokens so `*` behaves as an explicit fallback marker where operators choose to use it.
+- Webhook delivery payloads now surface the resolved routing tier as `routeMatch` alongside the existing `conversationTarget` and `routeConversationTarget` payload fields, which makes the selected fallback visible during verification and downstream handling.
+- Kept the slice additive and control-plane only:
+  - no channel adapter runtime was introduced
+  - no native companion, browser, canvas, or packaging scope was opened
+  - the work reuses the existing `conversation_target`, mission event, notification route, vault, and webhook-delivery contracts
+
+Primary files carrying this slice:
+
+- `src/openzues/services/ops_mesh.py`
+- `tests/test_ops_mesh.py`
+
+### Verification
+
+Focused delivery routing coverage passed:
+
+- `.\.venv\Scripts\python.exe -m pytest tests/test_ops_mesh.py -q -k "test_notification_route_delivers_webhook_ping or test_ops_mesh_service_filters_notification_routes_by_conversation_target or test_notification_route_test_api_updates_route_state"`
+- Result: `3 passed`
+
+Broader operator entrypoint coverage passed:
+
+- `.\.venv\Scripts\python.exe -m pytest tests/test_cli.py -q -k "test_routes_test_command_executes_delivery_ping"`
+- Result: `1 passed`
+
+Integrity check passed:
+
+- `.\.venv\Scripts\python.exe -m compileall src/openzues`
+
+### What remains
+
+OpenZues still does not have OpenClaw parity for:
+
+- a durable outbound send/outbox contract on top of the now-routable conversation identity
+- broader channel runtime and account-binding breadth beyond webhook-style operator delivery
+- browser-control runtime parity
+- canvas runtime parity
+- nodes, voice, companion apps, and packaging breadth
+
+This turn closed the first fallback delivery seam on top of the routed identity spine. It still does not provide a first-class outbound message/send contract or live channel adapters.
+
+### Next best slice
+
+Do not reopen notification-route fallback matching next unless a regression appears.
+
+The next smallest verified parity slice should add a durable routed outbound delivery contract before broadening into real channel runtimes:
+
+- add an operator-visible send/outbox record that persists `conversation_target`, `session_key`, message summary, resolved route scope, and delivery attempt state
+- reuse the existing `notification_routes`, mission events, `conversation_target`, and webhook delivery machinery instead of inventing a second dispatch path
+- keep the slice additive across API, CLI, and dashboard without pretending full Slack/Discord/Telegram runtime breadth already exists
+
+### Operator handoff
+
+Completed: landed fallback conversation-target matching for notification delivery so saved routed identity now resolves at peer, account, or channel scope, and webhook payloads expose the selected tier through `routeMatch`.
+
+Verified: `3 passed` on the focused notification-route delivery pack, `1 passed` on the CLI delivery test command, and `.\.venv\Scripts\python.exe -m compileall src/openzues` passed.
+
+Tool evidence:
+- debugging: used targeted `Get-Content`, `rg`, `pytest`, `compileall`, and `git diff` to lock and verify the seam
+- memory: used OpenZues Recall with `openzues recall "conversation_target routed identity adapter contract" --limit 5 --json` before reading broader repo context
+- session_search: the same Recall query was used as the session-search path for recovery
+- delegation: not used in this slice because the seam and write set were already narrow enough to implement directly
+- browser: not used in this slice because no DOM-only contract changed
+- vision: not used in this slice because no screenshot or image proof was required
+
+Next step: add the first durable outbound send/outbox contract on top of the now-routable `conversation_target` spine before opening real channel adapters.
+
+Blockers: none.
+
+### Re-entry checkpoint
+
+- Recovered context: the active parity lane had already landed routed identity authoring, and the smallest unfinished follow-on seam was fallback delivery matching for notification routes rather than more route-shape work.
+- Verified state: notification routes now consume saved conversation identity at peer, account, or channel scope, and delivered webhook payloads expose `conversationTarget`, `routeConversationTarget`, and `routeMatch`.
+- Next step: add a durable send/outbox contract that reuses the same routed identity and delivery path before broadening into channel-specific runtimes.
+- Blockers: none.
+
+## Recovery Update: Conversation Target Authoring Verified
+
+Date: 2026-04-12
+
+### Recovered context
+
+- Re-entered from the parity ledger and Recall instead of rebuilding the full OpenClaw inventory.
+- Locked the next unfinished seam named in the last checkpoint: operator authoring of the existing adapter-neutral `conversation_target` contract through setup/bootstrap and task-authoring surfaces.
+
+### Completed this turn
+
+- Verified that this seam was already landed in the live OpenZues worktree and only the checkpoint was stale.
+- Confirmed the operator-facing forms already expose `conversation_target` fields in the onboarding bootstrap form, task blueprint form, mission composer, and notification route form.
+- Confirmed the existing bootstrap/task authoring payload builders already serialize and hydrate `conversation_target`, and the backend already threads it through onboarding, launch routing, mission drafts, stored missions, and dashboard/setup readouts.
+- No production code changes were needed for this recovery landing; the durable step was to prove the seam and advance the checkpoint.
+
+Primary files inspected for proof:
+
+- `src/openzues/web/templates/index.html`
+- `src/openzues/web/static/app.js`
+- `src/openzues/services/onboarding.py`
+- `src/openzues/schemas.py`
+- `tests/test_app.py`
+
+### Verification
+
+Focused authoring proof passed:
+
+- `.\.venv\Scripts\python.exe -m pytest tests/test_app.py -q -k "onboarding_bootstrap_creates_first_run_bundle_and_launch_draft or task_creation_roundtrips_conversation_target_into_dashboard_draft"`
+- Result: `2 passed`
+
+Broader routed-identity regression proof passed:
+
+- `.\.venv\Scripts\python.exe -m pytest tests/test_app.py tests/test_database.py tests/test_missions.py tests/test_cli.py -q -k "conversation_target or session_key or conversation_reuse or reuse_thread or followup_payload_matching"`
+- Result: `10 passed`
+
+Integrity checks passed:
+
+- `node --check src/openzues/web/static/app.js`
+- `.\.venv\Scripts\python.exe -m compileall src/openzues`
+
+### What remains
+
+OpenZues still does not have OpenClaw parity for:
+
+- actual channel runtime breadth and adapter delivery on top of the now-authorable routed identity
+- browser-control runtime parity
+- canvas runtime parity
+- nodes, voice, companion apps, and packaging breadth
+
+This recovery turn proved the authoring seam is done. The next leverage point is no longer setup/task form exposure; it is the first bounded adapter execution layer that can consume the saved channel/account route identity.
+
+### Next best slice
+
+Do not reopen `conversation_target` authoring next unless a regression appears.
+
+The next smallest verified parity slice should bind the saved routed identity into one adapter-facing execution seam without pretending full channel breadth already exists:
+
+- reuse the existing `conversation_target`, `session_key`, launch routing, and follow-up contracts
+- choose one adapter-neutral delivery or dispatch contract first
+- keep the proof additive across API, CLI, and dashboard, not a broad channel runtime clone
+
+### Operator handoff
+
+Completed: verified that `conversation_target` is already authorable through onboarding/bootstrap and task-authoring surfaces in the current worktree, so no new code was required and the stale checkpoint is now corrected.
+
+Verified: `2 passed` on the focused bootstrap/task-authoring proof, `10 passed` on the broader app/database/missions/cli routed-identity pack, plus `node --check src/openzues/web/static/app.js` and `.\.venv\Scripts\python.exe -m compileall src/openzues`.
+
+Tool evidence:
+- debugging: used targeted `rg`, `Get-Content`, `pytest`, `node --check`, and `compileall` to inspect and verify the seam
+- delegation: used one architect sidecar to confirm that the seam was already landed and to tighten the minimum verification bar before checkpointing
+- memory: used OpenZues Recall with `.\.venv\Scripts\python.exe -m openzues.cli recall "openclaw parity onboarding bootstrap" --limit 5 --json` to recover the saved parity context
+- session_search: the same Recall query was used as the session-search path before restating the seam
+
+Next step: bind the saved routed identity into the first adapter-facing execution contract so OpenZues can act on the stored channel/account route without broadening into full channel runtime breadth.
+
+Blockers: none.
+
 ## Update: Gateway Method Registry Surface
 
 Date: 2026-04-12

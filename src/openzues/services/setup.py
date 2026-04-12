@@ -340,6 +340,7 @@ class SetupService:
                 mission_draft = await self.ops_mesh.build_task_draft(task_blueprint.id)
                 if (
                     mission_draft.thread_id is None
+                    and launch_route is not None
                     and launch_route.conversation_reuse is not None
                     and launch_route.conversation_reuse.reusable
                     and launch_route.conversation_reuse.thread_id is not None

@@ -532,6 +532,27 @@
                             placeholder="ops/inbox/*, mission/completed, mission/failed, task/*"
                           />
                           <input
+                            name="conversation_channel"
+                            type="text"
+                            placeholder="Route conversation channel (optional), e.g. slack"
+                          />
+                          <input
+                            name="conversation_account_id"
+                            type="text"
+                            placeholder="Route account or bot identity (optional)"
+                          />
+                          <select name="conversation_peer_kind">
+                            <option value="">Route peer kind (optional)</option>
+                            <option value="direct">Direct</option>
+                            <option value="group">Group</option>
+                            <option value="channel">Channel</option>
+                          </select>
+                          <input
+                            name="conversation_peer_id"
+                            type="text"
+                            placeholder="Route peer id, room, or thread (optional)"
+                          />
+                          <input
                             name="secret_header_name"
                             type="text"
                             placeholder="Optional secret header name"

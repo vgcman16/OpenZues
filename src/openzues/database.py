@@ -224,6 +224,7 @@ class Database:
                     kind TEXT NOT NULL,
                     target TEXT NOT NULL,
                     events_json TEXT NOT NULL,
+                    conversation_target_json TEXT,
                     enabled INTEGER NOT NULL DEFAULT 1,
                     secret_header_name TEXT,
                     secret_token TEXT,
@@ -416,6 +417,7 @@ class Database:
                 db, "gateway_bootstrap", "toolsets_json", "TEXT NOT NULL DEFAULT '[]'"
             )
             await self._ensure_column(db, "notification_routes", "vault_secret_id", "INTEGER")
+            await self._ensure_column(db, "notification_routes", "conversation_target_json", "TEXT")
             await self._ensure_column(db, "integrations", "vault_secret_id", "INTEGER")
             await self._ensure_column(db, "missions", "session_key", "TEXT")
             await self._ensure_column(db, "missions", "conversation_target_json", "TEXT")
@@ -1151,6 +1153,10 @@ class Database:
             for row in rows:
                 item = dict(row)
                 item["events"] = json.loads(item.pop("events_json"))
+                conversation_target = item.pop("conversation_target_json", None)
+                item["conversation_target"] = (
+                    json.loads(conversation_target) if conversation_target else None
+                )
                 output.append(item)
             return output
 
@@ -1161,6 +1167,7 @@ class Database:
         kind: str,
         target: str,
         events: list[str],
+        conversation_target: dict[str, Any] | None = None,
         enabled: bool,
         secret_header_name: str | None,
         secret_token: str | None,
@@ -1175,6 +1182,7 @@ class Database:
                     kind,
                     target,
                     events_json,
+                    conversation_target_json,
                     enabled,
                     secret_header_name,
                     secret_token,
@@ -1182,13 +1190,14 @@ class Database:
                     created_at,
                     updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     name,
                     kind,
                     target,
                     json.dumps(events),
+                    json.dumps(conversation_target) if conversation_target is not None else None,
                     int(enabled),
                     secret_header_name,
                     secret_token,
@@ -1204,6 +1213,11 @@ class Database:
     async def update_notification_route(self, route_id: int, **fields: Any) -> None:
         if "events" in fields:
             fields["events_json"] = json.dumps(fields.pop("events"))
+        if "conversation_target" in fields:
+            conversation_target = fields.pop("conversation_target")
+            fields["conversation_target_json"] = (
+                json.dumps(conversation_target) if conversation_target is not None else None
+            )
         if not fields:
             return
         fields["updated_at"] = utcnow()
