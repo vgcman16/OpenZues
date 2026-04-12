@@ -1,11 +1,19 @@
 from __future__ import annotations
 
 import asyncio
+import codecs
 import json
+import re
+import shutil
+import subprocess
+import time
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 import typer
 import uvicorn
@@ -53,6 +61,9 @@ app = typer.Typer(help="OpenZues local control plane")
 _ATTENTION_QUEUE_IDLE_REPLY = (
     "The attention queue is clear right now. There is no bounded move to fire."
 )
+_DEFAULT_WATCH_TASK_NAME = "OpenClaw Total Parity Program"
+_DEFAULT_BROWSER_WATCH_SESSION = "openzues-watch"
+_WATCH_LEADER_PID_RE = re.compile(r"Leader PID:\s*(?P<pid>\d+)", re.IGNORECASE)
 gateway_app = typer.Typer(help="Inspect and stamp the saved gateway bootstrap profile.")
 hermes_app = typer.Typer(help="Inspect and tune Hermes runtime posture.")
 routes_app = typer.Typer(help="Inspect and test notification routes.")
@@ -629,6 +640,819 @@ def _emit_route_test(payload: dict[str, object], *, json_output: bool) -> None:
         typer.echo(f"error: {error}")
 
 
+def _first_text_line(value: object, *, limit: int = 220) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    first_line = next((line.strip() for line in text.splitlines() if line.strip()), "")
+    if len(first_line) <= limit:
+        return first_line
+    return first_line[: max(0, limit - 3)].rstrip() + "..."
+
+
+def _watch_base_url(*, url: str | None, host: str, port: int) -> str:
+    if url:
+        return str(url).rstrip("/")
+    return f"http://{host}:{port}"
+
+
+def _watch_decode_error_body(exc: HTTPError) -> str:
+    try:
+        body = exc.read().decode("utf-8", errors="replace").strip()
+    except OSError:
+        body = ""
+    if not body:
+        return exc.reason or "request failed"
+    try:
+        payload = json.loads(body)
+    except json.JSONDecodeError:
+        return body
+    if isinstance(payload, dict):
+        detail = payload.get("detail")
+        if isinstance(detail, str) and detail.strip():
+            return detail.strip()
+    return body
+
+
+def _watch_api_json(
+    base_url: str,
+    path: str,
+    *,
+    method: str = "GET",
+    payload: object | None = None,
+    timeout_seconds: float = 60.0,
+    allow_timeout: bool = False,
+) -> Any:
+    body: bytes | None = None
+    headers = {"Accept": "application/json"}
+    if payload is not None:
+        body = json.dumps(payload).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    elif method != "GET":
+        body = b""
+    request = Request(f"{base_url}{path}", data=body, headers=headers, method=method)
+    try:
+        with urlopen(request, timeout=timeout_seconds) as response:
+            response_text = response.read().decode("utf-8", errors="replace")
+    except HTTPError as exc:
+        detail = _watch_decode_error_body(exc)
+        raise RuntimeError(f"{method} {path} failed ({exc.code}): {detail}") from exc
+    except TimeoutError as exc:
+        if allow_timeout:
+            return {"timed_out": True}
+        raise RuntimeError(f"{method} {path} timed out against {base_url}") from exc
+    except URLError as exc:
+        reason = getattr(exc, "reason", exc)
+        if allow_timeout and isinstance(reason, TimeoutError):
+            return {"timed_out": True}
+        raise RuntimeError(f"Could not reach OpenZues at {base_url}: {reason}") from exc
+
+    if not response_text.strip():
+        return None
+    return json.loads(response_text)
+
+
+def _browser_command() -> str:
+    command = shutil.which("agent-browser.cmd") or shutil.which("agent-browser")
+    if command is None:
+        raise RuntimeError(
+            "agent-browser is not installed or not on PATH. Install it before using --browser."
+        )
+    return command
+
+
+def _run_browser_command(
+    args: list[str],
+    *,
+    session_name: str,
+    timeout_seconds: float = 60.0,
+    allow_failure: bool = False,
+) -> str:
+    command = _browser_command()
+    command_path = Path(command)
+    invocation = [command, "--session", session_name, *args]
+    process_args = invocation
+    if command_path.suffix.lower() in {".cmd", ".bat"}:
+        process_args = ["cmd.exe", "/c", *invocation]
+    try:
+        completed = subprocess.run(
+            process_args,
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(
+            f"agent-browser {' '.join(args)} timed out after {timeout_seconds:.0f}s."
+        ) from exc
+    output = (completed.stdout or "").strip()
+    error_output = (completed.stderr or "").strip()
+    if completed.returncode != 0 and not allow_failure:
+        detail = error_output or output or "browser command failed"
+        raise RuntimeError(f"agent-browser {' '.join(args)} failed: {detail}")
+    return output or error_output
+
+
+def _strip_browser_value(value: str) -> str:
+    text = value.strip()
+    if text.startswith('"') and text.endswith('"') and len(text) >= 2:
+        return text[1:-1]
+    return text
+
+
+def _browser_screenshot_path(output: str) -> str | None:
+    marker = "Screenshot saved to "
+    for line in output.splitlines():
+        line = line.strip()
+        if marker in line:
+            return line.split(marker, 1)[1].strip()
+    return None
+
+
+def _summarize_browser_snapshot(output: str, *, limit: int = 8) -> str:
+    lines = [line.strip() for line in output.splitlines() if line.strip()]
+    if not lines:
+        return "No interactive browser snapshot lines were returned."
+    interesting = [
+        line
+        for line in lines
+        if line.startswith("- ")
+        or line.startswith("[")
+        or 'heading "' in line
+        or 'button "' in line
+        or 'textbox "' in line
+    ]
+    sample = interesting[:limit] if interesting else lines[:limit]
+    return " | ".join(sample)
+
+
+def _watch_browser_verify(
+    *,
+    browser_url: str,
+    session_name: str,
+) -> dict[str, Any]:
+    _run_browser_command(["errors", "--clear"], session_name=session_name, allow_failure=True)
+    _run_browser_command(["console", "--clear"], session_name=session_name, allow_failure=True)
+    _run_browser_command(["open", browser_url], session_name=session_name)
+    _run_browser_command(["wait", "2000"], session_name=session_name, allow_failure=True)
+
+    page_url = _strip_browser_value(
+        _run_browser_command(["get", "url"], session_name=session_name, allow_failure=True)
+    )
+    title = _strip_browser_value(
+        _run_browser_command(["get", "title"], session_name=session_name, allow_failure=True)
+    )
+    has_content = _strip_browser_value(
+        _run_browser_command(
+            [
+                "eval",
+                (
+                    "document.body && document.body.innerText.trim().length > 0 "
+                    "? 'HAS_CONTENT' : 'BLANK'"
+                ),
+            ],
+            session_name=session_name,
+        )
+    )
+    overlay_status = _strip_browser_value(
+        _run_browser_command(
+            [
+                "eval",
+                "document.querySelector('[data-nextjs-dialog], .vite-error-overlay, "
+                "#webpack-dev-server-client-overlay') ? 'ERROR_OVERLAY' : 'OK'",
+            ],
+            session_name=session_name,
+        )
+    )
+    screenshot_path: str | None = None
+    screenshot_error: str | None = None
+    try:
+        screenshot_output = _run_browser_command(
+            ["--annotate", "screenshot"],
+            session_name=session_name,
+            timeout_seconds=20.0,
+        )
+        screenshot_path = _browser_screenshot_path(screenshot_output)
+    except RuntimeError as exc:
+        screenshot_error = str(exc)
+
+    snapshot_summary = "Browser snapshot unavailable."
+    snapshot_error: str | None = None
+    try:
+        snapshot_output = _run_browser_command(
+            ["snapshot", "-i"],
+            session_name=session_name,
+            timeout_seconds=20.0,
+        )
+        snapshot_summary = _summarize_browser_snapshot(snapshot_output)
+    except RuntimeError as exc:
+        snapshot_error = str(exc)
+    errors_output = _run_browser_command(
+        ["errors"],
+        session_name=session_name,
+        allow_failure=True,
+    )
+    console_output = _run_browser_command(
+        ["console"],
+        session_name=session_name,
+        allow_failure=True,
+    )
+    error_count = len([line for line in errors_output.splitlines() if line.strip()])
+    console_count = len([line for line in console_output.splitlines() if line.strip()])
+    ok = has_content == "HAS_CONTENT" and overlay_status == "OK" and error_count == 0
+    summary_parts = [
+        f"url {page_url or browser_url}",
+        "content visible" if has_content == "HAS_CONTENT" else "page looks blank",
+        "no overlay" if overlay_status == "OK" else "error overlay present",
+        f"{error_count} page error(s)",
+        f"{console_count} console line(s)",
+    ]
+    return {
+        "ok": ok,
+        "status": "ready" if ok else "warn",
+        "summary": ", ".join(summary_parts) + ".",
+        "url": page_url or browser_url,
+        "title": title or None,
+        "has_content": has_content == "HAS_CONTENT",
+        "overlay_status": overlay_status or "unknown",
+        "error_count": error_count,
+        "console_count": console_count,
+        "screenshot_path": screenshot_path,
+        "screenshot_error": screenshot_error,
+        "snapshot_summary": snapshot_summary,
+        "snapshot_error": snapshot_error,
+        "errors_excerpt": _first_text_line(errors_output, limit=280) or None,
+        "console_excerpt": _first_text_line(console_output, limit=280) or None,
+    }
+
+
+def _watch_target_payload(
+    dashboard: dict[str, Any],
+    handoff: dict[str, Any],
+    *,
+    mission_id: int | None,
+    task_name: str | None,
+) -> dict[str, Any]:
+    missions = [item for item in dashboard.get("missions", []) if isinstance(item, dict)]
+    brief = dashboard.get("brief")
+    task_blueprint = (
+        handoff.get("task_blueprint") if isinstance(handoff.get("task_blueprint"), dict) else None
+    )
+    task_blueprint_id = (
+        int(task_blueprint["id"])
+        if isinstance(task_blueprint, dict) and task_blueprint.get("id") is not None
+        else None
+    )
+    resolved_task_name = str(task_name or "").strip() or (
+        str(task_blueprint.get("label") or "").strip() if isinstance(task_blueprint, dict) else ""
+    )
+    if not resolved_task_name:
+        resolved_task_name = _DEFAULT_WATCH_TASK_NAME
+
+    def _mission_sort_key(mission: dict[str, Any]) -> tuple[int, float, int]:
+        status_priority = {
+            "active": 0,
+            "blocked": 1,
+            "paused": 2,
+            "failed": 3,
+            "completed": 4,
+        }.get(str(mission.get("status") or "").strip().lower(), 5)
+        updated_text = str(mission.get("updated_at") or mission.get("created_at") or "").strip()
+        updated_at = 0.0
+        if updated_text:
+            try:
+                updated_at = datetime.fromisoformat(updated_text.replace("Z", "+00:00")).timestamp()
+            except ValueError:
+                updated_at = 0.0
+        return (
+            status_priority,
+            -updated_at,
+            -int(mission.get("id") or 0),
+        )
+
+    watched_mission: dict[str, Any] | None = None
+    if mission_id is not None:
+        watched_mission = next(
+            (mission for mission in missions if int(mission.get("id") or 0) == mission_id),
+            None,
+        )
+    if watched_mission is None and task_blueprint_id is not None:
+        candidates = [
+            mission
+            for mission in missions
+            if int(mission.get("task_blueprint_id") or 0) == task_blueprint_id
+        ]
+        if candidates:
+            watched_mission = sorted(candidates, key=_mission_sort_key)[0]
+    if watched_mission is None and resolved_task_name:
+        candidates = [
+            mission
+            for mission in missions
+            if str(mission.get("name") or "").strip() == resolved_task_name
+        ]
+        if candidates:
+            watched_mission = sorted(candidates, key=_mission_sort_key)[0]
+    if (
+        watched_mission is None
+        and isinstance(brief, dict)
+        and brief.get("focus_mission_id") is not None
+    ):
+        focus_mission_id = int(brief["focus_mission_id"])
+        watched_mission = next(
+            (mission for mission in missions if int(mission.get("id") or 0) == focus_mission_id),
+            None,
+        )
+    return {
+        "task_name": resolved_task_name,
+        "task_blueprint_id": task_blueprint_id,
+        "mission": watched_mission,
+    }
+
+
+def _watch_is_runnable(status: object) -> bool:
+    return str(status or "").strip().lower() in {"paused", "failed"}
+
+
+def _watch_is_terminal(status: object) -> bool:
+    return str(status or "").strip().lower() in {"completed", "failed"}
+
+
+def _watch_auto_action_summary(action: dict[str, Any] | None) -> str:
+    if not isinstance(action, dict):
+        return ""
+    return _first_text_line(action.get("summary"))
+
+
+def _watch_observer_posture(dashboard: dict[str, Any]) -> dict[str, Any] | None:
+    control_chat = dashboard.get("control_chat")
+    attention_queue = dashboard.get("attention_queue")
+    candidate_sections = [
+        section
+        for section in (control_chat, attention_queue)
+        if isinstance(section, dict)
+    ]
+    observer_section = next(
+        (
+            section
+            for section in candidate_sections
+            if str(section.get("headline") or "").strip() == "Observer mode is active"
+        ),
+        None,
+    )
+    if observer_section is None:
+        return None
+
+    summary = str(observer_section.get("summary") or "").strip()
+    if not summary:
+        summary = next(
+            (
+                str(section.get("summary") or "").strip()
+                for section in candidate_sections
+                if str(section.get("summary") or "").strip()
+            ),
+            "",
+        )
+    leader_pid: int | None = None
+    if summary:
+        match = _WATCH_LEADER_PID_RE.search(summary)
+        if match is not None:
+            leader_pid = int(match.group("pid"))
+    return {
+        "active": True,
+        "summary": summary or "Observer mode is active in this window.",
+        "leader_pid": leader_pid,
+    }
+
+
+def _maybe_launch_watch_target(
+    base_url: str,
+    *,
+    dashboard: dict[str, Any],
+    handoff: dict[str, Any],
+    mission_id: int | None,
+    task_name: str | None,
+) -> dict[str, Any] | None:
+    target = _watch_target_payload(
+        dashboard,
+        handoff,
+        mission_id=mission_id,
+        task_name=task_name,
+    )
+    watched_mission = target.get("mission")
+    if isinstance(watched_mission, dict) and watched_mission.get("id") is not None:
+        watched_mission_id = int(watched_mission["id"])
+        watched_mission_name = str(
+            watched_mission.get("name") or f"mission {watched_mission_id}"
+        ).strip()
+        if _watch_is_runnable(watched_mission.get("status")):
+            _watch_api_json(
+                base_url,
+                f"/api/missions/{watched_mission_id}/start",
+                method="POST",
+                timeout_seconds=5.0,
+                allow_timeout=True,
+            )
+            return {
+                "action": "resume_mission",
+                "mission_id": watched_mission_id,
+                "summary": (
+                    f"Sent a resume request for mission #{watched_mission_id} "
+                    f"({watched_mission_name}) and switched to live polling."
+                ),
+            }
+        return {
+            "action": "observe_existing_mission",
+            "mission_id": watched_mission_id,
+            "summary": f"Watching mission #{watched_mission_id} ({watched_mission_name}).",
+        }
+
+    recommended_action = str(handoff.get("recommended_action") or "").strip()
+    instance = handoff.get("instance")
+    if (
+        recommended_action == "connect_lane"
+        and isinstance(instance, dict)
+        and instance.get("id") is not None
+    ):
+        instance_id = int(instance["id"])
+        _watch_api_json(base_url, f"/api/instances/{instance_id}/connect", method="POST")
+        return {
+            "action": "connect_lane",
+            "instance_id": instance_id,
+            "summary": f"Reconnected lane #{instance_id} so the saved launch handoff can run.",
+        }
+
+    mission_draft = handoff.get("mission_draft")
+    if isinstance(mission_draft, dict):
+        created = _watch_api_json(base_url, "/api/missions", method="POST", payload=mission_draft)
+        if isinstance(created, dict):
+            created_id = int(created.get("id") or 0)
+            created_name = str(created.get("name") or f"mission {created_id}").strip()
+            if created_id and _watch_is_runnable(created.get("status")):
+                _watch_api_json(
+                    base_url,
+                    f"/api/missions/{created_id}/start",
+                    method="POST",
+                    timeout_seconds=5.0,
+                    allow_timeout=True,
+                )
+                return {
+                    "action": "resume_mission",
+                    "mission_id": created_id,
+                    "summary": (
+                        f"Sent a resume request for saved mission #{created_id} "
+                        f"({created_name}) from the launch handoff and switched to live polling."
+                    ),
+                }
+            return {
+                "action": "create_mission",
+                "mission_id": created_id if created_id else None,
+                "summary": (
+                    f"Launched mission #{created_id} ({created_name}) from the saved handoff."
+                ),
+            }
+
+    next_entrypoint = _first_text_line(
+        handoff.get("next_entrypoint")
+        or handoff.get("summary")
+        or "No launchable mission is saved yet."
+    )
+    return {
+        "action": "observe_handoff",
+        "summary": next_entrypoint,
+    }
+
+
+def _build_watch_payload(
+    *,
+    base_url: str,
+    dashboard: dict[str, Any],
+    handoff: dict[str, Any],
+    mission_id: int | None,
+    task_name: str | None,
+    auto_action: dict[str, Any] | None,
+    browser_verification: dict[str, Any] | None,
+) -> dict[str, Any]:
+    target = _watch_target_payload(
+        dashboard,
+        handoff,
+        mission_id=mission_id,
+        task_name=task_name,
+    )
+    missions = [item for item in dashboard.get("missions", []) if isinstance(item, dict)]
+    instances = [item for item in dashboard.get("instances", []) if isinstance(item, dict)]
+    observer_posture = _watch_observer_posture(dashboard)
+    return {
+        "headline": str(dashboard.get("brief", {}).get("headline") or "").strip(),
+        "summary": str(dashboard.get("brief", {}).get("summary") or "").strip(),
+        "checked_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        "base_url": base_url,
+        "watch_target": {
+            "mission_id": mission_id,
+            "task_name": target["task_name"],
+            "task_blueprint_id": target["task_blueprint_id"],
+        },
+        "auto_action": auto_action,
+        "browser_verification": browser_verification,
+        "observer_posture": observer_posture,
+        "setup_launch_handoff": handoff,
+        "mission_summary": {
+            "active_count": sum(str(item.get("status") or "") == "active" for item in missions),
+            "blocked_count": sum(str(item.get("status") or "") == "blocked" for item in missions),
+            "paused_count": sum(str(item.get("status") or "") == "paused" for item in missions),
+            "failed_count": sum(str(item.get("status") or "") == "failed" for item in missions),
+        },
+        "instance_summary": {
+            "connected_count": sum(bool(item.get("connected")) for item in instances),
+            "total_count": len(instances),
+        },
+        "gateway_capability": dashboard.get("gateway_capability"),
+        "watched_mission": target["mission"],
+    }
+
+
+def _watch_lines(payload: dict[str, object]) -> list[str]:
+    lines: list[str] = []
+    checked_at = str(payload.get("checked_at") or "").strip()
+    base_url = str(payload.get("base_url") or "").strip()
+    prefix = f"[{checked_at}] " if checked_at else ""
+    lines.append(f"{prefix}OpenZues watch @ {base_url or 'live server'}")
+    observer_posture = payload.get("observer_posture")
+    observer_active = isinstance(observer_posture, dict) and bool(observer_posture.get("active"))
+
+    headline = str(payload.get("headline") or "").strip()
+    if headline:
+        lines.append("brief: " + headline)
+    summary = str(payload.get("summary") or "").strip()
+    if summary:
+        lines.append("summary: " + summary)
+    if observer_active:
+        leader_pid = observer_posture.get("leader_pid")
+        mode_line = "mode: observer"
+        if isinstance(leader_pid, int):
+            mode_line += f" / leader PID {leader_pid}"
+        lines.append(mode_line)
+        observer_summary = _first_text_line(observer_posture.get("summary"), limit=320)
+        if observer_summary:
+            lines.append("mode summary: " + observer_summary)
+        lines.append(
+            "mode note: Mission telemetry may be leader-owned while lane, gateway, and "
+            "handoff posture below come from this observer window."
+        )
+
+    watch_target = payload.get("watch_target")
+    if isinstance(watch_target, dict):
+        task_name = str(watch_target.get("task_name") or "").strip()
+        task_blueprint_id = watch_target.get("task_blueprint_id")
+        target_parts: list[str] = []
+        if task_name:
+            target_parts.append(task_name)
+        if task_blueprint_id is not None:
+            target_parts.append(f"task #{task_blueprint_id}")
+        mission_id = watch_target.get("mission_id")
+        if mission_id is not None:
+            target_parts.append(f"mission #{mission_id}")
+        if target_parts:
+            lines.append("target: " + " | ".join(target_parts))
+
+    auto_action = payload.get("auto_action")
+    if isinstance(auto_action, dict):
+        auto_summary = _watch_auto_action_summary(auto_action)
+        if auto_summary:
+            lines.append("auto: " + auto_summary)
+
+    browser_verification = payload.get("browser_verification")
+    if isinstance(browser_verification, dict):
+        browser_status = str(browser_verification.get("status") or "").strip()
+        browser_summary = str(browser_verification.get("summary") or "").strip()
+        if browser_status or browser_summary:
+            lines.append(
+                "browser: "
+                + " / ".join(part for part in (browser_status, browser_summary) if part)
+            )
+        title = str(browser_verification.get("title") or "").strip()
+        if title:
+            lines.append("browser title: " + title)
+        snapshot_summary = _first_text_line(browser_verification.get("snapshot_summary"), limit=320)
+        if snapshot_summary:
+            lines.append("browser snapshot: " + snapshot_summary)
+        artifact_path = str(browser_verification.get("artifact_path") or "").strip()
+        if artifact_path:
+            lines.append("browser artifact: " + artifact_path)
+        screenshot_path = str(browser_verification.get("screenshot_path") or "").strip()
+        if screenshot_path:
+            lines.append("browser screenshot: " + screenshot_path)
+        screenshot_error = _first_text_line(browser_verification.get("screenshot_error"))
+        if screenshot_error:
+            lines.append("browser screenshot warning: " + screenshot_error)
+        snapshot_error = _first_text_line(browser_verification.get("snapshot_error"))
+        if snapshot_error:
+            lines.append("browser snapshot warning: " + snapshot_error)
+        errors_excerpt = _first_text_line(browser_verification.get("errors_excerpt"))
+        if errors_excerpt:
+            lines.append("browser errors: " + errors_excerpt)
+        console_excerpt = _first_text_line(browser_verification.get("console_excerpt"))
+        if console_excerpt:
+            lines.append("browser console: " + console_excerpt)
+
+    handoff = payload.get("setup_launch_handoff")
+    if isinstance(handoff, dict):
+        handoff_status = str(handoff.get("status") or "").strip()
+        handoff_headline = str(handoff.get("headline") or "").strip()
+        handoff_summary = _first_text_line(handoff.get("summary"))
+        handoff_label = "observer handoff" if observer_active else "handoff"
+        handoff_summary_label = (
+            "observer handoff summary" if observer_active else "handoff summary"
+        )
+        next_label = "observer next" if observer_active else "next"
+        if handoff_status or handoff_headline:
+            lines.append(
+                f"{handoff_label}: "
+                + " / ".join(part for part in (handoff_status, handoff_headline) if part)
+            )
+        if handoff_summary:
+            lines.append(f"{handoff_summary_label}: " + handoff_summary)
+        next_entrypoint = _first_text_line(handoff.get("next_entrypoint"))
+        if next_entrypoint:
+            lines.append(f"{next_label}: " + next_entrypoint)
+
+    instance_summary = payload.get("instance_summary")
+    if isinstance(instance_summary, dict):
+        lanes_label = "observer lanes" if observer_active else "lanes"
+        lines.append(
+            f"{lanes_label}: "
+            f"{instance_summary.get('connected_count', 0)} connected / "
+            f"{instance_summary.get('total_count', 0)} total"
+        )
+
+    mission_summary = payload.get("mission_summary")
+    if isinstance(mission_summary, dict):
+        lines.append(
+            "missions: "
+            f"{mission_summary.get('active_count', 0)} active, "
+            f"{mission_summary.get('blocked_count', 0)} blocked, "
+            f"{mission_summary.get('paused_count', 0)} paused, "
+            f"{mission_summary.get('failed_count', 0)} failed"
+        )
+
+    gateway_capability = payload.get("gateway_capability")
+    if isinstance(gateway_capability, dict):
+        gateway_level = str(gateway_capability.get("level") or "").strip()
+        gateway_headline = str(gateway_capability.get("headline") or "").strip()
+        gateway_label = "observer gateway" if observer_active else "gateway"
+        gateway_summary_label = (
+            "observer gateway summary" if observer_active else "gateway summary"
+        )
+        if gateway_level or gateway_headline:
+            lines.append(
+                f"{gateway_label}: "
+                + " / ".join(part for part in (gateway_level, gateway_headline) if part)
+            )
+        gateway_summary = _first_text_line(gateway_capability.get("summary"))
+        if gateway_summary:
+            lines.append(f"{gateway_summary_label}: " + gateway_summary)
+
+    watched_mission = payload.get("watched_mission")
+    if not isinstance(watched_mission, dict):
+        lines.append("mission: No matching live mission yet.")
+        return lines
+
+    watched_mission_id = watched_mission.get("id")
+    watched_name = str(watched_mission.get("name") or "Mission").strip()
+    watched_status = str(watched_mission.get("status") or "").strip()
+    watched_phase = str(watched_mission.get("phase") or "").strip()
+    lines.append(
+        "mission: "
+        + f"#{watched_mission_id} {watched_name}"
+        + (
+            " [" + " / ".join(part for part in (watched_status, watched_phase) if part) + "]"
+            if watched_status or watched_phase
+            else ""
+        )
+    )
+
+    live_telemetry = watched_mission.get("live_telemetry")
+    if isinstance(live_telemetry, dict):
+        live_summary = _first_text_line(live_telemetry.get("summary"))
+        if live_summary:
+            lines.append("live: " + live_summary)
+
+    delegation_brief = watched_mission.get("delegation_brief")
+    if isinstance(delegation_brief, dict):
+        delegation_summary = _first_text_line(delegation_brief.get("summary"))
+        if delegation_summary:
+            lines.append("delegation: " + delegation_summary)
+
+    toolsets = watched_mission.get("toolsets")
+    if isinstance(toolsets, list) and toolsets:
+        lines.append("toolsets: " + ", ".join(str(item) for item in toolsets[:8]))
+    tool_evidence = watched_mission.get("tool_evidence")
+    if isinstance(tool_evidence, dict):
+        tool_evidence_summary = _first_text_line(tool_evidence.get("summary"))
+        if tool_evidence_summary:
+            lines.append("tool proof: " + tool_evidence_summary)
+
+    current_command = _first_text_line(watched_mission.get("current_command"))
+    if current_command:
+        lines.append("command: " + current_command)
+
+    commentary = _first_text_line(watched_mission.get("last_commentary"))
+    if commentary:
+        lines.append("commentary: " + commentary)
+
+    checkpoint = _first_text_line(watched_mission.get("last_checkpoint"))
+    if checkpoint:
+        lines.append("checkpoint: " + checkpoint)
+
+    last_error = _first_text_line(watched_mission.get("last_error"))
+    if last_error:
+        lines.append("error: " + last_error)
+    return lines
+
+
+def _watch_output(payload: dict[str, object], *, json_output: bool) -> str:
+    if json_output:
+        return json.dumps(payload, indent=2)
+    return "\n".join(_watch_lines(payload))
+
+
+def _emit_watch(payload: dict[str, object], *, json_output: bool) -> None:
+    typer.echo(_watch_output(payload, json_output=json_output))
+
+
+def _watch_log_path(path: Path, index: int) -> Path:
+    return path.with_name(f"{path.name}.{index}")
+
+
+def _rotate_watch_log(path: Path, *, max_bytes: int, backups: int) -> None:
+    if max_bytes <= 0 or backups <= 0 or not path.exists():
+        return
+    try:
+        size = path.stat().st_size
+    except OSError:
+        return
+    if size < max_bytes:
+        return
+    oldest = _watch_log_path(path, backups)
+    if oldest.exists():
+        oldest.unlink()
+    for index in range(backups - 1, 0, -1):
+        source = _watch_log_path(path, index)
+        destination = _watch_log_path(path, index + 1)
+        if source.exists():
+            source.replace(destination)
+    path.replace(_watch_log_path(path, 1))
+
+
+def _append_watch_log(
+    path: Path,
+    *,
+    text: str,
+    max_bytes: int,
+    backups: int,
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _rotate_watch_log(path, max_bytes=max_bytes, backups=backups)
+    if path.exists():
+        try:
+            existing_bytes = path.read_bytes()
+        except OSError:
+            existing_bytes = b""
+        if existing_bytes and not existing_bytes.startswith(codecs.BOM_UTF8):
+            path.write_bytes(codecs.BOM_UTF8 + existing_bytes)
+    needs_bom = not path.exists()
+    if not needs_bom:
+        try:
+            needs_bom = path.stat().st_size == 0
+        except OSError:
+            needs_bom = True
+    with path.open("ab") as handle:
+        if needs_bom:
+            handle.write(codecs.BOM_UTF8)
+        handle.write(text.encode("utf-8"))
+        handle.write(b"\n\n")
+
+
+def _copy_watch_screenshot(
+    browser_verification: dict[str, Any] | None,
+    *,
+    artifact_path: Path,
+) -> dict[str, Any] | None:
+    if not isinstance(browser_verification, dict):
+        return browser_verification
+    screenshot_text = str(browser_verification.get("screenshot_path") or "").strip()
+    if not screenshot_text:
+        return browser_verification
+    source = Path(screenshot_text)
+    if not source.exists():
+        return browser_verification
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(source, artifact_path)
+    updated = dict(browser_verification)
+    updated["artifact_path"] = str(artifact_path)
+    return updated
+
+
 def _emit_executor_arm(payload: dict[str, object], *, json_output: bool) -> None:
     if json_output:
         _emit_payload(payload, json_output=True)
@@ -1007,6 +1831,225 @@ def status_command(
 
     payload = _run(_run_with_services(_action))
     _emit_status(payload, json_output=json_output)
+
+
+@app.command("watch")
+def watch_command(
+    host: str = typer.Option(settings.host, help="Host for the live OpenZues server."),
+    port: int = typer.Option(settings.port, help="Port for the live OpenZues server."),
+    url: str | None = typer.Option(
+        None,
+        "--url",
+        help="Explicit base URL for the live OpenZues server.",
+    ),
+    mission_id: int | None = typer.Option(
+        None,
+        "--mission-id",
+        help="Watch a specific mission id.",
+    ),
+    task_name: str | None = typer.Option(
+        None,
+        "--task-name",
+        help=(
+            "Mission or task label to watch. Defaults to the saved setup handoff task, then "
+            "falls back to the OpenClaw parity program label."
+        ),
+    ),
+    launch: bool = typer.Option(
+        False,
+        "--launch",
+        help=(
+            "If the watched mission is paused, failed, or only staged in the saved handoff, "
+            "resume or launch it before watching."
+        ),
+    ),
+    follow: bool = typer.Option(
+        False,
+        "--follow",
+        help="Keep polling the live server until interrupted or the watch condition settles.",
+    ),
+    interval_seconds: float = typer.Option(
+        5.0,
+        "--interval",
+        min=1.0,
+        help="Polling interval in seconds while following.",
+    ),
+    cycles: int | None = typer.Option(
+        None,
+        "--cycles",
+        min=1,
+        help="Optional maximum number of watch cycles to print.",
+    ),
+    until_terminal: bool = typer.Option(
+        False,
+        "--until-terminal",
+        help="Stop once the watched mission reaches a completed or failed terminal state.",
+    ),
+    browser: bool = typer.Option(
+        False,
+        "--browser",
+        help="Also verify the live dashboard surface with agent-browser during watch cycles.",
+    ),
+    browser_url: str | None = typer.Option(
+        None,
+        "--browser-url",
+        help="Explicit URL for browser verification. Defaults to the same live OpenZues URL.",
+    ),
+    browser_every: int = typer.Option(
+        1,
+        "--browser-every",
+        min=1,
+        help="Run browser verification every N watch cycles when --browser is enabled.",
+    ),
+    browser_session: str = typer.Option(
+        _DEFAULT_BROWSER_WATCH_SESSION,
+        "--browser-session",
+        help="agent-browser session name to reuse across watch cycles.",
+    ),
+    browser_screenshot_copy: str | None = typer.Option(
+        None,
+        "--browser-screenshot-copy",
+        help="Optional stable path that should always hold the latest browser screenshot artifact.",
+    ),
+    log_file: str | None = typer.Option(
+        None,
+        "--log-file",
+        help="Optional rolling log file for watch output.",
+    ),
+    log_max_bytes: int = typer.Option(
+        1_000_000,
+        "--log-max-bytes",
+        min=1,
+        help="Rotate the watch log when it reaches this size.",
+    ),
+    log_backups: int = typer.Option(
+        3,
+        "--log-backups",
+        min=1,
+        help="Number of rotated watch log backups to keep.",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit the watch snapshot as JSON.",
+    ),
+) -> None:
+    base_url = _watch_base_url(url=url, host=host, port=port)
+    keep_watching = follow or until_terminal or (cycles is not None and cycles > 1)
+    cycle_index = 0
+    auto_action: dict[str, Any] | None = None
+    poll_timeout = max(60.0, interval_seconds * 12.0)
+    browser_target_url = browser_url or base_url
+    log_path = Path(log_file).expanduser() if log_file else None
+    screenshot_artifact_path = (
+        Path(browser_screenshot_copy).expanduser() if browser_screenshot_copy else None
+    )
+
+    try:
+        while True:
+            if launch and cycle_index == 0:
+                initial_dashboard = _watch_api_json(
+                    base_url,
+                    "/api/dashboard",
+                    timeout_seconds=poll_timeout,
+                )
+                initial_handoff = _watch_api_json(
+                    base_url,
+                    "/api/setup/launch",
+                    timeout_seconds=poll_timeout,
+                )
+                if not isinstance(initial_dashboard, dict) or not isinstance(initial_handoff, dict):
+                    raise RuntimeError(
+                        "OpenZues watch did not receive the expected dashboard payload."
+                    )
+                auto_action = _maybe_launch_watch_target(
+                    base_url,
+                    dashboard=initial_dashboard,
+                    handoff=initial_handoff,
+                    mission_id=mission_id,
+                    task_name=task_name,
+                )
+
+            try:
+                dashboard = _watch_api_json(
+                    base_url,
+                    "/api/dashboard",
+                    timeout_seconds=poll_timeout,
+                )
+                handoff = _watch_api_json(
+                    base_url,
+                    "/api/setup/launch",
+                    timeout_seconds=poll_timeout,
+                )
+            except RuntimeError:
+                if not keep_watching:
+                    raise
+                typer.echo(f"watch warning: {base_url} is slow to answer; retrying.")
+                time.sleep(interval_seconds)
+                auto_action = None
+                continue
+            if not isinstance(dashboard, dict) or not isinstance(handoff, dict):
+                raise RuntimeError("OpenZues watch did not receive the expected live payload.")
+            browser_verification: dict[str, Any] | None = None
+            if browser and cycle_index % browser_every == 0:
+                try:
+                    browser_verification = _watch_browser_verify(
+                        browser_url=browser_target_url,
+                        session_name=browser_session,
+                    )
+                    if screenshot_artifact_path is not None:
+                        browser_verification = _copy_watch_screenshot(
+                            browser_verification,
+                            artifact_path=screenshot_artifact_path,
+                        )
+                except RuntimeError as exc:
+                    browser_verification = {
+                        "ok": False,
+                        "status": "warn",
+                        "summary": str(exc),
+                    }
+            payload = _build_watch_payload(
+                base_url=base_url,
+                dashboard=dashboard,
+                handoff=handoff,
+                mission_id=mission_id,
+                task_name=task_name,
+                auto_action=auto_action,
+                browser_verification=browser_verification,
+            )
+            rendered_output = _watch_output(payload, json_output=json_output)
+            typer.echo(rendered_output)
+            if log_path is not None:
+                _append_watch_log(
+                    log_path,
+                    text=rendered_output,
+                    max_bytes=log_max_bytes,
+                    backups=log_backups,
+                )
+
+            cycle_index += 1
+            watched_mission = payload.get("watched_mission")
+            if not keep_watching:
+                break
+            if cycles is not None and cycle_index >= cycles:
+                break
+            if (
+                until_terminal
+                and isinstance(watched_mission, dict)
+                and _watch_is_terminal(watched_mission.get("status"))
+                and not bool(watched_mission.get("in_progress"))
+            ):
+                break
+            if not json_output:
+                typer.echo("")
+            time.sleep(interval_seconds)
+            auto_action = None
+    except RuntimeError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    except KeyboardInterrupt as exc:
+        typer.echo("watch stopped")
+        raise typer.Exit(code=130) from exc
 
 
 @app.command("launch")

@@ -1283,6 +1283,22 @@ class MissionCheckpointView(BaseModel):
     created_at: datetime
 
 
+class MissionToolEvidenceItemView(BaseModel):
+    toolset: str
+    status: Literal["observed", "unproven"] = "unproven"
+    evidence_count: int = 0
+    examples: list[str] = Field(default_factory=list)
+
+
+class MissionToolEvidenceView(BaseModel):
+    proof_ready: bool = False
+    expected_toolsets: list[str] = Field(default_factory=list)
+    observed_toolsets: list[str] = Field(default_factory=list)
+    unproven_toolsets: list[str] = Field(default_factory=list)
+    summary: str = "No tool evidence has been recorded yet."
+    items: list[MissionToolEvidenceItemView] = Field(default_factory=list)
+
+
 class MissionLiveTelemetryView(BaseModel):
     streaming: bool = False
     thread_status: str | None = None
@@ -1376,6 +1392,7 @@ class MissionView(BaseModel):
     scope_drift_level: ScopeDriftLevel = "aligned"
     scope_drift_summary: str | None = None
     live_telemetry: MissionLiveTelemetryView = Field(default_factory=MissionLiveTelemetryView)
+    tool_evidence: MissionToolEvidenceView = Field(default_factory=MissionToolEvidenceView)
     delegation_brief: MissionDelegationBriefView = Field(default_factory=MissionDelegationBriefView)
     checkpoints: list[MissionCheckpointView] = Field(default_factory=list)
     created_at: datetime

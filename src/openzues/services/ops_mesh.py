@@ -2773,7 +2773,11 @@ class OpsMeshService:
 
     def _checkpoint_is_verified_parity_handoff(self, summary: str) -> bool:
         lowered = summary.lower()
-        return "verified:" in lowered and ("next step:" in lowered or "blockers:" in lowered)
+        return (
+            "verified:" in lowered
+            and "tool evidence:" in lowered
+            and ("next step:" in lowered or "blockers:" in lowered)
+        )
 
     def _resolve_parity_checkpoint_path(self, mission: dict[str, Any]) -> Path | None:
         if self.parity_checkpoint_path is not None:
@@ -2792,24 +2796,45 @@ class OpsMeshService:
             return candidates[-1]
         return None
 
-    def _build_parity_checkpoint_entry(self, mission: dict[str, Any]) -> str:
+    def _build_parity_checkpoint_entry(
+        self,
+        mission: dict[str, Any],
+        *,
+        mission_view: MissionView | None = None,
+    ) -> str:
         mission_id = int(mission["id"])
         title = str(mission.get("name") or "Parity Slice").strip() or "Parity Slice"
         updated = _parse_timestamp(str(mission.get("updated_at") or "")) or datetime.now(UTC)
         summary = str(mission.get("last_checkpoint") or "").strip()
-        return "\n".join(
-            [
-                f"<!-- OPENZUES_PARITY_MISSION:{mission_id} -->",
-                "",
-                f"## Update: {title}",
-                "",
-                f"Date: {updated.date().isoformat()}",
-                "",
-                "### Operator handoff",
-                "",
-                summary,
-            ]
-        )
+        lines = [
+            f"<!-- OPENZUES_PARITY_MISSION:{mission_id} -->",
+            "",
+            f"## Update: {title}",
+            "",
+            f"Date: {updated.date().isoformat()}",
+            "",
+            "### Operator handoff",
+            "",
+            summary,
+        ]
+        tool_evidence = mission_view.tool_evidence if mission_view is not None else None
+        if tool_evidence is not None and tool_evidence.expected_toolsets:
+            lines.extend(
+                [
+                    "",
+                    "### Observed tool evidence",
+                    "",
+                    f"- {tool_evidence.summary}",
+                ]
+            )
+            for item in tool_evidence.items:
+                status_label = "observed" if item.status == "observed" else "unproven"
+                example = item.examples[0] if item.examples else None
+                line = f"- {item.toolset}: {status_label}"
+                if example:
+                    line += f" ({example})"
+                lines.append(line)
+        return "\n".join(lines)
 
     async def _maybe_append_parity_checkpoint_ledger(
         self,
@@ -2827,6 +2852,19 @@ class OpsMeshService:
         path = self._resolve_parity_checkpoint_path(mission)
         if path is None:
             return
+        mission_view: MissionView | None = None
+        get_view = getattr(self.missions, "get_view", None)
+        if callable(get_view):
+            try:
+                maybe_view = await get_view(int(mission["id"]))
+            except Exception:
+                logger.exception(
+                    "Failed to load mission view for parity checkpoint evidence (%s).",
+                    mission["id"],
+                )
+            else:
+                if isinstance(maybe_view, MissionView):
+                    mission_view = maybe_view
         marker = f"<!-- OPENZUES_PARITY_MISSION:{int(mission['id'])} -->"
         if path.exists():
             existing = path.read_text(encoding="utf-8")
@@ -2836,7 +2874,7 @@ class OpsMeshService:
         else:
             path.parent.mkdir(parents=True, exist_ok=True)
             base = "# OpenClaw Parity Checkpoint"
-        entry = self._build_parity_checkpoint_entry(mission)
+        entry = self._build_parity_checkpoint_entry(mission, mission_view=mission_view)
         content = f"{base}\n\n{entry}\n"
         path.write_text(content, encoding="utf-8")
         await self._publish_ops_event(

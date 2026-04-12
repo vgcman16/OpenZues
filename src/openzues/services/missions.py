@@ -17,6 +17,8 @@ from openzues.schemas import (
     MissionDelegationRoleView,
     MissionLiveTelemetryView,
     MissionReflexRun,
+    MissionToolEvidenceItemView,
+    MissionToolEvidenceView,
     MissionView,
     SkillPinView,
 )
@@ -93,6 +95,53 @@ CONTRACT_SEAM_MARKERS = (
     "constructor",
     "serializer",
     "view",
+)
+TOOL_EVIDENCE_EVENT_LIMIT = 240
+TOOL_EVIDENCE_EXAMPLE_LIMIT = 2
+INSPECTION_COMMAND_MARKERS = (
+    "get-content",
+    "select-string",
+    "select-object",
+    "get-childitem",
+    "git diff",
+    "git status",
+    "git show",
+    "rg -n",
+    "rg --files",
+    "findstr",
+    "ls",
+    "dir",
+)
+DEBUGGING_COMMAND_PATTERNS = (
+    re.compile(r"\b(get-content|get-childitem|select-string|git diff|git status|rg)\b", re.I),
+    re.compile(r"\bpowershell(?:\.exe)?\b", re.I),
+)
+BROWSER_COMMAND_PATTERNS = (
+    re.compile(r"\bagent-browser(?:\.cmd)?\b", re.I),
+    re.compile(r"\bplaywright\b", re.I),
+    re.compile(r"\bbrowser\s+(?:open|goto|verify|console|errors|screenshot)\b", re.I),
+)
+VISION_COMMAND_PATTERNS = (
+    re.compile(r"\bview_image\b", re.I),
+    re.compile(r"\bscreenshot\b", re.I),
+    re.compile(r"\.(?:png|jpg|jpeg|webp)\b", re.I),
+)
+MEMORY_COMMAND_PATTERNS = (
+    re.compile(r"\bmempalace\b", re.I),
+    re.compile(r"\bopenzues\s+recall\b", re.I),
+)
+SESSION_SEARCH_COMMAND_PATTERNS = (
+    re.compile(r"\bsession_search\b", re.I),
+)
+DOCKER_COMMAND_PATTERNS = (
+    re.compile(r"\bdocker(?:\.exe)?\b", re.I),
+)
+DELEGATION_ROLE_HINTS = (
+    "brainstormer",
+    "architect",
+    "planner",
+    "coder",
+    "auditor",
 )
 
 
@@ -235,6 +284,282 @@ def _contract_seam_instruction_lines(mission: dict[str, Any]) -> list[str]:
 
 def _contains_any(text: str, terms: tuple[str, ...]) -> bool:
     return any(term in text for term in terms)
+
+
+def _matches_any_pattern(text: str, patterns: tuple[re.Pattern[str], ...]) -> bool:
+    return any(pattern.search(text) for pattern in patterns)
+
+
+def _command_is_inspection_only(command: str) -> bool:
+    lowered = command.lower()
+    return any(marker in lowered for marker in INSPECTION_COMMAND_MARKERS)
+
+
+def _append_tool_evidence(
+    observed: defaultdict[str, list[str]],
+    *,
+    toolset: str,
+    evidence: str | None,
+) -> None:
+    rendered = _trace_fragment(evidence, limit=220)
+    if not rendered:
+        return
+    entries = observed[toolset]
+    if rendered in entries:
+        return
+    if len(entries) >= TOOL_EVIDENCE_EXAMPLE_LIMIT:
+        return
+    entries.append(rendered)
+
+
+def _mission_targets_openclaw_parity(
+    mission: dict[str, Any],
+    *,
+    task: dict[str, Any] | None = None,
+) -> bool:
+    values = [
+        mission.get("name"),
+        mission.get("objective"),
+        mission.get("last_checkpoint"),
+    ]
+    if task is not None:
+        values.extend(
+            [
+                task.get("name"),
+                task.get("summary"),
+                task.get("objective_template"),
+                task.get("completion_marker"),
+            ]
+        )
+    blob = " ".join(str(value or "") for value in values).lower()
+    return "parity" in blob and ("openclaw" in blob or "parity complete" in blob)
+
+
+def _observe_tool_usage_from_command(
+    command: str,
+    *,
+    observed: defaultdict[str, list[str]],
+) -> None:
+    rendered = _trace_fragment(command, limit=220)
+    if not rendered:
+        return
+    if _matches_any_pattern(command, DEBUGGING_COMMAND_PATTERNS):
+        _append_tool_evidence(
+            observed,
+            toolset="debugging",
+            evidence=f"Command: {rendered}",
+        )
+
+    inspection_only = _command_is_inspection_only(command)
+    if inspection_only:
+        return
+
+    if _matches_any_pattern(command, BROWSER_COMMAND_PATTERNS):
+        _append_tool_evidence(
+            observed,
+            toolset="browser",
+            evidence=f"Browser command: {rendered}",
+        )
+    if _matches_any_pattern(command, VISION_COMMAND_PATTERNS):
+        _append_tool_evidence(
+            observed,
+            toolset="vision",
+            evidence=f"Visual evidence command: {rendered}",
+        )
+    if _matches_any_pattern(command, MEMORY_COMMAND_PATTERNS):
+        _append_tool_evidence(
+            observed,
+            toolset="memory",
+            evidence=f"Memory command: {rendered}",
+        )
+    if _matches_any_pattern(command, SESSION_SEARCH_COMMAND_PATTERNS):
+        _append_tool_evidence(
+            observed,
+            toolset="session_search",
+            evidence=f"Session search command: {rendered}",
+        )
+    if _matches_any_pattern(command, DOCKER_COMMAND_PATTERNS):
+        _append_tool_evidence(
+            observed,
+            toolset="docker",
+            evidence=f"Docker command: {rendered}",
+        )
+
+
+def _observe_tool_usage_from_item(
+    item: dict[str, Any],
+    *,
+    observed: defaultdict[str, list[str]],
+) -> None:
+    item_type = str(item.get("type") or "")
+    if item_type == "commandExecution":
+        command = str(item.get("command") or "").strip()
+        if command:
+            _observe_tool_usage_from_command(command, observed=observed)
+        return
+
+    if item_type == "collabAgentToolCall":
+        tool_name = str(item.get("tool") or "").strip() or "agent"
+        prompt = _trace_fragment(item.get("prompt"), limit=180)
+        evidence = f"{tool_name}: {prompt}" if prompt else tool_name
+        _append_tool_evidence(observed, toolset="delegation", evidence=evidence)
+        return
+
+    lowered_type = item_type.lower()
+    if "browser" in lowered_type:
+        _append_tool_evidence(
+            observed,
+            toolset="browser",
+            evidence=f"Runtime item: {item_type}",
+        )
+    if "image" in lowered_type or "vision" in lowered_type:
+        _append_tool_evidence(
+            observed,
+            toolset="vision",
+            evidence=f"Runtime item: {item_type}",
+        )
+    if "mempalace" in lowered_type or "recall" in lowered_type:
+        _append_tool_evidence(
+            observed,
+            toolset="memory",
+            evidence=f"Runtime item: {item_type}",
+        )
+    if "session_search" in lowered_type:
+        _append_tool_evidence(
+            observed,
+            toolset="session_search",
+            evidence=f"Runtime item: {item_type}",
+        )
+
+
+def _observe_tool_usage_from_output_delta(
+    delta: str,
+    *,
+    observed: defaultdict[str, list[str]],
+) -> None:
+    rendered = _trace_fragment(delta, limit=180)
+    if not rendered:
+        return
+    lowered = rendered.lower()
+    if "screenshot" in lowered or ".png" in lowered or ".jpg" in lowered:
+        _append_tool_evidence(
+            observed,
+            toolset="vision",
+            evidence=f"Output: {rendered}",
+        )
+        if "screenshot" in lowered:
+            _append_tool_evidence(
+                observed,
+                toolset="browser",
+                evidence=f"Output: {rendered}",
+            )
+    if "mempalace" in lowered:
+        _append_tool_evidence(
+            observed,
+            toolset="memory",
+            evidence=f"Output: {rendered}",
+        )
+    if "session_search" in lowered:
+        _append_tool_evidence(
+            observed,
+            toolset="session_search",
+            evidence=f"Output: {rendered}",
+        )
+
+
+def _build_tool_evidence_summary(
+    *,
+    expected_toolsets: list[str],
+    observed_toolsets: list[str],
+    unproven_toolsets: list[str],
+    has_thread: bool,
+) -> str:
+    if not expected_toolsets:
+        return "No explicit toolsets are declared for this mission."
+    if not has_thread:
+        return (
+            "Declared toolsets are armed, but the mission has not opened a thread yet, so there "
+            "is no runtime tool evidence to compare."
+        )
+    if observed_toolsets and not unproven_toolsets:
+        rendered = ", ".join(observed_toolsets)
+        return f"Thread evidence covered all declared toolsets: {rendered}."
+    if observed_toolsets:
+        observed_rendered = ", ".join(observed_toolsets)
+        unproven_rendered = ", ".join(unproven_toolsets)
+        return (
+            f"Thread evidence covered {len(observed_toolsets)} of "
+            f"{len(expected_toolsets)} declared toolsets: {observed_rendered}. "
+            f"Explicit proof is still missing for {unproven_rendered}."
+        )
+    rendered = ", ".join(expected_toolsets)
+    return (
+        "No declared toolsets have explicit runtime evidence yet. "
+        f"Armed posture: {rendered}."
+    )
+
+
+def _parity_tool_evidence_instruction_lines(
+    mission: dict[str, Any],
+    *,
+    task: dict[str, Any] | None,
+    toolsets: list[str],
+) -> list[str]:
+    if not _mission_targets_openclaw_parity(mission, task=task):
+        return []
+    if not toolsets:
+        return []
+    evidence_examples: list[str] = []
+    for toolset in toolsets:
+        if toolset == "debugging":
+            evidence_examples.append(
+                "- debugging: used rg/Get-Content/git diff to inspect the seam"
+            )
+        elif toolset == "delegation":
+            evidence_examples.append(
+                "- delegation: used built-in agents for an Architect or Planner sidecar"
+            )
+        elif toolset == "browser":
+            evidence_examples.append(
+                "- browser: not used in this slice because no UI proof was needed"
+            )
+        elif toolset == "vision":
+            evidence_examples.append(
+                "- vision: used a screenshot or image review to verify the surface"
+            )
+        elif toolset == "memory":
+            evidence_examples.append(
+                "- memory: used MemPalace or Recall to recover prior context"
+            )
+        elif toolset == "session_search":
+            evidence_examples.append(
+                "- session_search: queried prior mission/checkpoint history before "
+                "restating context"
+            )
+        else:
+            evidence_examples.append(f"- {toolset}: used or explain plainly why it stayed unproven")
+    return [
+        "OpenClaw parity proof contract:",
+        (
+            "- This checkpoint is not durable unless it proves both the product claim and which "
+            "declared tool families were actually exercised."
+        ),
+        f"- Declared toolsets for this mission: {', '.join(toolsets)}.",
+        (
+            "- Only mark a toolset as used if this thread actually invoked it or produced direct "
+            "evidence from it."
+        ),
+        (
+            "- If a declared toolset was unnecessary, unavailable, or still unproven, say that "
+            "plainly instead of implying it ran."
+        ),
+        (
+            "- End the final checkpoint with `Completed:`, `Verified:`, `Tool evidence:`, "
+            "`Next step:`, and `Blockers:`."
+        ),
+        "Tool evidence:",
+        *evidence_examples,
+    ]
 
 
 def _build_delegation_brief(
@@ -2569,6 +2894,11 @@ class MissionService:
             live_telemetry=live_telemetry,
         )
         toolsets = self._resolve_toolsets(mission, project=project, task=task)
+        tool_evidence = await self._build_tool_evidence(
+            mission,
+            project=project,
+            task=task,
+        )
         tool_policy = build_hermes_tool_policy(toolsets, setup_mode="local")
         preferred_memory_provider, preferred_executor = await load_saved_runtime_preferences(
             self.database
@@ -2586,6 +2916,7 @@ class MissionService:
             "scope_drift_level": scope.drift_level,
             "scope_drift_summary": scope.drift_summary,
             "live_telemetry": live_telemetry,
+            "tool_evidence": tool_evidence,
             "delegation_brief": delegation_brief,
             "toolsets": toolsets,
             "tool_policy": tool_policy,
@@ -2656,6 +2987,83 @@ class MissionService:
             recent_turn_activity_count_30s=recent_turn_activity_count_30s,
             token_rollup_pending=token_rollup_pending,
             summary=summary,
+        )
+
+    async def _build_tool_evidence(
+        self,
+        mission: dict[str, Any],
+        *,
+        project: dict[str, Any] | None = None,
+        task: dict[str, Any] | None = None,
+    ) -> MissionToolEvidenceView:
+        expected_toolsets = self._resolve_toolsets(mission, project=project, task=task)
+        thread_id = str(mission.get("thread_id") or "").strip()
+        if not expected_toolsets:
+            return MissionToolEvidenceView(
+                proof_ready=True,
+                summary="No explicit toolsets are declared for this mission.",
+            )
+        if not thread_id:
+            return MissionToolEvidenceView(
+                expected_toolsets=expected_toolsets,
+                unproven_toolsets=list(expected_toolsets),
+                summary=_build_tool_evidence_summary(
+                    expected_toolsets=expected_toolsets,
+                    observed_toolsets=[],
+                    unproven_toolsets=expected_toolsets,
+                    has_thread=False,
+                ),
+                items=[
+                    MissionToolEvidenceItemView(toolset=toolset, status="unproven")
+                    for toolset in expected_toolsets
+                ],
+            )
+
+        events = await self.database.list_thread_events(
+            instance_id=int(mission["instance_id"]),
+            thread_id=thread_id,
+            limit=TOOL_EVIDENCE_EVENT_LIMIT,
+        )
+        observed: defaultdict[str, list[str]] = defaultdict(list)
+        for event in events:
+            method = str(event.get("method") or "")
+            payload = event.get("payload")
+            if not isinstance(payload, dict):
+                continue
+            if method in {"item/started", "item/completed"}:
+                item = payload.get("item")
+                if isinstance(item, dict):
+                    _observe_tool_usage_from_item(item, observed=observed)
+            if method.endswith("commandExecution/outputDelta"):
+                delta = str(payload.get("delta") or "").strip()
+                if delta:
+                    _observe_tool_usage_from_output_delta(delta, observed=observed)
+
+        observed_toolsets = [toolset for toolset in expected_toolsets if observed.get(toolset)]
+        unproven_toolsets = [
+            toolset for toolset in expected_toolsets if toolset not in observed_toolsets
+        ]
+        items = [
+            MissionToolEvidenceItemView(
+                toolset=toolset,
+                status="observed" if observed.get(toolset) else "unproven",
+                evidence_count=len(observed.get(toolset, [])),
+                examples=list(observed.get(toolset, [])),
+            )
+            for toolset in expected_toolsets
+        ]
+        return MissionToolEvidenceView(
+            proof_ready=not unproven_toolsets,
+            expected_toolsets=expected_toolsets,
+            observed_toolsets=observed_toolsets,
+            unproven_toolsets=unproven_toolsets,
+            summary=_build_tool_evidence_summary(
+                expected_toolsets=expected_toolsets,
+                observed_toolsets=observed_toolsets,
+                unproven_toolsets=unproven_toolsets,
+                has_thread=True,
+            ),
+            items=items,
         )
 
     async def _build_turn_prompt(self, mission: dict[str, Any]) -> str:
@@ -2748,6 +3156,13 @@ class MissionService:
         tool_policy_lines = build_hermes_tool_policy_lines(tool_policy)
         if tool_policy_lines:
             instructions.extend(["", *tool_policy_lines])
+        parity_tool_lines = _parity_tool_evidence_instruction_lines(
+            mission,
+            task=task,
+            toolsets=toolsets,
+        )
+        if parity_tool_lines:
+            instructions.extend(["", *parity_tool_lines])
         resolved_instance_name = str(mission.get("instance_name") or "").strip() or None
         runtime_profile_row = await self.database.get_hermes_runtime_profile()
         runtime_profile = (

@@ -1,4 +1,5 @@
 import asyncio
+import codecs
 import json
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -8,10 +9,12 @@ from typer.testing import CliRunner
 
 from openzues.app import create_app
 from openzues.cli import (
+    _append_watch_log,
     _emit_attention_queue_action,
     _emit_continue_action,
     _emit_gateway_capability,
     _emit_status,
+    _watch_browser_verify,
     app,
 )
 from openzues.database import Database
@@ -42,6 +45,101 @@ def _bootstrap_cli_workspace(tmp_path, monkeypatch, *, task_name: str = "CLI Gat
         ],
     )
     assert bootstrap.exit_code == 0, bootstrap.stdout
+
+
+def _watch_dashboard_payload(*, mission_status: str = "paused") -> dict[str, object]:
+    return {
+        "brief": {
+            "headline": "Control plane is connected and ready",
+            "summary": "Launch a mission, start a thread manually, or prepare the workspace.",
+            "focus_mission_id": 35,
+        },
+        "control_chat": {
+            "headline": "Tell Zues what to do next",
+            "summary": "Chat is active in the leader window.",
+            "messages": [],
+        },
+        "attention_queue": {
+            "enabled": True,
+            "headline": "Attention queue is standing by",
+            "summary": "Recoveries and checkpoint hardeners can auto-launch.",
+            "actions": [],
+        },
+        "instances": [
+            {
+                "id": 2,
+                "name": "Local Codex Desktop",
+                "connected": True,
+            }
+        ],
+        "missions": [
+            {
+                "id": 35,
+                "name": "OpenClaw Total Parity Program",
+                "status": mission_status,
+                "phase": "paused" if mission_status == "paused" else "ready",
+                "task_blueprint_id": 2,
+                "toolsets": ["delegation", "browser", "debugging"],
+                "current_command": "python -m pytest tests/test_cli.py -q",
+                "last_commentary": "Watching the parity lane and verifying the next relay.",
+                "last_checkpoint": "Checkpoint ready for the next parity slice.",
+                "last_error": None,
+                "in_progress": mission_status == "active",
+                "live_telemetry": {
+                    "streaming": mission_status == "active",
+                    "summary": (
+                        "Streaming now with 3 thread events in the last 30s."
+                        if mission_status == "active"
+                        else "Mission is queued for the next live relay."
+                    ),
+                },
+                "delegation_brief": {
+                    "summary": "Built-in agents are armed for the parity run.",
+                },
+            }
+        ],
+        "gateway_capability": {
+            "level": "ready",
+            "headline": "Gateway capability is aligned",
+            "summary": "The saved launch posture is clear and lane health is stable.",
+        },
+    }
+
+
+def _watch_handoff_payload() -> dict[str, object]:
+    return {
+        "status": "ready",
+        "headline": "Saved launch handoff is ready",
+        "summary": "The saved lane, remote operator, and recurring task are aligned.",
+        "recommended_action": "load_draft",
+        "action_label": "Load launch draft",
+        "warnings": [],
+        "next_entrypoint": "Load the saved launch draft, then run the next verified mission cycle.",
+        "instance": {"id": 2, "label": "Local Codex Desktop", "connected": True},
+        "task_blueprint": {"id": 2, "label": "OpenClaw Total Parity Program"},
+        "mission_draft": {
+            "name": "OpenClaw Total Parity Program",
+            "objective": "Continue the verified parity program.",
+            "instance_id": 2,
+            "project_id": 1,
+            "task_blueprint_id": 2,
+            "cwd": "C:\\Users\\skull\\OneDrive\\Documents\\OpenZues",
+            "model": "gpt-5.4",
+            "reasoning_effort": "high",
+            "max_turns": 8,
+            "use_builtin_agents": True,
+            "run_verification": True,
+            "auto_commit": False,
+            "pause_on_approval": True,
+            "allow_auto_reflexes": True,
+            "auto_recover": True,
+            "auto_recover_limit": 2,
+            "reflex_cooldown_seconds": 900,
+            "allow_failover": True,
+            "toolsets": ["delegation", "browser", "debugging"],
+            "start_immediately": True,
+        },
+    }
 
 
 def test_emit_continue_action_human_output(capsys) -> None:
@@ -217,6 +315,431 @@ def test_status_json_reuses_gateway_contract_and_surfaces_queue_plan(tmp_path, m
     assert payload["queue_plan"]["signal_id"] is not None
     assert "Gateway Doctor says" in payload["queue_plan"]["reply"]
     assert cli_gateway == api_payload
+
+
+def test_watch_json_defaults_to_saved_launch_handoff_task(monkeypatch) -> None:
+    def fake_watch_api_json(
+        base_url: str,
+        path: str,
+        *,
+        method: str = "GET",
+        payload=None,
+        **_kwargs,
+    ):
+        assert base_url == "http://watch.test"
+        assert payload is None
+        if method == "GET" and path == "/api/dashboard":
+            return _watch_dashboard_payload()
+        if method == "GET" and path == "/api/setup/launch":
+            return _watch_handoff_payload()
+        raise AssertionError(f"Unexpected watch request: {method} {path}")
+
+    monkeypatch.setattr("openzues.cli._watch_api_json", fake_watch_api_json)
+
+    result = runner.invoke(app, ["watch", "--url", "http://watch.test", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["watch_target"]["task_name"] == "OpenClaw Total Parity Program"
+    assert payload["watch_target"]["task_blueprint_id"] == 2
+    assert payload["watched_mission"]["id"] == 35
+    assert payload["watched_mission"]["status"] == "paused"
+    assert payload["setup_launch_handoff"]["headline"] == "Saved launch handoff is ready"
+
+
+def test_watch_launch_resumes_paused_saved_mission(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+
+    def fake_watch_api_json(
+        base_url: str,
+        path: str,
+        *,
+        method: str = "GET",
+        payload=None,
+        **_kwargs,
+    ):
+        assert base_url == "http://watch.test"
+        calls.append((method, path))
+        if method == "GET" and path == "/api/dashboard":
+            if ("POST", "/api/missions/35/start") in calls:
+                return _watch_dashboard_payload(mission_status="active")
+            return _watch_dashboard_payload(mission_status="paused")
+        if method == "GET" and path == "/api/setup/launch":
+            return _watch_handoff_payload()
+        if method == "POST" and path == "/api/missions/35/start":
+            return {
+                "id": 35,
+                "name": "OpenClaw Total Parity Program",
+                "status": "active",
+            }
+        raise AssertionError(f"Unexpected watch request: {method} {path}")
+
+    monkeypatch.setattr("openzues.cli._watch_api_json", fake_watch_api_json)
+
+    result = runner.invoke(app, ["watch", "--url", "http://watch.test", "--launch", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["auto_action"]["action"] == "resume_mission"
+    assert payload["watched_mission"]["status"] == "active"
+    assert ("POST", "/api/missions/35/start") in calls
+
+
+def test_watch_prefers_paused_task_mission_over_completed_history(monkeypatch) -> None:
+    dashboard = _watch_dashboard_payload(mission_status="paused")
+    dashboard["missions"].insert(
+        0,
+        {
+            "id": 36,
+            "name": "OpenClaw Total Parity Program",
+            "status": "completed",
+            "phase": "completed",
+            "task_blueprint_id": 2,
+            "toolsets": ["delegation"],
+            "current_command": None,
+            "last_commentary": "Completed checkpoint.",
+            "last_checkpoint": "Checkpoint complete.",
+            "last_error": None,
+            "in_progress": False,
+            "live_telemetry": {"summary": "Last thread event arrived 90s ago."},
+            "delegation_brief": {"summary": "Completed history."},
+            "updated_at": "2026-04-12T15:30:00Z",
+        },
+    )
+    dashboard["missions"][1]["updated_at"] = "2026-04-12T15:20:00Z"
+
+    def fake_watch_api_json(
+        base_url: str,
+        path: str,
+        *,
+        method: str = "GET",
+        payload=None,
+        **_kwargs,
+    ):
+        assert base_url == "http://watch.test"
+        assert payload is None
+        if method == "GET" and path == "/api/dashboard":
+            return dashboard
+        if method == "GET" and path == "/api/setup/launch":
+            return _watch_handoff_payload()
+        raise AssertionError(f"Unexpected watch request: {method} {path}")
+
+    monkeypatch.setattr("openzues.cli._watch_api_json", fake_watch_api_json)
+
+    result = runner.invoke(app, ["watch", "--url", "http://watch.test", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["watched_mission"]["id"] == 35
+    assert payload["watched_mission"]["status"] == "paused"
+
+
+def test_watch_browser_verify_summarizes_browser_state(monkeypatch) -> None:
+    outputs = {
+        ("errors", "--clear"): "",
+        ("console", "--clear"): "✓ Console log cleared",
+        ("open", "http://watch.test"): "",
+        ("wait", "2000"): "",
+        ("get", "url"): "http://watch.test/",
+        ("get", "title"): "OpenZues",
+        (
+            "eval",
+            "document.body && document.body.innerText.trim().length > 0 ? 'HAS_CONTENT' : 'BLANK'",
+        ): '"HAS_CONTENT"',
+        (
+            "eval",
+            "document.querySelector('[data-nextjs-dialog], .vite-error-overlay, "
+            "#webpack-dev-server-client-overlay') ? 'ERROR_OVERLAY' : 'OK'",
+        ): '"OK"',
+        ("--annotate", "screenshot"): "✓ Screenshot saved to C:\\temp\\watch.png",
+        (
+            "snapshot",
+            "-i",
+        ): '- heading "OpenZues" [level=1, ref=e1]\n- button "Quick Connect" [ref=e2]',
+        ("errors",): "",
+        ("console",): "",
+    }
+
+    def fake_run_browser_command(
+        args: list[str],
+        *,
+        session_name: str,
+        timeout_seconds: float = 60.0,
+        allow_failure: bool = False,
+    ) -> str:
+        del timeout_seconds, allow_failure
+        assert session_name == "watch-browser"
+        key = tuple(args)
+        if key not in outputs:
+            raise AssertionError(f"Unexpected browser command: {key}")
+        return outputs[key]
+
+    monkeypatch.setattr("openzues.cli._run_browser_command", fake_run_browser_command)
+
+    payload = _watch_browser_verify(
+        browser_url="http://watch.test",
+        session_name="watch-browser",
+    )
+
+    assert payload["ok"] is True
+    assert payload["status"] == "ready"
+    assert payload["title"] == "OpenZues"
+    assert payload["has_content"] is True
+    assert payload["overlay_status"] == "OK"
+    assert payload["screenshot_path"] == "C:\\temp\\watch.png"
+    assert "OpenZues" in payload["snapshot_summary"]
+
+
+def test_watch_json_can_include_browser_verification(monkeypatch) -> None:
+    def fake_watch_api_json(
+        base_url: str,
+        path: str,
+        *,
+        method: str = "GET",
+        payload=None,
+        **_kwargs,
+    ):
+        assert base_url == "http://watch.test"
+        assert payload is None
+        if method == "GET" and path == "/api/dashboard":
+            return _watch_dashboard_payload(mission_status="active")
+        if method == "GET" and path == "/api/setup/launch":
+            return _watch_handoff_payload()
+        raise AssertionError(f"Unexpected watch request: {method} {path}")
+
+    def fake_browser_verify(*, browser_url: str, session_name: str):
+        assert browser_url == "http://watch.test"
+        assert session_name == "watch-browser"
+        return {
+            "ok": True,
+            "status": "ready",
+            "summary": (
+                "url http://watch.test, content visible, no overlay, "
+                "0 page error(s), 0 console line(s)."
+            ),
+            "title": "OpenZues",
+            "snapshot_summary": '- heading "OpenZues" [level=1, ref=e1]',
+            "screenshot_path": "C:\\temp\\watch.png",
+        }
+
+    monkeypatch.setattr("openzues.cli._watch_api_json", fake_watch_api_json)
+    monkeypatch.setattr("openzues.cli._watch_browser_verify", fake_browser_verify)
+
+    result = runner.invoke(
+        app,
+        [
+            "watch",
+            "--url",
+            "http://watch.test",
+            "--browser",
+            "--browser-session",
+            "watch-browser",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["watched_mission"]["status"] == "active"
+    assert payload["browser_verification"]["status"] == "ready"
+    assert payload["browser_verification"]["title"] == "OpenZues"
+    assert payload["browser_verification"]["screenshot_path"] == "C:\\temp\\watch.png"
+
+
+def test_watch_json_can_write_log_and_copy_browser_artifact(tmp_path, monkeypatch) -> None:
+    source_screenshot = tmp_path / "browser-source.png"
+    source_screenshot.write_bytes(b"browser-proof")
+    log_path = tmp_path / "watch.log"
+    artifact_path = tmp_path / "watch-latest.png"
+
+    def fake_watch_api_json(
+        base_url: str,
+        path: str,
+        *,
+        method: str = "GET",
+        payload=None,
+        **_kwargs,
+    ):
+        assert base_url == "http://watch.test"
+        assert payload is None
+        if method == "GET" and path == "/api/dashboard":
+            return _watch_dashboard_payload(mission_status="active")
+        if method == "GET" and path == "/api/setup/launch":
+            return _watch_handoff_payload()
+        raise AssertionError(f"Unexpected watch request: {method} {path}")
+
+    def fake_browser_verify(*, browser_url: str, session_name: str):
+        assert browser_url == "http://watch.test"
+        assert session_name == "watch-browser"
+        return {
+            "ok": True,
+            "status": "ready",
+            "summary": "browser verification passed.",
+            "title": "OpenZues",
+            "snapshot_summary": '- heading "OpenZues" [level=1, ref=e1]',
+            "screenshot_path": str(source_screenshot),
+        }
+
+    monkeypatch.setattr("openzues.cli._watch_api_json", fake_watch_api_json)
+    monkeypatch.setattr("openzues.cli._watch_browser_verify", fake_browser_verify)
+
+    result = runner.invoke(
+        app,
+        [
+            "watch",
+            "--url",
+            "http://watch.test",
+            "--browser",
+            "--browser-session",
+            "watch-browser",
+            "--browser-screenshot-copy",
+            str(artifact_path),
+            "--log-file",
+            str(log_path),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["browser_verification"]["artifact_path"] == str(artifact_path)
+    assert log_path.exists()
+    assert "OpenClaw Total Parity Program" in log_path.read_text(encoding="utf-8")
+    assert artifact_path.read_bytes() == b"browser-proof"
+
+
+def test_append_watch_log_writes_utf8_bom_once(tmp_path) -> None:
+    log_path = tmp_path / "watch.log"
+
+    _append_watch_log(log_path, text="I’m here", max_bytes=10_000, backups=2)
+    _append_watch_log(log_path, text="Still here", max_bytes=10_000, backups=2)
+
+    raw = log_path.read_bytes()
+    assert raw.startswith(codecs.BOM_UTF8)
+    assert raw.count(codecs.BOM_UTF8) == 1
+    decoded = raw.decode("utf-8-sig")
+    assert "I’m here" in decoded
+    assert "Still here" in decoded
+
+
+def test_append_watch_log_upgrades_existing_utf8_file_without_bom(tmp_path) -> None:
+    log_path = tmp_path / "watch.log"
+    log_path.write_text("Already here\n", encoding="utf-8")
+
+    _append_watch_log(log_path, text="I’m next", max_bytes=10_000, backups=2)
+
+    raw = log_path.read_bytes()
+    assert raw.startswith(codecs.BOM_UTF8)
+    assert raw.count(codecs.BOM_UTF8) == 1
+    decoded = raw.decode("utf-8-sig")
+    assert "Already here" in decoded
+    assert "I’m next" in decoded
+
+
+def test_watch_browser_verify_tolerates_optional_browser_artifact_failures(
+    monkeypatch,
+) -> None:
+    outputs = {
+        ("errors", "--clear"): "",
+        ("console", "--clear"): "",
+        ("open", "http://watch.test"): "",
+        ("wait", "2000"): "",
+        ("get", "url"): "http://watch.test/",
+        ("get", "title"): "OpenZues",
+        (
+            "eval",
+            "document.body && document.body.innerText.trim().length > 0 ? 'HAS_CONTENT' : 'BLANK'",
+        ): '"HAS_CONTENT"',
+        (
+            "eval",
+            "document.querySelector('[data-nextjs-dialog], .vite-error-overlay, "
+            "#webpack-dev-server-client-overlay') ? 'ERROR_OVERLAY' : 'OK'",
+        ): '"OK"',
+        ("errors",): "",
+        ("console",): "",
+    }
+
+    def fake_run_browser_command(
+        args: list[str],
+        *,
+        session_name: str,
+        timeout_seconds: float = 60.0,
+        allow_failure: bool = False,
+    ) -> str:
+        del timeout_seconds, allow_failure
+        assert session_name == "watch-browser"
+        key = tuple(args)
+        if key == ("--annotate", "screenshot"):
+            raise RuntimeError("annotated screenshot timed out")
+        if key == ("snapshot", "-i"):
+            raise RuntimeError("snapshot timed out")
+        if key not in outputs:
+            raise AssertionError(f"Unexpected browser command: {key}")
+        return outputs[key]
+
+    monkeypatch.setattr("openzues.cli._run_browser_command", fake_run_browser_command)
+
+    payload = _watch_browser_verify(
+        browser_url="http://watch.test",
+        session_name="watch-browser",
+    )
+
+    assert payload["ok"] is True
+    assert payload["status"] == "ready"
+    assert payload["screenshot_path"] is None
+    assert payload["snapshot_summary"] == "Browser snapshot unavailable."
+    assert payload["screenshot_error"] == "annotated screenshot timed out"
+    assert payload["snapshot_error"] == "snapshot timed out"
+
+
+def test_watch_human_output_calls_out_observer_mode(monkeypatch) -> None:
+    dashboard = _watch_dashboard_payload(mission_status="active")
+    dashboard["control_chat"] = {
+        "headline": "Observer mode is active",
+        "summary": (
+            "Observer mode is active because another OpenZues server already owns the "
+            "autonomous control plane for this data dir. Leader PID: 18672."
+        ),
+        "messages": [],
+    }
+    dashboard["attention_queue"] = {
+        "enabled": False,
+        "headline": "Observer mode is active",
+        "summary": (
+            "Autonomous queue workers are paused in this window because another OpenZues "
+            "server already owns the control-plane lease. Leader PID: 18672."
+        ),
+        "actions": [],
+    }
+    dashboard["instances"][0]["connected"] = False
+    dashboard["gateway_capability"]["summary"] = "0/2 lane(s) connected in the observer window."
+
+    def fake_watch_api_json(
+        base_url: str,
+        path: str,
+        *,
+        method: str = "GET",
+        payload=None,
+        **_kwargs,
+    ):
+        assert base_url == "http://watch.test"
+        assert payload is None
+        if method == "GET" and path == "/api/dashboard":
+            return dashboard
+        if method == "GET" and path == "/api/setup/launch":
+            return _watch_handoff_payload()
+        raise AssertionError(f"Unexpected watch request: {method} {path}")
+
+    monkeypatch.setattr("openzues.cli._watch_api_json", fake_watch_api_json)
+
+    result = runner.invoke(app, ["watch", "--url", "http://watch.test"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "mode: observer / leader PID 18672" in result.stdout
+    assert "mode note: Mission telemetry may be leader-owned" in result.stdout
+    assert "observer handoff:" in result.stdout
+    assert "observer lanes:" in result.stdout
+    assert "observer gateway:" in result.stdout
 
 
 def test_status_human_output_includes_gateway_radar_launchpad_and_queue(

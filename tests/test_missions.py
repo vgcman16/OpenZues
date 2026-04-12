@@ -1233,6 +1233,75 @@ async def test_get_view_surfaces_adaptive_delegation_brief(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_get_view_surfaces_runtime_tool_evidence(tmp_path) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    manager = FakeManager()
+    manager.instances[7].connected = True
+    service = MissionService(database, manager, BroadcastHub(), poll_interval_seconds=3600)
+
+    mission_id = await database.create_mission(
+        name="OpenClaw parity watcher",
+        objective="Verify the parity seam without pretending every tool already ran.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread_tool_evidence",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=4,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        toolsets=["debugging", "delegation", "browser", "memory", "session_search"],
+    )
+    await database.append_event(
+        instance_id=7,
+        thread_id="thread_tool_evidence",
+        method="item/started",
+        payload={
+            "item": {
+                "type": "commandExecution",
+                "command": (
+                    'powershell.exe -Command "Get-Content src/openzues/services/setup.py"'
+                ),
+            }
+        },
+    )
+    await database.append_event(
+        instance_id=7,
+        thread_id="thread_tool_evidence",
+        method="item/completed",
+        payload={
+            "item": {
+                "type": "collabAgentToolCall",
+                "tool": "spawnAgent",
+                "prompt": "Architect role. Map the next parity seam before edits.",
+            }
+        },
+    )
+
+    view = await service.get_view(mission_id)
+
+    assert view.tool_evidence.proof_ready is False
+    assert view.tool_evidence.observed_toolsets == ["debugging", "delegation"]
+    assert view.tool_evidence.unproven_toolsets == ["browser", "memory", "session_search"]
+    assert "Explicit proof is still missing" in view.tool_evidence.summary
+    evidence_by_toolset = {item.toolset: item for item in view.tool_evidence.items}
+    assert evidence_by_toolset["debugging"].status == "observed"
+    assert evidence_by_toolset["delegation"].status == "observed"
+    assert evidence_by_toolset["browser"].status == "unproven"
+
+
+@pytest.mark.asyncio
 async def test_build_turn_prompt_emits_agent_stack_roles(tmp_path) -> None:
     database = Database(tmp_path / "missions.db")
     await database.initialize()
@@ -1278,6 +1347,49 @@ async def test_build_turn_prompt_emits_agent_stack_roles(tmp_path) -> None:
     assert "Planner:" in prompt
     assert "Coder:" in prompt
     assert "Auditor:" in prompt
+
+
+@pytest.mark.asyncio
+async def test_build_turn_prompt_emits_parity_tool_evidence_contract(tmp_path) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    manager = FakeManager()
+    manager.instances[7].connected = True
+    service = MissionService(database, manager, BroadcastHub(), poll_interval_seconds=3600)
+
+    mission_id = await database.create_mission(
+        name="OpenClaw Total Parity Program",
+        objective="Keep iterating until OpenClaw parity is complete.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread_parity_contract",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=4,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        toolsets=["debugging", "delegation", "browser"],
+    )
+
+    mission = await database.get_mission(mission_id)
+    assert mission is not None
+
+    prompt = await service._build_turn_prompt(mission)
+
+    assert "OpenClaw parity proof contract:" in prompt
+    assert "Tool evidence:" in prompt
+    assert "declared tool families were actually exercised" in prompt
+    assert "- browser: not used in this slice because no UI proof was needed" in prompt
 
 
 @pytest.mark.asyncio

@@ -103,9 +103,51 @@ Or connect to a WebSocket endpoint when you have one available.
 ## Developer commands
 
 - `openzues --reload`
+- `openzues watch --port 8884 --follow --launch`
 - `pytest`
 - `ruff check .`
 - `mypy src`
+
+## Live Watch
+
+When you want to watch the real control plane instead of a second shadow process, point the watcher at
+the running OpenZues server:
+
+```powershell
+openzues watch --port 8884 --follow --launch
+```
+
+That view reads the live `/api/dashboard` and `/api/setup/launch` surfaces, locks onto the saved setup
+handoff task by default, and can auto-resume or launch the saved mission before it starts polling.
+
+For a repo-local Windows launcher, use:
+
+```powershell
+scripts\openzues-watch.cmd --port 8884 --follow --launch --until-terminal
+```
+
+To pair the live API watch with browser verification on the same dashboard:
+
+```powershell
+scripts\openzues-watch-browser.cmd --port 8884 --follow --launch
+```
+
+That browser-backed path uses `agent-browser` to open the live UI, confirm the page has content,
+check for a framework error overlay, collect page and console errors, and capture an annotated
+screenshot artifact beside the mission watch output.
+
+For a longer-running operator monitor with a rolling log plus a stable screenshot that refreshes
+every few cycles, use:
+
+```powershell
+scripts\openzues-operator-monitor.cmd
+```
+
+By default that launcher watches port `8884`, writes a rolling log to
+`%LOCALAPPDATA%\OpenZues\watch\operator-monitor.log`, and keeps the latest browser screenshot at
+`%LOCALAPPDATA%\OpenZues\watch\operator-monitor.png`. The wrapper uses the live API watcher for the
+mission heartbeat, then refreshes the browser screenshot out of process with a fresh `agent-browser`
+session so Windows shell quirks do not jam the main monitor loop.
 
 ## What Is Still Missing
 
