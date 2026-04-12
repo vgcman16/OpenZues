@@ -20,6 +20,7 @@ from openzues.schemas import (
     SetupWizardProbeView,
     SetupWizardSessionUpdate,
     SetupWizardSessionView,
+    TaskBlueprintView,
 )
 from openzues.services.access import AccessService
 from openzues.services.gateway_bootstrap import GatewayBootstrapService
@@ -166,6 +167,14 @@ class SetupService:
                 instance_mode = "quick_connect_desktop"
 
         updated_at = stored.get("updated_at")
+        conversation_target = stored.get("conversation_target")
+        if (
+            conversation_target is None
+            and gateway.launch_route is not None
+            and gateway.launch_route.conversation_target is not None
+        ):
+            conversation_target = gateway.launch_route.conversation_target.model_dump()
+
         payload = {
             "status": status,
             "headline": headline,
@@ -190,6 +199,7 @@ class SetupService:
             "max_turns": stored.get("max_turns", 4),
             "objective_template": stored.get("objective_template")
             or DEFAULT_SETUP_OBJECTIVE_TEMPLATE,
+            "conversation_target": conversation_target,
             "toolsets": stored.get("toolsets") or gateway.toolsets,
             "local_probe": local_probe,
             "remote_probe": remote_probe,
@@ -313,15 +323,31 @@ class SetupService:
         warnings = list(active_gateway.warnings)
         mission_draft = None
         draft_instance = None
+        launch_route = active_gateway.launch_route
+        task_blueprint: TaskBlueprintView | None = None
 
-        if active_gateway.task_blueprint is not None and self.ops_mesh is not None:
-            try:
-                mission_draft = await self.ops_mesh.build_task_draft(
-                    active_gateway.task_blueprint.id
-                )
-                draft_instance = instances.get(mission_draft.instance_id)
-            except KeyError:
+        if active_gateway.task_blueprint is not None:
+            raw_task = await self.database.get_task_blueprint(active_gateway.task_blueprint.id)
+            if raw_task is None:
                 warnings.append("The saved recurring task no longer exists.")
+            else:
+                task_blueprint = TaskBlueprintView.model_validate(raw_task)
+
+        if task_blueprint is not None and self.ops_mesh is not None:
+            try:
+                if self.ops_mesh.launch_routing is not None:
+                    launch_route = await self.ops_mesh.launch_routing.describe(task=task_blueprint)
+                mission_draft = await self.ops_mesh.build_task_draft(task_blueprint.id)
+                if (
+                    mission_draft.thread_id is None
+                    and launch_route.conversation_reuse is not None
+                    and launch_route.conversation_reuse.reusable
+                    and launch_route.conversation_reuse.thread_id is not None
+                ):
+                    mission_draft = mission_draft.model_copy(
+                        update={"thread_id": launch_route.conversation_reuse.thread_id}
+                    )
+                draft_instance = instances.get(mission_draft.instance_id)
             except ValueError:
                 warnings.append("No lane is available yet to materialize the saved launch draft.")
 
@@ -490,7 +516,7 @@ class SetupService:
             operator=active_gateway.operator,
             task_blueprint=active_gateway.task_blueprint,
             mission_draft=mission_draft,
-            launch_route=active_gateway.launch_route,
+            launch_route=launch_route,
         )
 
     async def reset(self, scope: SetupResetScope) -> SetupResetResultView:

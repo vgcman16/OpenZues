@@ -20,6 +20,7 @@ CATALOG_SAMPLE_LIMIT = 8
 LOG_LINE_PREVIEW_LIMIT = 360
 ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 LOG_TIMESTAMP_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z\s+")
+START_TURN_TIMEOUT_CONFIRM_SECONDS = 12.0
 
 
 def _pick_fields(item: dict[str, Any], keys: tuple[str, ...]) -> dict[str, Any]:
@@ -504,69 +505,118 @@ class RuntimeManager:
         client = runtime.client
         if client is None or not runtime.connected:
             return runtime
-        account = (await client.call("account/read", {"refreshToken": False})).get("account")
-        runtime.auth_state = _summarize_account(account)
-        raw_models = (await client.call("model/list", {"limit": 50, "includeHidden": False})).get(
-            "data", []
+        account_payload = await self._safe_refresh_call(
+            runtime,
+            "account/read",
+            {"refreshToken": False},
         )
-        runtime.models = _summarize_models([item for item in raw_models if isinstance(item, dict)])
-        raw_modes = (await client.call("collaborationMode/list", {})).get("data", [])
-        runtime.collaboration_modes = _summarize_named_items(
-            [item for item in raw_modes if isinstance(item, dict)],
-            keys=("name", "mode", "model", "reasoning_effort"),
+        if isinstance(account_payload, dict):
+            runtime.auth_state = _summarize_account(account_payload.get("account"))
+        model_payload = await self._safe_refresh_call(
+            runtime,
+            "model/list",
+            {"limit": 50, "includeHidden": False},
         )
+        if isinstance(model_payload, dict):
+            raw_models = model_payload.get("data", [])
+            runtime.models = _summarize_models(
+                [item for item in raw_models if isinstance(item, dict)]
+            )
+        mode_payload = await self._safe_refresh_call(runtime, "collaborationMode/list", {})
+        if isinstance(mode_payload, dict):
+            raw_modes = mode_payload.get("data", [])
+            runtime.collaboration_modes = _summarize_named_items(
+                [item for item in raw_modes if isinstance(item, dict)],
+                keys=("name", "mode", "model", "reasoning_effort"),
+            )
         skills_params: dict[str, Any] = {"forceReload": False}
         if runtime.cwd:
             skills_params["cwds"] = [runtime.cwd]
-        raw_skills = (await client.call("skills/list", skills_params)).get("data", [])
-        runtime.skills = _summarize_named_items(
-            [item for item in raw_skills if isinstance(item, dict)],
-            keys=("name", "description"),
-        )
-        raw_apps = (await client.call("app/list", {"limit": 50})).get("data", [])
-        runtime.apps = _summarize_named_items(
-            [item for item in raw_apps if isinstance(item, dict)],
-            keys=("id", "name", "description", "isAccessible", "isEnabled"),
-        )
-        raw_plugins = (await client.call("plugin/list", {})).get("data", [])
-        runtime.plugins = _summarize_named_items(
-            [item for item in raw_plugins if isinstance(item, dict)],
-            keys=("name", "enabled"),
-        )
+        skills_payload = await self._safe_refresh_call(runtime, "skills/list", skills_params)
+        if isinstance(skills_payload, dict):
+            raw_skills = skills_payload.get("data", [])
+            runtime.skills = _summarize_named_items(
+                [item for item in raw_skills if isinstance(item, dict)],
+                keys=("name", "description"),
+            )
+        apps_payload = await self._safe_refresh_call(runtime, "app/list", {"limit": 50})
+        if isinstance(apps_payload, dict):
+            raw_apps = apps_payload.get("data", [])
+            runtime.apps = _summarize_named_items(
+                [item for item in raw_apps if isinstance(item, dict)],
+                keys=("id", "name", "description", "isAccessible", "isEnabled"),
+            )
+        plugins_payload = await self._safe_refresh_call(runtime, "plugin/list", {})
+        if isinstance(plugins_payload, dict):
+            raw_plugins = plugins_payload.get("data", [])
+            runtime.plugins = _summarize_named_items(
+                [item for item in raw_plugins if isinstance(item, dict)],
+                keys=("name", "enabled"),
+            )
         raw_mcp_servers = await self.list_mcp_server_status(instance_id, limit=50, refresh=True)
         runtime.mcp_servers = _summarize_named_items(
             [item for item in raw_mcp_servers if isinstance(item, dict)],
             keys=("name", "status", "source", "authStatus"),
         )
-        raw_config = (await client.call("config/read", {"includeLayers": False})).get("config")
-        runtime.config = (
-            _pick_fields(
-                raw_config,
-                (
-                    "model",
-                    "model_reasoning_effort",
-                    "profile",
-                    "sandbox",
-                    "approvalPolicy",
-                    "approval_policy",
-                ),
+        config_payload = await self._safe_refresh_call(
+            runtime,
+            "config/read",
+            {"includeLayers": False},
+        )
+        if isinstance(config_payload, dict):
+            raw_config = config_payload.get("config")
+            runtime.config = (
+                _pick_fields(
+                    raw_config,
+                    (
+                        "model",
+                        "model_reasoning_effort",
+                        "profile",
+                        "sandbox",
+                        "approvalPolicy",
+                        "approval_policy",
+                    ),
+                )
+                if isinstance(raw_config, dict)
+                else None
             )
-            if isinstance(raw_config, dict)
-            else None
-        )
-        raw_threads = (await client.call("thread/list", {"limit": 30})).get("data", [])
-        runtime.threads = _summarize_threads(
-            [item for item in raw_threads if isinstance(item, dict)]
-        )
-        runtime.loaded_thread_ids = (await client.call("thread/loaded/list", {})).get(
-            "threadIds", []
-        )
+        thread_payload = await self._safe_refresh_call(runtime, "thread/list", {"limit": 30})
+        if isinstance(thread_payload, dict):
+            raw_threads = thread_payload.get("data", [])
+            runtime.threads = _summarize_threads(
+                [item for item in raw_threads if isinstance(item, dict)]
+            )
+        loaded_threads_payload = await self._safe_refresh_call(runtime, "thread/loaded/list", {})
+        if isinstance(loaded_threads_payload, dict):
+            runtime.loaded_thread_ids = loaded_threads_payload.get("threadIds", [])
         runtime.unresolved_requests = await self.database.list_unresolved_server_requests(
             instance_id
         )
         runtime.last_event_at = utcnow()
         await self.publish_snapshot("instance/refreshed", {"instanceId": instance_id})
         return runtime
+
+    async def _safe_refresh_call(
+        self,
+        runtime: InstanceRuntime,
+        method: str,
+        params: dict[str, Any],
+    ) -> Any | None:
+        client = runtime.client
+        if client is None:
+            return None
+        try:
+            return await client.call(method, params)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning(
+                "Instance refresh kept cached data for %s on instance %s",
+                method,
+                runtime.instance_id,
+                exc_info=True,
+            )
+            return None
 
     async def _refresh_instance_safely(self, instance_id: int) -> InstanceRuntime:
         runtime = await self.get(instance_id)
@@ -644,12 +694,56 @@ class RuntimeManager:
         runtime = await self.get(instance_id)
         if runtime.client is None:
             raise RuntimeError("Instance is not connected.")
-        result = await runtime.client.start_thread(
-            model=model,
-            cwd=cwd,
-            reasoning_effort=reasoning_effort,
-            collaboration_mode=collaboration_mode,
-        )
+        known_thread_ids = {
+            str(thread.get("id"))
+            for thread in runtime.threads
+            if isinstance(thread, dict) and isinstance(thread.get("id"), str)
+        }
+        attempts = 2
+        last_error: Exception | None = None
+        result: dict[str, Any] | None = None
+        for attempt in range(attempts):
+            if runtime.client is None:
+                raise RuntimeError("Instance is not connected.")
+            try:
+                result = await runtime.client.start_thread(
+                    model=model,
+                    cwd=cwd,
+                    reasoning_effort=reasoning_effort,
+                    collaboration_mode=collaboration_mode,
+                )
+                break
+            except TimeoutError as exc:
+                last_error = exc
+                await self._refresh_runtime_threads(runtime)
+                recovered_thread = next(
+                    (
+                        str(thread.get("id"))
+                        for thread in runtime.threads
+                        if isinstance(thread, dict)
+                        and isinstance(thread.get("id"), str)
+                        and str(thread.get("id")) not in known_thread_ids
+                    ),
+                    None,
+                )
+                if recovered_thread is not None:
+                    self._schedule_refresh_instance(instance_id)
+                    return {
+                        "thread": {"id": recovered_thread},
+                        "threadId": recovered_thread,
+                        "recoveredFrom": "timeout",
+                    }
+                if attempt == attempts - 1:
+                    raise
+                logger.warning(
+                    "Thread launch timed out for instance %s; reconnecting and retrying once.",
+                    instance_id,
+                )
+                await self.disconnect_instance(instance_id)
+                runtime = await self.connect_instance(instance_id)
+        if result is None:
+            assert last_error is not None
+            raise last_error
         thread_id = None
         thread = result.get("thread") if isinstance(result, dict) else None
         if isinstance(thread, dict) and isinstance(thread.get("id"), str):
@@ -690,6 +784,23 @@ class RuntimeManager:
                     collaboration_mode=collaboration_mode,
                 )
                 break
+            except TimeoutError as exc:
+                last_error = exc
+                result = await self._confirm_timed_out_start_turn(
+                    runtime,
+                    instance_id,
+                    thread_id,
+                )
+                if result is not None:
+                    logger.warning(
+                        "Recovered timed-out turn start for thread %s on instance %s.",
+                        thread_id,
+                        instance_id,
+                    )
+                    break
+                if attempt == attempts - 1:
+                    raise
+                await asyncio.sleep(0.5 * (attempt + 1))
             except Exception as exc:
                 last_error = exc
                 if "thread not found" not in str(exc).lower() or attempt == attempts - 1:
@@ -701,6 +812,39 @@ class RuntimeManager:
             raise last_error
         self._schedule_refresh_instance(instance_id)
         return result
+
+    async def _confirm_timed_out_start_turn(
+        self,
+        runtime: InstanceRuntime,
+        instance_id: int,
+        thread_id: str,
+        *,
+        timeout_seconds: float = START_TURN_TIMEOUT_CONFIRM_SECONDS,
+    ) -> dict[str, Any] | None:
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout_seconds
+        observed_active = False
+        while loop.time() < deadline:
+            await self._refresh_runtime_threads(runtime)
+            turn_id = self._turn_id_from_runtime(runtime, thread_id)
+            if turn_id is None:
+                turn_id = await self._turn_id_from_events(instance_id, thread_id)
+            thread_status = self._thread_status_from_runtime(runtime, thread_id)
+            if thread_status == "active":
+                observed_active = True
+            if turn_id is not None:
+                return {
+                    "threadId": thread_id,
+                    "turn": {"id": turn_id},
+                    "recoveredFrom": "timeout",
+                }
+            if observed_active:
+                return {
+                    "threadId": thread_id,
+                    "recoveredFrom": "timeout",
+                }
+            await asyncio.sleep(0.5)
+        return None
 
     async def interrupt_turn(self, instance_id: int, thread_id: str) -> dict[str, Any]:
         runtime = await self.get(instance_id)

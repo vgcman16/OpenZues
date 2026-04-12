@@ -229,6 +229,75 @@ def test_gateway_doctor_json_includes_gateway_capability_summary(tmp_path, monke
     assert cli_payload == api_payload
 
 
+def test_emit_gateway_capability_surfaces_conversation_reuse_summary(capsys) -> None:
+    _emit_gateway_capability(
+        {
+            "headline": "Gateway capability is operator-ready",
+            "summary": "Control plane is aligned.",
+            "connected_lane_health": {"summary": "1/1 lane(s) connected."},
+            "inventory": {"summary": "Tracked inventory is healthy.", "memory_summary": "Idle."},
+            "approval_posture": {"summary": "No approvals waiting."},
+            "launch_policy": {
+                "summary": "Verification on. Next launch will reuse thread thread_saved.",
+                "launch_route": {
+                    "conversation_target": {
+                        "summary": "slack · account workspace-bot · channel deploy-room"
+                    },
+                    "conversation_reuse": {
+                        "summary": (
+                            "Next launch will reuse thread thread_saved from mission "
+                            "'Parity'."
+                        )
+                    }
+                },
+            },
+            "diagnostics": {"summary": "Diagnostics are clean."},
+        },
+        json_output=False,
+    )
+
+    output = capsys.readouterr().out
+    assert "conversation target: slack" in output
+    assert "conversation reuse: Next launch will reuse thread thread_saved" in output
+
+
+def test_emit_gateway_capability_surfaces_callable_method_inventory(capsys) -> None:
+    _emit_gateway_capability(
+        {
+            "headline": "Gateway capability is operator-ready",
+            "summary": "Control plane is aligned.",
+            "connected_lane_health": {"summary": "1/1 lane(s) connected."},
+            "inventory": {
+                "summary": "Tracked inventory is healthy.",
+                "memory_summary": "Idle.",
+                "method_catalog": {
+                    "summary": (
+                        "3 callable method(s) are visible across 1 MCP server catalog(s) on "
+                        "1 connected lane(s)."
+                    ),
+                    "tool_count": 3,
+                    "server_count": 1,
+                    "lane_count": 1,
+                    "tools": [
+                        "github_create_pull_request",
+                        "github_search",
+                        "github_search_prs",
+                    ],
+                    "servers": ["GitHub MCP Server"],
+                },
+            },
+            "approval_posture": {"summary": "No approvals waiting."},
+            "launch_policy": {"summary": "Saved local launch policy."},
+            "diagnostics": {"summary": "Diagnostics are clean."},
+        },
+        json_output=False,
+    )
+
+    output = capsys.readouterr().out
+    assert "method catalog: 3 callable method(s) are visible" in output
+    assert "method tools: github_create_pull_request, github_search, github_search_prs" in output
+
+
 def test_continue_plan_uses_gateway_aware_repair_first_posture(tmp_path, monkeypatch) -> None:
     _bootstrap_cli_workspace(tmp_path, monkeypatch)
 
@@ -258,6 +327,23 @@ def test_queue_plan_uses_attention_queue_planner(tmp_path, monkeypatch) -> None:
     assert payload["mission_payload"] is None
 
 
+def test_queue_plan_can_target_selected_signal_id(tmp_path, monkeypatch) -> None:
+    _bootstrap_cli_workspace(tmp_path, monkeypatch, task_name="CLI Queue Loop")
+
+    baseline = runner.invoke(app, ["queue", "--plan", "--json"])
+    assert baseline.exit_code == 0, baseline.stdout
+    signal_id = json.loads(baseline.stdout)["signal_id"]
+
+    result = runner.invoke(app, ["queue", "--signal-id", signal_id, "--plan", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["mode"] == "plan"
+    assert payload["executed"] is False
+    assert payload["signal_id"] == signal_id
+    assert "Gateway Doctor says" in payload["reply"]
+
+
 def test_queue_execute_runs_one_bounded_attention_move(tmp_path, monkeypatch) -> None:
     _bootstrap_cli_workspace(tmp_path, monkeypatch, task_name="CLI Queue Loop")
 
@@ -271,6 +357,33 @@ def test_queue_execute_runs_one_bounded_attention_move(tmp_path, monkeypatch) ->
     assert payload["status"] == "escalated"
     assert payload["signal_id"] is not None
     assert "Gateway Doctor says" in payload["reply"]
+
+
+def test_queue_execute_can_target_selected_signal_id(tmp_path, monkeypatch) -> None:
+    _bootstrap_cli_workspace(tmp_path, monkeypatch, task_name="CLI Queue Loop")
+
+    baseline = runner.invoke(app, ["queue", "--plan", "--json"])
+    assert baseline.exit_code == 0, baseline.stdout
+    signal_id = json.loads(baseline.stdout)["signal_id"]
+
+    result = runner.invoke(app, ["queue", "--signal-id", signal_id, "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["mode"] == "executed"
+    assert payload["executed"] is True
+    assert payload["signal_id"] == signal_id
+    assert "Gateway Doctor says" in payload["reply"]
+
+
+def test_queue_rejects_unknown_signal_id(tmp_path, monkeypatch) -> None:
+    _bootstrap_cli_workspace(tmp_path, monkeypatch, task_name="CLI Queue Loop")
+
+    result = runner.invoke(app, ["queue", "--signal-id", "missing-signal", "--plan"])
+
+    assert result.exit_code == 1
+    assert "Attention-queue signal 'missing-signal' is not available right now." in result.stderr
+    assert "Available ids:" in result.stderr
 
 
 def test_gateway_doctor_human_output_summarizes_sections(tmp_path, monkeypatch) -> None:
@@ -785,7 +898,17 @@ def test_emit_status_human_output_includes_launchpad_opportunity_ids(capsys) -> 
                 "launch_policy": {"summary": "Launch summary"},
                 "warnings": [],
             },
-            "radar": {"summary": "Radar summary", "signals": []},
+            "radar": {
+                "summary": "Radar summary",
+                "signals": [
+                    {
+                        "id": "gateway/capability",
+                        "level": "warn",
+                        "title": "Gateway capability has live gaps",
+                        "detail": "Connected lanes need repair before launch.",
+                    }
+                ],
+            },
             "launchpad": {
                 "summary": "Launchpad summary",
                 "opportunities": [
@@ -799,6 +922,10 @@ def test_emit_status_human_output_includes_launchpad_opportunity_ids(capsys) -> 
     )
 
     output = capsys.readouterr().out
+    assert (
+        "[WARN] Gateway capability has live gaps (gateway/capability): "
+        "Connected lanes need repair before launch."
+    ) in output
     assert "opportunity: Stabilize gateway posture (gateway-repair)" in output
 
 
@@ -986,6 +1113,18 @@ def test_recover_plan_passes_recover_prompt_to_control_chat_planner(tmp_path, mo
     assert payload["action_kind"] == "launch_opportunity"
     assert payload["target_label"] == "Recover ForumForge"
     assert payload["opportunity_id"] == "recover-7"
+
+
+def test_recover_plan_smoke_builds_real_dashboard(tmp_path, monkeypatch) -> None:
+    _bootstrap_cli_workspace(tmp_path, monkeypatch, task_name="CLI Recover Loop")
+
+    result = runner.invoke(app, ["recover", "--plan", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["mode"] == "plan"
+    assert isinstance(payload["action_kind"], str)
+    assert "reply" in payload
 
 
 def test_harden_execute_submits_harden_prompt(tmp_path, monkeypatch) -> None:

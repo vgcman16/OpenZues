@@ -207,6 +207,27 @@
                       placeholder="Objective template. Example: Check the repo, ship the next verified slice, and leave a concise checkpoint."
                       required
                     ></textarea>
+                    <input
+                      name="conversation_channel"
+                      type="text"
+                      placeholder="Conversation channel (optional), e.g. slack"
+                    />
+                    <input
+                      name="conversation_account_id"
+                      type="text"
+                      placeholder="Conversation account or bot identity (optional)"
+                    />
+                    <select name="conversation_peer_kind">
+                      <option value="">Peer kind (optional)</option>
+                      <option value="direct">Direct</option>
+                      <option value="group">Group</option>
+                      <option value="channel">Channel</option>
+                    </select>
+                    <input
+                      name="conversation_peer_id"
+                      type="text"
+                      placeholder="Peer id, room, or thread (optional)"
+                    />
                     <input name="model" type="text" placeholder="Model (gpt-5.4)" />
                     <input
                       name="toolsets"
@@ -858,6 +879,27 @@
                         type="text"
                         placeholder="Hermes toolsets (optional)"
                       />
+                      <input
+                        name="conversation_channel"
+                        type="text"
+                        placeholder="Conversation channel (optional), e.g. slack"
+                      />
+                      <input
+                        name="conversation_account_id"
+                        type="text"
+                        placeholder="Conversation account or bot identity (optional)"
+                      />
+                      <select name="conversation_peer_kind">
+                        <option value="">Peer kind (optional)</option>
+                        <option value="direct">Direct</option>
+                        <option value="group">Group</option>
+                        <option value="channel">Channel</option>
+                      </select>
+                      <input
+                        name="conversation_peer_id"
+                        type="text"
+                        placeholder="Peer id, room, or thread (optional)"
+                      />
                     </div>
 
                     <textarea
@@ -1073,6 +1115,27 @@
                         name="toolsets"
                         type="text"
                         placeholder="Hermes toolsets, e.g. hermes-cli,browser,debugging"
+                      />
+                      <input
+                        name="conversation_channel"
+                        type="text"
+                        placeholder="Conversation channel (optional), e.g. slack"
+                      />
+                      <input
+                        name="conversation_account_id"
+                        type="text"
+                        placeholder="Conversation account or bot identity (optional)"
+                      />
+                      <select name="conversation_peer_kind">
+                        <option value="">Peer kind (optional)</option>
+                        <option value="direct">Direct</option>
+                        <option value="group">Group</option>
+                        <option value="channel">Channel</option>
+                      </select>
+                      <input
+                        name="conversation_peer_id"
+                        type="text"
+                        placeholder="Peer id, room, or thread (optional)"
                       />
                     </div>
 

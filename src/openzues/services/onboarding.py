@@ -101,6 +101,11 @@ class OnboardingService:
                 "model": payload.model,
                 "max_turns": payload.max_turns,
                 "objective_template": payload.objective_template,
+                "conversation_target": (
+                    payload.conversation_target.model_dump()
+                    if payload.conversation_target is not None
+                    else None
+                ),
                 "toolsets": payload.toolsets,
             }
         )
@@ -709,6 +714,7 @@ class OnboardingService:
             name=payload.task_name,
             summary=payload.task_summary,
             objective_template=payload.objective_template,
+            conversation_target=payload.conversation_target,
             instance_id=instance_id,
             project_id=project_id,
             cadence_minutes=payload.cadence_minutes,
@@ -754,6 +760,11 @@ class OnboardingService:
         await self.database.update_task_blueprint_payload(
             int(existing["id"]),
             objective_template=payload.objective_template,
+            conversation_target=(
+                payload.conversation_target.model_dump()
+                if payload.conversation_target is not None
+                else None
+            ),
             run_until_complete=False,
             continuation_cooldown_minutes=10,
             completion_marker=payload.completion_marker,

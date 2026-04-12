@@ -34,6 +34,7 @@ from openzues.services.hermes_runtime_profile import (
     load_saved_runtime_preferences,
     memory_provider_label,
 )
+from openzues.services.hermes_skills import is_local_skill_source_available
 from openzues.services.hermes_toolsets import (
     build_hermes_tool_policy,
     build_hermes_tool_policy_lines,
@@ -52,11 +53,38 @@ from openzues.services.skillbook import build_prompt_skill_lines, resolve_skill_
 
 logger = logging.getLogger(__name__)
 
+
+def _conversation_target_key(
+    target: dict[str, Any] | Any | None,
+) -> tuple[str, str, str, str] | None:
+    if target is None:
+        return None
+    if isinstance(target, dict):
+        channel = str(target.get("channel") or "").strip().lower()
+        account_id = str(target.get("account_id") or "").strip().lower()
+        peer_kind = str(target.get("peer_kind") or "").strip().lower()
+        peer_id = str(target.get("peer_id") or "").strip().lower()
+    else:
+        channel = str(getattr(target, "channel", "") or "").strip().lower()
+        account_id = str(getattr(target, "account_id", "") or "").strip().lower()
+        peer_kind = str(getattr(target, "peer_kind", "") or "").strip().lower()
+        peer_id = str(getattr(target, "peer_id", "") or "").strip().lower()
+    if not channel:
+        return None
+    return (channel, account_id, peer_kind, peer_id)
+
+
 STALE_TURN_SECONDS = 8 * 60
 CONTINUITY_SNAPSHOT_MIN_SECONDS = 5 * 60
 CONTINUITY_SNAPSHOT_KIND = "continuity_auto"
 RESTART_SAFE_SNAPSHOT_MIN_SECONDS = 90
 RESTART_SAFE_SNAPSHOT_KIND = "restart_safe"
+REPORTING_ORBIT_MIN_SECONDS = 2 * 60
+REPORTING_ORBIT_MIN_COMMENTARY_DELTAS = 12
+REPORTING_ORBIT_EVENT_LIMIT = 120
+PARITY_REPORTING_ORBIT_MIN_SECONDS = 45
+PARITY_REPORTING_ORBIT_MIN_COMMENTARY_DELTAS = 6
+INSPECTION_EXECUTION_STALL_SECONDS = 2 * 60
 RECOVERY_TRACE_EVENT_LIMIT = 80
 RECOVERY_TRACE_LINE_LIMIT = 8
 VERIFICATION_PASS_PATTERNS = (
@@ -96,7 +124,7 @@ CONTRACT_SEAM_MARKERS = (
     "serializer",
     "view",
 )
-TOOL_EVIDENCE_EVENT_LIMIT = 240
+TOOL_EVIDENCE_EVENT_LIMIT = 1200
 TOOL_EVIDENCE_EXAMPLE_LIMIT = 2
 INSPECTION_COMMAND_MARKERS = (
     "get-content",
@@ -132,6 +160,7 @@ MEMORY_COMMAND_PATTERNS = (
 )
 SESSION_SEARCH_COMMAND_PATTERNS = (
     re.compile(r"\bsession_search\b", re.I),
+    re.compile(r"\bopenzues\s+recall\b", re.I),
 )
 DOCKER_COMMAND_PATTERNS = (
     re.compile(r"\bdocker(?:\.exe)?\b", re.I),
@@ -142,6 +171,47 @@ DELEGATION_ROLE_HINTS = (
     "planner",
     "coder",
     "auditor",
+)
+OPENCLAW_PARITY_CHECKPOINT_LEDGER = "docs/openclaw-parity-checkpoint-2026-04-10.md"
+OPENCLAW_PARITY_OLD_INVENTORY_SENTENCE = (
+    "First inventory the OpenClaw surface area across gateway, onboarding, CLI, channels, "
+    "routing, voice, canvas, nodes, skills, browser, packaging, and companion apps."
+)
+OPENCLAW_PARITY_OLD_SLICE_SENTENCE = (
+    "Then choose the highest-leverage missing parity slice in OpenZues, implement it end to end "
+    "in production quality, run the relevant verification, and leave a checkpoint that names "
+    "what was completed, what remains, and the next best slice."
+)
+OPENCLAW_PARITY_OBJECTIVE_TRIM_HEADINGS = {
+    "Project skillbook:",
+    "Hermes tool policy:",
+    "Known integration inventory:",
+    "ECC workspace surface:",
+    "MemPalace protocol:",
+    "MemPalace maintenance protocol:",
+}
+OPENCLAW_PARITY_LOW_SIGNAL_RECOVERY_MARKERS = (
+    "hermes workflow guidance",
+    "current openzues worktree state",
+    "rebuilding context first",
+    "re-entering from the",
+    "rebinding on the checkpoint",
+    "checkpoint seam now",
+    "recall/session-search path first",
+    "recall/session-search first",
+    "before touching broader repo context",
+    "before any broader scan",
+    "read only the checkpoint",
+    "locking the next verified seam",
+    "current focus:",
+    "delegation preamble",
+    "planning spiral",
+)
+OPENCLAW_PARITY_BASELINE_TOOLSETS = (
+    "debugging",
+    "delegation",
+    "memory",
+    "session_search",
 )
 
 
@@ -165,6 +235,26 @@ def _is_thread_not_found_error(value: str | Exception | None) -> bool:
     if value is None:
         return False
     return "thread not found" in str(value).lower()
+
+
+def _is_turn_start_timeout_error(value: str | Exception | None) -> bool:
+    if value is None:
+        return False
+    lowered = str(value).lower()
+    return "failed to start the turn" in lowered or (
+        "turn/start" in lowered and "timeout" in lowered
+    )
+
+
+def _live_thread_failure_can_heal(value: str | Exception | None) -> bool:
+    if value is None:
+        return False
+    rendered = str(value)
+    return (
+        _is_thread_not_found_error(rendered)
+        or rendered.startswith("Waiting for approval:")
+        or _is_turn_start_timeout_error(rendered)
+    )
 
 
 def _truncate_text(value: str | None, limit: int = 320) -> str:
@@ -246,7 +336,7 @@ def _thread_live_summary(
 def _mission_text_blob(mission: dict[str, Any]) -> str:
     parts = [
         mission.get("name"),
-        mission.get("objective"),
+        _rendered_objective_for_turn(mission),
         mission.get("last_commentary"),
         mission.get("last_checkpoint"),
         mission.get("current_command"),
@@ -295,6 +385,13 @@ def _command_is_inspection_only(command: str) -> bool:
     return any(marker in lowered for marker in INSPECTION_COMMAND_MARKERS)
 
 
+def _execution_stall_threshold_seconds(command: str | None) -> int:
+    command_text = str(command or "").strip()
+    if command_text and _command_is_inspection_only(command_text):
+        return INSPECTION_EXECUTION_STALL_SECONDS
+    return STALE_TURN_SECONDS
+
+
 def _append_tool_evidence(
     observed: defaultdict[str, list[str]],
     *,
@@ -333,6 +430,185 @@ def _mission_targets_openclaw_parity(
         )
     blob = " ".join(str(value or "") for value in values).lower()
     return "parity" in blob and ("openclaw" in blob or "parity complete" in blob)
+
+
+def _compact_parity_objective_text(value: str | None) -> str:
+    objective = str(value or "").strip()
+    if not objective:
+        return objective
+    trimmed_lines: list[str] = []
+    for line in objective.splitlines():
+        stripped = line.strip()
+        if stripped in OPENCLAW_PARITY_OBJECTIVE_TRIM_HEADINGS or stripped.startswith(
+            "Hermes runtime posture prefers"
+        ):
+            break
+        trimmed_lines.append(line)
+    compacted = "\n".join(trimmed_lines).strip() or objective
+    replacement = (
+        f"Resume from the verified checkpoint in `{OPENCLAW_PARITY_CHECKPOINT_LEDGER}` "
+        "instead of rebuilding the full source inventory. Choose the next bounded missing seam "
+        "named there, implement it end to end in production quality, run the focused "
+        "verification for that seam, and leave a checkpoint that names what was completed, "
+        "what remains, and the next best slice."
+    )
+    old_block = (
+        f"{OPENCLAW_PARITY_OLD_INVENTORY_SENTENCE} {OPENCLAW_PARITY_OLD_SLICE_SENTENCE}"
+    )
+    if old_block in compacted:
+        compacted = compacted.replace(old_block, replacement)
+    compacted = compacted.replace(OPENCLAW_PARITY_OLD_INVENTORY_SENTENCE, replacement)
+    if (
+        OPENCLAW_PARITY_CHECKPOINT_LEDGER not in compacted
+        and "OpenClaw parity anchor:" not in compacted
+    ):
+        compacted = "\n".join(
+            [
+                compacted,
+                "",
+                "OpenClaw parity anchor:",
+                (
+                    f"- Resume from `{OPENCLAW_PARITY_CHECKPOINT_LEDGER}` instead of rebuilding "
+                    "the global source inventory."
+                ),
+                (
+                    "- Lock one unfinished seam from the latest checkpoint, name the target "
+                    "files, land the change, run focused verification, and checkpoint that "
+                    "slice."
+                ),
+            ]
+        ).strip()
+    return compacted
+
+
+def _openclaw_parity_toolsets(
+    *,
+    use_builtin_agents: bool,
+    run_verification: bool,
+) -> list[str]:
+    toolsets: list[str] = []
+    if run_verification:
+        toolsets.append("debugging")
+    if use_builtin_agents:
+        toolsets.append("delegation")
+    toolsets.extend(
+        toolset
+        for toolset in OPENCLAW_PARITY_BASELINE_TOOLSETS
+        if toolset not in toolsets
+    )
+    return toolsets
+
+
+def _rendered_objective_for_turn(mission: dict[str, Any]) -> str:
+    objective = str(mission.get("objective") or "").strip()
+    if _mission_targets_openclaw_parity(mission):
+        return _compact_parity_objective_text(objective)
+    return objective
+
+
+def _is_low_signal_parity_recovery_summary(value: str | None) -> bool:
+    summary = str(value or "").strip().lower()
+    if not summary:
+        return True
+    return any(marker in summary for marker in OPENCLAW_PARITY_LOW_SIGNAL_RECOVERY_MARKERS)
+
+
+def _uses_fast_parity_reporting_orbit_cutoff(
+    mission: dict[str, Any],
+    *,
+    commentary_text: str | None = None,
+) -> bool:
+    if not _mission_targets_openclaw_parity(mission):
+        return False
+    if str(mission.get("current_command") or "").strip():
+        return False
+    return any(
+        _is_low_signal_parity_recovery_summary(candidate)
+        for candidate in (commentary_text, mission.get("last_commentary"))
+    )
+
+
+def _parity_recovery_rule_lines() -> list[str]:
+    return [
+        "Parity recovery rules:",
+        f"- Treat `{OPENCLAW_PARITY_CHECKPOINT_LEDGER}` as the recovery ledger.",
+        "- Give at most two short commentary sentences before the first tool call.",
+        (
+            "- Before any repo-wide `rg` sweep or extra file read, use OpenZues Recall or another "
+            "session-search path so you are not rebuilding the handoff from scratch."
+        ),
+        (
+            "- A repo-wide search for thread ids, mission labels, or checkpoint filenames does "
+            "not count as session search."
+        ),
+        (
+            "- Generic MCP inventory probes like `list_mcp_resources` do not count as session "
+            "search or Recall."
+        ),
+        (
+            "- If Recall is unavailable, say that once, then move straight to the ledger and one "
+            "concrete seam instead of narrating the recovery plan."
+        ),
+        "- Read only the checkpoint and the 1-3 source/target files needed to lock the next seam.",
+        (
+            "- Do not rerun the global inventory or reread Hermes/ECC skillbooks unless the "
+            "chosen seam directly depends on them."
+        ),
+        (
+            "- If you reach a second planning sentence before a tool call or checkpoint, stop "
+            "narrating and act."
+        ),
+        (
+            "- Do not delegate until the exact seam, owned files, and focused verification "
+            "bar are named."
+        ),
+        (
+            "- After the seam is named, launch at most one tightly scoped Architect or Planner "
+            "sidecar when delegation will genuinely tighten the slice."
+        ),
+    ]
+
+
+def _preferred_parity_recovery_anchor(
+    anchor: str | None,
+    checkpoints: list[dict[str, Any]],
+) -> str:
+    rendered_anchor = str(anchor or "").strip()
+    if rendered_anchor and not _is_low_signal_parity_recovery_summary(rendered_anchor):
+        return rendered_anchor
+    checkpoint_lines = _recovery_checkpoint_summary_lines(checkpoints, parity_mode=True)
+    if checkpoint_lines:
+        return checkpoint_lines[0][2:]
+    return (
+        f"Resume from `{OPENCLAW_PARITY_CHECKPOINT_LEDGER}` and lock one unfinished seam "
+        "before broadening scope."
+    )
+
+
+def _recovery_checkpoint_summary_lines(
+    checkpoints: list[dict[str, Any]],
+    *,
+    parity_mode: bool,
+    crash_safe_only: bool = False,
+) -> list[str]:
+    lines: list[str] = []
+    for checkpoint in reversed(checkpoints):
+        kind = str(checkpoint.get("kind") or "")
+        if crash_safe_only and kind not in {
+            RESTART_SAFE_SNAPSHOT_KIND,
+            CONTINUITY_SNAPSHOT_KIND,
+            "queue_yield",
+        }:
+            continue
+        summary = str(checkpoint.get("summary") or "").strip().replace("\n", " ")
+        if parity_mode and _is_low_signal_parity_recovery_summary(summary):
+            continue
+        limit = 280 if parity_mode else 700
+        lines.append(f"- [{kind}] {summary[:limit]}")
+        max_items = 1 if crash_safe_only and parity_mode else 2 if parity_mode else 99
+        if len(lines) >= max_items:
+            break
+    return lines
 
 
 def _observe_tool_usage_from_command(
@@ -435,10 +711,14 @@ def _observe_tool_usage_from_item(
 def _observe_tool_usage_from_output_delta(
     delta: str,
     *,
+    command: str | None,
     observed: defaultdict[str, list[str]],
 ) -> None:
     rendered = _trace_fragment(delta, limit=180)
     if not rendered:
+        return
+    command_text = str(command or "").strip()
+    if command_text and _command_is_inspection_only(command_text):
         return
     lowered = rendered.lower()
     if "screenshot" in lowered or ".png" in lowered or ".jpg" in lowered:
@@ -562,6 +842,104 @@ def _parity_tool_evidence_instruction_lines(
     ]
 
 
+def _parity_tool_gap_lines(
+    tool_evidence: MissionToolEvidenceView,
+) -> list[str]:
+    if tool_evidence.proof_ready or not tool_evidence.expected_toolsets:
+        return []
+    lines = [
+        "Current tool proof gaps:",
+        f"- {tool_evidence.summary}",
+    ]
+    if tool_evidence.unproven_toolsets:
+        lines.append(
+            "- Before checkpointing, either exercise the relevant missing toolsets or say plainly "
+            f"why they stayed unproven: {', '.join(tool_evidence.unproven_toolsets)}."
+        )
+    return lines
+
+
+def _parity_inventory_drift_active(mission: dict[str, Any]) -> bool:
+    if not _mission_targets_openclaw_parity(mission):
+        return False
+    last_checkpoint = str(mission.get("last_checkpoint") or "")
+    if last_checkpoint.startswith("Auto-yielded the lane after"):
+        return True
+    command_count = int(mission.get("command_count") or 0)
+    if command_count < 24:
+        return False
+    current_command = str(mission.get("current_command") or "").lower()
+    last_commentary = str(mission.get("last_commentary") or "").lower()
+    drift_markers = (
+        "rebuilding context",
+        "rebuild context",
+        "checking the existing parity checkpoint",
+        "inventory the openclaw surface area",
+        "map the highest-leach missing parity seam",
+        "map the highest-leverage missing parity seam",
+    )
+    command_markers = (
+        "get-childitem",
+        "git status --short",
+        "rg -n --hidden",
+        "openclaw-parity-checkpoint",
+    )
+    return any(marker in last_commentary for marker in drift_markers) or any(
+        marker in current_command for marker in command_markers
+    )
+
+
+def _parity_execution_discipline_lines(
+    mission: dict[str, Any],
+) -> list[str]:
+    if not _mission_targets_openclaw_parity(mission):
+        return []
+    lines = [
+        "OpenClaw parity execution discipline:",
+        (
+            "- Treat the source inventory and checkpoint trail as already established context "
+            "unless a concrete contradiction appears."
+        ),
+        (
+            "- Do not spend this turn on broad workspace listings, repo-root sweeps, or rereading "
+            "the parity checkpoint beyond one targeted excerpt."
+        ),
+        (
+            "- Avoid root-level `Get-ChildItem`, generic `git status --short`, and repo-wide "
+            "`rg` sweeps for `parity`, `checkpoint`, or `inventory` once the handoff already names "
+            "the seam."
+        ),
+        (
+            "- Auto-attached local Hermes/ECC skillbooks are advisory here. Only open a local "
+            "SKILL.md when the chosen seam directly depends on that workflow."
+        ),
+        (
+            "- Within the first few commands, lock one missing seam, name the target files, and "
+            "define the focused verification bar."
+        ),
+        "- Preferred loop: targeted read -> edit -> focused verification -> checkpoint.",
+    ]
+    if _parity_inventory_drift_active(mission):
+        lines.extend(
+            [
+                (
+                    "- This mission already drifted into inventory churn or queue-yield. Do not "
+                    "reopen global inventory on this turn."
+                ),
+                (
+                    "- If you cannot name one bounded seam immediately, pick the strongest "
+                    "unfinished item from the latest checkpoint or handoff and execute only that "
+                    "slice."
+                ),
+                (
+                    "- A turn that ends without code, focused verification, or a concrete blocker "
+                    "does not count as progress here."
+                ),
+            ]
+        )
+    return lines
+
+
 def _build_delegation_brief(
     mission: dict[str, Any],
     *,
@@ -593,8 +971,6 @@ def _build_delegation_brief(
             "brainstorm",
             "idea",
             "concept",
-            "ux",
-            "ui",
             "cleaner",
             "better",
             "fresh",
@@ -602,7 +978,7 @@ def _build_delegation_brief(
             "what should",
             "design language",
         ),
-    )
+    ) or re.search(r"\b(?:ux|ui)\b", text) is not None
     needs_architect = has_workspace and (
         recovery_mode
         or command_count <= 6
@@ -811,6 +1187,26 @@ def _build_delegation_brief(
     )
 
 
+def _filter_prompt_skills_for_mission(
+    mission: dict[str, Any],
+    skills: list[Any],
+) -> list[Any]:
+    if not _mission_targets_openclaw_parity(mission):
+        return skills
+    filtered: list[Any] = []
+    for skill in skills:
+        source = str(getattr(skill, "source", "") or "").strip()
+        auto_attached = bool(getattr(skill, "auto_attached", False))
+        if (
+            not auto_attached
+            or not source
+            or source.startswith("builtin:")
+            or not is_local_skill_source_available(source)
+        ):
+            filtered.append(skill)
+    return filtered
+
+
 def _delegation_instruction_lines(brief: MissionDelegationBriefView) -> list[str]:
     if not brief.enabled or not brief.roles:
         return []
@@ -891,6 +1287,89 @@ def _thread_event_trace_line(event: dict[str, Any]) -> str | None:
     if method == "turn/completed":
         return "Turn completed."
     return None
+
+
+def _thread_event_payload(event: dict[str, Any]) -> dict[str, Any]:
+    payload = event.get("payload")
+    return payload if isinstance(payload, dict) else {}
+
+
+def _thread_event_method(event: dict[str, Any]) -> str:
+    return str(event.get("method") or "")
+
+
+def _thread_event_turn_id(event: dict[str, Any]) -> str | None:
+    return extract_turn_id(_thread_event_payload(event))
+
+
+def _thread_event_created_at(event: dict[str, Any]) -> datetime | None:
+    return _parse_timestamp(str(event.get("created_at") or "").strip() or None)
+
+
+def _thread_event_is_commentary_delta(event: dict[str, Any]) -> bool:
+    return _thread_event_method(event) == "item/agentMessage/delta"
+
+
+def _commentary_text_from_events(
+    events: list[dict[str, Any]],
+    *,
+    limit: int = 420,
+) -> str | None:
+    fragments: list[str] = []
+    for event in events:
+        if not _thread_event_is_commentary_delta(event):
+            continue
+        delta = str(_thread_event_payload(event).get("delta") or "")
+        if delta:
+            fragments.append(delta)
+    if not fragments:
+        return None
+    text = "".join(fragments).strip()
+    if not text:
+        return None
+    return _truncate_text(text, limit=limit)
+
+
+def _thread_event_is_material_progress(event: dict[str, Any]) -> bool:
+    method = _thread_event_method(event)
+    payload = _thread_event_payload(event)
+    if method in {"turn/completed", "item/commandExecution/outputDelta"}:
+        return True
+    if method in {"item/started", "item/completed"}:
+        item = payload.get("item")
+        if not isinstance(item, dict):
+            return False
+        item_type = str(item.get("type") or "")
+        if item_type == "commandExecution":
+            return True
+        return item_type == "agentMessage" and str(item.get("phase") or "") == "final_answer"
+    return False
+
+
+def _thread_event_is_progress_anchor(event: dict[str, Any]) -> bool:
+    if _thread_event_is_material_progress(event):
+        return True
+    return _thread_event_method(event) == "turn/started"
+
+
+def _thread_event_anchor_label(event: dict[str, Any]) -> str:
+    method = _thread_event_method(event)
+    payload = _thread_event_payload(event)
+    if method == "turn/started":
+        return "turn start"
+    if method in {"item/started", "item/completed"}:
+        item = payload.get("item")
+        if isinstance(item, dict):
+            item_type = str(item.get("type") or "")
+            if item_type == "commandExecution":
+                return "command activity"
+            if item_type == "agentMessage" and str(item.get("phase") or "") == "final_answer":
+                return "final answer"
+    if method == "item/commandExecution/outputDelta":
+        return "command output"
+    if method == "turn/completed":
+        return "turn completion"
+    return method or "recent turn activity"
 
 
 def _strip_trace_label(line: str) -> str:
@@ -1067,6 +1546,11 @@ class MissionService:
         project: dict[str, Any] | None = None,
         task: dict[str, Any] | None = None,
     ) -> list[str]:
+        if _mission_targets_openclaw_parity(mission, task=task):
+            return _openclaw_parity_toolsets(
+                use_builtin_agents=bool(mission.get("use_builtin_agents", True)),
+                run_verification=bool(mission.get("run_verification", True)),
+            )
         explicit_toolsets = mission.get("toolsets") or (task.get("toolsets") if task else [])
         cadence_minutes = None
         if task is not None and task.get("cadence_minutes") is not None:
@@ -1111,10 +1595,10 @@ class MissionService:
                         status_rank.get(str(mission.get("status") or ""), 99),
                         str(mission.get("updated_at") or ""),
                         int(mission.get("id") or 0),
-                    ),
+                ),
                     reverse=False,
                 )[0]
-        if not payload.thread_id:
+        if not payload.thread_id and not payload.session_key:
             return None
         candidates = [
             mission
@@ -1134,6 +1618,25 @@ class MissionService:
             reverse=False,
         )[0]
 
+    async def _reuse_thread_from_session_key(self, payload: MissionCreate) -> MissionCreate:
+        if payload.thread_id or not payload.session_key:
+            return payload
+        latest = await self.database.get_latest_mission_by_session_key(
+            payload.session_key,
+            instance_id=payload.instance_id,
+            require_thread=True,
+        )
+        if latest is None:
+            return payload
+        incoming_target = _conversation_target_key(payload.conversation_target)
+        saved_target = _conversation_target_key(latest.get("conversation_target"))
+        if incoming_target is not None and incoming_target != saved_target:
+            return payload
+        thread_id = str(latest.get("thread_id") or "").strip()
+        if not thread_id:
+            return payload
+        return payload.model_copy(update={"thread_id": thread_id})
+
     async def create(self, payload: MissionCreate) -> MissionView:
         await self.manager.get(payload.instance_id)
         project = (
@@ -1148,6 +1651,10 @@ class MissionService:
             task = await self.database.get_task_blueprint(payload.task_blueprint_id)
             if task is None:
                 raise ValueError(f"Unknown task blueprint {payload.task_blueprint_id}")
+        if payload.conversation_target is None and task is not None:
+            payload = payload.model_copy(
+                update={"conversation_target": task.get("conversation_target")}
+            )
         runtime = await self.manager.get(payload.instance_id)
         cwd = payload.cwd or (project["path"] if project is not None else runtime.cwd)
         resolved_toolsets = infer_hermes_toolsets(
@@ -1165,6 +1672,7 @@ class MissionService:
             ),
         )
         payload = payload.model_copy(update={"toolsets": resolved_toolsets})
+        payload = await self._reuse_thread_from_session_key(payload)
         duplicate = await self._find_duplicate_inflight_mission(payload, cwd=cwd)
         if duplicate is not None:
             return await self._build_view(duplicate)
@@ -1178,6 +1686,13 @@ class MissionService:
             task_blueprint_id=payload.task_blueprint_id,
             thread_id=payload.thread_id,
             session_key=payload.session_key,
+            conversation_target=(
+                payload.conversation_target.model_dump()
+                if hasattr(payload.conversation_target, "model_dump")
+                else payload.conversation_target
+                if payload.conversation_target is not None
+                else None
+            ),
             cwd=cwd,
             model=payload.model,
             reasoning_effort=payload.reasoning_effort,
@@ -1305,10 +1820,7 @@ class MissionService:
         params = event["params"]
         live_thread_signal = self._event_proves_thread_is_live(method, params)
 
-        if live_thread_signal and (
-            _is_thread_not_found_error(mission.get("last_error"))
-            or str(mission.get("last_error") or "").startswith("Waiting for approval:")
-        ):
+        if live_thread_signal and _live_thread_failure_can_heal(mission.get("last_error")):
             updates["status"] = "active"
             updates["last_error"] = None
             if method in {"turn/started", "item/started", "item/completed"}:
@@ -1556,6 +2068,19 @@ class MissionService:
             f"Drift: {packet.drift}",
             f"Next handoff: {packet.next_handoff}",
         ]
+        if _mission_targets_openclaw_parity(mission):
+            lines.extend(
+                [
+                    (
+                        "Resume rule: treat the source inventory as complete and do not reopen "
+                        "broad repo scans on the next turn."
+                    ),
+                    (
+                        "Resume target: choose one missing parity seam, edit the named files, run "
+                        "focused verification, and checkpoint that slice."
+                    ),
+                ]
+            )
         return "\n".join(lines)
 
     async def _yield_for_queue_locked(
@@ -1626,6 +2151,699 @@ class MissionService:
                 continue
             lines.append(line)
         return lines[-RECOVERY_TRACE_LINE_LIMIT:]
+
+    async def _detect_reporting_orbit(
+        self,
+        mission: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        if str(mission.get("status") or "") != "active":
+            return None
+        if not bool(mission.get("in_progress")):
+            return None
+        if bool(mission.get("last_checkpoint")):
+            return None
+        if str(mission.get("phase") or "") != "reporting":
+            return None
+        if str(mission.get("current_command") or "").strip():
+            return None
+
+        orbiting = int(mission.get("command_count") or 0) >= self._orbit_threshold(mission)
+        pressured = has_checkpoint_pressure(
+            total_tokens=int(mission.get("total_tokens") or 0),
+            model=str(mission.get("model") or "") or None,
+            has_checkpoint=False,
+        )
+        if not orbiting and not pressured:
+            return None
+
+        thread_id = str(mission.get("thread_id") or "").strip()
+        if not thread_id:
+            return None
+
+        current_turn_id = str(mission.get("last_turn_id") or "").strip() or None
+        events = await self.database.list_thread_events(
+            instance_id=int(mission["instance_id"]),
+            thread_id=thread_id,
+            limit=REPORTING_ORBIT_EVENT_LIMIT,
+        )
+        if current_turn_id is not None:
+            events = [
+                event for event in events if _thread_event_turn_id(event) == current_turn_id
+            ]
+        if not events:
+            return None
+
+        commentary_deltas = [
+            event for event in events if _thread_event_is_commentary_delta(event)
+        ]
+        commentary_text = _commentary_text_from_events(events)
+        fast_parity_cutoff = _uses_fast_parity_reporting_orbit_cutoff(
+            mission,
+            commentary_text=commentary_text,
+        )
+        min_commentary_deltas = (
+            PARITY_REPORTING_ORBIT_MIN_COMMENTARY_DELTAS
+            if fast_parity_cutoff
+            else REPORTING_ORBIT_MIN_COMMENTARY_DELTAS
+        )
+        if len(commentary_deltas) < min_commentary_deltas:
+            return None
+
+        anchor_index = None
+        for index in range(len(events) - 1, -1, -1):
+            if _thread_event_is_progress_anchor(events[index]):
+                anchor_index = index
+                break
+        if anchor_index is None:
+            anchor_index = 0
+
+        tail_events = events[anchor_index + 1 :]
+        if not tail_events:
+            return None
+
+        commentary_after_anchor = [
+            event for event in tail_events if _thread_event_is_commentary_delta(event)
+        ]
+        if len(commentary_after_anchor) < min_commentary_deltas:
+            return None
+        if any(_thread_event_is_material_progress(event) for event in tail_events):
+            return None
+
+        anchor_at = _thread_event_created_at(events[anchor_index])
+        last_commentary_at = _thread_event_created_at(commentary_after_anchor[-1])
+        if anchor_at is None or last_commentary_at is None:
+            return None
+
+        orbit_seconds = max(0, int((last_commentary_at - anchor_at).total_seconds()))
+        min_seconds = (
+            PARITY_REPORTING_ORBIT_MIN_SECONDS
+            if fast_parity_cutoff
+            else REPORTING_ORBIT_MIN_SECONDS
+        )
+        if orbit_seconds < min_seconds:
+            return None
+
+        return {
+            "turn_id": current_turn_id,
+            "orbit_seconds": orbit_seconds,
+            "commentary_delta_count": len(commentary_after_anchor),
+            "anchor_label": _thread_event_anchor_label(events[anchor_index]),
+            "fast_cutoff": fast_parity_cutoff,
+        }
+
+    async def _detect_executing_stall(
+        self,
+        mission: dict[str, Any],
+        *,
+        thread_status: str | None,
+        last_activity_seconds: int | None,
+    ) -> dict[str, Any] | None:
+        if str(mission.get("status") or "") != "active":
+            return None
+        if not bool(mission.get("in_progress")):
+            return None
+        if bool(mission.get("last_checkpoint")):
+            return None
+        if str(mission.get("phase") or "") != "executing":
+            return None
+        current_command = str(mission.get("current_command") or "").strip()
+        if not current_command:
+            return None
+        thread_untracked = thread_status in {None, "notLoaded"}
+        if thread_status != "active" and not thread_untracked:
+            return None
+        if last_activity_seconds is None:
+            return None
+        threshold_seconds = _execution_stall_threshold_seconds(current_command)
+        if last_activity_seconds < threshold_seconds:
+            return None
+        return {
+            "quiet_seconds": last_activity_seconds,
+            "command": current_command,
+            "inspection_only": _command_is_inspection_only(current_command),
+            "threshold_seconds": threshold_seconds,
+            "thread_untracked": thread_untracked,
+        }
+
+    def _build_reporting_orbit_recovery_prompt(
+        self,
+        mission: dict[str, Any],
+        *,
+        source_thread_id: str,
+        recovery_thread_id: str,
+        orbit_signal: dict[str, Any],
+        checkpoints: list[dict[str, Any]],
+        trace_lines: list[str],
+        base_prompt: str,
+    ) -> str:
+        continuity = build_continuity_packet(
+            mission,
+            instance_connected=True,
+            checkpoints=checkpoints,
+        )
+        parity_mode = _mission_targets_openclaw_parity(mission)
+        rendered_base_prompt = (
+            _compact_parity_objective_text(base_prompt) if parity_mode else base_prompt
+        )
+        instructions = [
+            "You are resuming an OpenZues autonomous mission after commentary-orbit recovery.",
+            f"Mission: {mission['name']}",
+            f"Orbit thread: {source_thread_id}",
+            f"Recovery thread: {recovery_thread_id}",
+            "",
+            "Recovery trigger:",
+            (
+                "- The prior turn stayed in commentary/reporting mode for about "
+                f"{int(orbit_signal['orbit_seconds'])} seconds and "
+                f"{int(orbit_signal['commentary_delta_count'])} commentary delta events "
+                f"after the last material progress marker ({orbit_signal['anchor_label']})."
+            ),
+            "- Mission control treated that pattern as orbit instead of forward motion.",
+            "- Do not continue the abandoned narration, delegation preamble, or planning spiral.",
+            (
+                "- Reconstruct context from the persisted packets below, take one bounded "
+                "high-leverage step, and end this turn with a durable checkpoint."
+            ),
+            (
+                "- If you use built-in agents, keep them tightly scoped and still land the "
+                "checkpoint from the main lane in this turn."
+            ),
+        ]
+        if parity_mode:
+            instructions.append(
+                "- The abandoned parity lane spent too long narrating recovery. After one short "
+                "sentence, your next move must be a tool call or the checkpoint itself."
+            )
+        instructions.extend(
+            [
+                "",
+                "Parity recovery anchor:" if parity_mode else "Continuity relay packet:",
+                (
+                    f"- Ledger: `{OPENCLAW_PARITY_CHECKPOINT_LEDGER}`"
+                    if parity_mode
+                    else f"- State: {continuity.state} ({continuity.score}/100)"
+                ),
+                (
+                    f"- Anchor: {_preferred_parity_recovery_anchor(continuity.anchor, checkpoints)}"
+                    if parity_mode
+                    else f"- Anchor: {continuity.anchor}"
+                ),
+                (
+                    f"- Next move: {continuity.next_handoff}"
+                    if parity_mode
+                    else f"- Drift: {continuity.drift}"
+                ),
+                (
+                    "- Stop orbiting and use tools immediately after the seam is named."
+                    if parity_mode
+                    else f"- Safest handoff: {continuity.next_handoff}"
+                ),
+            ]
+        )
+        if parity_mode:
+            instructions.extend(["", *_parity_recovery_rule_lines()])
+        if trace_lines and not parity_mode:
+            instructions.extend(["", "Recent persisted live trace:"])
+            instructions.extend(f"- {line}" for line in trace_lines)
+        crash_safe_packets = _recovery_checkpoint_summary_lines(
+            checkpoints,
+            parity_mode=parity_mode,
+            crash_safe_only=True,
+        )
+        if crash_safe_packets:
+            instructions.extend(
+                [
+                    "",
+                    "Relevant crash-safe packets:"
+                    if parity_mode
+                    else "Crash-safe relay packets:",
+                ]
+            )
+            instructions.extend(crash_safe_packets)
+        if checkpoints:
+            instructions.extend(
+                [
+                    "",
+                    "Relevant checkpoint trail:" if parity_mode else "Recent checkpoint trail:",
+                ]
+            )
+            instructions.extend(
+                _recovery_checkpoint_summary_lines(
+                    checkpoints,
+                    parity_mode=parity_mode,
+                )
+            )
+        instructions.extend(["", "Mission re-entry brief:", rendered_base_prompt])
+        return "\n".join(instructions)
+
+    def _build_executing_stall_recovery_prompt(
+        self,
+        mission: dict[str, Any],
+        *,
+        source_thread_id: str,
+        recovery_thread_id: str,
+        stall_signal: dict[str, Any],
+        checkpoints: list[dict[str, Any]],
+        trace_lines: list[str],
+        base_prompt: str,
+    ) -> str:
+        continuity = build_continuity_packet(
+            mission,
+            instance_connected=True,
+            checkpoints=checkpoints,
+        )
+        parity_mode = _mission_targets_openclaw_parity(mission)
+        rendered_base_prompt = (
+            _compact_parity_objective_text(base_prompt) if parity_mode else base_prompt
+        )
+        command = _truncate_text(str(stall_signal.get("command") or ""), 260)
+        instructions = [
+            "You are resuming an OpenZues autonomous mission after stalled-execution recovery.",
+            f"Mission: {mission['name']}",
+            f"Stalled thread: {source_thread_id}",
+            f"Recovery thread: {recovery_thread_id}",
+            "",
+            "Recovery trigger:",
+            (
+                "- The prior thread stayed marked active for about "
+                f"{int(stall_signal['quiet_seconds'])} seconds after the last live event while "
+                "holding this command open:"
+            ),
+            f"  {command}",
+            "- Mission control treated that as a stalled execution instead of healthy progress.",
+            (
+                "- Reconstruct context from the persisted packets below before you decide whether "
+                "any part of the old command needs to be rerun."
+            ),
+            (
+                "- Take one bounded high-leverage next step, verify one concrete claim, and end "
+                "this turn with a durable checkpoint."
+            ),
+        ]
+        if bool(stall_signal.get("inspection_only")):
+            instructions.append(
+                "- The stalled command was read-only inspection. Do not keep rereading the same "
+                "files unless the recovery packet proves a specific unanswered gap."
+            )
+        else:
+            instructions.append(
+                "- Treat the interrupted command as inconclusive until you confirm whether a "
+                "minimal rerun is still needed."
+            )
+        if bool(stall_signal.get("thread_untracked")):
+            instructions.append(
+                "- The old thread is no longer reporting as a live runtime thread, so treat this "
+                "recovery lane as the authoritative execution path."
+            )
+        if parity_mode:
+            instructions.extend(["", *_parity_recovery_rule_lines()])
+        instructions.extend(
+            [
+                "",
+                "Parity recovery anchor:" if parity_mode else "Continuity relay packet:",
+                (
+                    f"- Ledger: `{OPENCLAW_PARITY_CHECKPOINT_LEDGER}`"
+                    if parity_mode
+                    else f"- State: {continuity.state} ({continuity.score}/100)"
+                ),
+                (
+                    f"- Anchor: {_preferred_parity_recovery_anchor(continuity.anchor, checkpoints)}"
+                    if parity_mode
+                    else f"- Anchor: {continuity.anchor}"
+                ),
+                (
+                    f"- Next move: {continuity.next_handoff}"
+                    if parity_mode
+                    else f"- Drift: {continuity.drift}"
+                ),
+                (
+                    "- Re-run only the minimum proof needed after you lock the seam."
+                    if parity_mode
+                    else f"- Safest handoff: {continuity.next_handoff}"
+                ),
+            ]
+        )
+        if trace_lines and not parity_mode:
+            instructions.extend(["", "Recent persisted live trace:"])
+            instructions.extend(f"- {line}" for line in trace_lines)
+        crash_safe_packets = _recovery_checkpoint_summary_lines(
+            checkpoints,
+            parity_mode=parity_mode,
+            crash_safe_only=True,
+        )
+        if crash_safe_packets:
+            instructions.extend(
+                [
+                    "",
+                    "Relevant crash-safe packets:"
+                    if parity_mode
+                    else "Crash-safe relay packets:",
+                ]
+            )
+            instructions.extend(crash_safe_packets)
+        if checkpoints:
+            instructions.extend(
+                [
+                    "",
+                    "Relevant checkpoint trail:" if parity_mode else "Recent checkpoint trail:",
+                ]
+            )
+            instructions.extend(
+                _recovery_checkpoint_summary_lines(
+                    checkpoints,
+                    parity_mode=parity_mode,
+                )
+            )
+        instructions.extend(["", "Mission re-entry brief:", rendered_base_prompt])
+        return "\n".join(instructions)
+
+    async def _attempt_reporting_orbit_recovery(
+        self,
+        mission_id: int,
+        mission: dict[str, Any],
+        *,
+        orbit_signal: dict[str, Any],
+    ) -> bool:
+        source_thread_id = str(mission.get("thread_id") or "").strip()
+        if not source_thread_id:
+            return False
+
+        trace_lines = await self._recent_thread_trace_lines(
+            instance_id=int(mission["instance_id"]),
+            thread_id=source_thread_id,
+        )
+        await self._maybe_append_restart_safe_snapshot(
+            mission_id,
+            mission,
+            force=True,
+            reason="commentary_orbit",
+        )
+        checkpoints = await self.database.list_mission_checkpoints(mission_id, limit=6)
+        prompt_mission = {
+            **mission,
+            "in_progress": 0,
+            "phase": "rehydrating",
+            "last_error": None,
+        }
+        base_prompt = await self._build_turn_prompt(prompt_mission)
+
+        try:
+            await self.manager.interrupt_turn(int(mission["instance_id"]), source_thread_id)
+        except Exception:
+            logger.warning(
+                "Failed to interrupt commentary orbit on mission %s thread %s.",
+                mission_id,
+                source_thread_id,
+                exc_info=True,
+            )
+
+        try:
+            thread_result = await self.manager.start_thread(
+                int(mission["instance_id"]),
+                model=str(mission["model"]),
+                cwd=mission["cwd"],
+                reasoning_effort=mission["reasoning_effort"],
+                collaboration_mode=mission["collaboration_mode"],
+            )
+        except Exception as exc:
+            error_summary = (
+                "Commentary-orbit recovery could not start a fresh thread: "
+                f"{_error_summary(exc, fallback='unknown thread startup failure')}"
+            )
+            await self.database.update_mission(
+                mission_id,
+                status="failed",
+                phase="failed",
+                failure_count=int(mission["failure_count"]) + 1,
+                last_error=error_summary,
+                in_progress=0,
+                current_command=None,
+                last_activity_at=utcnow(),
+            )
+            await self.database.append_mission_checkpoint(
+                mission_id=mission_id,
+                thread_id=source_thread_id,
+                turn_id=str(mission.get("last_turn_id") or "") or None,
+                kind="error",
+                summary=error_summary,
+            )
+            await self._publish_snapshot(
+                "mission/failed",
+                {
+                    "missionId": mission_id,
+                    "threadId": source_thread_id,
+                    "error": error_summary,
+                },
+            )
+            return False
+
+        recovery_thread_id = extract_thread_id(thread_result) or extract_thread_id(
+            {"thread": thread_result.get("thread")}
+        )
+        if recovery_thread_id is None:
+            error_summary = (
+                "Commentary-orbit recovery did not return a fresh thread ID for "
+                f"mission {mission_id}."
+            )
+            await self.database.update_mission(
+                mission_id,
+                status="failed",
+                phase="failed",
+                failure_count=int(mission["failure_count"]) + 1,
+                last_error=error_summary,
+                in_progress=0,
+                current_command=None,
+                last_activity_at=utcnow(),
+            )
+            await self.database.append_mission_checkpoint(
+                mission_id=mission_id,
+                thread_id=source_thread_id,
+                turn_id=str(mission.get("last_turn_id") or "") or None,
+                kind="error",
+                summary=error_summary,
+            )
+            return False
+
+        await self.database.update_mission(
+            mission_id,
+            thread_id=recovery_thread_id,
+            status="active",
+            phase="rehydrating",
+            in_progress=0,
+            last_turn_id=None,
+            current_command=None,
+            last_error=None,
+            last_activity_at=utcnow(),
+        )
+        await self.database.append_mission_checkpoint(
+            mission_id=mission_id,
+            thread_id=recovery_thread_id,
+            turn_id=None,
+            kind="orbit_rebind",
+            summary=(
+                "Mission rebound from commentary orbit on thread "
+                f"{source_thread_id} to fresh thread {recovery_thread_id} after about "
+                f"{int(orbit_signal['orbit_seconds'])} seconds and "
+                f"{int(orbit_signal['commentary_delta_count'])} commentary delta events "
+                "without material turn progress."
+                + (
+                    " The parity fast-cutoff guardrail fired because the lane kept narrating "
+                    "re-entry instead of using tools."
+                    if bool(orbit_signal.get("fast_cutoff"))
+                    else ""
+                )
+            ),
+        )
+        await self._publish_snapshot(
+            "mission/orbit-rebound",
+            {
+                "missionId": mission_id,
+                "sourceThreadId": source_thread_id,
+                "threadId": recovery_thread_id,
+                "instanceId": int(mission["instance_id"]),
+            },
+        )
+        refreshed = await self.require_mission(mission_id)
+        await self._start_turn_with_prompt(
+            mission_id,
+            refreshed,
+            thread_id=recovery_thread_id,
+            prompt=self._build_reporting_orbit_recovery_prompt(
+                mission,
+                source_thread_id=source_thread_id,
+                recovery_thread_id=recovery_thread_id,
+                orbit_signal=orbit_signal,
+                checkpoints=checkpoints,
+                trace_lines=trace_lines,
+                base_prompt=base_prompt,
+            ),
+            event_type="mission/orbit-recovery-started",
+            allow_stale_thread_recovery=False,
+        )
+        return True
+
+    async def _attempt_executing_stall_recovery(
+        self,
+        mission_id: int,
+        mission: dict[str, Any],
+        *,
+        stall_signal: dict[str, Any],
+    ) -> bool:
+        source_thread_id = str(mission.get("thread_id") or "").strip()
+        if not source_thread_id:
+            return False
+
+        trace_lines = await self._recent_thread_trace_lines(
+            instance_id=int(mission["instance_id"]),
+            thread_id=source_thread_id,
+        )
+        await self._maybe_append_restart_safe_snapshot(
+            mission_id,
+            mission,
+            force=True,
+            reason="execution_stall",
+        )
+        await self._maybe_append_continuity_snapshot(
+            mission_id,
+            mission,
+            force=True,
+            reason="execution_stall",
+        )
+        checkpoints = await self.database.list_mission_checkpoints(mission_id, limit=6)
+        prompt_mission = {
+            **mission,
+            "in_progress": 0,
+            "phase": "rehydrating",
+            "last_error": None,
+        }
+        base_prompt = await self._build_turn_prompt(prompt_mission)
+
+        try:
+            await self.manager.interrupt_turn(int(mission["instance_id"]), source_thread_id)
+        except Exception:
+            logger.warning(
+                "Failed to interrupt stalled execution on mission %s thread %s.",
+                mission_id,
+                source_thread_id,
+                exc_info=True,
+            )
+
+        try:
+            thread_result = await self.manager.start_thread(
+                int(mission["instance_id"]),
+                model=str(mission["model"]),
+                cwd=mission["cwd"],
+                reasoning_effort=mission["reasoning_effort"],
+                collaboration_mode=mission["collaboration_mode"],
+            )
+        except Exception as exc:
+            error_summary = (
+                "Stalled-execution recovery could not start a fresh thread: "
+                f"{_error_summary(exc, fallback='unknown thread startup failure')}"
+            )
+            await self.database.update_mission(
+                mission_id,
+                status="failed",
+                phase="failed",
+                failure_count=int(mission["failure_count"]) + 1,
+                last_error=error_summary,
+                in_progress=0,
+                current_command=None,
+                last_activity_at=utcnow(),
+            )
+            await self.database.append_mission_checkpoint(
+                mission_id=mission_id,
+                thread_id=source_thread_id,
+                turn_id=str(mission.get("last_turn_id") or "") or None,
+                kind="error",
+                summary=error_summary,
+            )
+            await self._publish_snapshot(
+                "mission/failed",
+                {
+                    "missionId": mission_id,
+                    "threadId": source_thread_id,
+                    "error": error_summary,
+                },
+            )
+            return False
+
+        recovery_thread_id = extract_thread_id(thread_result) or extract_thread_id(
+            {"thread": thread_result.get("thread")}
+        )
+        if recovery_thread_id is None:
+            error_summary = (
+                "Stalled-execution recovery did not return a fresh thread ID for "
+                f"mission {mission_id}."
+            )
+            await self.database.update_mission(
+                mission_id,
+                status="failed",
+                phase="failed",
+                failure_count=int(mission["failure_count"]) + 1,
+                last_error=error_summary,
+                in_progress=0,
+                current_command=None,
+                last_activity_at=utcnow(),
+            )
+            await self.database.append_mission_checkpoint(
+                mission_id=mission_id,
+                thread_id=source_thread_id,
+                turn_id=str(mission.get("last_turn_id") or "") or None,
+                kind="error",
+                summary=error_summary,
+            )
+            return False
+
+        await self.database.update_mission(
+            mission_id,
+            thread_id=recovery_thread_id,
+            status="active",
+            phase="rehydrating",
+            in_progress=0,
+            last_turn_id=None,
+            current_command=None,
+            last_error=None,
+            last_activity_at=utcnow(),
+        )
+        await self.database.append_mission_checkpoint(
+            mission_id=mission_id,
+            thread_id=recovery_thread_id,
+            turn_id=None,
+            kind="execution_rebind",
+            summary=(
+                "Mission rebound from a stalled command on thread "
+                f"{source_thread_id} to fresh thread {recovery_thread_id} after about "
+                f"{int(stall_signal['quiet_seconds'])} seconds without fresh live events."
+            ),
+        )
+        await self._publish_snapshot(
+            "mission/execution-rebound",
+            {
+                "missionId": mission_id,
+                "sourceThreadId": source_thread_id,
+                "threadId": recovery_thread_id,
+                "instanceId": int(mission["instance_id"]),
+            },
+        )
+        refreshed = await self.require_mission(mission_id)
+        await self._start_turn_with_prompt(
+            mission_id,
+            refreshed,
+            thread_id=recovery_thread_id,
+            prompt=self._build_executing_stall_recovery_prompt(
+                mission,
+                source_thread_id=source_thread_id,
+                recovery_thread_id=recovery_thread_id,
+                stall_signal=stall_signal,
+                checkpoints=checkpoints,
+                trace_lines=trace_lines,
+                base_prompt=base_prompt,
+            ),
+            event_type="mission/execution-recovery-started",
+            allow_stale_thread_recovery=False,
+        )
+        return True
 
     def _should_capture_restart_safe_snapshot(
         self,
@@ -2036,6 +3254,7 @@ class MissionService:
             instance_connected=True,
             checkpoints=checkpoints,
         )
+        parity_mode = _mission_targets_openclaw_parity(mission)
         delegation_brief = _build_delegation_brief(
             mission,
             recovery_mode=True,
@@ -2047,7 +3266,7 @@ class MissionService:
             f"Recovery lane: {target_name}",
             "",
             "Primary objective:",
-            str(mission["objective"]),
+            _rendered_objective_for_turn(mission),
             "",
             "Failover doctrine:",
             "- Reconstruct state from the checkpoint trail before making new changes.",
@@ -2058,7 +3277,10 @@ class MissionService:
                 "verified facts, next move, blockers."
             ),
         ]
-        instructions.extend(["", *_delegation_instruction_lines(delegation_brief)])
+        if parity_mode:
+            instructions.extend(["", *_parity_recovery_rule_lines()])
+        else:
+            instructions.extend(["", *_delegation_instruction_lines(delegation_brief)])
         if bool(mission.get("run_verification")):
             instructions.append(
                 "- Run the fastest meaningful verification before broadening scope again."
@@ -2077,31 +3299,60 @@ class MissionService:
         instructions.extend(
             [
                 "",
-                "Continuity relay packet:",
-                f"- State: {continuity.state} ({continuity.score}/100)",
-                f"- Anchor: {continuity.anchor}",
-                f"- Drift: {continuity.drift}",
-                f"- Safest handoff: {continuity.next_handoff}",
+                "Parity recovery anchor:" if parity_mode else "Continuity relay packet:",
+                (
+                    f"- Ledger: `{OPENCLAW_PARITY_CHECKPOINT_LEDGER}`"
+                    if parity_mode
+                    else f"- State: {continuity.state} ({continuity.score}/100)"
+                ),
+                (
+                    f"- Anchor: {_preferred_parity_recovery_anchor(continuity.anchor, checkpoints)}"
+                    if parity_mode
+                    else f"- Anchor: {continuity.anchor}"
+                ),
+                (
+                    f"- Next move: {continuity.next_handoff}"
+                    if parity_mode
+                    else f"- Drift: {continuity.drift}"
+                ),
+                (
+                    "- Use tools immediately after you lock the seam."
+                    if parity_mode
+                    else f"- Safest handoff: {continuity.next_handoff}"
+                ),
             ]
         )
-        if trace_lines:
+        if trace_lines and not parity_mode:
             instructions.extend(["", "Recent persisted live trace:"])
             instructions.extend(f"- {line}" for line in trace_lines)
         if checkpoints:
-            crash_safe_packets = self._crash_safe_packet_summaries(checkpoints)
+            crash_safe_packets = _recovery_checkpoint_summary_lines(
+                checkpoints,
+                parity_mode=parity_mode,
+                crash_safe_only=True,
+            )
             if crash_safe_packets:
-                instructions.extend(["", "Crash-safe relay packets:"])
+                instructions.extend(
+                    [
+                        "",
+                        "Relevant crash-safe packets:"
+                        if parity_mode
+                        else "Crash-safe relay packets:",
+                    ]
+                )
                 instructions.extend(crash_safe_packets)
             instructions.extend(
                 [
                     "",
-                    "Recent checkpoint trail:",
+                    "Relevant checkpoint trail:" if parity_mode else "Recent checkpoint trail:",
                 ]
             )
-            for checkpoint in reversed(checkpoints):
-                summary = str(checkpoint.get("summary") or "").strip().replace("\n", " ")
-                summary = summary[:700]
-                instructions.append(f"- [{checkpoint['kind']}] {summary}")
+            instructions.extend(
+                _recovery_checkpoint_summary_lines(
+                    checkpoints,
+                    parity_mode=parity_mode,
+                )
+            )
         elif mission.get("last_checkpoint"):
             instructions.extend(
                 [
@@ -2135,6 +3386,7 @@ class MissionService:
             instance_connected=True,
             checkpoints=checkpoints,
         )
+        parity_mode = _mission_targets_openclaw_parity(mission)
         delegation_brief = _build_delegation_brief(
             mission,
             recovery_mode=True,
@@ -2146,7 +3398,7 @@ class MissionService:
             f"Recovery thread: {new_thread_id}",
             "",
             "Primary objective:",
-            str(mission["objective"]),
+            _rendered_objective_for_turn(mission),
             "",
             "Recovery doctrine:",
             "- The prior thread can no longer be resumed, so treat this as a fresh re-entry lane.",
@@ -2158,7 +3410,10 @@ class MissionService:
                 "next step, blockers."
             ),
         ]
-        instructions.extend(["", *_delegation_instruction_lines(delegation_brief)])
+        if parity_mode:
+            instructions.extend(["", *_parity_recovery_rule_lines()])
+        else:
+            instructions.extend(["", *_delegation_instruction_lines(delegation_brief)])
         if bool(mission.get("run_verification")):
             instructions.append(
                 "- Run the fastest meaningful verification before broadening scope again."
@@ -2173,30 +3428,60 @@ class MissionService:
                 "Recovery trigger:",
                 stale_error,
                 "",
-                "Continuity relay packet:",
-                f"- State: {continuity.state} ({continuity.score}/100)",
-                f"- Anchor: {continuity.anchor}",
-                f"- Drift: {continuity.drift}",
-                f"- Safest handoff: {continuity.next_handoff}",
+                "Parity recovery anchor:" if parity_mode else "Continuity relay packet:",
+                (
+                    f"- Ledger: `{OPENCLAW_PARITY_CHECKPOINT_LEDGER}`"
+                    if parity_mode
+                    else f"- State: {continuity.state} ({continuity.score}/100)"
+                ),
+                (
+                    f"- Anchor: {_preferred_parity_recovery_anchor(continuity.anchor, checkpoints)}"
+                    if parity_mode
+                    else f"- Anchor: {continuity.anchor}"
+                ),
+                (
+                    f"- Next move: {continuity.next_handoff}"
+                    if parity_mode
+                    else f"- Drift: {continuity.drift}"
+                ),
+                (
+                    "- Use tools immediately after you lock the seam."
+                    if parity_mode
+                    else f"- Safest handoff: {continuity.next_handoff}"
+                ),
             ]
         )
-        if trace_lines:
+        if trace_lines and not parity_mode:
             instructions.extend(["", "Recent persisted live trace:"])
             instructions.extend(f"- {line}" for line in trace_lines)
         if checkpoints:
-            crash_safe_packets = self._crash_safe_packet_summaries(checkpoints)
+            crash_safe_packets = _recovery_checkpoint_summary_lines(
+                checkpoints,
+                parity_mode=parity_mode,
+                crash_safe_only=True,
+            )
             if crash_safe_packets:
-                instructions.extend(["", "Crash-safe relay packets:"])
+                instructions.extend(
+                    [
+                        "",
+                        "Relevant crash-safe packets:"
+                        if parity_mode
+                        else "Crash-safe relay packets:",
+                    ]
+                )
                 instructions.extend(crash_safe_packets)
             instructions.extend(
                 [
                     "",
-                    "Recent checkpoint trail:",
+                    "Relevant checkpoint trail:" if parity_mode else "Recent checkpoint trail:",
                 ]
             )
-            for checkpoint in reversed(checkpoints):
-                summary = str(checkpoint.get("summary") or "").strip().replace("\n", " ")
-                instructions.append(f"- [{checkpoint['kind']}] {summary[:700]}")
+            instructions.extend(
+                _recovery_checkpoint_summary_lines(
+                    checkpoints,
+                    parity_mode=parity_mode,
+                )
+            )
         elif mission.get("last_checkpoint"):
             instructions.extend(
                 [
@@ -2615,6 +3900,7 @@ class MissionService:
                 ):
                     return
                 return
+            thread_status: str | None = None
             executor_assessment = build_executor_launch_assessment(
                 preferred_executor,
                 instance=runtime,
@@ -2688,7 +3974,7 @@ class MissionService:
                     ):
                         await self.database.update_mission(mission_id, in_progress=1)
                         mission["in_progress"] = 1
-                    if _is_thread_not_found_error(mission.get("last_error")):
+                    if _live_thread_failure_can_heal(mission.get("last_error")):
                         heal_updates: dict[str, Any] = {
                             "status": "active",
                             "last_error": None,
@@ -2709,6 +3995,18 @@ class MissionService:
                         stale_error=str(mission.get("last_error") or ""),
                     ):
                         return
+
+            stalled_execution = await self._detect_executing_stall(
+                mission,
+                thread_status=thread_status,
+                last_activity_seconds=last_activity_seconds,
+            )
+            if stalled_execution is not None and await self._attempt_executing_stall_recovery(
+                mission_id,
+                mission,
+                stall_signal=stalled_execution,
+            ):
+                return
 
             missions_for_instance = [
                 candidate
@@ -2793,28 +4091,56 @@ class MissionService:
                 await self._yield_for_queue_locked(mission_id, mission)
                 return
 
-            if mission["in_progress"] and not force:
-                await self._maybe_append_restart_safe_snapshot(
+            if mission["in_progress"]:
+                orbit_signal = await self._detect_reporting_orbit(mission)
+                if orbit_signal is not None and await self._attempt_reporting_orbit_recovery(
                     mission_id,
                     mission,
-                    reason="live_heartbeat",
-                )
-                await self._maybe_append_continuity_snapshot(
-                    mission_id,
-                    mission,
-                    reason="live_orbit",
-                )
-                return
+                    orbit_signal=orbit_signal,
+                ):
+                    return
+                if not force:
+                    await self._maybe_append_restart_safe_snapshot(
+                        mission_id,
+                        mission,
+                        reason="live_heartbeat",
+                    )
+                    await self._maybe_append_continuity_snapshot(
+                        mission_id,
+                        mission,
+                        reason="live_orbit",
+                    )
+                    return
 
             thread_id = mission["thread_id"]
             if thread_id is None:
-                thread_result = await self.manager.start_thread(
-                    int(mission["instance_id"]),
-                    model=str(mission["model"]),
-                    cwd=mission["cwd"],
-                    reasoning_effort=mission["reasoning_effort"],
-                    collaboration_mode=mission["collaboration_mode"],
-                )
+                try:
+                    thread_result = await self.manager.start_thread(
+                        int(mission["instance_id"]),
+                        model=str(mission["model"]),
+                        cwd=mission["cwd"],
+                        reasoning_effort=mission["reasoning_effort"],
+                        collaboration_mode=mission["collaboration_mode"],
+                    )
+                except TimeoutError:
+                    launch_error = (
+                        "Thread launch timed out on the selected lane. Reconnect the lane or "
+                        "retry once the desktop bridge is responsive."
+                    )
+                    await self.database.update_mission(
+                        mission_id,
+                        status="blocked",
+                        phase="launch",
+                        in_progress=0,
+                        current_command=None,
+                        last_error=launch_error,
+                        last_activity_at=utcnow(),
+                    )
+                    await self._publish_snapshot(
+                        "mission/blocked",
+                        {"missionId": mission_id, "reason": launch_error},
+                    )
+                    return
                 thread_id = extract_thread_id(thread_result) or extract_thread_id(
                     {"thread": thread_result.get("thread")}
                 )
@@ -2859,6 +4185,8 @@ class MissionService:
             )
 
     async def _build_view(self, mission: dict[str, Any]) -> MissionView:
+        rendered_objective = _rendered_objective_for_turn(mission)
+        scoped_mission = {**mission, "objective": rendered_objective}
         project_label = None
         project: dict[str, Any] | None = None
         if mission["project_id"] is not None:
@@ -2873,7 +4201,7 @@ class MissionService:
             MissionCheckpointView.model_validate(item)
             for item in await self.database.list_mission_checkpoints(int(mission["id"]), limit=5)
         ]
-        scope = build_scope_assessment(mission, checkpoints=checkpoints)
+        scope = build_scope_assessment(scoped_mission, checkpoints=checkpoints)
         live_telemetry = await self._build_live_telemetry(mission, runtime=runtime)
         trace_lines: list[str] = []
         thread_id = str(mission.get("thread_id") or "").strip()
@@ -2889,7 +4217,7 @@ class MissionService:
             )
         commentary_summary = _derive_commentary_summary(mission, trace_lines=trace_lines)
         delegation_brief = _build_delegation_brief(
-            mission,
+            scoped_mission,
             scope=scope,
             live_telemetry=live_telemetry,
         )
@@ -2907,6 +4235,7 @@ class MissionService:
             **mission,
             "instance_name": runtime.name if runtime is not None else None,
             "project_label": project_label,
+            "objective": rendered_objective,
             "commentary_summary": commentary_summary,
             "checkpoints": checkpoints,
             "suggested_action": self._suggested_action(mission, scope),
@@ -3025,6 +4354,7 @@ class MissionService:
             limit=TOOL_EVIDENCE_EVENT_LIMIT,
         )
         observed: defaultdict[str, list[str]] = defaultdict(list)
+        command_by_item_id: dict[str, str] = {}
         for event in events:
             method = str(event.get("method") or "")
             payload = event.get("payload")
@@ -3033,11 +4363,21 @@ class MissionService:
             if method in {"item/started", "item/completed"}:
                 item = payload.get("item")
                 if isinstance(item, dict):
+                    if str(item.get("type") or "") == "commandExecution":
+                        item_id = str(item.get("id") or "").strip()
+                        command = str(item.get("command") or "").strip()
+                        if item_id and command:
+                            command_by_item_id[item_id] = command
                     _observe_tool_usage_from_item(item, observed=observed)
             if method.endswith("commandExecution/outputDelta"):
                 delta = str(payload.get("delta") or "").strip()
                 if delta:
-                    _observe_tool_usage_from_output_delta(delta, observed=observed)
+                    item_id = str(payload.get("itemId") or "").strip()
+                    _observe_tool_usage_from_output_delta(
+                        delta,
+                        command=command_by_item_id.get(item_id),
+                        observed=observed,
+                    )
 
         observed_toolsets = [toolset for toolset in expected_toolsets if observed.get(toolset)]
         unproven_toolsets = [
@@ -3068,7 +4408,9 @@ class MissionService:
 
     async def _build_turn_prompt(self, mission: dict[str, Any]) -> str:
         continuity = build_continuity_packet(mission, instance_connected=True)
-        scope = build_scope_assessment(mission)
+        rendered_objective = _rendered_objective_for_turn(mission)
+        scoped_mission = {**mission, "objective": rendered_objective}
+        scope = build_scope_assessment(scoped_mission)
         project_label: str | None = None
         project_path: str | None = None
         explicit_pins: list[SkillPinView] = []
@@ -3093,19 +4435,28 @@ class MissionService:
                 if int(item["project_id"]) == int(mission["project_id"])
             ]
         toolsets = self._resolve_toolsets(mission, project=project, task=task)
+        tool_evidence = await self._build_tool_evidence(
+            mission,
+            project=project,
+            task=task,
+        )
         tool_policy = build_hermes_tool_policy(toolsets, setup_mode="local")
         preferred_memory_provider, preferred_executor = await load_saved_runtime_preferences(
             self.database
         )
         skill_profile = resolve_skill_profile(
-            str(mission.get("objective") or ""),
+            rendered_objective,
             explicit_pins=explicit_pins,
             project_label=project_label,
             project_path=project_path,
             toolsets=toolsets,
         )
+        prompt_skills = _filter_prompt_skills_for_mission(
+            scoped_mission,
+            list(skill_profile.skills),
+        )
         delegation_brief = _build_delegation_brief(
-            mission,
+            scoped_mission,
             scope=scope,
         )
         instructions = [
@@ -3113,7 +4464,7 @@ class MissionService:
             f"Mission: {mission['name']}",
             "",
             "Primary objective:",
-            str(mission["objective"]),
+            rendered_objective,
             "",
             "Mission charter:",
             scope.charter_summary,
@@ -3133,7 +4484,7 @@ class MissionService:
             instructions.append(
                 "- Run relevant tests, builds, or browser checks after meaningful changes."
             )
-        contract_lines = _contract_seam_instruction_lines(mission)
+        contract_lines = _contract_seam_instruction_lines(scoped_mission)
         if contract_lines:
             instructions.extend(["", *contract_lines])
         if bool(mission["auto_commit"]):
@@ -3150,7 +4501,7 @@ class MissionService:
                 f"- Treat `{mission['cwd']}` as the primary workspace unless the thread"
                 " already established a better target."
             )
-        skill_lines = build_prompt_skill_lines(skill_profile.skills)
+        skill_lines = build_prompt_skill_lines(prompt_skills)
         if skill_lines:
             instructions.extend(["", *skill_lines])
         tool_policy_lines = build_hermes_tool_policy_lines(tool_policy)
@@ -3163,6 +4514,12 @@ class MissionService:
         )
         if parity_tool_lines:
             instructions.extend(["", *parity_tool_lines])
+            parity_tool_gap_lines = _parity_tool_gap_lines(tool_evidence)
+            if parity_tool_gap_lines:
+                instructions.extend(["", *parity_tool_gap_lines])
+        parity_execution_lines = _parity_execution_discipline_lines(mission)
+        if parity_execution_lines:
+            instructions.extend(["", *parity_execution_lines])
         resolved_instance_name = str(mission.get("instance_name") or "").strip() or None
         runtime_profile_row = await self.database.get_hermes_runtime_profile()
         runtime_profile = (

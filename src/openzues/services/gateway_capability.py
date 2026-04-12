@@ -19,6 +19,7 @@ from openzues.schemas import (
     GatewayCapabilityLaneView,
     GatewayCapabilityLaunchPolicyView,
     GatewayCapabilityMemoryProofReferenceView,
+    GatewayCapabilityMethodCatalogView,
     GatewayCapabilityView,
     InstanceView,
     MissionCreate,
@@ -49,6 +50,7 @@ from openzues.services.ops_mesh import OpsMeshService, build_ops_mesh
 from openzues.services.remote_ops import RemoteOpsService
 
 logger = logging.getLogger(__name__)
+GATEWAY_MCP_STATUS_REFRESH_TIMEOUT_SECONDS = 4.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -228,6 +230,61 @@ def _build_mempalace_tool_proof(
             best_candidate = candidate
 
     return best_candidate
+
+
+def _build_callable_method_catalog(
+    instances: list[InstanceView],
+    mcp_server_status_by_instance: dict[int, list[dict[str, Any]]],
+) -> GatewayCapabilityMethodCatalogView:
+    connected_lane_names: set[str] = set()
+    server_names: dict[str, str] = {}
+    tool_names: dict[str, str] = {}
+
+    for instance in instances:
+        if not instance.connected:
+            continue
+        for entry in mcp_server_status_by_instance.get(instance.id, []):
+            if not isinstance(entry, dict):
+                continue
+            server_name = str(entry.get("name") or entry.get("source") or "MCP server").strip()
+            if not server_name:
+                server_name = "MCP server"
+            names = _catalog_names(entry.get("tools"))
+            if not names:
+                continue
+            connected_lane_names.add(instance.name)
+            server_names.setdefault(server_name.lower(), server_name)
+            for tool_name in names:
+                tool_names.setdefault(tool_name.lower(), tool_name)
+
+    tools = sorted(tool_names.values(), key=str.lower)
+    servers = sorted(server_names.values(), key=str.lower)
+    lane_count = len(connected_lane_names)
+    if tools:
+        headline = "Gateway callable methods are visible"
+        summary = (
+            f"{len(tools)} callable method(s) are visible across {len(servers)} MCP server "
+            f"catalog(s) on {lane_count} connected lane(s)."
+        )
+    elif servers:
+        headline = "Gateway callable methods are staged"
+        summary = (
+            f"{len(servers)} MCP server catalog(s) are visible on {lane_count} connected "
+            "lane(s), but no callable tool names were published yet."
+        )
+    else:
+        headline = "Gateway callable methods are idle"
+        summary = "No lane-published MCP server catalogs are exposing callable tools yet."
+
+    return GatewayCapabilityMethodCatalogView(
+        headline=headline,
+        summary=summary,
+        tool_count=len(tools),
+        server_count=len(servers),
+        lane_count=lane_count,
+        tools=tools,
+        servers=servers,
+    )
 
 
 def _task_value(task: Any, field: str) -> Any:
@@ -845,13 +902,21 @@ class GatewayCapabilityService:
             remote_requests=remote_requests,
         )
         diagnostics_view = self._build_diagnostics_summary(diagnostics.checks)
+        launch_policy_summary = gateway.launch_defaults_summary
+        if (
+            gateway.launch_route is not None
+            and gateway.launch_route.conversation_reuse is not None
+        ):
+            launch_policy_summary = (
+                f"{launch_policy_summary} {gateway.launch_route.conversation_reuse.summary}"
+            ).strip()
         launch_policy = GatewayCapabilityLaunchPolicyView(
             headline=(
                 "Saved remote launch policy"
                 if gateway.setup_mode == "remote"
                 else "Saved local launch policy"
             ),
-            summary=gateway.launch_defaults_summary,
+            summary=launch_policy_summary,
             setup_mode=gateway.setup_mode,
             setup_flow=gateway.setup_flow,
             route_binding_mode=gateway.route_binding_mode,
@@ -1132,26 +1197,44 @@ class GatewayCapabilityService:
         if not connected_instances:
             return {}
 
-        responses = await asyncio.gather(
-            *(
-                self.manager.list_mcp_server_status(instance.id, refresh=True)
-                for instance in connected_instances
-            ),
-            return_exceptions=True,
-        )
-
         status_by_instance: dict[int, list[dict[str, Any]]] = {}
+        responses = await asyncio.gather(
+            *(self._refresh_mcp_server_status(instance.id) for instance in connected_instances)
+        )
         for instance, response in zip(connected_instances, responses, strict=False):
-            if isinstance(response, BaseException):
-                logger.warning(
-                    "Gateway capability could not load MCP server status for instance %s: %s",
-                    instance.id,
-                    response,
-                )
-                status_by_instance[instance.id] = []
-                continue
-            status_by_instance[instance.id] = response if isinstance(response, list) else []
+            status_by_instance[instance.id] = response
         return status_by_instance
+
+    async def _refresh_mcp_server_status(
+        self,
+        instance_id: int,
+    ) -> list[dict[str, Any]]:
+        runtime = self.manager.instances.get(instance_id)
+        cached = [
+            dict(item)
+            for item in (runtime.mcp_server_status if runtime is not None else [])
+            if isinstance(item, dict)
+        ]
+        try:
+            response = await asyncio.wait_for(
+                self.manager.list_mcp_server_status(instance_id, refresh=True),
+                timeout=GATEWAY_MCP_STATUS_REFRESH_TIMEOUT_SECONDS,
+            )
+        except TimeoutError:
+            logger.warning(
+                "Gateway capability timed out while refreshing MCP server status for instance %s; "
+                "using cached lane status instead.",
+                instance_id,
+            )
+            return cached
+        except Exception as exc:
+            logger.warning(
+                "Gateway capability could not load MCP server status for instance %s: %s",
+                instance_id,
+                exc,
+            )
+            return cached
+        return response if isinstance(response, list) else cached
 
     def _build_lane_health(
         self,
@@ -1330,6 +1413,7 @@ class GatewayCapabilityService:
         tracked_gap_count = int(integrations_inventory.gap_count)
         tracked_count = int(integrations_inventory.tracked_count)
         observed_count = int(integrations_inventory.observed_count)
+        method_catalog = _build_callable_method_catalog(instances, mcp_server_status_by_instance)
         tracked_memory_items = [
             item
             for item in integrations_inventory.items
@@ -1650,6 +1734,9 @@ class GatewayCapabilityService:
                 "integrations are visible yet."
             )
 
+        if method_catalog.tool_count:
+            summary = f"{summary} {method_catalog.summary}"
+
         items.sort(key=lambda item: (item.kind, item.name.lower()))
         return GatewayCapabilityInventoryView(
             headline=headline,
@@ -1674,6 +1761,7 @@ class GatewayCapabilityService:
             memory_proof_launch_label=(
                 memory_proof_target.launch_label if memory_proof_target is not None else None
             ),
+            method_catalog=method_catalog,
             items=items,
         )
 

@@ -2,14 +2,74 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sqlite3
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from typing import Any
 
 import pytest
 
 from openzues.database import Database
 from openzues.schemas import MissionCreate, MissionReflexRun
+from openzues.services.ecc_catalog import configure_ecc_catalog
+from openzues.services.followups import mission_row_matches_payload
+from openzues.services.hermes_skills import configure_hermes_skill_catalog
 from openzues.services.hub import BroadcastHub
-from openzues.services.missions import MissionService
+from openzues.services.missions import (
+    OPENCLAW_PARITY_CHECKPOINT_LEDGER,
+    MissionService,
+)
+
+
+@pytest.fixture(autouse=True)
+def _reset_external_skill_catalogs() -> None:
+    configure_hermes_skill_catalog(None)
+    configure_ecc_catalog(None)
+    yield
+    configure_hermes_skill_catalog(None)
+    configure_ecc_catalog(None)
+
+
+def _write_fake_hermes_skill(
+    repo_root: Path,
+    *,
+    relative_dir: str,
+    name: str,
+    description: str,
+    category: str,
+    tags: list[str],
+    requires_toolsets: list[str] | None = None,
+) -> Path:
+    skill_dir = repo_root / relative_dir
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    skill_path = skill_dir / "SKILL.md"
+    lines = [
+        "---",
+        f"name: {name}",
+        f"description: {description}",
+        "metadata:",
+        "  hermes:",
+        f"    category: {category}",
+        f"    tags: [{', '.join(tags)}]",
+    ]
+    if requires_toolsets:
+        lines.append(f"    requires_toolsets: [{', '.join(requires_toolsets)}]")
+    lines.extend(
+        [
+            "---",
+            "",
+            f"# {name}",
+            "",
+            "## When to Use",
+            "Use this Hermes skill when the workflow needs it.",
+            "",
+            "## Procedure",
+            "1. Open the skill.",
+            "2. Follow the workflow.",
+        ]
+    )
+    skill_path.write_text("\n".join(lines), encoding="utf-8")
+    return skill_path
 
 
 class FakeRuntime:
@@ -37,7 +97,9 @@ class FakeManager:
         self.instances = {7: FakeRuntime(7)}
         self.thread_calls: list[dict] = []
         self.turn_calls: list[dict] = []
+        self.interrupt_calls: list[dict] = []
         self.fail_connect_for: set[int] = set()
+        self.start_thread_error: Exception | None = None
         self.start_turn_error: Exception | None = None
 
     async def get(self, instance_id: int) -> FakeRuntime:
@@ -93,6 +155,8 @@ class FakeManager:
                 "collaboration_mode": collaboration_mode,
             }
         )
+        if self.start_thread_error is not None:
+            raise self.start_thread_error
         runtime = await self.get(instance_id)
         thread_id = f"thread_auto_{instance_id}"
         runtime.threads = [{"id": thread_id, "status": {"type": "idle"}}]
@@ -124,6 +188,17 @@ class FakeManager:
         runtime = await self.get(instance_id)
         runtime.threads = [{"id": thread_id, "status": {"type": "active"}}]
         return {"turn": {"id": f"turn_auto_{instance_id}"}}
+
+    async def interrupt_turn(self, instance_id: int, thread_id: str) -> dict[str, Any]:
+        self.interrupt_calls.append(
+            {
+                "instance_id": instance_id,
+                "thread_id": thread_id,
+            }
+        )
+        runtime = await self.get(instance_id)
+        runtime.threads = [{"id": thread_id, "status": {"type": "idle"}}]
+        return {"ok": "true"}
 
 
 @pytest.mark.asyncio
@@ -184,6 +259,192 @@ async def test_run_now_creates_thread_and_turn(tmp_path) -> None:
     assert stored["in_progress"] == 1
     assert "safe" in stored["toolsets"]
     assert "terminal" in stored["toolsets"]
+
+
+@pytest.mark.asyncio
+async def test_create_reuses_saved_thread_from_session_key(tmp_path) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    manager = FakeManager()
+    service = MissionService(database, manager, BroadcastHub(), poll_interval_seconds=3600)
+
+    await database.create_mission(
+        name="Earlier parity run",
+        objective="Ship the previous slice.",
+        status="completed",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread_saved",
+        session_key="launch:mode:workspace_affinity:task:7:operator:1",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=4,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        toolsets=["debugging"],
+    )
+
+    mission = await service.create(
+        MissionCreate(
+            name="OpenClaw parity continuation",
+            objective="Land the next bounded parity slice.",
+            instance_id=7,
+            cwd="C:/workspace",
+            session_key="launch:mode:workspace_affinity:task:7:operator:1",
+            max_turns=2,
+            start_immediately=False,
+        )
+    )
+    stored = await database.get_mission(mission.id)
+
+    assert stored is not None
+    assert stored["thread_id"] == "thread_saved"
+    assert stored["session_key"] == "launch:mode:workspace_affinity:task:7:operator:1"
+
+
+@pytest.mark.asyncio
+async def test_create_blocks_thread_reuse_when_conversation_target_changes(tmp_path) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    manager = FakeManager()
+    service = MissionService(database, manager, BroadcastHub(), poll_interval_seconds=3600)
+
+    await database.create_mission(
+        name="Earlier parity run",
+        objective="Ship the previous slice.",
+        status="completed",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread_saved",
+        session_key="launch:mode:workspace_affinity:task:7:operator:1:channel:slack",
+        conversation_target={
+            "channel": "slack",
+            "account_id": "workspace-bot",
+            "peer_kind": "channel",
+            "peer_id": "deploy-room",
+        },
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=4,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        toolsets=["debugging"],
+    )
+
+    mission = await service.create(
+        MissionCreate(
+            name="OpenClaw parity continuation",
+            objective="Land the next bounded parity slice.",
+            instance_id=7,
+            cwd="C:/workspace",
+            session_key="launch:mode:workspace_affinity:task:7:operator:1:channel:slack",
+            conversation_target={
+                "channel": "slack",
+                "account_id": "workspace-bot",
+                "peer_kind": "channel",
+                "peer_id": "qa-room",
+            },
+            max_turns=2,
+            start_immediately=False,
+        )
+    )
+    stored = await database.get_mission(mission.id)
+
+    assert stored is not None
+    assert stored["thread_id"] is None
+    assert stored["conversation_target"]["peer_id"] == "qa-room"
+
+
+def test_followup_payload_matching_uses_session_key_when_thread_changes() -> None:
+    payload = MissionCreate(
+        name="Recover OpenClaw parity",
+        objective=(
+            "Continue the mission 'OpenClaw parity' from its existing thread. Start by "
+            "reading the last checkpoint and failure context, fix the blocker, verify the "
+            "path forward, and leave a cleaner checkpoint when done."
+        ),
+        instance_id=7,
+        project_id=1,
+        cwd="C:/workspace",
+        thread_id="thread_new",
+        session_key="launch:mode:workspace_affinity:task:7:project:1:operator:1",
+        start_immediately=False,
+    )
+
+    assert mission_row_matches_payload(
+        {
+            "name": payload.name,
+            "objective": payload.objective,
+            "instance_id": 7,
+            "project_id": 1,
+            "thread_id": "thread_old",
+            "session_key": "launch:mode:workspace_affinity:task:7:project:1:operator:1",
+            "cwd": "C:/workspace",
+        },
+        payload,
+        cwd="C:/workspace",
+    )
+
+
+def test_followup_payload_matching_prefers_conversation_target_before_session_key() -> None:
+    payload = MissionCreate(
+        name="Recover OpenClaw parity",
+        objective=(
+            "Continue the mission 'OpenClaw parity' from its existing thread. Start by "
+            "reading the last checkpoint and failure context, fix the blocker, verify the "
+            "path forward, and leave a cleaner checkpoint when done."
+        ),
+        instance_id=7,
+        project_id=1,
+        cwd="C:/workspace",
+        thread_id="thread_new",
+        session_key="launch:mode:workspace_affinity:task:7:project:1:operator:1",
+        conversation_target={
+            "channel": "slack",
+            "account_id": "workspace-bot",
+            "peer_kind": "channel",
+            "peer_id": "deploy-room",
+        },
+        start_immediately=False,
+    )
+
+    assert mission_row_matches_payload(
+        {
+            "name": payload.name,
+            "objective": payload.objective,
+            "instance_id": 7,
+            "project_id": 1,
+            "thread_id": "thread_old",
+            "session_key": "launch:mode:workspace_affinity:task:7:project:1:operator:1",
+            "conversation_target": {
+                "channel": "slack",
+                "account_id": "workspace-bot",
+                "peer_kind": "channel",
+                "peer_id": "deploy-room",
+            },
+            "cwd": "C:/workspace",
+        },
+        payload,
+        cwd="C:/workspace",
+    )
 
 
 @pytest.mark.asyncio
@@ -1288,17 +1549,204 @@ async def test_get_view_surfaces_runtime_tool_evidence(tmp_path) -> None:
             }
         },
     )
+    for index in range(260):
+        await database.append_event(
+            instance_id=7,
+            thread_id="thread_tool_evidence",
+            method="item/commandExecution/outputDelta",
+            payload={
+                "itemId": f"filler_{index}",
+                "delta": f"filler output {index}",
+            },
+        )
 
     view = await service.get_view(mission_id)
 
     assert view.tool_evidence.proof_ready is False
     assert view.tool_evidence.observed_toolsets == ["debugging", "delegation"]
-    assert view.tool_evidence.unproven_toolsets == ["browser", "memory", "session_search"]
+    assert view.tool_evidence.unproven_toolsets == ["memory", "session_search"]
     assert "Explicit proof is still missing" in view.tool_evidence.summary
     evidence_by_toolset = {item.toolset: item for item in view.tool_evidence.items}
     assert evidence_by_toolset["debugging"].status == "observed"
     assert evidence_by_toolset["delegation"].status == "observed"
-    assert evidence_by_toolset["browser"].status == "unproven"
+    assert evidence_by_toolset["memory"].status == "unproven"
+
+
+@pytest.mark.asyncio
+async def test_get_view_ignores_inspection_output_as_memory_tool_use(tmp_path) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    manager = FakeManager()
+    manager.instances[7].connected = True
+    service = MissionService(database, manager, BroadcastHub(), poll_interval_seconds=3600)
+
+    mission_id = await database.create_mission(
+        name="Memory proof guard",
+        objective="Verify the parity seam without overclaiming tool use.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread_memory_guard",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=4,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        toolsets=["debugging", "memory"],
+    )
+    await database.append_event(
+        instance_id=7,
+        thread_id="thread_memory_guard",
+        method="item/started",
+        payload={
+            "item": {
+                "type": "commandExecution",
+                "id": "call_memory_guard",
+                "command": (
+                    'powershell.exe -Command "Get-Content '
+                    'src/openzues/services/gateway_capability.py"'
+                ),
+            }
+        },
+    )
+    await database.append_event(
+        instance_id=7,
+        thread_id="thread_memory_guard",
+        method="item/commandExecution/outputDelta",
+        payload={
+            "itemId": "call_memory_guard",
+            "delta": (
+                'memory_summary = "MemPalace is not staged through a tracked integration yet."'
+            ),
+        },
+    )
+
+    view = await service.get_view(mission_id)
+
+    assert view.tool_evidence.observed_toolsets == ["debugging"]
+    assert view.tool_evidence.unproven_toolsets == ["memory"]
+    evidence_by_toolset = {item.toolset: item for item in view.tool_evidence.items}
+    assert evidence_by_toolset["memory"].status == "unproven"
+
+
+@pytest.mark.asyncio
+async def test_get_view_counts_openzues_recall_as_memory_and_session_search(tmp_path) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    manager = FakeManager()
+    manager.instances[7].connected = True
+    service = MissionService(database, manager, BroadcastHub(), poll_interval_seconds=3600)
+
+    mission_id = await database.create_mission(
+        name="Recall proof guard",
+        objective="Recover parity context through durable recall before the next slice.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread_recall_guard",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=4,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        toolsets=["memory", "session_search"],
+    )
+    await database.append_event(
+        instance_id=7,
+        thread_id="thread_recall_guard",
+        method="item/started",
+        payload={
+            "item": {
+                "type": "commandExecution",
+                "id": "call_recall_guard",
+                "command": 'powershell.exe -Command "openzues recall parity --limit 3"',
+            }
+        },
+    )
+    await database.append_event(
+        instance_id=7,
+        thread_id="thread_recall_guard",
+        method="item/commandExecution/outputDelta",
+        payload={
+            "itemId": "call_recall_guard",
+            "delta": "openzues recall returned the latest parity checkpoint trail.",
+        },
+    )
+
+    view = await service.get_view(mission_id)
+
+    assert view.tool_evidence.observed_toolsets == ["memory", "session_search"]
+    assert view.tool_evidence.unproven_toolsets == []
+
+
+@pytest.mark.asyncio
+async def test_get_view_normalizes_openclaw_parity_toolsets(tmp_path) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    manager = FakeManager()
+    manager.instances[7].connected = True
+    service = MissionService(database, manager, BroadcastHub(), poll_interval_seconds=3600)
+
+    mission_id = await database.create_mission(
+        name="OpenClaw Total Parity Program",
+        objective=(
+            "Use C:/openclaw-main as the source of truth and C:/workspace as the target product. "
+            "Resume from the verified checkpoint in "
+            "`docs/openclaw-parity-checkpoint-2026-04-10.md` instead of rebuilding the full "
+            "source inventory. Choose the next bounded missing seam named there, implement it end "
+            "to end in production quality, run the focused verification for that seam, and leave "
+            "a checkpoint that names what was completed, what remains, and the next best slice."
+        ),
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread_parity_tools",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort="high",
+        collaboration_mode=None,
+        max_turns=8,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        toolsets=["debugging", "delegation", "browser", "vision", "memory", "session_search"],
+    )
+
+    view = await service.get_view(mission_id)
+
+    assert view.toolsets == ["debugging", "delegation", "memory", "session_search"]
+    assert view.tool_evidence.expected_toolsets == [
+        "debugging",
+        "delegation",
+        "memory",
+        "session_search",
+    ]
+    assert "browser" not in view.toolsets
+    assert "vision" not in view.toolsets
 
 
 @pytest.mark.asyncio
@@ -1388,8 +1836,200 @@ async def test_build_turn_prompt_emits_parity_tool_evidence_contract(tmp_path) -
 
     assert "OpenClaw parity proof contract:" in prompt
     assert "Tool evidence:" in prompt
+    assert "Current tool proof gaps:" in prompt
     assert "declared tool families were actually exercised" in prompt
-    assert "- browser: not used in this slice because no UI proof was needed" in prompt
+    assert "- memory: used MemPalace or Recall to recover prior context" in prompt
+    assert (
+        "- session_search: queried prior mission/checkpoint history before restating context"
+        in prompt
+    )
+    assert "OpenClaw parity execution discipline:" in prompt
+
+
+@pytest.mark.asyncio
+async def test_build_turn_prompt_compacts_parity_objective_and_skips_auto_local_skillbooks(
+    tmp_path: Path,
+) -> None:
+    hermes_root = tmp_path / "hermes-agent-main"
+    skill_path = _write_fake_hermes_skill(
+        hermes_root,
+        relative_dir="skills/gateway/openclaw-gateway-parity",
+        name="OpenClaw Gateway Parity",
+        description="Focused guidance for OpenClaw gateway parity seams.",
+        category="gateway",
+        tags=["openclaw", "parity", "gateway", "routing"],
+        requires_toolsets=["debugging"],
+    )
+    configure_hermes_skill_catalog(hermes_root)
+
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    project_root = tmp_path / "workspace"
+    project_root.mkdir()
+    await database.create_project(path=str(project_root), label="OpenZues Workspace")
+    await database.create_skill_pin(
+        project_id=1,
+        name="Browser Verify",
+        prompt_hint=(
+            "Use this after meaningful UI changes or dashboard flows that need visual "
+            "confirmation."
+        ),
+        source="agent-browser",
+        enabled=True,
+    )
+    manager = FakeManager()
+    manager.instances[7].connected = True
+    service = MissionService(database, manager, BroadcastHub(), poll_interval_seconds=3600)
+
+    mission_id = await database.create_mission(
+        name="OpenClaw Total Parity Program",
+        objective=(
+            "Use C:/openclaw-main as the source of truth and C:/workspace as the target product. "
+            "First inventory the OpenClaw surface area across gateway, onboarding, CLI, channels, "
+            "routing, voice, canvas, nodes, skills, browser, packaging, and companion apps. "
+            "Then choose the highest-leverage missing parity slice in OpenZues, implement it end "
+            "to end in production quality, run the relevant verification, and leave a checkpoint "
+            "that names what was completed, what remains, and the next best slice.\n\n"
+            "Continuous loop contract:\n"
+            "- Keep chaining until parity is genuinely complete.\n\n"
+            "Project skillbook:\n"
+            f"- OpenClaw Gateway Parity: Read the linked Hermes SKILL.md first. Source: "
+            f"{skill_path}.\n\n"
+            "Hermes tool policy:\n"
+            "- Active toolsets: debugging, delegation, browser.\n\n"
+            "Hermes runtime posture prefers OpenZues Recall for memory and Docker Backend "
+            "for execution."
+        ),
+        status="active",
+        instance_id=7,
+        project_id=1,
+        thread_id="thread_parity_compaction",
+        cwd=str(project_root),
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=4,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        toolsets=["debugging", "delegation", "browser"],
+    )
+
+    mission = await database.get_mission(mission_id)
+    assert mission is not None
+
+    prompt = await service._build_turn_prompt(mission)
+
+    assert "docs/openclaw-parity-checkpoint-2026-04-10.md" in prompt
+    assert "First inventory the OpenClaw surface area" not in prompt
+    assert "Project skillbook:" not in prompt
+    assert str(skill_path) not in prompt
+    assert "OpenClaw Gateway Parity" not in prompt
+    assert "open that SKILL.md before you execute the related workflow" not in prompt
+    assert "Browser Verify" in prompt
+
+
+@pytest.mark.asyncio
+async def test_build_turn_prompt_clamps_parity_inventory_drift_after_queue_yield(tmp_path) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    manager = FakeManager()
+    manager.instances[7].connected = True
+    service = MissionService(database, manager, BroadcastHub(), poll_interval_seconds=3600)
+
+    mission_id = await database.create_mission(
+        name="OpenClaw Total Parity Program",
+        objective="Keep iterating until OpenClaw parity is complete.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread_parity_resume",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=4,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        toolsets=["debugging", "delegation"],
+    )
+    await database.update_mission(
+        mission_id,
+        command_count=59,
+        last_checkpoint=(
+            "Auto-yielded the lane after a long run of 38,347 tokens and 59 commands without "
+            "a durable checkpoint."
+        ),
+        last_commentary=(
+            "I am rebuilding context from the target workspace and mapping the highest-leverage "
+            "missing parity seam again."
+        ),
+    )
+
+    mission = await database.get_mission(mission_id)
+    assert mission is not None
+
+    prompt = await service._build_turn_prompt(mission)
+
+    assert "This mission already drifted into inventory churn or queue-yield." in prompt
+    assert "Do not reopen global inventory on this turn." in prompt
+    assert "Avoid root-level `Get-ChildItem`" in prompt
+
+
+@pytest.mark.asyncio
+async def test_build_queue_yield_checkpoint_includes_parity_resume_rule(tmp_path) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    manager = FakeManager()
+    service = MissionService(database, manager, BroadcastHub(), poll_interval_seconds=3600)
+
+    mission_id = await database.create_mission(
+        name="OpenClaw Total Parity Program",
+        objective="Keep iterating until OpenClaw parity is complete.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread_parity_queue",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=4,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+    )
+    await database.update_mission(
+        mission_id,
+        total_tokens=38347,
+        command_count=59,
+    )
+    mission = await database.get_mission(mission_id)
+    assert mission is not None
+
+    summary = await service._build_queue_yield_checkpoint(mission_id, mission)
+
+    assert "Resume rule: treat the source inventory as complete" in summary
+    assert "Resume target: choose one missing parity seam" in summary
 
 
 @pytest.mark.asyncio
@@ -1833,6 +2473,420 @@ async def test_reconcile_uses_scope_realign_reflex_for_drifting_mission(tmp_path
 
 
 @pytest.mark.asyncio
+async def test_reconcile_rebinds_commentary_orbiting_thread(tmp_path) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    manager = FakeManager()
+    manager.instances[7].connected = True
+    manager.instances[7].threads = [{"id": "thread_orbit", "status": {"type": "active"}}]
+    service = MissionService(database, manager, BroadcastHub(), poll_interval_seconds=3600)
+
+    mission_id = await database.create_mission(
+        name="Orbiting parity mission",
+        objective="Land the OpenClaw parity checkpoint instead of looping in commentary.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread_orbit",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=True,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+    )
+    await database.update_mission(
+        mission_id,
+        in_progress=1,
+        phase="reporting",
+        command_count=12,
+        turns_completed=1,
+        total_tokens=222631,
+        last_turn_id="turn_orbit",
+        current_command=None,
+        last_commentary=(
+            "I am still sequencing delegation and deciding whether this turn should stop."
+        ),
+    )
+    await database.append_event(
+        instance_id=7,
+        thread_id="thread_orbit",
+        method="turn/started",
+        payload={"threadId": "thread_orbit", "turnId": "turn_orbit"},
+    )
+    for delta in (
+        "I",
+        "am",
+        "still",
+        "deciding",
+        "whether",
+        "this",
+        "turn",
+        "should",
+        "stop",
+        "and",
+        "land",
+        "now",
+    ):
+        await database.append_event(
+            instance_id=7,
+            thread_id="thread_orbit",
+            method="item/agentMessage/delta",
+            payload={
+                "threadId": "thread_orbit",
+                "turnId": "turn_orbit",
+                "itemId": "msg_orbit",
+                "delta": delta,
+            },
+        )
+
+    now = datetime.now(UTC) - timedelta(minutes=4)
+    with sqlite3.connect(database.path) as connection:
+        event_ids = [
+            row[0]
+            for row in connection.execute("SELECT id FROM events ORDER BY id ASC").fetchall()
+        ]
+        for offset, event_id in enumerate(event_ids):
+            created_at = now + timedelta(seconds=offset * 20)
+            connection.execute(
+                "UPDATE events SET created_at = ? WHERE id = ?",
+                (created_at.isoformat(), event_id),
+            )
+        connection.commit()
+
+    await service._reconcile_mission(mission_id)
+    mission = await database.get_mission(mission_id)
+    checkpoints = await database.list_mission_checkpoints(mission_id)
+
+    assert mission is not None
+    assert mission["thread_id"] == "thread_auto_7"
+    assert mission["status"] == "active"
+    assert mission["phase"] == "thinking"
+    assert mission["in_progress"] == 1
+    assert manager.interrupt_calls[0]["thread_id"] == "thread_orbit"
+    assert manager.thread_calls[0]["instance_id"] == 7
+    assert manager.turn_calls[0]["thread_id"] == "thread_auto_7"
+    assert "commentary-orbit recovery" in manager.turn_calls[0]["text"]
+    assert "Do not continue the abandoned narration" in manager.turn_calls[0]["text"]
+    assert checkpoints[0]["kind"] == "orbit_rebind"
+    assert "thread_orbit" in checkpoints[0]["summary"]
+
+
+@pytest.mark.asyncio
+async def test_reconcile_rebinds_low_signal_parity_orbit_early(tmp_path) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    manager = FakeManager()
+    manager.instances[7].connected = True
+    manager.instances[7].threads = [{"id": "thread_parity_orbit", "status": {"type": "active"}}]
+    service = MissionService(database, manager, BroadcastHub(), poll_interval_seconds=3600)
+
+    mission_id = await database.create_mission(
+        name="OpenClaw parity orbit mission",
+        objective=(
+            "Use the verified OpenClaw parity checkpoint in "
+            "`docs/openclaw-parity-checkpoint-2026-04-10.md` and land the next bounded seam."
+        ),
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread_parity_orbit",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=True,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+    )
+    await database.update_mission(
+        mission_id,
+        in_progress=1,
+        phase="reporting",
+        command_count=10,
+        turns_completed=1,
+        total_tokens=180000,
+        last_turn_id="turn_parity_orbit",
+        current_command=None,
+        last_commentary="Waiting for the next checkpoint handoff.",
+    )
+    await database.append_event(
+        instance_id=7,
+        thread_id="thread_parity_orbit",
+        method="turn/started",
+        payload={"threadId": "thread_parity_orbit", "turnId": "turn_parity_orbit"},
+    )
+    for delta in (
+        "Rebinding",
+        " on",
+        " the",
+        " checkpoint",
+        " seam now;",
+        " checking for Recall/session-search first",
+    ):
+        await database.append_event(
+            instance_id=7,
+            thread_id="thread_parity_orbit",
+            method="item/agentMessage/delta",
+            payload={
+                "threadId": "thread_parity_orbit",
+                "turnId": "turn_parity_orbit",
+                "itemId": "msg_parity_orbit",
+                "delta": delta,
+            },
+        )
+
+    now = datetime.now(UTC) - timedelta(minutes=2)
+    with sqlite3.connect(database.path) as connection:
+        event_ids = [
+            row[0]
+            for row in connection.execute("SELECT id FROM events ORDER BY id ASC").fetchall()
+        ]
+        for offset, event_id in enumerate(event_ids):
+            created_at = now + timedelta(seconds=offset * 10)
+            connection.execute(
+                "UPDATE events SET created_at = ? WHERE id = ?",
+                (created_at.isoformat(), event_id),
+            )
+        connection.commit()
+
+    await service._reconcile_mission(mission_id)
+    mission = await database.get_mission(mission_id)
+    checkpoints = await database.list_mission_checkpoints(mission_id)
+
+    assert mission is not None
+    assert mission["thread_id"] == "thread_auto_7"
+    assert mission["status"] == "active"
+    assert mission["phase"] == "thinking"
+    assert mission["in_progress"] == 1
+    assert manager.interrupt_calls[0]["thread_id"] == "thread_parity_orbit"
+    assert manager.thread_calls[0]["instance_id"] == 7
+    assert manager.turn_calls[0]["thread_id"] == "thread_auto_7"
+    assert "commentary-orbit recovery" in manager.turn_calls[0]["text"]
+    assert (
+        "your next move must be a tool call or the checkpoint itself"
+        in manager.turn_calls[0]["text"]
+    )
+    assert checkpoints[0]["kind"] == "orbit_rebind"
+    assert "parity fast-cutoff guardrail" in checkpoints[0]["summary"]
+
+
+@pytest.mark.asyncio
+async def test_reconcile_rebinds_stalled_executing_thread(tmp_path) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    manager = FakeManager()
+    manager.instances[7].connected = True
+    manager.instances[7].threads = [{"id": "thread_exec_stall", "status": {"type": "active"}}]
+    service = MissionService(database, manager, BroadcastHub(), poll_interval_seconds=3600)
+
+    mission_id = await database.create_mission(
+        name="Stalled execution parity mission",
+        objective="Land the OpenClaw parity checkpoint instead of hanging on a stale read.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread_exec_stall",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=True,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+    )
+    await database.update_mission(
+        mission_id,
+        in_progress=1,
+        phase="executing",
+        command_count=18,
+        turns_completed=2,
+        total_tokens=310000,
+        last_turn_id="turn_exec_stall",
+        current_command=(
+            'powershell.exe -Command "Get-Content docs/openclaw-parity-checkpoint-2026-04-10.md"'
+        ),
+        last_commentary="I am still reading the parity checkpoint before deciding what to land.",
+        last_activity_at=(datetime.now(UTC) - timedelta(minutes=5)).isoformat(),
+    )
+    await database.append_event(
+        instance_id=7,
+        thread_id="thread_exec_stall",
+        method="turn/started",
+        payload={"threadId": "thread_exec_stall", "turnId": "turn_exec_stall"},
+    )
+    await database.append_event(
+        instance_id=7,
+        thread_id="thread_exec_stall",
+        method="item/started",
+        payload={
+            "threadId": "thread_exec_stall",
+            "turnId": "turn_exec_stall",
+            "item": {
+                "type": "commandExecution",
+                "id": "call_exec_stall",
+                "command": (
+                    'powershell.exe -Command "Get-Content '
+                    'docs/openclaw-parity-checkpoint-2026-04-10.md"'
+                ),
+            },
+        },
+    )
+    await database.append_event(
+        instance_id=7,
+        thread_id="thread_exec_stall",
+        method="item/commandExecution/outputDelta",
+        payload={
+            "threadId": "thread_exec_stall",
+            "turnId": "turn_exec_stall",
+            "itemId": "call_exec_stall",
+            "delta": "OpenClaw parity checkpoint header",
+        },
+    )
+
+    now = datetime.now(UTC) - timedelta(minutes=5)
+    with sqlite3.connect(database.path) as connection:
+        event_ids = [
+            row[0]
+            for row in connection.execute("SELECT id FROM events ORDER BY id ASC").fetchall()
+        ]
+        for offset, event_id in enumerate(event_ids):
+            created_at = now + timedelta(seconds=offset * 20)
+            connection.execute(
+                "UPDATE events SET created_at = ? WHERE id = ?",
+                (created_at.isoformat(), event_id),
+            )
+        connection.commit()
+
+    await service._reconcile_mission(mission_id)
+    mission = await database.get_mission(mission_id)
+    checkpoints = await database.list_mission_checkpoints(mission_id)
+
+    assert mission is not None
+    assert mission["thread_id"] == "thread_auto_7"
+    assert mission["status"] == "active"
+    assert mission["phase"] == "thinking"
+    assert mission["in_progress"] == 1
+    assert manager.interrupt_calls[0]["thread_id"] == "thread_exec_stall"
+    assert manager.thread_calls[0]["instance_id"] == 7
+    assert manager.turn_calls[0]["thread_id"] == "thread_auto_7"
+    assert "stalled-execution recovery" in manager.turn_calls[0]["text"]
+    assert "Do not keep rereading the same files" in manager.turn_calls[0]["text"]
+    assert checkpoints[0]["kind"] == "execution_rebind"
+    assert "thread_exec_stall" in checkpoints[0]["summary"]
+
+
+@pytest.mark.asyncio
+async def test_reconcile_rebinds_not_loaded_executing_thread(tmp_path) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    manager = FakeManager()
+    manager.instances[7].connected = True
+    manager.instances[7].threads = [
+        {
+            "id": "thread_exec_not_loaded",
+            "status": {"type": "notLoaded"},
+        }
+    ]
+    service = MissionService(database, manager, BroadcastHub(), poll_interval_seconds=3600)
+
+    mission_id = await database.create_mission(
+        name="Stalled execution parity mission",
+        objective="Land the OpenClaw parity checkpoint instead of hanging on a stale read.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread_exec_not_loaded",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=True,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+    )
+    await database.update_mission(
+        mission_id,
+        in_progress=1,
+        phase="executing",
+        command_count=18,
+        turns_completed=2,
+        total_tokens=310000,
+        last_turn_id="turn_exec_not_loaded",
+        current_command=(
+            'powershell.exe -Command "Get-Content docs/openclaw-parity-checkpoint-2026-04-10.md"'
+        ),
+        last_commentary="I am still reading the parity checkpoint before deciding what to land.",
+        last_activity_at=(datetime.now(UTC) - timedelta(minutes=5)).isoformat(),
+    )
+    await database.append_event(
+        instance_id=7,
+        thread_id="thread_exec_not_loaded",
+        method="turn/started",
+        payload={"threadId": "thread_exec_not_loaded", "turnId": "turn_exec_not_loaded"},
+    )
+    await database.append_event(
+        instance_id=7,
+        thread_id="thread_exec_not_loaded",
+        method="item/started",
+        payload={
+            "threadId": "thread_exec_not_loaded",
+            "turnId": "turn_exec_not_loaded",
+            "item": {
+                "type": "commandExecution",
+                "id": "call_exec_not_loaded",
+                "command": (
+                    'powershell.exe -Command "Get-Content '
+                    'docs/openclaw-parity-checkpoint-2026-04-10.md"'
+                ),
+            },
+        },
+    )
+
+    await service._reconcile_mission(mission_id)
+    mission = await database.get_mission(mission_id)
+    checkpoints = await database.list_mission_checkpoints(mission_id)
+
+    assert mission is not None
+    assert mission["thread_id"] == "thread_auto_7"
+    assert mission["status"] == "active"
+    assert mission["phase"] == "thinking"
+    assert mission["in_progress"] == 1
+    assert manager.interrupt_calls[0]["thread_id"] == "thread_exec_not_loaded"
+    assert manager.thread_calls[0]["instance_id"] == 7
+    assert manager.turn_calls[0]["thread_id"] == "thread_auto_7"
+    assert "stalled-execution recovery" in manager.turn_calls[0]["text"]
+    assert "no longer reporting as a live runtime thread" in manager.turn_calls[0]["text"]
+    assert checkpoints[0]["kind"] == "execution_rebind"
+    assert "thread_exec_not_loaded" in checkpoints[0]["summary"]
+
+
+@pytest.mark.asyncio
 async def test_reconcile_creates_background_continuity_snapshot_for_hot_live_turn(
     tmp_path,
 ) -> None:
@@ -2154,6 +3208,131 @@ async def test_reconcile_rebinds_stale_thread_before_failing_again(tmp_path) -> 
 
 
 @pytest.mark.asyncio
+async def test_stale_thread_recovery_prompt_is_compact_for_openclaw_parity(tmp_path) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    manager = FakeManager()
+    manager.instances[7].connected = True
+    service = MissionService(database, manager, BroadcastHub(), poll_interval_seconds=3600)
+
+    mission_id = await database.create_mission(
+        name="OpenClaw Total Parity Program",
+        objective=(
+            "Use C:/openclaw-main as the source of truth and C:/OpenZues as the target product. "
+            "First inventory the OpenClaw surface area across gateway, onboarding, CLI, channels, "
+            "routing, voice, canvas, nodes, skills, browser, packaging, and companion apps. "
+            "Then choose the highest-leverage missing parity slice in OpenZues, implement it end "
+            "to end in production quality, run the relevant verification, and leave a checkpoint "
+            "that names what was completed, what remains, and the next best slice."
+        ),
+        status="failed",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread_parity_stale",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort="high",
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+    )
+    mission = await database.get_mission(mission_id)
+    assert mission is not None
+
+    prompt = service._build_stale_thread_recovery_prompt(
+        mission,
+        stale_thread_id="thread_parity_stale",
+        new_thread_id="thread_parity_recovered",
+        stale_error="thread not found: thread_parity_stale",
+        checkpoints=[
+            {
+                "kind": "restart_safe",
+                "summary": (
+                    "Restart-safe recovery packet after 4 commands. Current focus: Rebuilding "
+                    "context first: I'm reading the Hermes workflow guidance, the current "
+                    "OpenZues worktree state, and any existing parity checkpoint."
+                ),
+            },
+            {
+                "kind": "final_answer",
+                "summary": (
+                    "Persistent setup launch handoff landed. Next step: move into routing and "
+                    "session-key policy parity."
+                ),
+            },
+        ],
+        trace_lines=[
+            "Output: hermes sessions list",
+            "Output: hermes cron create 30m",
+        ],
+    )
+
+    assert "stale-thread recovery" in prompt
+    assert f"Treat `{OPENCLAW_PARITY_CHECKPOINT_LEDGER}` as the recovery ledger." in prompt
+    assert "Give at most two short commentary sentences before the first tool call." in prompt
+    assert "does not count as session search" in prompt
+    assert "list_mcp_resources" in prompt
+    assert "Built-in agent stack:" not in prompt
+    assert "Crash-safe relay packets:" not in prompt
+    assert "Recent persisted live trace:" not in prompt
+    assert "Hermes workflow guidance" not in prompt
+    assert "Relevant checkpoint trail:" in prompt
+    assert "Persistent setup launch handoff landed." in prompt
+    assert "First inventory the OpenClaw surface area" not in prompt
+
+
+@pytest.mark.asyncio
+async def test_run_now_blocks_mission_when_thread_launch_times_out(tmp_path) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    manager = FakeManager()
+    manager.instances[7].connected = True
+    manager.start_thread_error = TimeoutError()
+    service = MissionService(database, manager, BroadcastHub(), poll_interval_seconds=3600)
+
+    mission_id = await database.create_mission(
+        name="OpenClaw Total Parity Program",
+        objective="Resume from the parity checkpoint and lock the next bounded seam.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id=None,
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort="high",
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+    )
+
+    view = await service.run_now(mission_id)
+    mission = await database.get_mission(mission_id)
+
+    assert mission is not None
+    assert mission["status"] == "blocked"
+    assert mission["phase"] == "launch"
+    assert "Thread launch timed out" in str(mission["last_error"])
+    assert view.status == "blocked"
+    assert view.phase == "launch"
+
+
+@pytest.mark.asyncio
 async def test_live_event_clears_stale_thread_failure_state(tmp_path) -> None:
     database = Database(tmp_path / "missions.db")
     await database.initialize()
@@ -2276,6 +3455,67 @@ async def test_live_event_clears_approval_block_after_autopilot_resume(tmp_path)
 
 
 @pytest.mark.asyncio
+async def test_live_event_clears_turn_start_timeout_failure_state(tmp_path) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    manager = FakeManager()
+    manager.instances[7].connected = True
+    service = MissionService(database, manager, BroadcastHub(), poll_interval_seconds=3600)
+
+    mission_id = await database.create_mission(
+        name="Late turn start proof",
+        objective="Recover when the runtime starts a turn after the RPC times out.",
+        status="failed",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread_late",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=True,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+    )
+    await database.update_mission(
+        mission_id,
+        last_error="TimeoutError: Codex runtime failed to start the turn without a detailed error.",
+        phase="failed",
+        in_progress=0,
+    )
+
+    await service.handle_event(
+        7,
+        {
+            "method": "item/started",
+            "threadId": "thread_late",
+            "params": {
+                "threadId": "thread_late",
+                "turnId": "turn_late",
+                "item": {
+                    "type": "commandExecution",
+                    "command": 'powershell.exe -Command "Get-Date"',
+                },
+            },
+        },
+    )
+
+    mission = await database.get_mission(mission_id)
+
+    assert mission is not None
+    assert mission["status"] == "active"
+    assert mission["last_error"] is None
+    assert mission["phase"] == "executing"
+    assert mission["in_progress"] == 1
+
+
+@pytest.mark.asyncio
 async def test_reconcile_clears_stale_thread_error_when_runtime_thread_is_alive(tmp_path) -> None:
     database = Database(tmp_path / "missions.db")
     await database.initialize()
@@ -2320,6 +3560,54 @@ async def test_reconcile_clears_stale_thread_error_when_runtime_thread_is_alive(
     assert mission["last_error"] is None
     assert mission["phase"] == "thinking"
     assert mission["in_progress"] == 1
+
+
+@pytest.mark.asyncio
+async def test_reconcile_clears_turn_start_timeout_failure_when_thread_is_alive(tmp_path) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    manager = FakeManager()
+    manager.instances[7].connected = True
+    manager.instances[7].threads = [{"id": "thread_live", "status": {"type": "active"}}]
+    service = MissionService(database, manager, BroadcastHub(), poll_interval_seconds=3600)
+
+    mission_id = await database.create_mission(
+        name="Recovered late-start mission",
+        objective="Trust a live runtime thread over a transient turn-start timeout.",
+        status="failed",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread_live",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=True,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+    )
+    await database.update_mission(
+        mission_id,
+        last_error="TimeoutError: Codex runtime failed to start the turn without a detailed error.",
+        phase="failed",
+        in_progress=0,
+    )
+
+    await service._reconcile_mission(mission_id)
+    mission = await database.get_mission(mission_id)
+
+    assert mission is not None
+    assert mission["status"] == "active"
+    assert mission["last_error"] is None
+    assert mission["phase"] == "thinking"
+    assert mission["in_progress"] == 1
+    assert manager.turn_calls == []
 
 
 @pytest.mark.asyncio

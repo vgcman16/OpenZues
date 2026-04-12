@@ -1580,3 +1580,672 @@ That keeps the work on the same high-leverage control-plane spine before broaden
 - Verified state: `openzues launch <opportunity-id>` now previews or executes the selected launchpad draft through the existing mission creation spine, and human `status` output now exposes opportunity ids when available.
 - Next step: add an explicit queue-signal target path by introducing a small selector into the shared queue planner/executor lane.
 - Blockers: none beyond the known combined app-plus-CLI pytest order sensitivity already captured in the ledger.
+
+## Update: Live Watch CLI Recovery Slice
+
+### Recovered context
+
+- Re-entered from stale-thread recovery by reading the parity ledger, the current OpenZues worktree, and the OpenClaw source layout before making changes.
+- Verified that the stale relay claiming `instance_mode` was still thin and wizard-session state was missing was no longer true in the repo: setup posture, wizard-session persistence, launch routing, gateway doctor, and the gateway-aware operator CLI spine were already landed.
+- Checked the dirty worktree before broadening scope and found the next active seam already in progress: a live `openzues watch` command plus repo-local watcher launcher scripts in the CLI layer.
+- Confirmed against the OpenClaw source tree that this is not a missing backend contract from upstream. It is a thin OpenZues operator affordance on top of existing dashboard/setup-launch surfaces, so the right move was to finish and verify it as a bounded CLI parity slice instead of inventing another watcher subsystem.
+
+### Completed this turn
+
+- Finished and verified the in-progress live-watch operator seam in the existing worktree:
+  - `openzues watch` now composes `/api/dashboard` plus `/api/setup/launch` into one watch snapshot.
+  - the command can resolve a target mission from the saved launch handoff, an explicit mission id, or a task label
+  - `--launch` can reconnect or resume the saved target before watching when the current posture allows it
+  - `--follow`, `--cycles`, `--until-terminal`, JSON output, and human-readable output are wired through one CLI path
+  - `scripts/openzues-watch.cmd` provides a repo-local Windows launcher for the new watch command
+- Kept the slice additive and bounded:
+  - no new API route was introduced
+  - no gateway/routing/schema contract was changed
+  - the watch command stays a client composition layer over existing control-plane truth instead of a second supervision backend
+- Stabilized three unrelated but newly surfaced calendar-fragile MemPalace gateway-capability tests in `tests/test_app.py` by switching them from fixed April 11 timestamps to relative UTC timestamps. That was necessary so the required broader regression pack would reflect real product behavior on April 12, 2026 instead of failing on stale fixture dates.
+
+Primary files carrying this turn's delta:
+
+- `src/openzues/cli.py`
+- `tests/test_cli.py`
+- `README.md`
+- `scripts/openzues-watch.cmd`
+- `tests/test_app.py`
+
+### Verification
+
+Focused watch/CLI coverage passed:
+
+- `.\.venv\Scripts\python.exe -m pytest tests/test_cli.py -q -k "watch or status or gateway or queue or launch or continue"`
+- Result: `21 passed`
+
+Full CLI pack passed:
+
+- `.\.venv\Scripts\python.exe -m pytest tests/test_cli.py -q`
+- Result: `31 passed`
+
+Broader app pack passed after stabilizing the date-fragile MemPalace fixtures:
+
+- `.\.venv\Scripts\python.exe -m pytest tests/test_app.py -q`
+- Result: `115 passed`
+
+Broader changed-surface control-plane pack passed:
+
+- `.\.venv\Scripts\python.exe -m pytest tests/test_database.py tests/test_manager.py tests/test_ops_mesh.py -q`
+- Result: `39 passed`
+
+Static integrity checks passed:
+
+- `node --check src/openzues/web/static/app.js`
+- `.\.venv\Scripts\python.exe -m compileall src/openzues`
+
+Live command smoke passed against a disposable local server on `http://127.0.0.1:8893`:
+
+- `.\.venv\Scripts\python.exe -m openzues.cli serve --host 127.0.0.1 --port 8893`
+- `.\.venv\Scripts\python.exe -m openzues.cli watch --url http://127.0.0.1:8893 --json`
+- Result: the command returned a real HTTP snapshot that resolved the saved `OpenClaw Total Parity Program` task, included the staged launch handoff, surfaced gateway posture, and attached the live watched mission payload.
+
+### What remains
+
+OpenZues still lacks the larger OpenClaw parity surfaces:
+
+- broader operator CLI parity beyond the current gateway-aware status, continue, launch, queue, recover, harden, and watch actions
+- explicit queue-signal targeting by id on top of the existing attention-queue planner
+- channel runtime and channel/account routing
+- browser-control runtime parity
+- canvas runtime parity
+- nodes, voice, companion apps, and packaging matrix
+
+Within the operator-control spine, the next leverage is no longer another gateway summary or another passive watch view. The next bounded seam is explicit queue-targeted actuation without recreating queue policy inside the CLI.
+
+### Next best slice
+
+Do not reopen setup posture, launch routing, gateway doctor, or the new watch command next. The next smallest verified slice should stay on the same operator CLI spine.
+
+Recommended next slice:
+
+- add one explicit CLI action for a selected attention-queue signal id
+- introduce the selector in the shared queue planner/executor path rather than copying queue policy into the CLI
+- keep preview vs execute semantics explicit, the same way `continue`, `launch`, and `watch` keep operator intent inspectable before side effects
+- keep consuming the existing `GatewayCapabilityView`, `plan_attention_queue(...)`, radar signals, and launchpad opportunities instead of inventing a second CLI policy layer
+
+That preserves the current high-leverage control-plane parity path before broadening into OpenClaw's channel, browser, canvas, node, voice, and companion-app ecosystems.
+
+### Blockers
+
+- No credential blocker hit during this turn.
+- No approval blocker hit during this turn.
+- An untracked `scripts/openzues-watch-browser.cmd` file is present in the worktree and appears to target a not-yet-landed `watch --browser` flag. This turn did not touch or verify that file because it sits outside the verified `watch` contract currently in `src/openzues/cli.py`.
+
+### Operator handoff
+
+- Completed: recovered the parity footing, confirmed the setup/gateway/routing spine was already landed, finished the in-progress `openzues watch` CLI slice, and stabilized three calendar-fragile MemPalace app tests so the broader regression pack is trustworthy again.
+- Verified: focused watch/operator CLI coverage passed (`21 passed`), the full CLI pack passed (`31 passed`), the full app pack passed (`115 passed`), the broader database/manager/ops-mesh pack passed (`39 passed`), `node --check` passed, `compileall` passed, and a live smoke against `http://127.0.0.1:8893` returned a real watch snapshot over HTTP.
+- Next step: add explicit queue-signal targeting by id while keeping the selector inside the shared attention-queue planner/executor path.
+- Blockers: none for the verified `watch` seam; only the unrelated untracked `scripts/openzues-watch-browser.cmd` remains outside the proven contract.
+
+### Re-entry checkpoint
+
+- Recovered context: the stale relay about missing wizard/session posture was obsolete; the actual live missing seam in the worktree was a bounded `openzues watch` CLI affordance on top of already-landed dashboard and setup-launch contracts.
+- Verified state: `openzues watch` is now proven by focused tests, full CLI/app/control-plane packs, static checks, and one live local HTTP smoke. The broader regression bar is green again after replacing fixed-date MemPalace fixtures with relative UTC timestamps.
+- Next step: land one queue-signal-targeted CLI action on the same shared planner/gateway spine instead of reopening backend routing or jumping to channels.
+- Blockers: no product blocker. Keep the untracked `scripts/openzues-watch-browser.cmd` out of scope unless the next cycle explicitly decides to add a browser-mode watch contract.
+
+## Update: Queue Signal Targeting Slice
+
+Date: 2026-04-12
+
+### Recovered context
+
+- Re-entered from the verified `watch` checkpoint instead of reopening the already-landed gateway doctor, status, launchpad, or watch seams.
+- Confirmed the live missing operator-control gap was exactly what the last checkpoint named: the attention queue could only act on the next autonomous signal, not an explicitly selected radar signal id.
+- Kept the work on the shared planner spine. The CLI was already thin; the missing selector belonged in the existing attention-queue planner and executor, not in another CLI-only policy branch.
+
+### Completed this turn
+
+- Added explicit signal-addressable queue targeting on the shared control-chat path:
+  - `plan_attention_queue(...)` now accepts an optional `target_signal_id`
+  - `ControlChatService.tick_attention_queue(...)` threads the same selector through execution
+  - unknown signal ids now fail clearly with the current available ids instead of silently falling back to the default whole-queue decision
+- Extended the CLI without widening scope:
+  - `openzues queue --signal-id <id> --plan` previews the selected radar signal
+  - `openzues queue --signal-id <id>` executes the selected queue move through the existing queue executor and action log
+  - when a selected signal is real but not currently actionable, the CLI returns a safe targeted no-op instead of pretending it fired the next generic queue move
+- Tightened terminal discoverability for the new path:
+  - human `openzues status` output now prints radar signal ids beside the visible top signals, so operators can target the new queue selector without dropping to raw JSON first
+
+Primary files carrying this slice:
+
+- `src/openzues/services/control_chat.py`
+- `src/openzues/cli.py`
+- `tests/test_cli.py`
+- `tests/test_app.py`
+
+### Verification
+
+Focused queue packs passed:
+
+- `.\.venv\Scripts\python.exe -m pytest tests/test_cli.py -q -k "queue"`
+- Result: `8 passed`
+- `.\.venv\Scripts\python.exe -m pytest tests/test_app.py -q -k "attention_queue"`
+- Result: `11 passed`
+
+Broader CLI regression coverage passed:
+
+- `.\.venv\Scripts\python.exe -m pytest tests/test_cli.py -q`
+- Result: `39 passed`
+
+Static integrity check passed:
+
+- `.\.venv\Scripts\python.exe -m compileall src/openzues`
+
+### What remains
+
+OpenZues still lacks larger OpenClaw parity surfaces:
+
+- broader operator CLI parity beyond the current gateway-aware status, continue, launch, queue, recover, harden, and watch actions
+- deeper gateway/plugin bootstrap and method-registry seams
+- channel runtime and channel/account routing
+- browser-control runtime parity beyond the current operator watch affordances
+- canvas runtime parity
+- nodes, voice, companion apps, and packaging matrix
+
+Within the operator-control spine, the biggest remaining leverage is no longer basic actuation by launchpad or queue id. The next useful seam is to close the remaining gateway bootstrap/method-registry gap before broadening into channels, browser runtime, or companion apps.
+
+### Next best slice
+
+Do not reopen the queue selector, gateway doctor projection, or watch surface next. The next smallest verified slice should step outward from operator actuation into the gateway substrate.
+
+Recommended next slice:
+
+- inventory the highest-leverage OpenClaw gateway bootstrap and method-registry seams against the current OpenZues gateway bootstrap profile
+- add one bounded gateway/bootstrap capability improvement that reuses the existing `GatewayBootstrapService`, `GatewayCapabilityService`, and launch-routing state rather than creating a second gateway stack
+- keep the slice operator-verifiable across API, dashboard, and CLI the same way the current control-plane work has been landed
+
+That keeps parity work anchored on OpenClaw's control-plane leverage instead of diffusing into broad channel or native-app scope too early.
+
+### Blockers
+
+- No credential blocker hit during this turn.
+- No approval blocker hit during this turn.
+- The wider source-of-truth gaps remain product-scope gaps, not access blockers.
+
+### Operator handoff
+
+- Completed: landed explicit `openzues queue --signal-id <id>` targeting on the shared attention-queue planner/executor, added clear unknown-id handling, and surfaced radar signal ids in human `status` output for terminal discoverability.
+- Verified: focused queue CLI coverage passed (`8 passed`), focused attention-queue app coverage passed (`11 passed`), the full CLI pack passed (`39 passed`), and `compileall` passed.
+- Next step: move off the now-solid operator CLI spine and take one bounded gateway bootstrap / method-registry parity seam on the same shared control-plane substrate.
+- Blockers: none beyond the standing product-scope depth.
+
+### Re-entry checkpoint
+
+- Recovered context: the live missing seam after `watch` was explicit queue-signal targeting by id, not another gateway summary or another passive observer surface.
+- Verified state: the shared attention-queue path now supports targeted preview and execution by radar signal id, unknown ids fail clearly without falling back to whole-queue behavior, and human `status` output exposes the visible signal ids needed to drive the command.
+- Next step: inventory and land one bounded gateway bootstrap / method-registry improvement against the OpenClaw source seams while keeping API, dashboard, and CLI truth unified.
+- Blockers: none.
+
+## Update: Operator Control Reliability Slice
+
+Date: 2026-04-12
+
+### Recovered context
+
+- Re-entered from the queue-targeting checkpoint and the stale-thread relay packet without reopening already-verified onboarding, watch, direct MemPalace proof, or queue-selector work.
+- Confirmed the active worktree seam was narrower than the broad parity inventory: gateway capability freshness under slow MCP refresh, mission tool-proof truthfulness, and cache-safe operator surfaces around mutating API failures.
+- Reused the existing source-of-truth inventory in this checkpoint and the MemPalace checkpoint instead of rebuilding the full OpenClaw surface map again.
+
+### Completed this turn
+
+- Hardened gateway capability freshness on the live MemPalace seam:
+  - `GatewayCapabilityService` now times out slow `mcpServerStatus/list` refreshes and falls back to cached runtime MCP status instead of stalling the operator surface
+  - the ready path still requires the full MemPalace tool contract, but transient refresh stalls now degrade into cached truth instead of false warning churn
+- Tightened parity tool-proof accounting in mission prompts:
+  - mission event scans now look back far enough to survive longer traces
+  - command output is now attached to the originating command id so inspection-only reads such as `Get-Content` no longer count as memory-tool proof
+  - parity prompts now call out current proof gaps explicitly instead of only listing the declared tool contract
+- Closed the remaining operator-surface reliability gap in the dashboard/API cache path:
+  - operator dashboard and gateway capability caches are now invalidated in a `finally` path for mutating `/api/` requests
+  - failed mutating requests can no longer leave stale operator snapshots resident until the cache TTL expires
+
+Primary files carrying this slice:
+
+- `src/openzues/services/gateway_capability.py`
+- `src/openzues/services/missions.py`
+- `src/openzues/app.py`
+- `tests/test_app.py`
+- `tests/test_missions.py`
+
+### Verification
+
+Focused reliability regressions passed from the project virtualenv:
+
+- `.\.venv\Scripts\python.exe -m pytest tests/test_app.py -q -k "mutating_api_failure_invalidates_operator_surface_caches or gateway_capability_uses_cached_mcp_status_when_live_refresh_times_out"`
+- Result: `2 passed`
+
+Re-verified the active operator-control slice:
+
+- `.\.venv\Scripts\python.exe -m pytest tests/test_app.py -q -k "gateway_capability or attention_queue"`
+- Result: `21 passed`
+- `.\.venv\Scripts\python.exe -m pytest tests/test_cli.py -q -k "queue or status"`
+- Result: `10 passed`
+- `.\.venv\Scripts\python.exe -m pytest tests/test_missions.py -q -k "tool_evidence or parity_tool"`
+- Result: `2 passed`
+
+### What remains
+
+OpenZues still lacks the broader OpenClaw parity surfaces already inventoried earlier in this checkpoint:
+
+- deeper gateway bootstrap and method-registry parity
+- broader CLI parity beyond the current control-plane actions
+- channel runtime and routing
+- browser-control runtime parity
+- canvas, nodes, voice, packaging, and companion apps
+
+Within the current operator-control spine, the freshness/proof/cache seam is now verified. The next leverage point is no longer more MemPalace doctor plumbing or more queue targeting.
+
+### Next best slice
+
+Do not reopen this reliability seam next unless a new regression appears. The next smallest verified slice should move one layer down into the gateway substrate:
+
+- compare OpenClaw's gateway bootstrap and method-registry seams against `GatewayBootstrapService` and the current OpenZues gateway capability/bootstrap contracts
+- land one bounded improvement that reuses the existing gateway bootstrap state, launch routing, API, dashboard, and CLI surfaces
+- keep the result operator-verifiable the same way this reliability slice stayed grounded in shared control-plane truth
+
+### Blockers
+
+- No credential blocker hit during this turn.
+- No approval blocker hit during this turn.
+- The remaining gaps are product-scope gaps, not access blockers.
+
+### Re-entry checkpoint
+
+- Recovered context: the stale-thread relay was pointing at calendar-fragile MemPalace freshness, but the live worktree had already moved onto a tighter operator-control seam around cached gateway truth, targeted actuation, and parity proof accounting.
+- Verified state: slow MCP refresh now falls back to cached runtime status, inspection-only command output no longer overclaims tool proof, mutating API failures invalidate operator caches safely, and the focused app/CLI/mission packs are green in the repo virtualenv.
+- Next step: inventory and land one bounded gateway bootstrap / method-registry parity improvement on top of the now-stable operator-control substrate.
+- Blockers: none.
+
+## Update: Targeted Queue Execution Contract
+
+Date: 2026-04-12
+
+### Recovered context
+
+- Re-entered on the still-open operator-control seam rather than reopening onboarding or queue-selector work that was already verified.
+- Confirmed the remaining production-quality gap inside the current slice: `openzues queue --signal-id <id>` could plan against one radar signal but still execute an unrelated safe approval first.
+- Kept scope bounded to the shared control-plane contract seam instead of drifting into a broader gateway/bootstrap redesign in the same turn.
+
+### Completed this turn
+
+- Closed the explicit queue-targeting contract gap in `ControlChatService`:
+  - targeted attention-queue execution now honors `target_signal_id` before any unrelated safe-approval sweep
+  - explicit operator targeting can no longer be silently preempted by a pending safe approval on the lane
+- Added a regression that proves the selected-signal path stays bounded even when a safe approval is also available:
+  - the test fakes mission creation so it exercises the control-plane contract without dragging live runtime startup into shutdown
+  - the assertion proves no approval resolution happened and the selected failed-signal recovery path was the action recorded
+- Re-ran the broader operator contract packs after the fix instead of trusting the narrow regression alone.
+
+Primary files carrying this slice:
+
+- `src/openzues/services/control_chat.py`
+- `tests/test_app.py`
+
+### Verification
+
+Focused app/dashboard pack passed:
+
+- `.\.venv\Scripts\python.exe -m pytest tests/test_app.py -q -k "gateway_capability or attention_queue"`
+- Result: `22 passed`
+
+Focused mission-proof pack remained green:
+
+- `.\.venv\Scripts\python.exe -m pytest tests/test_missions.py -q -k "tool_evidence or parity_tool_evidence_contract or commentary_orbiting_thread or stalled_executing_thread"`
+- Result: `4 passed`
+
+Focused contract guard pack passed:
+
+- `.\.venv\Scripts\python.exe -m pytest tests/test_app.py tests/test_database.py tests/test_manager.py tests/test_ops_mesh.py -q`
+- Result: `160 passed`
+
+Static integrity checks passed:
+
+- `node --check src/openzues/web/static/app.js`
+- `.\.venv\Scripts\python.exe -m compileall src/openzues`
+
+Previously rerun CLI proof for the same seam stayed green in this recovery lane:
+
+- `.\.venv\Scripts\python.exe -m pytest tests/test_cli.py -q -k "queue or status"`
+- Result: `10 passed`
+
+### What remains
+
+The current operator-control seam is now internally consistent, but OpenZues still lacks the larger OpenClaw parity surfaces already inventoried:
+
+- deeper gateway bootstrap and method-registry parity
+- broader CLI parity outside the current control-plane operator actions
+- channel runtime and channel/account routing
+- browser-control runtime, canvas, nodes, voice, packaging, and companion apps
+
+### Next best slice
+
+Do not reopen queue targeting, cache invalidation, or the current mission-proof seam next unless a new regression appears.
+
+The next smallest verified slice should move one layer down into OpenClaw's gateway substrate:
+
+- compare OpenClaw gateway bootstrap and method-registry seams against the current `GatewayBootstrapService`, `GatewayCapabilityService`, and launch-routing contracts
+- land one bounded gateway/bootstrap improvement that shows up coherently across API, dashboard, and CLI
+- keep the slice additive and operator-verifiable, not a broad stub for channels or native companions
+
+### Blockers
+
+- No credential blocker hit during this turn.
+- No approval blocker hit during this turn.
+- The remaining gaps are product-scope gaps, not access blockers.
+
+### Operator handoff
+
+- Completed: closed the last production-quality gap in explicit queue targeting so `queue --signal-id` now stays bounded to the selected radar signal even when a safe approval is pending elsewhere.
+- Verified: `22 passed` on the broader app/dashboard queue-capability pack, `4 passed` on the focused mission-proof pack, `160 passed` on the control-plane contract pack, `10 passed` on the focused CLI queue/status pack, plus `node --check` and `compileall`.
+- Tool evidence:
+  - debugging: used `git diff`, `rg`, and `Get-Content` to inspect the live seam and failing fixture path
+  - delegation: used architect/planner sidecars to map the seam and tighten the verification bar
+  - browser: not used in this slice because no UI contract changed
+  - vision: not used in this slice because no visual surface changed
+  - memory: not used directly; recovery context came from the persisted checkpoint doc and relay packet rather than Recall/MemPalace runtime calls
+  - session_search: not used directly; the thread did not query Recall/session-search APIs
+- Next step: take one bounded OpenClaw gateway bootstrap / method-registry parity seam on top of the now-stable operator-control substrate.
+- Blockers: none.
+
+## Update: Mission Runtime Continuity Hardening
+
+Date: 2026-04-12
+
+### Recovered context
+
+- Re-entered on the same operator-control seam after the queue-targeting contract was already checkpointed earlier today.
+- Confirmed the dirty worktree had moved beyond queue targeting into a broader continuity pass across mission recovery, runtime refresh hardening, gateway capability refresh behavior, and operator cache consistency.
+- Kept scope anchored to the current control-plane spine instead of broadening into channels, nodes, or companion apps.
+
+### Completed this turn
+
+- Finished and verified the in-flight operator continuity hardening slice already present in the worktree.
+- Mission control now treats late `turn/start` timeouts as recoverable when the runtime proves the turn actually started, which keeps missions from being stranded in false failed states during launch jitter.
+- Missions caught in commentary orbit or stalled inspection reads can now interrupt the stale runtime thread, rebind onto a fresh thread, and resume with a bounded recovery prompt instead of continuing abandoned narration.
+- Tool-family proofing is stricter: inspection-only output no longer overclaims `memory` tool use, so parity checkpoints can distinguish real Recall/MemPalace exercise from simple file reads.
+- Gateway capability refresh now falls back to cached MCP lane status when a live refresh stalls, which keeps the operator gateway surface readable under runtime slowness.
+- Shared operator/dashboard caches now invalidate after mutating API requests, and the CLI attention queue can target an explicit signal id without silent fallback while still surfacing the selected signal id in output.
+
+Primary files carrying this slice:
+
+- `src/openzues/services/missions.py`
+- `src/openzues/services/manager.py`
+- `src/openzues/services/control_chat.py`
+- `src/openzues/services/gateway_capability.py`
+- `src/openzues/app.py`
+- `src/openzues/cli.py`
+- `tests/test_missions.py`
+- `tests/test_manager.py`
+- `tests/test_app.py`
+- `tests/test_cli.py`
+
+### Verification
+
+Focused contract and continuity verification passed from the repo virtualenv:
+
+- `.\.venv\Scripts\python.exe -m pytest tests/test_app.py tests/test_database.py tests/test_manager.py tests/test_ops_mesh.py -q`
+- Result: `162 passed`
+- `.\.venv\Scripts\python.exe -m pytest tests/test_cli.py tests/test_missions.py -q`
+- Result: `87 passed`
+- `node --check src/openzues/web/static/app.js`
+- Result: passed
+- `.\.venv\Scripts\python.exe -m compileall src/openzues`
+- Result: passed
+
+### What remains
+
+The parity inventory is unchanged at the macro level. OpenZues still does not have OpenClaw parity for:
+
+- routed channel/account conversation identity
+- channel runtime breadth
+- browser-control runtime parity
+- canvas runtime parity
+- nodes and companion apps
+- voice wake and talk-mode surfaces
+- packaging and release-channel breadth
+
+This slice hardens continuity on the current control lane. It does not yet reach OpenClaw's bound channel/session routing seam.
+
+### Next best slice
+
+Do not reopen this continuity seam next unless a new regression appears. The next smallest verified parity slice should target routed session identity on top of the existing gateway and mission spine:
+
+- map OpenClaw's `binding-routing` and `session-conversation` seam onto OpenZues lane, operator, project, and mission identity
+- add stable session-key policy and conversation reuse before broadening into channel adapters
+- keep the work additive by reusing the current mission, launch routing, gateway bootstrap, and recall primitives
+
+### Operator handoff
+
+Completed: landed the operator continuity hardening slice already in flight: recoverable late turn starts, commentary-orbit and stalled-execution thread rebinds, stricter tool-proof accounting, cached gateway capability refresh fallback, cache-safe operator surface invalidation, and bounded CLI queue targeting by signal id.
+
+Verified: `162 passed` across app/database/manager/ops-mesh, `87 passed` across CLI/missions, plus `node --check src/openzues/web/static/app.js` and `.\.venv\Scripts\python.exe -m compileall src/openzues` both passed.
+
+Tool evidence:
+- debugging: used `git diff`, `rg`, repo file inspection, targeted `pytest`, `node --check`, and `compileall` to inspect and verify the seam
+- delegation: used architect and planner sidecar agents to map the live seam and tighten the parity claim/checkpoint gate
+- browser: not used in this slice because no UI flow or DOM contract changed
+- vision: not used in this slice because no screenshot or image proof was needed
+- memory: not used in this slice; prior checkpoint state was recovered from repository files rather than a live Recall or MemPalace query
+- session_search: not used in this slice because no session-search tool surface was available in this runtime
+
+Next step: implement routed session identity and conversation reuse on top of the current gateway/mission spine before broadening into channel adapters or companion runtimes.
+
+Blockers: none.
+
+## Update: Gateway Method Registry Surface
+
+Date: 2026-04-12
+
+### Recovered context
+
+- Re-entered on the gateway/bootstrap parity lane after the continuity and queue slices were already checkpointed.
+- Confirmed the active gap was narrower than the broader parity backlog: OpenZues had lane-published MCP server summaries, but callable tool inventory was still not surfaced as a first-class operator contract.
+- Kept the scope inside the gateway method-registry seam and reused the existing MCP server status summaries instead of introducing a separate registry source.
+
+### Completed this turn
+
+- Added a new gateway method catalog contract on top of the existing gateway capability inventory.
+- The contract now projects unique callable tool names, server counts, and connected-lane counts from lane-published MCP server status catalogs.
+- Gateway capability summaries now append the callable method inventory summary when tools are visible, so the API payload, CLI doctor output, and dashboard view all share the same truth.
+
+Primary files carrying this slice:
+
+- `src/openzues/schemas.py`
+- `src/openzues/services/gateway_capability.py`
+- `src/openzues/cli.py`
+- `src/openzues/web/static/app.js`
+- `tests/test_app.py`
+- `tests/test_cli.py`
+
+### Verification
+
+Focused contract coverage was added for:
+
+- the gateway capability API/dashboard payload including the callable method catalog
+- the CLI doctor emitter printing the callable method catalog summary and tool names
+
+### What remains
+
+OpenZues still lacks the broader OpenClaw parity surfaces already inventoried earlier in this checkpoint:
+
+- routed channel/account conversation identity
+- channel runtime breadth
+- browser-control runtime parity
+- canvas runtime parity
+- nodes and companion apps
+- voice wake and talk-mode surfaces
+- packaging and release-channel breadth
+
+This slice closes the operator-facing gateway method-registry inventory gap, but it does not yet reach the routed session identity seam.
+
+### Next best slice
+
+Do not reopen the gateway method catalog slice next unless a regression appears. The next smallest verified parity slice should continue onto routed session identity and conversation reuse on top of the current gateway and mission spine.
+
+### Blockers
+
+- None.
+
+## Update: Routed Session Identity and Gateway Method Catalog
+
+Date: 2026-04-12
+
+### Recovered context
+
+- Re-entered from stale-thread recovery by trusting the existing parity ledger instead of rebuilding the full OpenClaw inventory.
+- Verified that the next unfinished seam named in the latest durable checkpoint was routed session identity and conversation reuse on top of the existing gateway and mission spine.
+- Confirmed in the dirty worktree that this seam was partially implemented but not yet checkpointed: session-key lookup, launch-route reuse projection, session-aware follow-up matching, and CLI surfacing were all present.
+- After that seam was verified, took one more bounded gateway substrate slice: operator-visible callable method inventory from the already-published MCP server catalogs.
+
+### Completed this turn
+
+- Closed the routed session identity and conversation reuse seam:
+  - `LaunchRoutingService` now projects `conversation_reuse` beside the stable routed `session_key`
+  - mission creation reuses the latest compatible saved thread by `session_key` before starting a new thread
+  - follow-up matching now treats `session_key` as the canonical routed identity when thread ids change
+  - setup handoff and CLI output now surface the reuse summary so operators can see when the next launch will continue an existing logical conversation
+- Closed one bounded gateway method-registry seam on top of that routing work:
+  - gateway capability inventory now includes a callable method catalog derived from lane-published MCP server `tools` catalogs
+  - the same callable catalog summary is visible through the gateway capability API payload, CLI doctor/status output, and dashboard gateway doctor card
+  - the slice reuses the existing runtime-published MCP status summaries instead of introducing a second registry source
+
+Primary files carrying the two verified slices:
+
+- `src/openzues/database.py`
+- `src/openzues/schemas.py`
+- `src/openzues/services/followups.py`
+- `src/openzues/services/gateway_capability.py`
+- `src/openzues/services/launch_routing.py`
+- `src/openzues/services/missions.py`
+- `src/openzues/cli.py`
+- `src/openzues/web/static/app.js`
+- `tests/test_app.py`
+- `tests/test_cli.py`
+- `tests/test_database.py`
+- `tests/test_missions.py`
+
+### Verification
+
+Focused routed-session seam verification passed:
+
+- `.\.venv\Scripts\python.exe -m pytest tests/test_app.py tests/test_missions.py tests/test_cli.py tests/test_database.py -q -k "session_key or conversation_reuse or reuse_thread or followup_payload_matching"`
+- Result: `5 passed`
+
+Focused gateway method-catalog verification passed:
+
+- `.\.venv\Scripts\python.exe -m pytest tests/test_app.py tests/test_missions.py tests/test_cli.py tests/test_database.py -q -k "session_key or conversation_reuse or reuse_thread or followup_payload_matching or gateway_capability_endpoint_summarizes_connected_lane_health_inventory_and_warnings or gateway_capability_uses_cached_mcp_status_when_live_refresh_times_out or emit_gateway_capability_surfaces_callable_method_inventory or gateway_doctor_json_includes_gateway_capability_summary"`
+- Result: `9 passed`
+
+Static integrity checks passed:
+
+- `node --check src/openzues/web/static/app.js`
+- `.\.venv\Scripts\python.exe -m compileall src/openzues`
+
+### What remains
+
+OpenZues still does not have OpenClaw parity for:
+
+- routed channel/account conversation identity beyond the current control-plane session spine
+- channel runtime breadth
+- browser-control runtime parity
+- canvas runtime parity
+- nodes and companion apps
+- voice wake and talk-mode surfaces
+- packaging and release-channel breadth
+
+The current turn closed the control-plane session identity seam and exposed a bounded callable gateway catalog. It did not yet bind that routed identity into a channel/account adapter contract.
+
+### Next best slice
+
+Do not reopen routed session reuse or the gateway method catalog next unless a regression appears.
+
+The next smallest verified parity slice should bind the now-stable routed session identity into the first channel/account routing seam:
+
+- map OpenClaw's adapter-neutral routing/session contract from `openclaw-main/src/routing/resolve-route.ts` and related session-key helpers onto one OpenZues channel/account conversation identity shape
+- keep the slice additive by reusing the current `session_key`, `launch_routing`, mission follow-up matching, and gateway capability surfaces
+- choose one bounded adapter-neutral contract first; do not broaden into full channel runtime breadth, native companions, or packaging in the same cycle
+
+### Blockers
+
+- No credential blocker hit during this turn.
+- No approval blocker hit during this turn.
+- The remaining gaps are product-scope gaps, not access blockers.
+
+### Re-entry checkpoint
+
+- Recovered context: the next unfinished seam after continuity hardening was routed session identity and conversation reuse, not another global source inventory pass.
+- Verified state: routed launches now expose a stable `session_key` plus `conversation_reuse`, mission creation reuses the latest compatible thread by that key, follow-up matching survives thread-id churn, and gateway doctor now reports callable MCP tool inventory across API, CLI, and dashboard.
+- Next step: bind the same routed identity into the first channel/account routing contract so OpenZues stops at one logical conversation shape before broadening into channel-runtime breadth.
+- Blockers: none.
+
+## Update: Adapter-Neutral Conversation Target Contract
+
+Date: 2026-04-12
+
+### Recovered context
+
+- Re-entered from the routed-session checkpoint instead of reopening the broader OpenClaw inventory.
+- Confirmed the next unfinished seam named in the checkpoint was the first adapter-neutral channel/account routing contract on top of the existing `session_key` spine.
+- Queried OpenZues Recall before editing so the active lane reused the saved routing/session continuity context instead of restating it from scratch.
+
+### Completed this turn
+
+- Added a durable adapter-neutral `conversation_target` contract to the routing spine:
+  - task blueprints can now carry `channel`, `account_id`, `peer_kind`, and `peer_id`
+  - launch routing normalizes that target, includes it in the routed session identity, and surfaces a stable summary beside the existing `session_key`
+  - mission drafts inherit the same target, and stored missions now persist it durably in SQLite
+- Tightened conversation safety instead of only displaying the new field:
+  - thread reuse from `session_key` is now blocked when the incoming conversation target does not match the saved one
+  - follow-up matching now prefers the adapter-neutral conversation target before falling back to `session_key` or `thread_id`
+- Kept the slice additive:
+  - no channel runtime was introduced
+  - no native companion or packaging scope was opened
+  - the work reuses the existing launch-routing, mission, follow-up, CLI, and dashboard contracts
+
+### What remains
+
+OpenZues still does not have OpenClaw parity for:
+
+- first-class operator input surfaces for this new channel/account route identity during setup/bootstrap or task authoring
+- actual channel runtime breadth and adapter delivery
+- browser-control runtime parity
+- canvas runtime parity
+- nodes, voice, companion apps, and packaging breadth
+
+The routed identity contract now exists and is verified. The remaining leverage is to make it authorable through the existing operator surfaces before broadening into live channel runtime breadth.
+
+### Next best slice
+
+Do not reopen the routed session-key or follow-up safety seam next unless a regression appears.
+
+The next smallest verified slice should expose this new `conversation_target` contract through the existing operator setup/task surfaces:
+
+- allow onboarding/bootstrap or task-authoring flows to save a first channel/account/peer target explicitly
+- reuse the now-landed `conversation_target` plus routed `session_key` contract instead of inventing another route schema
+- keep the proof additive across API, dashboard, and CLI without pretending full channel delivery already exists
+
+### Operator handoff
+
+Completed: landed the first adapter-neutral channel/account routing contract on top of the routed `session_key` spine by adding durable `conversation_target` fields to task blueprints, launch routing, mission drafts, stored missions, and follow-up identity checks.
+
+Verified: `168 passed` across `tests/test_app.py tests/test_database.py tests/test_manager.py tests/test_ops_mesh.py`; `98 passed` across `tests/test_missions.py tests/test_cli.py`; `node --check src/openzues/web/static/app.js` passed; `.\.venv\Scripts\python.exe -m compileall src/openzues` passed.
+
+Tool evidence:
+- debugging: used targeted `Get-Content`, source-file inspection, `pytest`, `node --check`, and `compileall` to map and verify the seam
+- delegation: used an architect sidecar to confirm the minimum file set, contract shape, and verification bar before locking the implementation
+- browser: not used in this slice because no live browser-only proof was required
+- vision: not used in this slice because no screenshot or image proof was required
+- memory: used OpenZues Recall with `openzues recall "session_key conversation reuse routing" --limit 5 --json` to recover the saved routing checkpoint context
+- session_search: the same Recall query was used to search prior checkpoint/session history before restating the seam
+
+Next step: expose the new `conversation_target` contract through setup/bootstrap and task-authoring surfaces so operators can save the first channel/account route directly without dropping to raw payload editing.
+
+Blockers: none.

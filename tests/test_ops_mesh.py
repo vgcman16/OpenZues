@@ -299,6 +299,99 @@ def test_build_ops_mesh_auto_skillbook_includes_claw_style_builtin_skills() -> N
     assert "Project skillbook:" in ops_mesh.task_inbox.tasks[0].mission_draft.objective
 
 
+@pytest.mark.asyncio
+async def test_openclaw_parity_draft_anchors_checkpoint_without_harness_dossier(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    project_root = tmp_path / "workspace"
+    project_root.mkdir()
+    await database.create_project(path=str(project_root), label="OpenZues Workspace")
+    await database.create_skill_pin(
+        project_id=1,
+        name="Browser Verify",
+        prompt_hint=(
+            "Use this after meaningful UI changes or dashboard flows that need visual "
+            "confirmation."
+        ),
+        source="agent-browser",
+        enabled=True,
+    )
+    await database.create_integration(
+        project_id=1,
+        name="GitHub Inventory",
+        kind="github",
+        base_url="https://api.github.com",
+        auth_scheme="none",
+        notes="Primary repo automation context for OpenZues tasks.",
+        vault_secret_id=None,
+        secret_label=None,
+        secret_value=None,
+        enabled=True,
+    )
+    await database.create_task_blueprint(
+        name="OpenClaw Total Parity Program",
+        summary="Keep closing OpenClaw parity until the product is genuinely done.",
+        project_id=1,
+        instance_id=1,
+        cadence_minutes=60,
+        enabled=True,
+        payload={
+            "objective_template": (
+                "Use C:/openclaw-main as the source of truth and C:/workspace as the target "
+                "product. First inventory the OpenClaw surface area across gateway, onboarding, "
+                "CLI, channels, routing, voice, canvas, nodes, skills, browser, packaging, and "
+                "companion apps. Then choose the highest-leverage missing parity slice in "
+                "OpenZues, implement it end to end in production quality, run the relevant "
+                "verification, and leave a checkpoint that names what was completed, what "
+                "remains, and the next best slice."
+            ),
+            "run_until_complete": True,
+            "completion_marker": "PARITY COMPLETE",
+            "cwd": str(project_root),
+            "model": "gpt-5.4",
+            "reasoning_effort": "high",
+            "collaboration_mode": None,
+            "max_turns": 8,
+            "use_builtin_agents": True,
+            "run_verification": True,
+            "auto_commit": False,
+            "pause_on_approval": True,
+            "allow_auto_reflexes": True,
+            "auto_recover": True,
+            "auto_recover_limit": 2,
+            "reflex_cooldown_seconds": 900,
+            "allow_failover": True,
+            "toolsets": ["debugging", "delegation", "browser"],
+        },
+    )
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+    task_row = await database.get_task_blueprint(1)
+    assert task_row is not None
+
+    draft = await service._build_draft_for_task(_serialize_task(task_row))
+
+    assert "OpenClaw parity anchor:" in draft.objective
+    assert "docs/openclaw-parity-checkpoint-2026-04-10.md" in draft.objective
+    assert "First inventory the OpenClaw surface area" not in draft.objective
+    assert "Project skillbook:" not in draft.objective
+    assert "Known integration inventory:" not in draft.objective
+    assert "ECC workspace surface:" not in draft.objective
+    assert "Hermes runtime posture prefers" not in draft.objective
+    assert draft.toolsets == ["debugging", "delegation", "memory", "session_search"]
+    assert "browser" not in draft.toolsets
+
+
 def test_build_ops_mesh_synthesizes_operator_inbox_items() -> None:
     now = datetime.now(UTC)
     task_view = _serialize_task(

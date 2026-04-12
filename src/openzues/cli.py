@@ -262,6 +262,15 @@ def _emit_gateway_capability(payload: dict[str, object], *, json_output: bool) -
     if isinstance(inventory, dict):
         typer.echo("inventory: " + str(inventory.get("summary") or ""))
         typer.echo("memory: " + str(inventory.get("memory_summary") or ""))
+        method_catalog = inventory.get("method_catalog")
+        if isinstance(method_catalog, dict):
+            typer.echo("method catalog: " + str(method_catalog.get("summary") or ""))
+            method_tools = method_catalog.get("tools")
+            if isinstance(method_tools, list) and method_tools:
+                typer.echo(
+                    "method tools: "
+                    + ", ".join(str(tool) for tool in method_tools[:6] if str(tool).strip())
+                )
         memory_evidence = inventory.get("memory_evidence")
         if isinstance(memory_evidence, list):
             for evidence in memory_evidence[:3]:
@@ -298,6 +307,16 @@ def _emit_gateway_capability(payload: dict[str, object], *, json_output: bool) -
     launch_policy = payload.get("launch_policy")
     if isinstance(launch_policy, dict):
         typer.echo("launch policy: " + str(launch_policy.get("summary") or ""))
+        launch_route = launch_policy.get("launch_route")
+        if isinstance(launch_route, dict):
+            conversation_target = launch_route.get("conversation_target")
+            if isinstance(conversation_target, dict):
+                summary = str(conversation_target.get("summary") or "").strip()
+                if summary:
+                    typer.echo("conversation target: " + summary)
+            conversation_reuse = launch_route.get("conversation_reuse")
+            if isinstance(conversation_reuse, dict):
+                typer.echo("conversation reuse: " + str(conversation_reuse.get("summary") or ""))
     diagnostics = payload.get("diagnostics")
     if isinstance(diagnostics, dict):
         typer.echo("diagnostics: " + str(diagnostics.get("summary") or ""))
@@ -564,6 +583,19 @@ def _emit_status(payload: dict[str, object], *, json_output: bool) -> None:
         launch_policy = gateway_capability.get("launch_policy")
         if isinstance(launch_policy, dict):
             typer.echo("launch policy: " + str(launch_policy.get("summary") or ""))
+            launch_route = launch_policy.get("launch_route")
+            if isinstance(launch_route, dict):
+                conversation_target = launch_route.get("conversation_target")
+                if isinstance(conversation_target, dict):
+                    summary = str(conversation_target.get("summary") or "").strip()
+                    if summary:
+                        typer.echo("conversation target: " + summary)
+                conversation_reuse = launch_route.get("conversation_reuse")
+                if isinstance(conversation_reuse, dict):
+                    typer.echo(
+                        "conversation reuse: "
+                        + str(conversation_reuse.get("summary") or "")
+                    )
         warnings = gateway_capability.get("warnings")
         if isinstance(warnings, list):
             for warning in warnings[:3]:
@@ -580,10 +612,12 @@ def _emit_status(payload: dict[str, object], *, json_output: bool) -> None:
                 level = str(signal.get("level") or "info").upper()
                 title = str(signal.get("title") or "Signal").strip()
                 detail = str(signal.get("detail") or "").strip()
+                signal_id = str(signal.get("id") or "").strip()
+                label = f"{title} ({signal_id})" if signal_id else title
                 if detail:
-                    typer.echo(f"[{level}] {title}: {detail}")
+                    typer.echo(f"[{level}] {label}: {detail}")
                 else:
-                    typer.echo(f"[{level}] {title}")
+                    typer.echo(f"[{level}] {label}")
 
     launchpad = payload.get("launchpad")
     if isinstance(launchpad, dict):
@@ -1311,6 +1345,30 @@ def _watch_lines(payload: dict[str, object]) -> list[str]:
         gateway_summary = _first_text_line(gateway_capability.get("summary"))
         if gateway_summary:
             lines.append(f"{gateway_summary_label}: " + gateway_summary)
+        launch_policy = gateway_capability.get("launch_policy")
+        if isinstance(launch_policy, dict):
+            launch_route = launch_policy.get("launch_route")
+            if isinstance(launch_route, dict):
+                conversation_target = launch_route.get("conversation_target")
+                if isinstance(conversation_target, dict):
+                    target_summary = _first_text_line(conversation_target.get("summary"))
+                    if target_summary:
+                        target_label = (
+                            "observer conversation target"
+                            if observer_active
+                            else "conversation target"
+                        )
+                        lines.append(f"{target_label}: " + target_summary)
+                conversation_reuse = launch_route.get("conversation_reuse")
+                if isinstance(conversation_reuse, dict):
+                    reuse_summary = _first_text_line(conversation_reuse.get("summary"))
+                    if reuse_summary:
+                        reuse_label = (
+                            "observer conversation reuse"
+                            if observer_active
+                            else "conversation reuse"
+                        )
+                        lines.append(f"{reuse_label}: " + reuse_summary)
 
     watched_mission = payload.get("watched_mission")
     if not isinstance(watched_mission, dict):
@@ -1614,6 +1672,16 @@ def _available_launchpad_ids(dashboard: SimpleNamespace) -> list[str]:
     return [opportunity.id for opportunity in dashboard.launchpad.opportunities]
 
 
+def _attention_queue_idle_reply(*, signal_id: str | None = None) -> str:
+    wanted = str(signal_id or "").strip()
+    if wanted:
+        return (
+            f"The selected attention-queue signal `{wanted}` does not have a bounded move "
+            "right now."
+        )
+    return _ATTENTION_QUEUE_IDLE_REPLY
+
+
 def _build_status_payload(dashboard: SimpleNamespace) -> dict[str, object]:
     active_count = sum(1 for mission in dashboard.missions if mission.status == "active")
     blocked_count = sum(1 for mission in dashboard.missions if mission.status == "blocked")
@@ -1679,6 +1747,7 @@ async def _build_operator_dashboard(services: CliServices) -> SimpleNamespace:
             gateway_capability=gateway_capability,
         ),
         gateway_capability=gateway_capability,
+        ops_mesh=SimpleNamespace(skillbooks=[]),
     )
 
 
@@ -1712,7 +1781,36 @@ def _build_bootstrap_payload(
     allow_failover: bool,
     enabled: bool,
     use_mempalace: bool,
+    conversation_channel: str | None = None,
+    conversation_account_id: str | None = None,
+    conversation_peer_kind: str | None = None,
+    conversation_peer_id: str | None = None,
 ) -> OnboardingBootstrapCreate:
+    channel = str(conversation_channel or "").strip()
+    account_id = str(conversation_account_id or "").strip() or None
+    peer_kind = str(conversation_peer_kind or "").strip().lower() or None
+    peer_id = str(conversation_peer_id or "").strip() or None
+    if not channel and not account_id and not peer_kind and not peer_id:
+        conversation_target = None
+    else:
+        if not channel:
+            raise ValueError(
+                "Provide --conversation-channel when saving a conversation route target."
+            )
+        if bool(peer_kind) != bool(peer_id):
+            raise ValueError(
+                "Provide both --conversation-peer-kind and --conversation-peer-id together."
+            )
+        if peer_kind not in {None, "direct", "group", "channel"}:
+            raise ValueError(
+                "--conversation-peer-kind must be one of: direct, group, channel."
+            )
+        conversation_target = {
+            "channel": channel,
+            "account_id": account_id,
+            "peer_kind": peer_kind,
+            "peer_id": peer_id,
+        }
     return OnboardingBootstrapCreate(
         setup_mode=setup_mode,  # type: ignore[arg-type]
         setup_flow=setup_flow,  # type: ignore[arg-type]
@@ -1728,6 +1826,7 @@ def _build_bootstrap_payload(
         task_name=task_name,
         task_summary=task_summary,
         objective_template=objective_template,
+        conversation_target=conversation_target,
         cadence_minutes=cadence_minutes,
         model=model,
         max_turns=max_turns,
@@ -2333,6 +2432,11 @@ def hermes_preflight_docker(
 
 @app.command("queue")
 def queue_command(
+    signal_id: str | None = typer.Option(
+        None,
+        "--signal-id",
+        help="Target one radar signal id instead of the next automatic queue move.",
+    ),
     plan_only: bool = typer.Option(
         False,
         "--plan",
@@ -2347,7 +2451,7 @@ def queue_command(
     async def _action(services: CliServices) -> dict[str, object]:
         dashboard = await _build_operator_dashboard(services)
         typed_dashboard = cast(DashboardView, dashboard)
-        plan = plan_attention_queue(typed_dashboard)
+        plan = plan_attention_queue(typed_dashboard, target_signal_id=signal_id)
         if plan_only:
             if plan is None:
                 return {
@@ -2355,8 +2459,8 @@ def queue_command(
                     "executed": False,
                     "action_kind": "idle",
                     "status": "observed",
-                    "reply": _ATTENTION_QUEUE_IDLE_REPLY,
-                    "signal_id": None,
+                    "reply": _attention_queue_idle_reply(signal_id=signal_id),
+                    "signal_id": signal_id,
                     "mission_id": None,
                     "opportunity_id": None,
                     "target_label": None,
@@ -2385,8 +2489,8 @@ def queue_command(
                 "executed": False,
                 "action_kind": "idle",
                 "status": "observed",
-                "reply": _ATTENTION_QUEUE_IDLE_REPLY,
-                "signal_id": None,
+                "reply": _attention_queue_idle_reply(signal_id=signal_id),
+                "signal_id": signal_id,
                 "mission_id": None,
                 "opportunity_id": None,
                 "target_label": None,
@@ -2395,7 +2499,10 @@ def queue_command(
         latest_before = await services.database.get_latest_attention_queue_action(
             plan.signal_fingerprint
         )
-        executed = await services.control_chat.tick_attention_queue(typed_dashboard)
+        executed = await services.control_chat.tick_attention_queue(
+            typed_dashboard,
+            target_signal_id=signal_id,
+        )
         latest_after = await services.database.get_latest_attention_queue_action(
             plan.signal_fingerprint
         )
@@ -2440,7 +2547,11 @@ def queue_command(
             "target_label": plan.target_label,
         }
 
-    payload = _run(_run_with_services(_action))
+    try:
+        payload = _run(_run_with_services(_action))
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
     _emit_attention_queue_action(payload, json_output=json_output)
 
 
@@ -2703,6 +2814,26 @@ def gateway_bootstrap(
         "--use-mempalace",
         help="Stage MemPalace as the tracked project memory integration.",
     ),
+    conversation_channel: str | None = typer.Option(
+        None,
+        "--conversation-channel",
+        help="Adapter-neutral route channel, for example slack or telegram.",
+    ),
+    conversation_account_id: str | None = typer.Option(
+        None,
+        "--conversation-account",
+        help="Adapter-neutral account or bot identity.",
+    ),
+    conversation_peer_kind: str | None = typer.Option(
+        None,
+        "--conversation-peer-kind",
+        help="Peer kind for the route target: direct, group, or channel.",
+    ),
+    conversation_peer_id: str | None = typer.Option(
+        None,
+        "--conversation-peer-id",
+        help="Peer identifier for the route target.",
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit the full result as JSON."),
 ) -> None:
     payload = _build_bootstrap_payload(
@@ -2734,6 +2865,10 @@ def gateway_bootstrap(
         allow_failover=allow_failover,
         enabled=enabled,
         use_mempalace=use_mempalace,
+        conversation_channel=conversation_channel,
+        conversation_account_id=conversation_account_id,
+        conversation_peer_kind=conversation_peer_kind,
+        conversation_peer_id=conversation_peer_id,
     )
     result = _run(
         _run_with_services(lambda services: services.onboarding.bootstrap(payload))
@@ -2786,6 +2921,26 @@ def setup_bootstrap(
         "--use-mempalace",
         help="Stage MemPalace as the tracked project memory integration.",
     ),
+    conversation_channel: str | None = typer.Option(
+        None,
+        "--conversation-channel",
+        help="Adapter-neutral route channel, for example slack or telegram.",
+    ),
+    conversation_account_id: str | None = typer.Option(
+        None,
+        "--conversation-account",
+        help="Adapter-neutral account or bot identity.",
+    ),
+    conversation_peer_kind: str | None = typer.Option(
+        None,
+        "--conversation-peer-kind",
+        help="Peer kind for the route target: direct, group, or channel.",
+    ),
+    conversation_peer_id: str | None = typer.Option(
+        None,
+        "--conversation-peer-id",
+        help="Peer identifier for the route target.",
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit the full result as JSON."),
 ) -> None:
     payload = _build_bootstrap_payload(
@@ -2817,6 +2972,10 @@ def setup_bootstrap(
         allow_failover=allow_failover,
         enabled=enabled,
         use_mempalace=use_mempalace,
+        conversation_channel=conversation_channel,
+        conversation_account_id=conversation_account_id,
+        conversation_peer_kind=conversation_peer_kind,
+        conversation_peer_id=conversation_peer_id,
     )
     result = _run(
         _run_with_services(lambda services: services.onboarding.bootstrap(payload))

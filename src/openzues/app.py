@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
@@ -8,6 +9,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from ipaddress import ip_address
 from pathlib import Path
+from time import perf_counter
 from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
@@ -1550,6 +1552,16 @@ def create_app(
                 merged["pathCount"] = len(unique_paths)
         return merged
 
+    cache_operator_surfaces = app_settings is None
+    dashboard_cache_ttl_seconds = 1.5 if cache_operator_surfaces else 0.0
+    gateway_cache_ttl_seconds = 1.5 if cache_operator_surfaces else 0.0
+    dashboard_cache: DashboardView | None = None
+    dashboard_cache_at = 0.0
+    dashboard_cache_lock = asyncio.Lock()
+    gateway_cache: GatewayCapabilityView | None = None
+    gateway_cache_at = 0.0
+    gateway_cache_lock = asyncio.Lock()
+
     async def build_dashboard_events() -> list[EventView]:
         merged_events: dict[tuple[Any, ...], EventView] = {}
         passthrough_events: list[EventView] = []
@@ -1581,7 +1593,22 @@ def create_app(
         events = [*passthrough_events, *merged_events.values()]
         return sorted(events, key=lambda item: item.created_at)
 
-    async def build_dashboard() -> DashboardView:
+    async def build_gateway_capability() -> GatewayCapabilityView:
+        nonlocal gateway_cache, gateway_cache_at
+        if not cache_operator_surfaces:
+            return await active_gateway_capability_service.get_view()
+        now = perf_counter()
+        if gateway_cache is not None and (now - gateway_cache_at) <= gateway_cache_ttl_seconds:
+            return gateway_cache
+        async with gateway_cache_lock:
+            now = perf_counter()
+            if gateway_cache is not None and (now - gateway_cache_at) <= gateway_cache_ttl_seconds:
+                return gateway_cache
+            gateway_cache = await active_gateway_capability_service.get_view()
+            gateway_cache_at = perf_counter()
+            return gateway_cache
+
+    async def _build_dashboard_uncached() -> DashboardView:
         project_rows = await active_database.list_projects()
         playbook_rows = await active_database.list_playbooks()
         projects = [
@@ -1602,7 +1629,7 @@ def create_app(
         instances = await active_manager.list_views()
         missions = await active_mission_service.list_views()
         doctrines = build_doctrines(missions, projects)
-        gateway_capability = await active_gateway_capability_service.get_view()
+        gateway_capability = await build_gateway_capability()
         preferred_memory_provider, preferred_executor = await load_saved_runtime_preferences(
             active_database
         )
@@ -1695,8 +1722,34 @@ def create_app(
             }
         )
 
+    async def build_dashboard() -> DashboardView:
+        nonlocal dashboard_cache, dashboard_cache_at
+        if not cache_operator_surfaces:
+            return await _build_dashboard_uncached()
+        now = perf_counter()
+        if (
+            dashboard_cache is not None
+            and (now - dashboard_cache_at) <= dashboard_cache_ttl_seconds
+        ):
+            return dashboard_cache
+        async with dashboard_cache_lock:
+            now = perf_counter()
+            if (
+                dashboard_cache is not None
+                and (now - dashboard_cache_at) <= dashboard_cache_ttl_seconds
+            ):
+                return dashboard_cache
+            dashboard_cache = await _build_dashboard_uncached()
+            dashboard_cache_at = perf_counter()
+            return dashboard_cache
+
     @fastapi_app.middleware("http")
     async def guard_observer_mutations(request: Request, call_next):
+        nonlocal dashboard_cache, dashboard_cache_at, gateway_cache, gateway_cache_at
+        is_mutating_api_request = (
+            request.method in {"POST", "PUT", "PATCH", "DELETE"}
+            and request.url.path.startswith("/api/")
+        )
         if (
             request.method in {"POST", "PUT", "PATCH", "DELETE"}
             and request.url.path.startswith("/api/")
@@ -1715,7 +1768,15 @@ def create_app(
                     "control_plane": fastapi_app.state.control_plane_role,
                 },
             )
-        return await call_next(request)
+        try:
+            response = await call_next(request)
+        finally:
+            if is_mutating_api_request:
+                dashboard_cache = None
+                dashboard_cache_at = 0.0
+                gateway_cache = None
+                gateway_cache_at = 0.0
+        return response
 
     async def require_remote_operator(
         request: Request,
@@ -2181,7 +2242,7 @@ def create_app(
 
     @fastapi_app.get("/api/gateway/capability", response_model=GatewayCapabilityView)
     async def get_gateway_capability() -> GatewayCapabilityView:
-        return await active_gateway_capability_service.get_view()
+        return await build_gateway_capability()
 
     @fastapi_app.post("/api/gateway/memory/prove", response_model=MissionView)
     async def run_gateway_memory_proof(

@@ -31,6 +31,14 @@ class Database:
                 output.append(text)
         return output
 
+    @staticmethod
+    def _decode_json_object(value: Any) -> dict[str, Any] | None:
+        try:
+            decoded = json.loads(str(value or "null"))
+        except (TypeError, ValueError):
+            return None
+        return decoded if isinstance(decoded, dict) else None
+
     async def initialize(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         async with aiosqlite.connect(self.path) as db:
@@ -271,6 +279,7 @@ class Database:
                     task_blueprint_id INTEGER,
                     thread_id TEXT,
                     session_key TEXT,
+                    conversation_target_json TEXT,
                     cwd TEXT,
                     model TEXT NOT NULL,
                     reasoning_effort TEXT,
@@ -380,6 +389,7 @@ class Database:
             await self._ensure_column(db, "missions", "last_reflex_kind", "TEXT")
             await self._ensure_column(db, "missions", "last_reflex_at", "TEXT")
             await self._ensure_column(db, "missions", "task_blueprint_id", "INTEGER")
+            await self._ensure_column(db, "missions", "conversation_target_json", "TEXT")
             await self._ensure_column(db, "playbooks", "cadence_minutes", "INTEGER")
             await self._ensure_column(db, "playbooks", "enabled", "INTEGER NOT NULL DEFAULT 1")
             await self._ensure_column(db, "playbooks", "last_run_at", "TEXT")
@@ -408,6 +418,7 @@ class Database:
             await self._ensure_column(db, "notification_routes", "vault_secret_id", "INTEGER")
             await self._ensure_column(db, "integrations", "vault_secret_id", "INTEGER")
             await self._ensure_column(db, "missions", "session_key", "TEXT")
+            await self._ensure_column(db, "missions", "conversation_target_json", "TEXT")
             await self._ensure_column(db, "missions", "toolsets_json", "TEXT NOT NULL DEFAULT '[]'")
             await db.execute(
                 """
@@ -1398,6 +1409,7 @@ class Database:
         project_id: int | None,
         thread_id: str | None,
         session_key: str | None = None,
+        conversation_target: dict[str, Any] | None = None,
         cwd: str | None,
         model: str,
         reasoning_effort: str | None,
@@ -1428,6 +1440,7 @@ class Database:
                     task_blueprint_id,
                     thread_id,
                     session_key,
+                    conversation_target_json,
                     cwd,
                     model,
                     reasoning_effort,
@@ -1447,7 +1460,7 @@ class Database:
                     updated_at
                 )
                 VALUES (
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                 )
                 """,
                 (
@@ -1459,6 +1472,7 @@ class Database:
                     task_blueprint_id,
                     thread_id,
                     session_key,
+                    json.dumps(conversation_target) if conversation_target is not None else None,
                     cwd,
                     model,
                     reasoning_effort,
@@ -1490,6 +1504,9 @@ class Database:
             for row in rows:
                 item = dict(row)
                 item["toolsets"] = self._decode_json_list(item.pop("toolsets_json", "[]"))
+                item["conversation_target"] = self._decode_json_object(
+                    item.pop("conversation_target_json", None)
+                )
                 output.append(item)
             return output
 
@@ -1502,6 +1519,9 @@ class Database:
                 return None
             item = dict(row)
             item["toolsets"] = self._decode_json_list(item.pop("toolsets_json", "[]"))
+            item["conversation_target"] = self._decode_json_object(
+                item.pop("conversation_target_json", None)
+            )
             return item
 
     async def list_lane_snapshots(self, *, limit: int = 24) -> list[dict[str, Any]]:
@@ -1574,11 +1594,67 @@ class Database:
                 return None
             item = dict(row)
             item["toolsets"] = self._decode_json_list(item.pop("toolsets_json", "[]"))
+            item["conversation_target"] = self._decode_json_object(
+                item.pop("conversation_target_json", None)
+            )
+            return item
+
+    async def get_latest_mission_by_session_key(
+        self,
+        session_key: str,
+        *,
+        instance_id: int | None = None,
+        require_thread: bool = False,
+    ) -> dict[str, Any] | None:
+        normalized = str(session_key or "").strip()
+        if not normalized:
+            return None
+        query = [
+            "SELECT * FROM missions WHERE session_key = ?",
+        ]
+        params: list[Any] = [normalized]
+        if instance_id is not None:
+            query.append("AND instance_id = ?")
+            params.append(instance_id)
+        if require_thread:
+            query.append("AND thread_id IS NOT NULL AND TRIM(thread_id) <> ''")
+        query.extend(
+            [
+                "ORDER BY",
+                "CASE status",
+                "    WHEN 'active' THEN 0",
+                "    WHEN 'blocked' THEN 1",
+                "    WHEN 'paused' THEN 2",
+                "    WHEN 'failed' THEN 3",
+                "    WHEN 'completed' THEN 4",
+                "    ELSE 5",
+                "END,",
+                "updated_at DESC,",
+                "id DESC",
+                "LIMIT 1",
+            ]
+        )
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute("\n".join(query), params)
+            row = await cursor.fetchone()
+            if row is None:
+                return None
+            item = dict(row)
+            item["toolsets"] = self._decode_json_list(item.pop("toolsets_json", "[]"))
+            item["conversation_target"] = self._decode_json_object(
+                item.pop("conversation_target_json", None)
+            )
             return item
 
     async def update_mission(self, mission_id: int, **fields: Any) -> None:
         if "toolsets" in fields:
             fields["toolsets_json"] = json.dumps(fields.pop("toolsets"))
+        if "conversation_target" in fields:
+            target = fields.pop("conversation_target")
+            fields["conversation_target_json"] = (
+                json.dumps(target) if target is not None else None
+            )
         if not fields:
             return
         fields["updated_at"] = utcnow()

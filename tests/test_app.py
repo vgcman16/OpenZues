@@ -28,9 +28,11 @@ from openzues.schemas import (
     InstanceView,
     MissionLiveTelemetryView,
     MissionView,
+    OperatorView,
     ProjectView,
     RemoteRequestView,
     TaskBlueprintView,
+    TeamView,
 )
 from openzues.services.control_chat import plan_attention_queue, plan_control_chat
 from openzues.services.control_plane import ControlPlaneLease
@@ -1432,6 +1434,12 @@ def test_onboarding_bootstrap_creates_first_run_bundle_and_launch_draft(tmp_path
                 "objective_template": (
                     "Inspect the repo, ship the next verified slice, and checkpoint it."
                 ),
+                "conversation_target": {
+                    "channel": "slack",
+                    "account_id": "workspace-bot",
+                    "peer_kind": "channel",
+                    "peer_id": "deploy-room",
+                },
                 "cadence_minutes": 180,
                 "model": "gpt-5.4",
                 "max_turns": 4,
@@ -1449,6 +1457,7 @@ def test_onboarding_bootstrap_creates_first_run_bundle_and_launch_draft(tmp_path
             },
         )
         dashboard_response = client.get("/api/dashboard")
+        setup_response = client.get("/api/setup")
 
     assert response.status_code == 200
     payload = response.json()
@@ -1472,10 +1481,15 @@ def test_onboarding_bootstrap_creates_first_run_bundle_and_launch_draft(tmp_path
         "browser",
         "debugging",
     ]
+    assert payload["mission_draft"]["conversation_target"]["channel"] == "slack"
+    assert payload["mission_draft"]["conversation_target"]["account_id"] == "workspace-bot"
+    assert payload["mission_draft"]["conversation_target"]["peer_kind"] == "channel"
+    assert payload["mission_draft"]["conversation_target"]["peer_id"] == "deploy-room"
     assert payload["launch_route"]["mode"] == "task_lane"
     assert payload["launch_route"]["matched_by"] == "task.instance"
     assert payload["launch_route"]["resolved_instance"]["label"] == "Bootstrap Lane"
     assert payload["launch_route"]["session_key"] == payload["mission_draft"]["session_key"]
+    assert payload["launch_route"]["conversation_target"] == payload["mission_draft"]["conversation_target"]
 
     dashboard = dashboard_response.json()
     assert dashboard["projects"][0]["label"] == "Bootstrap Workspace"
@@ -1501,6 +1515,15 @@ def test_onboarding_bootstrap_creates_first_run_bundle_and_launch_draft(tmp_path
         "debugging",
     ]
     assert dashboard["gateway_bootstrap"]["launch_route"]["mode"] == "task_lane"
+    assert (
+        dashboard["task_blueprints"][0]["conversation_target"]["summary"]
+        == "slack · account workspace-bot · channel deploy-room"
+    )
+
+    setup = setup_response.json()
+    assert setup["wizard_session"]["conversation_target"]["channel"] == "slack"
+    assert setup["wizard_session"]["conversation_target"]["account_id"] == "workspace-bot"
+    assert setup["launch_handoff"]["launch_route"]["conversation_target"]["peer_id"] == "deploy-room"
 
 
 def test_dashboard_auto_attaches_matching_hermes_skill_to_task_draft(tmp_path) -> None:
@@ -1577,6 +1600,73 @@ def test_dashboard_auto_attaches_matching_hermes_skill_to_task_draft(tmp_path) -
         assert "Read the linked Hermes SKILL.md" in task_objective
     finally:
         configure_hermes_skill_catalog(None)
+
+
+def test_task_creation_roundtrips_conversation_target_into_dashboard_draft(tmp_path) -> None:
+    with make_client(tmp_path) as client:
+        instance = client.post(
+            "/api/instances",
+            json={
+                "name": "Routing Lane",
+                "transport": "desktop",
+                "cwd": str(tmp_path),
+                "auto_connect": False,
+            },
+        ).json()
+        project = client.post(
+            "/api/projects",
+            json={"path": str(tmp_path), "label": "Routing Workspace"},
+        ).json()
+        task_response = client.post(
+            "/api/tasks",
+            json={
+                "name": "Channel Route Loop",
+                "summary": "Keep one routed conversation identity stable.",
+                "objective_template": "Ship the next verified slice against the saved route.",
+                "conversation_target": {
+                    "channel": "slack",
+                    "account_id": "workspace-bot",
+                    "peer_kind": "channel",
+                    "peer_id": "deploy-room",
+                },
+                "instance_id": instance["id"],
+                "project_id": project["id"],
+                "cadence_minutes": 90,
+                "cwd": str(tmp_path),
+                "model": "gpt-5.4",
+                "reasoning_effort": None,
+                "collaboration_mode": None,
+                "max_turns": 3,
+                "use_builtin_agents": True,
+                "run_verification": True,
+                "auto_commit": False,
+                "pause_on_approval": True,
+                "allow_auto_reflexes": True,
+                "auto_recover": True,
+                "auto_recover_limit": 2,
+                "reflex_cooldown_seconds": 900,
+                "allow_failover": True,
+                "enabled": True,
+            },
+        )
+        dashboard_response = client.get("/api/dashboard")
+
+    assert task_response.status_code == 200
+    task_payload = task_response.json()
+    assert task_payload["conversation_target"]["channel"] == "slack"
+    assert task_payload["conversation_target"]["account_id"] == "workspace-bot"
+    assert task_payload["conversation_target"]["peer_kind"] == "channel"
+    assert task_payload["conversation_target"]["peer_id"] == "deploy-room"
+    assert task_payload["conversation_target"]["summary"] == (
+        "slack · account workspace-bot · channel deploy-room"
+    )
+
+    dashboard = dashboard_response.json()
+    task = dashboard["task_blueprints"][0]
+    assert task["conversation_target"]["summary"] == (
+        "slack · account workspace-bot · channel deploy-room"
+    )
+    assert task["mission_draft"]["conversation_target"]["peer_id"] == "deploy-room"
 
 
 def test_dashboard_auto_attaches_matching_ecc_skill_and_surface_to_task_draft(
@@ -2723,6 +2813,386 @@ def test_launch_routing_uses_gateway_default_cwd_when_task_has_no_workspace_cont
     assert gateway["last_route_resolved_at"] is not None
 
 
+def test_setup_launch_handoff_surfaces_session_conversation_reuse(tmp_path) -> None:
+    workspace_path = tmp_path / "workspace"
+    workspace_path.mkdir()
+
+    with make_client(tmp_path) as client:
+        lane = client.post(
+            "/api/instances",
+            json={
+                "name": "Workspace Lane",
+                "transport": "desktop",
+                "cwd": str(workspace_path),
+                "auto_connect": False,
+            },
+        ).json()
+        manager = client.app.state.manager
+        manager.instances[lane["id"]].connected = True
+
+        database = client.app.state.database
+        project_id = asyncio.run(
+            database.create_project(path=str(workspace_path), label="Workspace")
+        )
+        team_id = asyncio.run(
+            database.create_team(
+                name="Operators",
+                slug="operators",
+                description="Remote operators",
+            )
+        )
+        operator_id = asyncio.run(
+            database.create_operator(
+                team_id=team_id,
+                name="Operator",
+                email="operator@example.com",
+                role="operator",
+                enabled=True,
+                api_key_hash="hash123",
+                api_key_preview="ozk_abcd...1234",
+                api_key_issued_at="2026-04-12T00:00:00+00:00",
+            )
+        )
+        task_id = asyncio.run(
+            database.create_task_blueprint(
+                name="OpenClaw Total Parity Program",
+                summary="Continue the verified parity spine.",
+                project_id=project_id,
+                instance_id=None,
+                cadence_minutes=180,
+                enabled=True,
+                payload={
+                    "objective_template": "Ship the next verified parity slice.",
+                    "conversation_target": {
+                        "channel": "slack",
+                        "account_id": "workspace-bot",
+                        "peer_kind": "channel",
+                        "peer_id": "deploy-room",
+                    },
+                    "cwd": str(workspace_path),
+                    "model": "gpt-5.4",
+                    "max_turns": 4,
+                    "use_builtin_agents": True,
+                    "run_verification": True,
+                    "auto_commit": False,
+                    "pause_on_approval": True,
+                    "allow_auto_reflexes": True,
+                    "auto_recover": True,
+                    "auto_recover_limit": 2,
+                    "reflex_cooldown_seconds": 900,
+                    "allow_failover": True,
+                    "toolsets": ["debugging", "delegation"],
+                    "run_until_complete": False,
+                    "continuation_cooldown_minutes": 10,
+                },
+            )
+        )
+        asyncio.run(
+            database.upsert_gateway_bootstrap(
+                setup_mode="remote",
+                setup_flow="advanced",
+                route_binding_mode="workspace_affinity",
+                preferred_instance_id=None,
+                preferred_project_id=project_id,
+                team_id=team_id,
+                operator_id=operator_id,
+                task_blueprint_id=task_id,
+                default_cwd=str(workspace_path),
+                model="gpt-5.4",
+                max_turns=4,
+                use_builtin_agents=True,
+                run_verification=True,
+                auto_commit=False,
+                pause_on_approval=True,
+                allow_auto_reflexes=True,
+                auto_recover=True,
+                auto_recover_limit=2,
+                reflex_cooldown_seconds=900,
+                allow_failover=True,
+            )
+        )
+        session_key = (
+            f"launch:mode:workspace_affinity:task:{task_id}:project:{project_id}:operator:{operator_id}:"
+            "channel:slack:account:workspace-bot:peer:channel:deploy-room"
+        )
+        asyncio.run(
+            database.create_mission(
+                name="Previous parity run",
+                objective="Ship the prior parity slice.",
+                status="completed",
+                instance_id=lane["id"],
+                project_id=project_id,
+                task_blueprint_id=task_id,
+                thread_id="thread_saved",
+                session_key=session_key,
+                conversation_target={
+                    "channel": "slack",
+                    "account_id": "workspace-bot",
+                    "peer_kind": "channel",
+                    "peer_id": "deploy-room",
+                },
+                cwd=str(workspace_path),
+                model="gpt-5.4",
+                reasoning_effort=None,
+                collaboration_mode=None,
+                max_turns=4,
+                use_builtin_agents=True,
+                run_verification=True,
+                auto_commit=False,
+                pause_on_approval=True,
+                allow_auto_reflexes=True,
+                auto_recover=True,
+                auto_recover_limit=2,
+                reflex_cooldown_seconds=900,
+                allow_failover=True,
+                toolsets=["debugging"],
+            )
+        )
+        asyncio.run(
+            database.create_mission(
+                name="Queued parity continuation",
+                objective="Land the next verified parity slice.",
+                status="paused",
+                instance_id=lane["id"],
+                project_id=project_id,
+                task_blueprint_id=task_id,
+                thread_id=None,
+                session_key=session_key,
+                conversation_target={
+                    "channel": "slack",
+                    "account_id": "workspace-bot",
+                    "peer_kind": "channel",
+                    "peer_id": "deploy-room",
+                },
+                cwd=str(workspace_path),
+                model="gpt-5.4",
+                reasoning_effort=None,
+                collaboration_mode=None,
+                max_turns=4,
+                use_builtin_agents=True,
+                run_verification=True,
+                auto_commit=False,
+                pause_on_approval=True,
+                allow_auto_reflexes=True,
+                auto_recover=True,
+                auto_recover_limit=2,
+                reflex_cooldown_seconds=900,
+                allow_failover=True,
+                toolsets=["debugging"],
+            )
+        )
+
+        setup_response = client.get("/api/setup")
+
+    assert setup_response.status_code == 200
+    payload = setup_response.json()
+    reuse = payload["launch_handoff"]["launch_route"]["conversation_reuse"]
+    target = payload["launch_handoff"]["launch_route"]["conversation_target"]
+    assert target["channel"] == "slack"
+    assert target["account_id"] == "workspace-bot"
+    assert target["peer_kind"] == "channel"
+    assert target["peer_id"] == "deploy-room"
+    assert reuse["reusable"] is True
+    assert reuse["thread_id"] == "thread_saved"
+    assert "reuse thread thread_saved" in reuse["summary"]
+    assert payload["launch_handoff"]["mission_draft"]["thread_id"] == "thread_saved"
+    assert payload["launch_handoff"]["mission_draft"]["session_key"] == session_key
+    assert payload["launch_handoff"]["mission_draft"]["conversation_target"] == target
+
+
+def test_gateway_backfill_does_not_overwrite_saved_remote_bootstrap(tmp_path) -> None:
+    workspace_path = tmp_path / "workspace"
+    workspace_path.mkdir()
+
+    with make_client(tmp_path) as client:
+        lane = client.post(
+            "/api/instances",
+            json={
+                "name": "Workspace Lane",
+                "transport": "desktop",
+                "cwd": str(workspace_path),
+                "auto_connect": False,
+            },
+        ).json()
+        manager = client.app.state.manager
+        manager.instances[lane["id"]].connected = True
+
+        database = client.app.state.database
+        gateway_service = client.app.state.gateway_bootstrap_service
+
+        project_id = asyncio.run(
+            database.create_project(path=str(workspace_path), label="Workspace")
+        )
+        team_id = asyncio.run(
+            database.create_team(
+                name="Operators",
+                slug="operators",
+                description="Remote operators",
+            )
+        )
+        operator_id = asyncio.run(
+            database.create_operator(
+                team_id=team_id,
+                name="Operator",
+                email="operator@example.com",
+                role="operator",
+                enabled=True,
+                api_key_hash="hash123",
+                api_key_preview="ozk_abcd...1234",
+                api_key_issued_at="2026-04-12T00:00:00+00:00",
+            )
+        )
+        task_id = asyncio.run(
+            database.create_task_blueprint(
+                name="OpenClaw Total Parity Program",
+                summary="Continue the verified parity spine.",
+                project_id=project_id,
+                instance_id=None,
+                cadence_minutes=180,
+                enabled=True,
+                payload={
+                    "objective_template": "Ship the next verified parity slice.",
+                    "conversation_target": {
+                        "channel": "slack",
+                        "account_id": "workspace-bot",
+                        "peer_kind": "channel",
+                        "peer_id": "deploy-room",
+                    },
+                    "cwd": str(workspace_path),
+                    "model": "gpt-5.4",
+                    "max_turns": 4,
+                    "use_builtin_agents": True,
+                    "run_verification": True,
+                    "auto_commit": False,
+                    "pause_on_approval": True,
+                    "allow_auto_reflexes": True,
+                    "auto_recover": True,
+                    "auto_recover_limit": 2,
+                    "reflex_cooldown_seconds": 900,
+                    "allow_failover": True,
+                    "toolsets": ["debugging", "delegation"],
+                    "run_until_complete": False,
+                    "continuation_cooldown_minutes": 10,
+                },
+            )
+        )
+        asyncio.run(
+            database.upsert_gateway_bootstrap(
+                setup_mode="remote",
+                setup_flow="advanced",
+                route_binding_mode="workspace_affinity",
+                preferred_instance_id=None,
+                preferred_project_id=project_id,
+                team_id=team_id,
+                operator_id=operator_id,
+                task_blueprint_id=task_id,
+                default_cwd=str(workspace_path),
+                model="gpt-5.4",
+                max_turns=4,
+                use_builtin_agents=True,
+                run_verification=True,
+                auto_commit=False,
+                pause_on_approval=True,
+                allow_auto_reflexes=True,
+                auto_recover=True,
+                auto_recover_limit=2,
+                reflex_cooldown_seconds=900,
+                allow_failover=True,
+            )
+        )
+
+        now = datetime.now(UTC)
+        backfilled = asyncio.run(
+            gateway_service._backfill_from_existing(
+                instances={instance.id: instance for instance in asyncio.run(manager.list_views())},
+                projects={
+                    project_id: ProjectView(
+                        id=project_id,
+                        path=str(workspace_path),
+                        label="Workspace",
+                        exists=True,
+                        is_git_repo=False,
+                    )
+                },
+                teams={
+                    team_id: TeamView(
+                        id=team_id,
+                        name="Operators",
+                        slug="operators",
+                        description="Remote operators",
+                        created_at=now,
+                        updated_at=now,
+                    )
+                },
+                operators={
+                    operator_id: OperatorView(
+                        id=operator_id,
+                        team_id=team_id,
+                        team_name="Operators",
+                        name="Operator",
+                        email="operator@example.com",
+                        role="operator",
+                        enabled=True,
+                        has_api_key=True,
+                        api_key_preview="ozk_abcd...1234",
+                        api_key_issued_at="2026-04-12T00:00:00+00:00",
+                        created_at=now,
+                        updated_at=now,
+                    )
+                },
+                tasks={
+                    task_id: TaskBlueprintView(
+                        id=task_id,
+                        name="OpenClaw Total Parity Program",
+                        summary="Continue the verified parity spine.",
+                        objective_template="Ship the next verified parity slice.",
+                        conversation_target={
+                            "channel": "slack",
+                            "account_id": "workspace-bot",
+                            "peer_kind": "channel",
+                            "peer_id": "deploy-room",
+                        },
+                        instance_id=None,
+                        project_id=project_id,
+                        cadence_minutes=180,
+                        run_until_complete=False,
+                        continuation_cooldown_minutes=10,
+                        completion_marker=None,
+                        cwd=str(workspace_path),
+                        model="gpt-5.4",
+                        reasoning_effort=None,
+                        collaboration_mode=None,
+                        max_turns=4,
+                        use_builtin_agents=True,
+                        run_verification=True,
+                        auto_commit=False,
+                        pause_on_approval=True,
+                        allow_auto_reflexes=True,
+                        auto_recover=True,
+                        auto_recover_limit=2,
+                        reflex_cooldown_seconds=900,
+                        allow_failover=True,
+                        toolsets=["debugging", "delegation"],
+                        enabled=True,
+                        created_at=now,
+                        updated_at=now,
+                    )
+                },
+            )
+        )
+
+        saved = asyncio.run(database.get_gateway_bootstrap())
+
+    assert backfilled is False
+    assert saved is not None
+    assert saved["setup_mode"] == "remote"
+    assert saved["setup_flow"] == "advanced"
+    assert saved["route_binding_mode"] == "workspace_affinity"
+    assert saved["preferred_instance_id"] is None
+    assert saved["preferred_project_id"] == project_id
+    assert saved["operator_id"] == operator_id
+
+
 def test_setup_endpoint_reports_reentrant_posture_after_bootstrap(tmp_path) -> None:
     with make_client(tmp_path) as client:
         client.post(
@@ -3095,6 +3565,18 @@ def test_gateway_capability_endpoint_summarizes_connected_lane_health_inventory_
             {"name": "Slack", "enabled": True},
         ]
         runtime.mcp_servers = [{"name": "GitHub MCP Server", "source": "github", "status": "ready"}]
+        runtime.mcp_server_status = [
+            {
+                "name": "GitHub MCP Server",
+                "source": "github",
+                "status": "ready",
+                "tools": [
+                    "github_search",
+                    "github_search_prs",
+                    "github_create_pull_request",
+                ],
+            }
+        ]
 
         database = client.app.state.database
         asyncio.run(
@@ -3132,6 +3614,10 @@ def test_gateway_capability_endpoint_summarizes_connected_lane_health_inventory_
     assert capability["inventory"]["app_count"] == 1
     assert capability["inventory"]["plugin_count"] == 2
     assert capability["inventory"]["mcp_server_count"] == 1
+    assert capability["inventory"]["method_catalog"]["tool_count"] == 3
+    assert capability["inventory"]["method_catalog"]["server_count"] == 1
+    assert capability["inventory"]["method_catalog"]["lane_count"] == 1
+    assert capability["inventory"]["method_catalog"]["tools"][0] == "github_create_pull_request"
     assert capability["approval_posture"]["approval_count"] == 1
     assert capability["approval_posture"]["pause_on_approval"] is True
     assert capability["launch_policy"]["setup_mode"] == "local"
@@ -3142,6 +3628,7 @@ def test_gateway_capability_endpoint_summarizes_connected_lane_health_inventory_
     dashboard = dashboard_response.json()
     assert dashboard["gateway_capability"]["approval_posture"]["approval_count"] == 1
     assert dashboard["gateway_capability"]["inventory"]["tracked_ready_count"] == 1
+    assert dashboard["gateway_capability"]["inventory"]["method_catalog"]["tool_count"] == 3
     assert (
         dashboard["gateway_capability"]["connected_lane_health"]["lanes"][0]["instance_name"]
         == "Gateway Lane"
@@ -3285,6 +3772,149 @@ def test_gateway_capability_warns_when_mempalace_tool_contract_is_incomplete(tmp
     assert dashboard["gateway_capability"]["inventory"]["memory_status"] == "warn"
 
 
+def test_gateway_capability_uses_cached_mcp_status_when_live_refresh_times_out(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        bootstrap_response = client.post(
+            "/api/onboarding/bootstrap",
+            json={
+                "setup_mode": "local",
+                "setup_flow": "quickstart",
+                "instance_mode": "create_desktop",
+                "instance_name": "Memory Lane",
+                "project_path": str(tmp_path),
+                "project_label": "Memory Workspace",
+                "operator_name": "Memory Builder",
+                "use_mempalace": True,
+                "task_name": "Memory Ship Loop",
+                "objective_template": "Ship the next memory-backed slice.",
+            },
+        )
+        assert bootstrap_response.status_code == 200
+
+        instance_id = bootstrap_response.json()["instance"]["id"]
+        runtime = client.app.state.manager.instances[instance_id]
+        runtime.connected = True
+        runtime.initialized = True
+        runtime.mcp_servers = [
+            {
+                "name": "MemPalace MCP Server",
+                "source": "mempalace",
+                "status": "ready",
+                "authStatus": "ready",
+            }
+        ]
+        runtime.mcp_server_status = [
+            {
+                "name": "MemPalace MCP Server",
+                "source": "mempalace",
+                "status": "ready",
+                "authStatus": "ready",
+                "tools": [
+                    "mempalace_status",
+                    "mempalace_search",
+                    "mempalace_diary_write",
+                    "mempalace_diary_read",
+                ],
+            }
+        ]
+
+        async def fake_list_mcp_server_status(
+            instance_id: int,
+            *,
+            limit: int = 50,
+            refresh: bool = True,
+        ) -> list[dict[str, object]]:
+            del instance_id, limit, refresh
+            raise TimeoutError
+
+        monkeypatch.setattr(
+            "openzues.services.gateway_capability.GATEWAY_MCP_STATUS_REFRESH_TIMEOUT_SECONDS",
+            0.01,
+        )
+        monkeypatch.setattr(
+            client.app.state.manager,
+            "list_mcp_server_status",
+            fake_list_mcp_server_status,
+        )
+
+        capability_response = client.get("/api/gateway/capability")
+        dashboard_response = client.get("/api/dashboard")
+
+    assert capability_response.status_code == 200
+    capability = capability_response.json()
+    assert capability["inventory"]["memory_status"] == "ready"
+    assert "Callable tool proof passed" in capability["inventory"]["memory_summary"]
+    assert "mempalace_status" in capability["inventory"]["memory_evidence"][0]
+
+    assert dashboard_response.status_code == 200
+    dashboard = dashboard_response.json()
+    assert dashboard["gateway_capability"]["inventory"]["memory_status"] == "ready"
+
+
+def test_mutating_api_failure_invalidates_operator_surface_caches(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    cache_settings = Settings(
+        data_dir=tmp_path / "cache-data",
+        db_path=tmp_path / "cache-data" / "openzues-test.db",
+        hermes_source_path=None,
+        ecc_source_path=None,
+    )
+    monkeypatch.setattr("openzues.app.settings", cache_settings)
+    app = create_app()
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        initial_dashboard = client.get("/api/dashboard")
+        assert initial_dashboard.status_code == 200
+        assert initial_dashboard.json()["projects"] == []
+
+        async def fail_bootstrap(_payload):
+            raise RuntimeError("forced bootstrap failure")
+
+        monkeypatch.setattr(client.app.state.onboarding_service, "bootstrap", fail_bootstrap)
+
+        with pytest.raises(RuntimeError, match="forced bootstrap failure"):
+            client.post(
+                "/api/onboarding/bootstrap",
+                json={
+                    "setup_mode": "local",
+                    "setup_flow": "quickstart",
+                    "instance_mode": "create_desktop",
+                    "instance_name": "Recovery Lane",
+                    "project_path": str(tmp_path / "workspace"),
+                    "project_label": "Recovered Workspace",
+                    "operator_name": "Recovery Builder",
+                    "task_name": "Recovery Loop",
+                    "objective_template": "Recover the next parity slice.",
+                },
+            )
+
+        asyncio.run(
+            client.app.state.database.create_project(
+                path=str(tmp_path / "workspace"),
+                label="Recovered Workspace",
+            )
+        )
+
+        refreshed_dashboard = client.get("/api/dashboard")
+
+    assert refreshed_dashboard.status_code == 200
+    assert any(
+        project["label"] == "Recovered Workspace"
+        for project in refreshed_dashboard.json()["projects"]
+    )
+
+
 def test_gateway_capability_warns_when_mempalace_memory_loop_last_failed(tmp_path) -> None:
     app_settings = Settings(
         data_dir=tmp_path / "data",
@@ -3365,6 +3995,10 @@ def test_gateway_capability_warns_when_mempalace_memory_loop_last_failed(tmp_pat
 
 
 def test_gateway_capability_surfaces_mempalace_writeback_timestamp(tmp_path) -> None:
+    last_launched_at = (
+        (datetime.now(UTC) - timedelta(minutes=10)).isoformat().replace("+00:00", "Z")
+    )
+    writeback_at = (datetime.now(UTC) - timedelta(minutes=8)).isoformat().replace("+00:00", "Z")
     app_settings = Settings(
         data_dir=tmp_path / "data",
         db_path=tmp_path / "data" / "openzues-test.db",
@@ -3421,11 +4055,11 @@ def test_gateway_capability_surfaces_mempalace_writeback_timestamp(tmp_path) -> 
         asyncio.run(
             client.app.state.database.update_task_blueprint_payload(
                 memory_task_id,
-                last_launched_at="2026-04-11T15:10:00Z",
+                last_launched_at=last_launched_at,
                 last_status="completed",
                 last_result_summary=build_mempalace_writeback_signal(
                     status="wrote",
-                    at="2026-04-11T15:12:00Z",
+                    at=writeback_at,
                     scope="Memory Workspace",
                 ),
             )
@@ -3438,7 +4072,7 @@ def test_gateway_capability_surfaces_mempalace_writeback_timestamp(tmp_path) -> 
     assert capability["inventory"]["memory_status"] == "ready"
     assert "Last durable writeback was reported" in capability["inventory"]["memory_summary"]
     assert any(
-        "Memory Workspace writeback reported at 2026-04-11T15:12:00Z." in line
+        f"Memory Workspace writeback reported at {writeback_at}." in line
         for line in capability["inventory"]["memory_evidence"]
     )
 
@@ -3446,6 +4080,11 @@ def test_gateway_capability_surfaces_mempalace_writeback_timestamp(tmp_path) -> 
 def test_gateway_capability_surfaces_mempalace_roundtrip_from_latest_mission_checkpoint(
     tmp_path,
 ) -> None:
+    last_launched_at = (
+        (datetime.now(UTC) - timedelta(minutes=12)).isoformat().replace("+00:00", "Z")
+    )
+    writeback_at = (datetime.now(UTC) - timedelta(minutes=9)).isoformat().replace("+00:00", "Z")
+    roundtrip_at = (datetime.now(UTC) - timedelta(minutes=8)).isoformat().replace("+00:00", "Z")
     app_settings = Settings(
         data_dir=tmp_path / "data",
         db_path=tmp_path / "data" / "openzues-test.db",
@@ -3503,11 +4142,11 @@ def test_gateway_capability_surfaces_mempalace_roundtrip_from_latest_mission_che
         asyncio.run(
             database.update_task_blueprint_payload(
                 memory_task_id,
-                last_launched_at="2026-04-11T15:10:00Z",
+                last_launched_at=last_launched_at,
                 last_status="completed",
                 last_result_summary=build_mempalace_writeback_signal(
                     status="wrote",
-                    at="2026-04-11T15:12:00Z",
+                    at=writeback_at,
                     scope="Memory Workspace",
                 ),
             )
@@ -3544,12 +4183,12 @@ def test_gateway_capability_surfaces_mempalace_roundtrip_from_latest_mission_che
                     [
                         build_mempalace_writeback_signal(
                             status="wrote",
-                            at="2026-04-11T15:12:00Z",
+                            at=writeback_at,
                             scope="Memory Workspace",
                         ),
                         build_mempalace_roundtrip_signal(
                             status="verified",
-                            at="2026-04-11T15:13:00Z",
+                            at=roundtrip_at,
                             scope="Memory Workspace",
                             detail=(
                                 "mempalace_search returned the freshly written recovery handoff "
@@ -3572,7 +4211,7 @@ def test_gateway_capability_surfaces_mempalace_roundtrip_from_latest_mission_che
         "Last MemPalace roundtrip proof was reported" in capability["inventory"]["memory_summary"]
     )
     assert any(
-        "Memory Workspace roundtrip verified at 2026-04-11T15:13:00Z." in line
+        f"Memory Workspace roundtrip verified at {roundtrip_at}." in line
         and "mempalace_search returned the freshly written recovery handoff" in line
         for line in capability["inventory"]["memory_evidence"]
     )
@@ -3592,6 +4231,11 @@ def test_gateway_capability_surfaces_mempalace_roundtrip_from_latest_mission_che
 
 
 def test_gateway_capability_warns_when_mempalace_roundtrip_is_unavailable(tmp_path) -> None:
+    last_launched_at = (
+        (datetime.now(UTC) - timedelta(minutes=12)).isoformat().replace("+00:00", "Z")
+    )
+    writeback_at = (datetime.now(UTC) - timedelta(minutes=9)).isoformat().replace("+00:00", "Z")
+    roundtrip_at = (datetime.now(UTC) - timedelta(minutes=8)).isoformat().replace("+00:00", "Z")
     app_settings = Settings(
         data_dir=tmp_path / "data",
         db_path=tmp_path / "data" / "openzues-test.db",
@@ -3649,11 +4293,11 @@ def test_gateway_capability_warns_when_mempalace_roundtrip_is_unavailable(tmp_pa
         asyncio.run(
             database.update_task_blueprint_payload(
                 memory_task_id,
-                last_launched_at="2026-04-11T15:10:00Z",
+                last_launched_at=last_launched_at,
                 last_status="completed",
                 last_result_summary=build_mempalace_writeback_signal(
                     status="wrote",
-                    at="2026-04-11T15:12:00Z",
+                    at=writeback_at,
                     scope="Memory Workspace",
                 ),
             )
@@ -3690,12 +4334,12 @@ def test_gateway_capability_warns_when_mempalace_roundtrip_is_unavailable(tmp_pa
                     [
                         build_mempalace_writeback_signal(
                             status="wrote",
-                            at="2026-04-11T15:12:00Z",
+                            at=writeback_at,
                             scope="Memory Workspace",
                         ),
                         build_mempalace_roundtrip_signal(
                             status="unavailable",
-                            at="2026-04-11T15:13:00Z",
+                            at=roundtrip_at,
                             scope="Memory Workspace",
                             detail=(
                                 "mempalace_search could not confirm the freshly written handoff "
@@ -4474,6 +5118,108 @@ def test_attention_queue_prefers_gateway_repair_before_recovery_when_posture_nee
     assert "Gateway Doctor says Connected lanes need repair before launch" in decision.reply
 
 
+def test_attention_queue_targeted_signal_id_does_not_fall_back_to_gateway_repair() -> None:
+    failed = make_mission_view(
+        mission_id=61,
+        name="Vault Mesh Finish",
+        status="failed",
+        phase="failed",
+        project_id=11,
+        project_label="OpenZues",
+        last_checkpoint="Checkpoint exists",
+        last_error="thread not found",
+    )
+    project = make_project_view(project_id=11, label="OpenZues")
+    gateway_capability = make_gateway_capability_view(
+        level="warn",
+        headline="Gateway capability has live gaps",
+        summary="Connected lanes need repair before launch.",
+        ready_count=0,
+        connected_count=1,
+        total_count=1,
+        warning_count=1,
+        approval_count=0,
+        tracked_ready_count=0,
+        tracked_gap_count=1,
+        route_status="repair",
+        route_warning=None,
+    )
+    dashboard = make_dashboard_view(
+        instances=[make_instance_view()],
+        missions=[failed],
+        projects=[project],
+        opportunities=[
+            make_gateway_repair_opportunity(project_id=11),
+            {
+                "id": "recover-61",
+                "kind": "recovery_run",
+                "impact": "high",
+                "title": "Recover Vault Mesh Finish",
+                "summary": "Resume from the failure checkpoint.",
+                "why_now": "The failure already has thread context.",
+                "action_label": "Recover run",
+                "mission_draft": {
+                    "name": "Recover Vault Mesh Finish",
+                    "objective": "Recover from the failure and verify it.",
+                    "instance_id": 1,
+                    "project_id": 11,
+                    "task_blueprint_id": None,
+                    "cwd": "C:/workspace",
+                    "thread_id": "thread_61",
+                    "model": "gpt-5.4",
+                    "reasoning_effort": None,
+                    "collaboration_mode": None,
+                    "max_turns": 3,
+                    "use_builtin_agents": True,
+                    "run_verification": True,
+                    "auto_commit": False,
+                    "pause_on_approval": True,
+                    "allow_auto_reflexes": True,
+                    "auto_recover": True,
+                    "auto_recover_limit": 2,
+                    "reflex_cooldown_seconds": 900,
+                    "allow_failover": True,
+                    "start_immediately": True,
+                },
+            },
+        ],
+    ).model_copy(
+        update={
+            "gateway_capability": gateway_capability,
+            "radar": build_radar(
+                [make_instance_view()],
+                [failed],
+                [project],
+                gateway_capability=gateway_capability,
+            ),
+        }
+    )
+    failed_signal_id = next(
+        signal.id for signal in dashboard.radar.signals if signal.id.endswith("-failed")
+    )
+
+    decision = plan_attention_queue(dashboard, target_signal_id=failed_signal_id)
+
+    assert decision is not None
+    assert decision.signal_id == failed_signal_id
+    assert decision.action_kind == "launch_opportunity"
+    assert decision.opportunity_id == "recover-61"
+    assert "failed cycle already has enough context" in decision.reply
+
+
+def test_attention_queue_targeted_signal_id_raises_for_unknown_signal() -> None:
+    dashboard = make_dashboard_view(
+        instances=[make_instance_view()],
+        opportunities=[make_gateway_repair_opportunity()],
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="Attention-queue signal 'missing-signal' is not available right now.",
+    ):
+        plan_attention_queue(dashboard, target_signal_id="missing-signal")
+
+
 def test_attention_queue_holds_when_gateway_posture_needs_repair_without_repair_draft() -> None:
     failed = make_mission_view(
         mission_id=61,
@@ -4813,6 +5559,177 @@ def test_attention_queue_auto_approves_safe_orphan_request(tmp_path, monkeypatch
     assert actions[0]["status"] == "executed"
     assert "auto-approved" in (actions[0]["summary"] or "")
     assert messages[-1]["action_kind"] == "resolve_request"
+
+
+def test_attention_queue_targeted_signal_skips_safe_approval_sweep(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    with make_client(tmp_path, attention_queue_enabled=False) as client:
+        database = client.app.state.database
+        manager = client.app.state.manager
+        resolved: list[dict[str, object]] = []
+        launched_payloads: list[object] = []
+        instance_id = 1
+        project_id = 11
+
+        async def fake_resolve(instance_id: int, request_id: str, result: object) -> None:
+            resolved.append(
+                {
+                    "instance_id": instance_id,
+                    "request_id": request_id,
+                    "result": result,
+                }
+            )
+
+        async def fake_create(payload) -> MissionView:
+            launched_payloads.append(payload)
+            return make_mission_view(
+                mission_id=91,
+                name=payload.name,
+                objective=payload.objective,
+                status="active",
+                phase="thinking",
+                instance_id=payload.instance_id,
+                project_id=payload.project_id,
+                project_label="OpenZues",
+                thread_id=payload.thread_id,
+                cwd=payload.cwd,
+                model=payload.model,
+                max_turns=payload.max_turns,
+                use_builtin_agents=payload.use_builtin_agents,
+                run_verification=payload.run_verification,
+                auto_commit=payload.auto_commit,
+                pause_on_approval=payload.pause_on_approval,
+                allow_auto_reflexes=payload.allow_auto_reflexes,
+                auto_recover=payload.auto_recover,
+                auto_recover_limit=payload.auto_recover_limit,
+                reflex_cooldown_seconds=payload.reflex_cooldown_seconds,
+            )
+
+        monkeypatch.setattr(manager, "resolve_request", fake_resolve)
+        monkeypatch.setattr(client.app.state.control_chat_service.missions, "create", fake_create)
+
+        failed = make_mission_view(
+            mission_id=61,
+            name="Vault Mesh Finish",
+            status="failed",
+            phase="failed",
+            instance_id=instance_id,
+            project_id=project_id,
+            project_label="OpenZues",
+            last_checkpoint="Checkpoint exists",
+            last_error="thread not found",
+        )
+        project = make_project_view(project_id=project_id, label="OpenZues")
+        gateway_capability = make_gateway_capability_view(
+            level="warn",
+            headline="Gateway capability has live gaps",
+            summary="Connected lanes need repair before launch.",
+            ready_count=0,
+            connected_count=1,
+            total_count=1,
+            warning_count=1,
+            approval_count=1,
+            tracked_ready_count=0,
+            tracked_gap_count=1,
+            route_status="repair",
+            route_warning="Saved lane is still waiting on approval.",
+        )
+        instance = make_instance_view(
+            instance_id=instance_id,
+            unresolved_requests=[
+                {
+                    "id": "approval-safe",
+                    "method": "item/commandExecution/requestApproval",
+                    "payload": {
+                        "command": 'powershell.exe -Command "rg -n \\"ForumForge\\" src"',
+                        "commandActions": [
+                            {
+                                "type": "unknown",
+                                "command": 'rg -n "ForumForge" src',
+                            }
+                        ],
+                        "availableDecisions": ["accept", "cancel"],
+                    },
+                }
+            ]
+        )
+        dashboard = make_dashboard_view(
+            instances=[instance],
+            missions=[failed],
+            projects=[project],
+            opportunities=[
+                make_gateway_repair_opportunity(
+                    instance_id=instance_id,
+                    project_id=project_id,
+                ),
+                {
+                    "id": "recover-61",
+                    "kind": "recovery_run",
+                    "impact": "high",
+                    "title": "Recover Vault Mesh Finish",
+                    "summary": "Resume from the failure checkpoint.",
+                    "why_now": "The failure already has thread context.",
+                    "action_label": "Recover run",
+                    "mission_draft": {
+                        "name": "Recover Vault Mesh Finish",
+                        "objective": "Recover from the failure and verify it.",
+                        "instance_id": instance_id,
+                        "project_id": project_id,
+                        "task_blueprint_id": None,
+                        "cwd": "C:/workspace",
+                        "thread_id": "thread_61",
+                        "model": "gpt-5.4",
+                        "reasoning_effort": None,
+                        "collaboration_mode": None,
+                        "max_turns": 3,
+                        "use_builtin_agents": True,
+                        "run_verification": True,
+                        "auto_commit": False,
+                        "pause_on_approval": True,
+                        "allow_auto_reflexes": True,
+                        "auto_recover": True,
+                        "auto_recover_limit": 2,
+                        "reflex_cooldown_seconds": 900,
+                        "allow_failover": True,
+                        "start_immediately": True,
+                    },
+                },
+            ],
+        ).model_copy(
+            update={
+                "gateway_capability": gateway_capability,
+                "radar": build_radar(
+                    [instance],
+                    [failed],
+                    [project],
+                    gateway_capability=gateway_capability,
+                ),
+            }
+        )
+        failed_signal_id = next(
+            signal.id for signal in dashboard.radar.signals if signal.id.endswith("-failed")
+        )
+
+        acted = asyncio.run(
+            client.app.state.control_chat_service.tick_attention_queue(
+                dashboard,
+                target_signal_id=failed_signal_id,
+            )
+        )
+        actions = asyncio.run(database.list_attention_queue_actions())
+        messages = asyncio.run(database.list_control_chat_messages())
+
+    assert acted is True
+    assert resolved == []
+    assert len(launched_payloads) == 1
+    assert len(actions) == 1
+    assert actions[0]["signal_id"] == failed_signal_id
+    assert actions[0]["action_kind"] == "launch_opportunity"
+    assert actions[0]["status"] == "executed"
+    assert "failed cycle already has enough context" in (actions[0]["summary"] or "")
+    assert messages[-1]["action_kind"] == "launch_opportunity"
 
 
 def test_attention_queue_pauses_long_stale_mission_to_free_queue(tmp_path) -> None:

@@ -515,6 +515,10 @@ class GatewayBootstrapService:
         operators: dict[int, OperatorView],
         tasks: dict[int, TaskBlueprintView],
     ) -> bool:
+        # Startup helpers can race with a real bootstrap save. Recheck the row
+        # before backfilling so we do not overwrite a freshly staged posture.
+        if await self.database.get_gateway_bootstrap() is not None:
+            return False
         if not tasks or not operators:
             return False
 

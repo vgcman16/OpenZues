@@ -179,6 +179,85 @@ class FakeTurnClient:
         return {"data": [{"id": "thread_retry", "status": {"type": "idle"}}]}
 
 
+class FakeTimeoutTurnClient:
+    def __init__(self) -> None:
+        self.turn_attempts = 0
+        self.thread_list_calls = 0
+
+    async def start_turn(
+        self,
+        *,
+        thread_id: str,
+        text: str,
+        cwd: str | None,
+        model: str | None,
+        reasoning_effort: str | None,
+        collaboration_mode: str | None,
+    ) -> dict[str, dict[str, str]]:
+        del thread_id, text, cwd, model, reasoning_effort, collaboration_mode
+        self.turn_attempts += 1
+        raise TimeoutError()
+
+    async def call(
+        self,
+        method: str,
+        params: dict | None = None,
+        timeout: float = 30.0,
+    ) -> dict[str, list[dict[str, object]]]:
+        del params, timeout
+        assert method == "thread/list"
+        self.thread_list_calls += 1
+        return {"data": [{"id": "thread_timeout", "status": {"type": "active"}}]}
+
+
+class FakeStartThreadRetryClient:
+    def __init__(self) -> None:
+        self.start_attempts = 0
+
+    async def start_thread(
+        self,
+        *,
+        model: str,
+        cwd: str | None,
+        reasoning_effort: str | None,
+        collaboration_mode: str | None,
+    ) -> dict[str, dict[str, str]]:
+        del model, cwd, reasoning_effort, collaboration_mode
+        self.start_attempts += 1
+        if self.start_attempts == 1:
+            raise TimeoutError()
+        return {"thread": {"id": "thread_retry_ok"}}
+
+
+class FakeStartThreadRecoveredClient:
+    def __init__(self) -> None:
+        self.start_attempts = 0
+        self.thread_list_calls = 0
+
+    async def start_thread(
+        self,
+        *,
+        model: str,
+        cwd: str | None,
+        reasoning_effort: str | None,
+        collaboration_mode: str | None,
+    ) -> dict[str, dict[str, str]]:
+        del model, cwd, reasoning_effort, collaboration_mode
+        self.start_attempts += 1
+        raise TimeoutError()
+
+    async def call(
+        self,
+        method: str,
+        params: dict | None = None,
+        timeout: float = 30.0,
+    ) -> dict[str, list[dict[str, object]]]:
+        del params, timeout
+        assert method == "thread/list"
+        self.thread_list_calls += 1
+        return {"data": [{"id": "thread_recovered", "status": {"type": "idle"}}]}
+
+
 class FakeMcpStatusClient:
     def __init__(self, payload: list[dict[str, object]]) -> None:
         self.payload = payload
@@ -193,6 +272,39 @@ class FakeMcpStatusClient:
         self.calls.append((method, params))
         assert method == "mcpServerStatus/list"
         return {"data": self.payload}
+
+
+class FakeRefreshClient:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    async def call(
+        self,
+        method: str,
+        params: dict | None = None,
+        timeout: float = 30.0,
+    ) -> dict[str, object]:
+        del params, timeout
+        self.calls.append(method)
+        if method in {"app/list", "plugin/list"}:
+            raise TimeoutError()
+        if method == "account/read":
+            return {"account": {"type": "chatgpt", "email": "operator@example.com"}}
+        if method == "model/list":
+            return {"data": [{"id": "gpt-5.4", "displayName": "GPT-5.4"}]}
+        if method == "collaborationMode/list":
+            return {"data": [{"name": "default", "mode": "default"}]}
+        if method == "skills/list":
+            return {"data": [{"name": "Browser Verify", "description": "Verify UI flows."}]}
+        if method == "config/read":
+            return {"config": {"model": "gpt-5.4", "approvalPolicy": "never"}}
+        if method == "thread/list":
+            return {"data": [{"id": "thread_live", "status": {"type": "active"}}]}
+        if method == "thread/loaded/list":
+            return {"threadIds": ["thread_live"]}
+        if method == "mcpServerStatus/list":
+            return {"data": []}
+        raise AssertionError(f"Unexpected method {method}")
 
 
 @pytest.mark.asyncio
@@ -359,6 +471,125 @@ async def test_start_turn_retries_after_thread_not_found(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_start_turn_recovers_when_runtime_started_turn_after_timeout(tmp_path) -> None:
+    database = Database(tmp_path / "manager.db")
+    await database.initialize()
+    manager = RuntimeManager(database, BroadcastHub())
+    client = FakeTimeoutTurnClient()
+    runtime = InstanceRuntime(
+        instance_id=1,
+        name="Local Codex Desktop",
+        transport="desktop",
+        command=None,
+        args=None,
+        websocket_url=None,
+        cwd="C:/workspace",
+        auto_connect=False,
+        client=client,  # type: ignore[arg-type]
+        connected=True,
+    )
+    manager.instances[1] = runtime
+    manager._schedule_refresh_instance = lambda _instance_id: None  # type: ignore[method-assign]
+
+    await database.append_event(
+        instance_id=1,
+        thread_id="thread_timeout",
+        method="turn/started",
+        payload={"threadId": "thread_timeout", "turn": {"id": "turn_late"}},
+    )
+
+    result = await manager.start_turn(
+        1,
+        thread_id="thread_timeout",
+        text="Continue building.",
+        cwd="C:/workspace",
+        model=None,
+        reasoning_effort=None,
+        collaboration_mode=None,
+    )
+
+    assert result["turn"]["id"] == "turn_late"
+    assert result["recoveredFrom"] == "timeout"
+    assert client.turn_attempts == 1
+    assert client.thread_list_calls >= 1
+    assert runtime.threads == [{"id": "thread_timeout", "status": {"type": "active"}}]
+
+
+@pytest.mark.asyncio
+async def test_start_thread_reconnects_and_retries_after_timeout(tmp_path) -> None:
+    database = Database(tmp_path / "manager.db")
+    await database.initialize()
+    manager = RuntimeManager(database, BroadcastHub())
+    client = FakeStartThreadRetryClient()
+    runtime = InstanceRuntime(
+        instance_id=1,
+        name="Local Codex Desktop",
+        transport="desktop",
+        command=None,
+        args=None,
+        websocket_url=None,
+        cwd="C:/workspace",
+        auto_connect=False,
+        client=client,  # type: ignore[arg-type]
+        connected=True,
+    )
+    manager.instances[1] = runtime
+    manager.disconnect_instance = AsyncMock()  # type: ignore[method-assign]
+    manager.connect_instance = AsyncMock(return_value=runtime)  # type: ignore[method-assign]
+    manager._schedule_refresh_instance = lambda _instance_id: None  # type: ignore[method-assign]
+
+    result = await manager.start_thread(
+        1,
+        model="gpt-5.4",
+        cwd="C:/workspace",
+        reasoning_effort="high",
+        collaboration_mode=None,
+    )
+
+    assert result == {"thread": {"id": "thread_retry_ok"}}
+    assert client.start_attempts == 2
+    manager.disconnect_instance.assert_awaited_once_with(1)
+    manager.connect_instance.assert_awaited_once_with(1)
+    assert runtime.threads == [{"id": "thread_retry_ok", "status": {"type": "idle"}}]
+
+
+@pytest.mark.asyncio
+async def test_start_thread_recovers_when_timeout_created_thread_anyway(tmp_path) -> None:
+    database = Database(tmp_path / "manager.db")
+    await database.initialize()
+    manager = RuntimeManager(database, BroadcastHub())
+    client = FakeStartThreadRecoveredClient()
+    runtime = InstanceRuntime(
+        instance_id=1,
+        name="Local Codex Desktop",
+        transport="desktop",
+        command=None,
+        args=None,
+        websocket_url=None,
+        cwd="C:/workspace",
+        auto_connect=False,
+        client=client,  # type: ignore[arg-type]
+        connected=True,
+    )
+    manager.instances[1] = runtime
+    manager._schedule_refresh_instance = lambda _instance_id: None  # type: ignore[method-assign]
+
+    result = await manager.start_thread(
+        1,
+        model="gpt-5.4",
+        cwd="C:/workspace",
+        reasoning_effort="high",
+        collaboration_mode=None,
+    )
+
+    assert result["thread"]["id"] == "thread_recovered"
+    assert result["recoveredFrom"] == "timeout"
+    assert client.start_attempts == 1
+    assert client.thread_list_calls >= 1
+    assert runtime.threads == [{"id": "thread_recovered", "status": {"type": "idle"}}]
+
+
+@pytest.mark.asyncio
 async def test_list_mcp_server_status_summarizes_tool_catalogs(tmp_path) -> None:
     database = Database(tmp_path / "manager.db")
     await database.initialize()
@@ -412,3 +643,38 @@ async def test_list_mcp_server_status_summarizes_tool_catalogs(tmp_path) -> None
         }
     ]
     assert runtime.mcp_server_status == payload
+
+
+@pytest.mark.asyncio
+async def test_refresh_instance_keeps_cached_catalogs_when_optional_reads_timeout(tmp_path) -> None:
+    database = Database(tmp_path / "manager.db")
+    await database.initialize()
+    manager = RuntimeManager(database, BroadcastHub())
+    client = FakeRefreshClient()
+    runtime = InstanceRuntime(
+        instance_id=1,
+        name="Local Codex Desktop",
+        transport="desktop",
+        command=None,
+        args=None,
+        websocket_url=None,
+        cwd="C:/workspace",
+        auto_connect=False,
+        client=client,  # type: ignore[arg-type]
+        connected=True,
+        apps=[{"id": "cached_app", "name": "Cached App"}],
+        plugins=[{"name": "cached-plugin", "enabled": True}],
+    )
+    manager.instances[1] = runtime
+
+    refreshed = await manager.refresh_instance(1)
+
+    assert refreshed.auth_state == {"type": "chatgpt", "email": "operator@example.com"}
+    assert refreshed.models == [{"id": "gpt-5.4", "displayName": "GPT-5.4"}]
+    assert refreshed.skills == [{"name": "Browser Verify", "description": "Verify UI flows."}]
+    assert refreshed.apps == [{"id": "cached_app", "name": "Cached App"}]
+    assert refreshed.plugins == [{"name": "cached-plugin", "enabled": True}]
+    assert refreshed.threads == [{"id": "thread_live", "status": {"type": "active"}}]
+    assert refreshed.loaded_thread_ids == ["thread_live"]
+    assert "app/list" in client.calls
+    assert "plugin/list" in client.calls

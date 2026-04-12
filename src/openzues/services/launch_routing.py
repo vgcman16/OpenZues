@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from openzues.database import Database, utcnow
 from openzues.schemas import (
+    ConversationTargetView,
     GatewayBootstrapResourceView,
     GatewayRouteBindingMode,
     InstanceView,
     LaunchRouteBindingMode,
+    LaunchRouteConversationReuseView,
     LaunchRouteMatch,
     LaunchRouteStatus,
     LaunchRouteView,
@@ -20,6 +23,46 @@ from openzues.services.hermes_runtime_profile import (
     load_saved_runtime_preferences,
 )
 from openzues.services.manager import RuntimeManager
+
+_ROUTE_TOKEN_RE = re.compile(r"[^a-z0-9_-]+")
+
+
+def _normalize_route_token(value: str | None) -> str | None:
+    text = str(value or "").strip().lower()
+    if not text:
+        return None
+    normalized = _ROUTE_TOKEN_RE.sub("-", text).strip("-_")
+    return normalized or None
+
+
+def _normalize_conversation_target(
+    target: ConversationTargetView | dict | None,
+) -> ConversationTargetView | None:
+    if target is None:
+        return None
+    raw = (
+        target
+        if isinstance(target, ConversationTargetView)
+        else ConversationTargetView.model_validate(target)
+    )
+    channel = _normalize_route_token(raw.channel)
+    if not channel:
+        return None
+    account_id = _normalize_route_token(raw.account_id)
+    peer_id = _normalize_route_token(raw.peer_id)
+    peer_kind = raw.peer_kind if peer_id else None
+    summary_parts = [channel]
+    if account_id:
+        summary_parts.append(f"account {account_id}")
+    if peer_kind and peer_id:
+        summary_parts.append(f"{peer_kind} {peer_id}")
+    return ConversationTargetView(
+        channel=channel,
+        account_id=account_id,
+        peer_kind=peer_kind,
+        peer_id=peer_id if peer_kind else None,
+        summary=" · ".join(summary_parts),
+    )
 
 
 def _normalize_path(value: str | None) -> str | None:
@@ -88,6 +131,10 @@ class LaunchRoutingService:
         task: TaskBlueprintView | None = None,
         persist: bool = True,
     ) -> LaunchRouteView:
+        if task is not None and not hasattr(task, "instance_id") and hasattr(task, "id"):
+            raw_task = await self.database.get_task_blueprint(int(task.id))
+            if raw_task is not None:
+                task = TaskBlueprintView.model_validate(raw_task)
         gateway = await self.database.get_gateway_bootstrap()
         _preferred_memory_provider, preferred_executor = await load_saved_runtime_preferences(
             self.database
@@ -149,6 +196,9 @@ class LaunchRoutingService:
             if gateway is not None and gateway.get("operator_id") is not None
             else None
         )
+        conversation_target = _normalize_conversation_target(
+            task.conversation_target if task is not None else None
+        )
         task_id = (
             task.id
             if task is not None
@@ -174,6 +224,7 @@ class LaunchRoutingService:
             task_id=task_id,
             project_id=project_id,
             operator_id=operator_id,
+            conversation_target=conversation_target,
         )
 
         warnings: list[str] = []
@@ -387,6 +438,10 @@ class LaunchRoutingService:
             if gateway is not None and gateway.get("last_route_resolved_at") is not None
             else None
         )
+        conversation_reuse = await self._build_conversation_reuse(
+            session_key=session_key,
+            resolved_instance=resolved_instance,
+        )
 
         candidate_views = [
             _instance_resource(
@@ -411,11 +466,13 @@ class LaunchRoutingService:
             headline=headline,
             summary=summary,
             session_key=session_key,
+            conversation_target=conversation_target,
             warnings=warnings,
             preferred_instance=_instance_resource(preferred_instance),
             resolved_instance=_instance_resource(resolved_instance),
             candidates=[candidate for candidate in candidate_views if candidate is not None],
             last_resolved_at=route_last_resolved_at,
+            conversation_reuse=conversation_reuse,
         )
 
     def _resolve_mode(
@@ -448,6 +505,7 @@ class LaunchRoutingService:
         task_id: int | None,
         project_id: int | None,
         operator_id: int | None,
+        conversation_target: ConversationTargetView | None = None,
     ) -> str:
         parts = ["launch", f"mode:{mode}"]
         if task_id is not None:
@@ -458,4 +516,99 @@ class LaunchRoutingService:
             parts.append(f"operator:{operator_id}")
         if mode in {"task_lane", "saved_lane"} and preferred_instance_id is not None:
             parts.append(f"lane:{preferred_instance_id}")
+        if conversation_target is not None:
+            parts.append(f"channel:{conversation_target.channel}")
+            if conversation_target.account_id:
+                parts.append(f"account:{conversation_target.account_id}")
+            if conversation_target.peer_kind and conversation_target.peer_id:
+                parts.append(f"peer:{conversation_target.peer_kind}:{conversation_target.peer_id}")
         return ":".join(parts)
+
+    async def _build_conversation_reuse(
+        self,
+        *,
+        session_key: str,
+        resolved_instance: InstanceView | None,
+    ) -> LaunchRouteConversationReuseView:
+        latest = await self.database.get_latest_mission_by_session_key(
+            session_key,
+            require_thread=True,
+        )
+        if latest is None:
+            return LaunchRouteConversationReuseView(
+                reusable=False,
+                summary="No prior conversation is saved for this routed session key yet.",
+            )
+
+        mission_name = str(latest.get("name") or f"Mission {latest.get('id')}")
+        mission_status = str(latest.get("status") or "").strip() or None
+        thread_id = str(latest.get("thread_id") or "").strip() or None
+        latest_instance_id = (
+            int(latest["instance_id"]) if latest.get("instance_id") is not None else None
+        )
+        latest_instance = (
+            await self.manager.get(latest_instance_id)
+            if latest_instance_id is not None and latest_instance_id in self.manager.instances
+            else None
+        )
+        latest_instance_name = latest_instance.name if latest_instance is not None else None
+
+        if thread_id is None:
+            return LaunchRouteConversationReuseView(
+                reusable=False,
+                summary="No prior conversation is saved for this routed session key yet.",
+            )
+
+        if resolved_instance is None:
+            return LaunchRouteConversationReuseView(
+                reusable=False,
+                summary=(
+                    f"Mission '{mission_name}' last used thread {thread_id}, but the current "
+                    "route has not resolved a lane yet."
+                ),
+                mission_id=int(latest["id"]),
+                mission_name=mission_name,
+                mission_status=mission_status,  # type: ignore[arg-type]
+                thread_id=thread_id,
+                instance_id=latest_instance_id,
+                instance_name=latest_instance_name,
+                updated_at=str(latest.get("updated_at") or "") or None,
+            )
+
+        if latest_instance_id != resolved_instance.id:
+            previous_lane = latest_instance_name or (
+                f"lane {latest_instance_id}" if latest_instance_id is not None else "another lane"
+            )
+            return LaunchRouteConversationReuseView(
+                reusable=False,
+                summary=(
+                    f"Mission '{mission_name}' saved thread {thread_id} on {previous_lane}, "
+                    f"but the current route resolves to {resolved_instance.name}."
+                ),
+                mission_id=int(latest["id"]),
+                mission_name=mission_name,
+                mission_status=mission_status,  # type: ignore[arg-type]
+                thread_id=thread_id,
+                instance_id=latest_instance_id,
+                instance_name=latest_instance_name,
+                updated_at=str(latest.get("updated_at") or "") or None,
+            )
+
+        live_status = mission_status in {"active", "blocked", "paused"}
+        summary = (
+            f"This routed session is already live on thread {thread_id} via mission "
+            f"'{mission_name}'."
+            if live_status
+            else f"Next launch will reuse thread {thread_id} from mission '{mission_name}'."
+        )
+        return LaunchRouteConversationReuseView(
+            reusable=True,
+            summary=summary,
+            mission_id=int(latest["id"]),
+            mission_name=mission_name,
+            mission_status=mission_status,  # type: ignore[arg-type]
+            thread_id=thread_id,
+            instance_id=latest_instance_id,
+            instance_name=latest_instance_name,
+            updated_at=str(latest.get("updated_at") or "") or None,
+        )

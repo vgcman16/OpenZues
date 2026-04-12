@@ -263,6 +263,131 @@ async def test_thread_event_metrics_capture_recent_activity(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_get_latest_mission_by_session_key_prefers_active_session(tmp_path) -> None:
+    database = Database(tmp_path / "test.db")
+    await database.initialize()
+
+    instance_id = await database.create_instance(
+        name="Local Codex",
+        transport="stdio",
+        command="codex",
+        args="app-server",
+        websocket_url=None,
+        cwd=str(tmp_path),
+        auto_connect=False,
+    )
+    session_key = "launch:mode:workspace_affinity:task:7:project:1:operator:1"
+    completed_id = await database.create_mission(
+        name="Completed session",
+        objective="Finished work.",
+        status="completed",
+        instance_id=instance_id,
+        project_id=None,
+        thread_id="thread_completed",
+        session_key=session_key,
+        cwd=str(tmp_path),
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=4,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        toolsets=[],
+    )
+    active_id = await database.create_mission(
+        name="Active session",
+        objective="Continue work.",
+        status="active",
+        instance_id=instance_id,
+        project_id=None,
+        thread_id="thread_active",
+        session_key=session_key,
+        cwd=str(tmp_path),
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=4,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        toolsets=[],
+    )
+
+    latest = await database.get_latest_mission_by_session_key(session_key)
+
+    assert latest is not None
+    assert latest["id"] == active_id
+    assert latest["thread_id"] == "thread_active"
+    assert latest["status"] == "active"
+    assert completed_id != active_id
+
+
+@pytest.mark.asyncio
+async def test_mission_roundtrip_preserves_conversation_target(tmp_path) -> None:
+    database = Database(tmp_path / "test.db")
+    await database.initialize()
+
+    mission_id = await database.create_mission(
+        name="Channel-scoped session",
+        objective="Route one bounded channel conversation.",
+        status="paused",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread_channel",
+        session_key="launch:mode:workspace_affinity:task:7:operator:1:channel:slack",
+        conversation_target={
+            "channel": "slack",
+            "account_id": "workspace-bot",
+            "peer_kind": "channel",
+            "peer_id": "deploy-room",
+        },
+        cwd=str(tmp_path),
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=2,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        toolsets=[],
+    )
+
+    mission = await database.get_mission(mission_id)
+    latest = await database.get_latest_mission_by_session_key(
+        "launch:mode:workspace_affinity:task:7:operator:1:channel:slack"
+    )
+
+    assert mission is not None
+    assert mission["conversation_target"] == {
+        "channel": "slack",
+        "account_id": "workspace-bot",
+        "peer_kind": "channel",
+        "peer_id": "deploy-room",
+    }
+    assert latest is not None
+    assert latest["conversation_target"] == mission["conversation_target"]
+
+
+@pytest.mark.asyncio
 async def test_get_mission_by_thread_prefers_active_shared_owner(tmp_path) -> None:
     database = Database(tmp_path / "test.db")
     await database.initialize()

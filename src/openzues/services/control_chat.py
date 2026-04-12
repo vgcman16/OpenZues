@@ -263,10 +263,12 @@ def _create_prompt_mission(prompt: str, dashboard: DashboardView) -> MissionCrea
     objective = prompt.strip()
     if objective and objective[-1] not in ".!?":
         objective = f"{objective}."
+    ops_mesh = getattr(dashboard, "ops_mesh", None)
+    skillbooks = getattr(ops_mesh, "skillbooks", []) if ops_mesh is not None else []
     skillbook = next(
         (
             item
-            for item in dashboard.ops_mesh.skillbooks
+            for item in skillbooks
             if project_id is not None and item.project_id == project_id
         ),
         None,
@@ -434,6 +436,32 @@ def _find_gateway_signal(dashboard: DashboardView) -> DashboardSignalView | None
     )
 
 
+def _available_attention_queue_signal_ids(dashboard: DashboardView) -> list[str]:
+    return [signal.id for signal in dashboard.radar.signals if signal.id]
+
+
+def _resolve_attention_queue_signal(
+    dashboard: DashboardView,
+    target_signal_id: str | None,
+) -> DashboardSignalView | None:
+    wanted = str(target_signal_id or "").strip()
+    if not wanted:
+        return None
+    signal = next((item for item in dashboard.radar.signals if item.id == wanted), None)
+    if signal is not None:
+        return signal
+    available_ids = _available_attention_queue_signal_ids(dashboard)
+    available_note = (
+        f" Available ids: {', '.join(available_ids)}."
+        if available_ids
+        else " The radar is clear right now."
+    )
+    raise ValueError(
+        f"Attention-queue signal '{wanted}' is not available right now."
+        f"{available_note} Run `openzues status --json` to inspect the current radar."
+    )
+
+
 def _matches_mission_payload(mission: MissionView, payload: MissionCreate) -> bool:
     return mission.status in {"active", "blocked", "paused"} and mission_matches_payload(
         mission,
@@ -474,6 +502,7 @@ def _build_recovery_payload(mission: MissionView) -> MissionCreate:
         task_blueprint_id=None,
         cwd=mission.cwd,
         thread_id=mission.thread_id,
+        session_key=mission.session_key,
         model=mission.model,
         reasoning_effort=mission.reasoning_effort,
         collaboration_mode=mission.collaboration_mode,
@@ -505,6 +534,7 @@ def _build_hardener_payload(mission: MissionView) -> MissionCreate:
         task_blueprint_id=None,
         cwd=mission.cwd,
         thread_id=mission.thread_id,
+        session_key=mission.session_key,
         model=mission.model,
         reasoning_effort=mission.reasoning_effort,
         collaboration_mode=mission.collaboration_mode,
@@ -807,12 +837,19 @@ def plan_control_chat(prompt: str, dashboard: DashboardView) -> ControlChatPlan:
     )
 
 
-def plan_attention_queue(dashboard: DashboardView) -> AttentionQueuePlan | None:
+def plan_attention_queue(
+    dashboard: DashboardView,
+    *,
+    target_signal_id: str | None = None,
+) -> AttentionQueuePlan | None:
     gateway_needs_repair = _gateway_needs_repair(dashboard)
     active_in_progress = any(
         mission.status == "active" and mission.in_progress for mission in dashboard.missions
     )
-    actionable_signals = list(dashboard.radar.signals)
+    selected_signal = _resolve_attention_queue_signal(dashboard, target_signal_id)
+    actionable_signals = [selected_signal] if selected_signal is not None else list(
+        dashboard.radar.signals
+    )
 
     approval_signal = next(
         (
@@ -887,6 +924,10 @@ def plan_attention_queue(dashboard: DashboardView) -> AttentionQueuePlan | None:
         return None
 
     gateway_signal = _find_gateway_signal(dashboard)
+    if selected_signal is not None and (
+        gateway_signal is None or gateway_signal.id != selected_signal.id
+    ):
+        gateway_signal = None
     if gateway_needs_repair and gateway_signal is not None:
         gateway_repair = _find_gateway_repair_opportunity(dashboard)
         if gateway_repair is not None:
@@ -1338,11 +1379,16 @@ class ControlChatService:
             return
         await self._execute_approval_autopilot(decision)
 
-    async def tick_attention_queue(self, dashboard: DashboardView) -> bool:
-        if await self._sweep_safe_approvals(dashboard):
+    async def tick_attention_queue(
+        self,
+        dashboard: DashboardView,
+        *,
+        target_signal_id: str | None = None,
+    ) -> bool:
+        if target_signal_id is None and await self._sweep_safe_approvals(dashboard):
             return True
 
-        plan = plan_attention_queue(dashboard)
+        plan = plan_attention_queue(dashboard, target_signal_id=target_signal_id)
         if plan is None:
             return False
 

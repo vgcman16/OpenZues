@@ -94,6 +94,22 @@ from openzues.services.vault import VaultService, mask_secret
 
 logger = logging.getLogger(__name__)
 DEFAULT_TASK_COMPLETION_MARKER = "TASK COMPLETE"
+OPENCLAW_PARITY_CHECKPOINT_LEDGER = "docs/openclaw-parity-checkpoint-2026-04-10.md"
+OPENCLAW_PARITY_OLD_INVENTORY_SENTENCE = (
+    "First inventory the OpenClaw surface area across gateway, onboarding, CLI, channels, "
+    "routing, voice, canvas, nodes, skills, browser, packaging, and companion apps."
+)
+OPENCLAW_PARITY_OLD_SLICE_SENTENCE = (
+    "Then choose the highest-leverage missing parity slice in OpenZues, implement it end to end "
+    "in production quality, run the relevant verification, and leave a checkpoint that names "
+    "what was completed, what remains, and the next best slice."
+)
+OPENCLAW_PARITY_BASELINE_TOOLSETS = (
+    "debugging",
+    "delegation",
+    "memory",
+    "session_search",
+)
 
 
 def _parse_timestamp(value: str | None) -> datetime | None:
@@ -128,6 +144,52 @@ def _format_cadence(cadence_minutes: int | None) -> str:
 def _task_completion_marker(task: TaskBlueprintView) -> str:
     marker = (task.completion_marker or "").strip()
     return marker or DEFAULT_TASK_COMPLETION_MARKER
+
+
+def _task_targets_openclaw_parity(task: TaskBlueprintView) -> bool:
+    values = (
+        task.name,
+        task.summary,
+        task.objective_template,
+        task.completion_marker,
+    )
+    blob = " ".join(str(value or "") for value in values).lower()
+    return "parity" in blob and ("openclaw" in blob or "parity complete" in blob)
+
+
+def _normalized_task_objective_template(task: TaskBlueprintView) -> str:
+    objective = str(task.objective_template or "").strip()
+    if not objective or not _task_targets_openclaw_parity(task):
+        return objective
+    replacement = (
+        f"Resume from the verified checkpoint in `{OPENCLAW_PARITY_CHECKPOINT_LEDGER}` "
+        "instead of rebuilding the full source inventory. Choose the next bounded missing seam "
+        "named there, implement it end to end in production quality, run the focused "
+        "verification for that seam, and leave a checkpoint that names what was completed, "
+        "what remains, and the next best slice."
+    )
+    old_block = (
+        f"{OPENCLAW_PARITY_OLD_INVENTORY_SENTENCE} {OPENCLAW_PARITY_OLD_SLICE_SENTENCE}"
+    )
+    if old_block in objective:
+        return objective.replace(old_block, replacement)
+    if OPENCLAW_PARITY_OLD_INVENTORY_SENTENCE in objective:
+        return objective.replace(OPENCLAW_PARITY_OLD_INVENTORY_SENTENCE, replacement)
+    return objective
+
+
+def _openclaw_parity_task_toolsets(task: TaskBlueprintView) -> list[str]:
+    toolsets: list[str] = []
+    if task.run_verification:
+        toolsets.append("debugging")
+    if task.use_builtin_agents:
+        toolsets.append("delegation")
+    toolsets.extend(
+        toolset
+        for toolset in OPENCLAW_PARITY_BASELINE_TOOLSETS
+        if toolset not in toolsets
+    )
+    return toolsets
 
 
 def _task_has_terminal_completion(
@@ -233,8 +295,10 @@ def _resolve_task_toolsets(
     project_label: str | None = None,
     project_path: str | None = None,
 ) -> list[str]:
+    if _task_targets_openclaw_parity(task):
+        return _openclaw_parity_task_toolsets(task)
     return infer_hermes_toolsets(
-        task.objective_template,
+        _normalized_task_objective_template(task),
         explicit_toolsets=task.toolsets,
         project_label=project_label,
         project_path=project_path or task.cwd,
@@ -1394,7 +1458,8 @@ def _build_task_objective(
     instance_cwd: str | None = None,
     project_path: str | None = None,
 ) -> str:
-    sections = [task.objective_template]
+    is_openclaw_parity = _task_targets_openclaw_parity(task)
+    sections = [_normalized_task_objective_template(task)]
     if task.run_until_complete:
         marker = _task_completion_marker(task)
         sections.extend(
@@ -1415,6 +1480,28 @@ def _build_task_objective(
                 ),
             ]
         )
+    if is_openclaw_parity:
+        sections.extend(
+            [
+                "",
+                "OpenClaw parity anchor:",
+                (
+                    f"- Resume from `{OPENCLAW_PARITY_CHECKPOINT_LEDGER}` instead of rebuilding "
+                    "the global source inventory."
+                ),
+                (
+                    "- Lock one unfinished seam from the latest checkpoint, name the target "
+                    "files, land the change, run focused verification, and checkpoint that "
+                    "slice."
+                ),
+                (
+                    "- Detailed skill, tool, runtime, integration, and workspace posture is "
+                    "injected at mission turn time. Do not spend the first move rereading "
+                    "advisory local SKILL.md files unless the chosen seam directly needs one."
+                ),
+            ]
+        )
+        return "\n".join(sections)
     if skill_pins:
         sections.extend(
             [
@@ -2240,7 +2327,7 @@ class OpsMeshService:
             task = _serialize_task(row)
             project = projects.get(task.project_id) if task.project_id is not None else None
             tasks.append(
-                _attach_task_tool_policy(
+                await self._hydrate_task_blueprint_view(
                     task,
                     project_label=str(project["label"]) if project is not None else None,
                     project_path=str(project["path"]) if project is not None else None,
@@ -2373,11 +2460,31 @@ class OpsMeshService:
         )
         row = await self.database.get_task_blueprint(task_id)
         assert row is not None
-        return _attach_task_tool_policy(
+        return await self._hydrate_task_blueprint_view(
             _serialize_task(row),
             project_label=str(project["label"]) if project is not None else None,
             project_path=str(project["path"]) if project is not None else None,
         )
+
+    async def _hydrate_task_blueprint_view(
+        self,
+        task: TaskBlueprintView,
+        *,
+        project_label: str | None = None,
+        project_path: str | None = None,
+    ) -> TaskBlueprintView:
+        hydrated = _attach_task_tool_policy(
+            task,
+            project_label=project_label,
+            project_path=project_path,
+        )
+        mission_draft: MissionDraftView | None = None
+        try:
+            mission_draft = await self._build_draft_for_task(hydrated)
+        except ValueError:
+            # Keep task listings readable even when no lane can currently launch the task.
+            mission_draft = None
+        return hydrated.model_copy(update={"mission_draft": mission_draft})
 
     async def delete_task_blueprint(self, task_id: int) -> None:
         await self.database.delete_task_blueprint(task_id)
@@ -3016,12 +3123,18 @@ class OpsMeshService:
             self.database
         )
         session_key = None
+        thread_id = None
         instance_id: int | None
         resolved_instance_name: str | None = None
         resolved_instance_cwd: str | None = None
         if self.launch_routing is not None:
             launch_route = await self.launch_routing.describe(task=task)
             session_key = launch_route.session_key
+            if (
+                launch_route.conversation_reuse is not None
+                and launch_route.conversation_reuse.reusable
+            ):
+                thread_id = launch_route.conversation_reuse.thread_id
             if launch_route.resolved_instance is not None:
                 instance_id = launch_route.resolved_instance.id
                 resolved_instance_name = launch_route.resolved_instance.label
@@ -3064,8 +3177,11 @@ class OpsMeshService:
             project_id=task.project_id,
             task_blueprint_id=task.id,
             cwd=task.cwd or (str(project["path"]) if project is not None else None),
-            thread_id=None,
+            thread_id=thread_id,
             session_key=session_key,
+            conversation_target=launch_route.conversation_target
+            if self.launch_routing is not None
+            else task.conversation_target,
             model=task.model,
             reasoning_effort=task.reasoning_effort,
             collaboration_mode=task.collaboration_mode,

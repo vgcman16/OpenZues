@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 TransportType = Literal["desktop", "stdio", "websocket"]
 PlaybookKind = Literal["command", "turn", "thread_turn", "review"]
@@ -28,6 +28,7 @@ SetupFlow = Literal["quickstart", "advanced"]
 SetupWizardStatus = Literal["unconfigured", "staged", "ready"]
 LaunchRouteStatus = Literal["ready", "staged", "repair"]
 LaunchRouteBindingMode = Literal["task_lane", "saved_lane", "workspace_affinity"]
+ConversationTargetPeerKind = Literal["direct", "group", "channel"]
 LaunchRouteMatch = Literal[
     "task.instance",
     "gateway.preferred_instance",
@@ -500,6 +501,16 @@ class GatewayCapabilityMemoryProofReferenceView(BaseModel):
     updated_at: datetime | None = None
 
 
+class GatewayCapabilityMethodCatalogView(BaseModel):
+    headline: str
+    summary: str
+    tool_count: int = 0
+    server_count: int = 0
+    lane_count: int = 0
+    tools: list[str] = Field(default_factory=list)
+    servers: list[str] = Field(default_factory=list)
+
+
 class GatewayCapabilityInventoryView(BaseModel):
     headline: str
     summary: str
@@ -519,6 +530,7 @@ class GatewayCapabilityInventoryView(BaseModel):
     memory_proof_launchable: bool = False
     memory_proof_target_instance_id: int | None = None
     memory_proof_launch_label: str | None = None
+    method_catalog: GatewayCapabilityMethodCatalogView | None = None
     items: list[GatewayCapabilityInventoryItemView] = Field(default_factory=list)
 
 
@@ -753,6 +765,7 @@ class TaskBlueprintCreate(BaseModel):
     name: str
     summary: str | None = None
     objective_template: str
+    conversation_target: ConversationTargetView | None = None
     instance_id: int | None = None
     project_id: int | None = None
     cadence_minutes: int | None = Field(default=None, ge=1)
@@ -782,6 +795,7 @@ class TaskBlueprintView(TaskBlueprintCreate):
     last_launched_at: str | None = None
     last_status: str | None = None
     last_result_summary: str | None = None
+    mission_draft: MissionDraftView | None = None
     tool_policy: HermesToolPolicyView | None = None
     created_at: datetime
     updated_at: datetime
@@ -924,6 +938,7 @@ class OnboardingBootstrapCreate(BaseModel):
     task_name: str
     task_summary: str | None = None
     objective_template: str
+    conversation_target: ConversationTargetView | None = None
     cadence_minutes: int = Field(default=180, ge=1)
     completion_marker: str | None = None
     model: str = "gpt-5.4"
@@ -975,6 +990,47 @@ class GatewayBootstrapResourceView(BaseModel):
     connected: bool | None = None
 
 
+class ConversationTargetView(BaseModel):
+    channel: str
+    account_id: str | None = None
+    peer_kind: ConversationTargetPeerKind | None = None
+    peer_id: str | None = None
+    summary: str | None = None
+
+    @model_validator(mode="after")
+    def _populate_summary(self) -> "ConversationTargetView":
+        channel = str(self.channel or "").strip().lower()
+        account_id = str(self.account_id or "").strip() or None
+        peer_id = str(self.peer_id or "").strip() or None
+        peer_kind = self.peer_kind if peer_id else None
+        summary = str(self.summary or "").strip() or None
+        if not summary and channel:
+            parts = [channel]
+            if account_id:
+                parts.append(f"account {account_id}")
+            if peer_kind and peer_id:
+                parts.append(f"{peer_kind} {peer_id}")
+            summary = " · ".join(parts)
+        self.channel = channel
+        self.account_id = account_id
+        self.peer_kind = peer_kind
+        self.peer_id = peer_id if peer_kind else None
+        self.summary = summary
+        return self
+
+
+class LaunchRouteConversationReuseView(BaseModel):
+    reusable: bool = False
+    summary: str
+    mission_id: int | None = None
+    mission_name: str | None = None
+    mission_status: MissionStatus | None = None
+    thread_id: str | None = None
+    instance_id: int | None = None
+    instance_name: str | None = None
+    updated_at: str | None = None
+
+
 class LaunchRouteView(BaseModel):
     status: LaunchRouteStatus
     mode: LaunchRouteBindingMode
@@ -982,11 +1038,13 @@ class LaunchRouteView(BaseModel):
     headline: str
     summary: str
     session_key: str
+    conversation_target: ConversationTargetView | None = None
     warnings: list[str] = Field(default_factory=list)
     preferred_instance: GatewayBootstrapResourceView | None = None
     resolved_instance: GatewayBootstrapResourceView | None = None
     candidates: list[GatewayBootstrapResourceView] = Field(default_factory=list)
     last_resolved_at: str | None = None
+    conversation_reuse: LaunchRouteConversationReuseView | None = None
 
 
 class GatewayBootstrapUpdate(BaseModel):
@@ -1093,6 +1151,7 @@ class SetupWizardSessionView(BaseModel):
     model: str = "gpt-5.4"
     max_turns: int | None = 4
     objective_template: str | None = None
+    conversation_target: ConversationTargetView | None = None
     toolsets: list[str] = Field(default_factory=list)
     local_probe: SetupWizardProbeView
     remote_probe: SetupWizardProbeView
@@ -1116,6 +1175,7 @@ class SetupWizardSessionUpdate(BaseModel):
     model: str | None = None
     max_turns: int | None = Field(default=None, ge=1)
     objective_template: str | None = None
+    conversation_target: ConversationTargetView | None = None
     toolsets: list[str] | None = None
 
 
@@ -1210,6 +1270,7 @@ class RemoteMissionCreate(BaseModel):
     cwd: str | None = None
     thread_id: str | None = None
     session_key: str | None = None
+    conversation_target: ConversationTargetView | None = None
     model: str = "gpt-5.4"
     reasoning_effort: str | None = None
     collaboration_mode: str | None = None
@@ -1241,6 +1302,7 @@ class MissionCreate(BaseModel):
     cwd: str | None = None
     thread_id: str | None = None
     session_key: str | None = None
+    conversation_target: ConversationTargetView | None = None
     model: str = "gpt-5.4"
     reasoning_effort: str | None = None
     collaboration_mode: str | None = None
@@ -1346,6 +1408,7 @@ class MissionView(BaseModel):
     task_blueprint_id: int | None = None
     thread_id: str | None = None
     session_key: str | None = None
+    conversation_target: ConversationTargetView | None = None
     cwd: str | None = None
     model: str
     reasoning_effort: str | None = None

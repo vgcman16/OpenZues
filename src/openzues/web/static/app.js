@@ -1643,6 +1643,8 @@ function renderLaunchRoute(route) {
   }
   const resolvedLabel = route.resolved_instance?.label || "No lane resolved yet";
   const preferredLabel = route.preferred_instance?.label || "No pinned lane";
+  const conversationTargetSummary = route.conversation_target?.summary || "";
+  const reuseSummary = route.conversation_reuse?.summary || "";
   return `
     <article class="bootstrap-route">
       <div class="row">
@@ -1671,6 +1673,12 @@ function renderLaunchRoute(route) {
           <p class="bootstrap-route-session">${escapeHtml(route.session_key)}</p>
         </div>
       </div>
+      ${
+        conversationTargetSummary
+          ? `<div class="ops-note"><strong>Conversation target:</strong> ${escapeHtml(conversationTargetSummary)}</div>`
+          : ""
+      }
+      ${reuseSummary ? `<div class="ops-note"><strong>Conversation reuse:</strong> ${escapeHtml(reuseSummary)}</div>` : ""}
       ${
         route.warnings?.length
           ? `<div class="ops-note">${route.warnings.map((warning) => escapeHtml(warning)).join(" ")}</div>`
@@ -1851,6 +1859,7 @@ function renderGatewayCapabilitySummary() {
     .join("");
   const memoryProof = capability.inventory.memory_proof_reference;
   const memoryProofContinuity = capability.inventory.memory_proof_continuity;
+  const methodCatalog = capability.inventory.method_catalog;
   const canOpenMemoryProofMission = Boolean(
     memoryProof?.mission_id && getMissionById(memoryProof.mission_id),
   );
@@ -1887,6 +1896,32 @@ function renderGatewayCapabilitySummary() {
         <div class="small-muted">${escapeHtml(capability.connected_lane_health.summary)}</div>
         <div class="small-muted">${escapeHtml(capability.inventory.summary)}</div>
         <div class="small-muted">${escapeHtml(capability.inventory.memory_summary || "")}</div>
+        ${
+          methodCatalog
+            ? `
+                <div class="small-muted">${escapeHtml(methodCatalog.summary || "")}</div>
+                <div class="pill-row">
+                  ${pill(
+                    `${methodCatalog.tool_count} methods`,
+                    methodCatalog.tool_count ? "ok" : "warn",
+                  )}
+                  ${pill(
+                    `${methodCatalog.server_count} MCP catalogs`,
+                    methodCatalog.server_count ? "ok" : "warn",
+                  )}
+                  ${pill(
+                    `${methodCatalog.lane_count} connected lanes`,
+                    methodCatalog.lane_count ? "ok" : "warn",
+                  )}
+                </div>
+                ${
+                  Array.isArray(methodCatalog.tools) && methodCatalog.tools.length
+                    ? `<div class="small-muted">${escapeHtml(clipText(methodCatalog.tools.join(", "), 180))}</div>`
+                    : ""
+                }
+              `
+            : ""
+        }
         ${Array.isArray(capability.inventory.memory_evidence) ? capability.inventory.memory_evidence.map((evidence) => `<div class="small-muted">${escapeHtml(evidence)}</div>`).join("") : ""}
         ${
           capability.inventory.memory_recommended_action
@@ -2006,6 +2041,7 @@ function applyWizardSessionToForm(force = false) {
   setValue("model", wizard.model);
   setValue("max_turns", wizard.max_turns ?? "");
   setValue("objective_template", wizard.objective_template);
+  applyConversationTargetToForm(onboardingFormEl, wizard.conversation_target || null);
   setValue(
     "toolsets",
     Array.isArray(wizard.toolsets) ? wizard.toolsets.join(", ") : "",
@@ -2497,6 +2533,11 @@ function renderOpsMesh() {
                 ${task.instance_name ? ` Lane: ${escapeHtml(task.instance_name)}.` : ""}
                 ${task.skill_count ? ` ${task.skill_count} skill hint(s).` : ""}
                 ${task.integration_count ? ` ${task.integration_count} integration note(s).` : ""}
+                ${
+                  task.mission_draft?.conversation_target?.summary
+                    ? ` Conversation: ${escapeHtml(task.mission_draft.conversation_target.summary)}.`
+                    : ""
+                }
               </div>
               ${
                 task.mission_draft?.tool_policy?.summary
@@ -3602,6 +3643,7 @@ function applyMissionPreset(presetId) {
 function resetMissionForm() {
   missionFormEl.reset();
   missionFormEl.querySelector('input[name="task_blueprint_id"]').value = "";
+  applyConversationTargetToForm(missionFormEl, null);
   missionFormEl.querySelector('input[name="use_builtin_agents"]').checked = true;
   missionFormEl.querySelector('input[name="run_verification"]').checked = true;
   missionFormEl.querySelector('input[name="auto_commit"]').checked = true;
@@ -3632,6 +3674,7 @@ function applyMissionDraft(draft) {
   missionFormEl.querySelector('input[name="auto_recover_limit"]').value = draft.auto_recover_limit || 2;
   missionFormEl.querySelector('input[name="reflex_cooldown_seconds"]').value =
     draft.reflex_cooldown_seconds || 900;
+  applyConversationTargetToForm(missionFormEl, draft.conversation_target || null);
   missionFormEl.querySelector('input[name="toolsets"]').value = Array.isArray(draft.toolsets)
     ? draft.toolsets.join(", ")
     : "";
@@ -3648,7 +3691,11 @@ function applyMissionDraft(draft) {
   }
   missionProjectSelectEl.value = draft.project_id != null ? String(draft.project_id) : "";
   missionAdvancedEl.open = Boolean(
-    draft.thread_id || draft.max_turns || draft.model !== "gpt-5.4" || !draft.auto_commit,
+    draft.thread_id
+      || draft.max_turns
+      || draft.model !== "gpt-5.4"
+      || !draft.auto_commit
+      || draft.conversation_target?.channel,
   );
 }
 
@@ -5347,6 +5394,51 @@ function parseCsvList(text) {
     .filter(Boolean);
 }
 
+function buildConversationTargetPayload(formLike) {
+  const read = (name) => String(formLike.get(name) || "").trim();
+  const channel = read("conversation_channel");
+  const accountId = read("conversation_account_id");
+  const peerKind = read("conversation_peer_kind").toLowerCase();
+  const peerId = read("conversation_peer_id");
+  if (!channel && !accountId && !peerKind && !peerId) {
+    return null;
+  }
+  if (!channel) {
+    throw new Error("Provide a conversation channel before saving a routed conversation target.");
+  }
+  if ((peerKind && !peerId) || (!peerKind && peerId)) {
+    throw new Error(
+      "Provide both peer kind and peer id together when saving a routed conversation target.",
+    );
+  }
+  if (peerKind && !["direct", "group", "channel"].includes(peerKind)) {
+    throw new Error("Peer kind must be direct, group, or channel.");
+  }
+  return {
+    channel,
+    account_id: accountId || null,
+    peer_kind: peerKind || null,
+    peer_id: peerId || null,
+  };
+}
+
+function applyConversationTargetToForm(formEl, target = null) {
+  if (!formEl) {
+    return;
+  }
+  const setValue = (name, value) => {
+    const field = formEl.querySelector(`[name="${name}"]`);
+    if (!field) {
+      return;
+    }
+    field.value = value == null ? "" : String(value);
+  };
+  setValue("conversation_channel", target?.channel || "");
+  setValue("conversation_account_id", target?.account_id || "");
+  setValue("conversation_peer_kind", target?.peer_kind || "");
+  setValue("conversation_peer_id", target?.peer_id || "");
+}
+
 function syncTransportFields() {
   const transport = transportSelectEl.value;
   document.querySelectorAll("[data-transport-visible]").forEach((element) => {
@@ -5449,6 +5541,7 @@ missionFormEl.addEventListener("submit", async (event) => {
         : 900,
       start_immediately: form.get("start_immediately") === "on",
       toolsets: parseCsvList(form.get("toolsets") || ""),
+      conversation_target: buildConversationTargetPayload(form),
     });
     resetMissionForm();
     showToast("Mission launched.");
@@ -5559,6 +5652,7 @@ if (onboardingFormEl) {
         task_name: form.get("task_name"),
         task_summary: null,
         objective_template: form.get("objective_template"),
+        conversation_target: buildConversationTargetPayload(form),
         cadence_minutes: form.get("cadence_minutes") ? Number(form.get("cadence_minutes")) : 180,
         completion_marker: null,
         model: form.get("model") || "gpt-5.4",
@@ -5678,6 +5772,7 @@ taskFormEl.addEventListener("submit", async (event) => {
       name: form.get("name"),
       summary: form.get("summary") || null,
       objective_template: form.get("objective_template"),
+      conversation_target: buildConversationTargetPayload(form),
       instance_id: form.get("instance_id") ? Number(form.get("instance_id")) : null,
       project_id: form.get("project_id") ? Number(form.get("project_id")) : null,
       cadence_minutes: form.get("cadence_minutes") ? Number(form.get("cadence_minutes")) : null,
