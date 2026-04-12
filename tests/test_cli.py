@@ -7,7 +7,6 @@ from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 
 from openzues.app import create_app
-from openzues.database import Database
 from openzues.cli import (
     _emit_attention_queue_action,
     _emit_continue_action,
@@ -15,9 +14,10 @@ from openzues.cli import (
     _emit_status,
     app,
 )
+from openzues.database import Database
 from openzues.schemas import ControlChatMessageView, ControlChatResponse, MissionDraftView
-from openzues.settings import Settings
 from openzues.services.control_chat import ControlChatPlan
+from openzues.settings import Settings
 
 runner = CliRunner()
 
@@ -189,9 +189,7 @@ def test_gateway_doctor_human_output_summarizes_sections(tmp_path, monkeypatch) 
     assert "diagnostics:" in result.stdout
 
 
-def test_status_json_reuses_gateway_contract_and_surfaces_queue_plan(
-    tmp_path, monkeypatch
-) -> None:
+def test_status_json_reuses_gateway_contract_and_surfaces_queue_plan(tmp_path, monkeypatch) -> None:
     data_dir = tmp_path / "data"
     _bootstrap_cli_workspace(tmp_path, monkeypatch)
 
@@ -204,7 +202,9 @@ def test_status_json_reuses_gateway_contract_and_surfaces_queue_plan(
     with TestClient(api_app, client=("testclient", 50000)) as client:
         api_payload = client.get("/api/gateway/capability").json()
 
-    cli_gateway = {key: value for key, value in payload["gateway_capability"].items() if key != "checked_at"}
+    cli_gateway = {
+        key: value for key, value in payload["gateway_capability"].items() if key != "checked_at"
+    }
     api_payload = {key: value for key, value in api_payload.items() if key != "checked_at"}
     if "diagnostics" in cli_gateway and "diagnostics" in api_payload:
         for key in ("ok_count", "warn_count", "fail_count"):
@@ -430,13 +430,14 @@ def test_launch_rejects_unknown_launchpad_opportunity_id(monkeypatch) -> None:
     result = runner.invoke(app, ["launch", "not-a-real-opportunity"])
 
     assert result.exit_code == 1
-    assert "Launchpad opportunity 'not-a-real-opportunity' is not available right now." in result.stderr
+    assert (
+        "Launchpad opportunity 'not-a-real-opportunity' is not available right now."
+        in result.stderr
+    )
     assert "Available ids: gateway-repair." in result.stderr
 
 
-def test_recover_plan_passes_recover_prompt_to_control_chat_planner(
-    tmp_path, monkeypatch
-) -> None:
+def test_recover_plan_passes_recover_prompt_to_control_chat_planner(tmp_path, monkeypatch) -> None:
     _bootstrap_cli_workspace(tmp_path, monkeypatch, task_name="CLI Recover Loop")
 
     captured: list[str] = []
@@ -482,7 +483,10 @@ def test_harden_execute_submits_harden_prompt(tmp_path, monkeypatch) -> None:
             assistant=ControlChatMessageView(
                 id=12,
                 role="assistant",
-                content="I launched `Harden ForumForge` because the finished checkpoint is the highest-leverage follow-through.",
+                content=(
+                    "I launched `Harden ForumForge` because the finished "
+                    "checkpoint is the highest-leverage follow-through."
+                ),
                 action_kind="launch_opportunity",
                 mission_id=44,
                 opportunity_id="harden-44",
@@ -538,7 +542,9 @@ def test_routes_test_command_executes_delivery_ping(tmp_path, monkeypatch) -> No
         del route, event, secret_token
         deliveries.append(event_type)
 
-    monkeypatch.setattr("openzues.services.ops_mesh.OpsMeshService._post_webhook", fake_post_webhook)
+    monkeypatch.setattr(
+        "openzues.services.ops_mesh.OpsMeshService._post_webhook", fake_post_webhook
+    )
 
     result = runner.invoke(app, ["routes", "test", str(route_id), "--json"])
 
@@ -566,7 +572,9 @@ def test_hermes_arm_shell_command_uses_saved_gateway_workspace(tmp_path, monkeyp
 
 def test_hermes_arm_docker_command_uses_saved_gateway_workspace(tmp_path, monkeypatch) -> None:
     _bootstrap_cli_workspace(tmp_path, monkeypatch, task_name="CLI Docker Loop")
-    monkeypatch.setattr("openzues.services.hermes_platform._which", lambda command: command == "docker")
+    monkeypatch.setattr(
+        "openzues.services.hermes_platform._which", lambda command: command == "docker"
+    )
 
     result = runner.invoke(app, ["hermes", "arm-docker", "--json"])
 
@@ -582,13 +590,17 @@ def test_hermes_arm_docker_command_uses_saved_gateway_workspace(tmp_path, monkey
 
 def test_hermes_preflight_docker_command_reports_ready_backend(tmp_path, monkeypatch) -> None:
     _bootstrap_cli_workspace(tmp_path, monkeypatch, task_name="CLI Docker Preflight")
-    monkeypatch.setattr("openzues.services.hermes_platform._which", lambda command: command == "docker")
+    monkeypatch.setattr(
+        "openzues.services.hermes_platform._which", lambda command: command == "docker"
+    )
     monkeypatch.setattr(
         "openzues.services.hermes_platform.shutil.which",
         lambda command: "C:\\docker\\docker.exe" if command == "docker" else None,
     )
 
-    async def fake_run_process_capture(*args: str, timeout_seconds: float = 20.0) -> tuple[int, str, str]:
+    async def fake_run_process_capture(
+        *args: str, timeout_seconds: float = 20.0
+    ) -> tuple[int, str, str]:
         del timeout_seconds
         command = tuple(args)
         if command[-1] == "--version":

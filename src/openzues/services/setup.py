@@ -309,9 +309,7 @@ class SetupService:
     ) -> SetupLaunchHandoffView:
         active_gateway = gateway or await self.gateway_bootstrap.get_view()
         instances = {instance.id: instance for instance in await self.manager.list_views()}
-        operators = {
-            operator.id: operator for operator in await self.access.list_operator_views()
-        }
+        operators = {operator.id: operator for operator in await self.access.list_operator_views()}
         warnings = list(active_gateway.warnings)
         mission_draft = None
         draft_instance = None
@@ -628,10 +626,7 @@ class SetupService:
             return SetupWizardProbeView(
                 status="ready",
                 headline="Local lane is live",
-                summary=(
-                    f"{connected_count} connected {lane_label} can launch "
-                    "work immediately."
-                ),
+                summary=(f"{connected_count} connected {lane_label} can launch work immediately."),
             )
         if instance_count > 0:
             saved_lane_label = f"lane{'s' if instance_count != 1 else ''}"
@@ -639,8 +634,7 @@ class SetupService:
                 status="warn",
                 headline="Local lane is saved but idle",
                 summary=(
-                    f"{instance_count} saved {saved_lane_label} still need "
-                    "connection attention."
+                    f"{instance_count} saved {saved_lane_label} still need connection attention."
                 ),
             )
         return SetupWizardProbeView(
@@ -661,18 +655,14 @@ class SetupService:
             return SetupWizardProbeView(
                 status="ready",
                 headline="Remote ingress is armed",
-                summary=(
-                    f"{api_key_count} operator {key_label} can trigger work "
-                    "remotely."
-                ),
+                summary=(f"{api_key_count} operator {key_label} can trigger work remotely."),
             )
         if operators or team_count:
             return SetupWizardProbeView(
                 status="warn",
                 headline="Remote ingress is partially staged",
                 summary=(
-                    "Teams or operators exist, but no active operator API "
-                    "key is available yet."
+                    "Teams or operators exist, but no active operator API key is available yet."
                 ),
             )
         return SetupWizardProbeView(

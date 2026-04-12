@@ -338,7 +338,9 @@ async def test_hermes_platform_can_arm_docker_backend_from_saved_gateway_workspa
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("openzues.services.hermes_platform._which", lambda command: command == "docker")
+    monkeypatch.setattr(
+        "openzues.services.hermes_platform._which", lambda command: command == "docker"
+    )
 
     project_dir = tmp_path / "workspace"
     project_dir.mkdir(parents=True, exist_ok=True)
@@ -425,13 +427,17 @@ async def test_hermes_platform_can_preflight_docker_backend(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("openzues.services.hermes_platform._which", lambda command: command == "docker")
+    monkeypatch.setattr(
+        "openzues.services.hermes_platform._which", lambda command: command == "docker"
+    )
     monkeypatch.setattr(
         "openzues.services.hermes_platform.shutil.which",
         lambda command: "C:\\docker\\docker.exe" if command == "docker" else None,
     )
 
-    async def fake_run_process_capture(*args: str, timeout_seconds: float = 20.0) -> tuple[int, str, str]:
+    async def fake_run_process_capture(
+        *args: str, timeout_seconds: float = 20.0
+    ) -> tuple[int, str, str]:
         del timeout_seconds
         command = tuple(args)
         if command[-1] == "--version":

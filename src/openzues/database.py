@@ -408,9 +408,7 @@ class Database:
             await self._ensure_column(db, "notification_routes", "vault_secret_id", "INTEGER")
             await self._ensure_column(db, "integrations", "vault_secret_id", "INTEGER")
             await self._ensure_column(db, "missions", "session_key", "TEXT")
-            await self._ensure_column(
-                db, "missions", "toolsets_json", "TEXT NOT NULL DEFAULT '[]'"
-            )
+            await self._ensure_column(db, "missions", "toolsets_json", "TEXT NOT NULL DEFAULT '[]'")
             await db.execute(
                 """
                 CREATE INDEX IF NOT EXISTS idx_missions_task
@@ -1137,9 +1135,7 @@ class Database:
     async def list_notification_routes(self) -> list[dict[str, Any]]:
         async with aiosqlite.connect(self.path) as db:
             db.row_factory = aiosqlite.Row
-            rows = await db.execute_fetchall(
-                "SELECT * FROM notification_routes ORDER BY id ASC"
-            )
+            rows = await db.execute_fetchall("SELECT * FROM notification_routes ORDER BY id ASC")
             output = []
             for row in rows:
                 item = dict(row)

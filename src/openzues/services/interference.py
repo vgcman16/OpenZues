@@ -336,7 +336,8 @@ def build_interference(
                 scope_label=scope_label,
                 project_id=None,
                 summary=(
-                    f"{gateway_capability.headline}. {gateway_capability.connected_lane_health.summary}"
+                    f"{gateway_capability.headline}. "
+                    f"{gateway_capability.connected_lane_health.summary}"
                 ),
                 pressure=(
                     "Operators can fork work around the saved launch posture when approvals, "

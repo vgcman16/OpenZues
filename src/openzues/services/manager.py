@@ -19,17 +19,11 @@ RuntimeListener = Callable[[int, dict[str, Any]], Awaitable[None]]
 CATALOG_SAMPLE_LIMIT = 8
 LOG_LINE_PREVIEW_LIMIT = 360
 ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
-LOG_TIMESTAMP_RE = re.compile(
-    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z\s+"
-)
+LOG_TIMESTAMP_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z\s+")
 
 
 def _pick_fields(item: dict[str, Any], keys: tuple[str, ...]) -> dict[str, Any]:
-    return {
-        key: value
-        for key in keys
-        if (value := item.get(key)) not in (None, "", [], {})
-    }
+    return {key: value for key in keys if (value := item.get(key)) not in (None, "", [], {})}
 
 
 def _ordered_names(items: list[str]) -> list[str]:
@@ -112,11 +106,7 @@ def _summarize_named_items(
     *,
     keys: tuple[str, ...],
 ) -> list[dict[str, Any]]:
-    return [
-        summary
-        for item in items
-        if (summary := _pick_fields(item, keys))
-    ]
+    return [summary for item in items if (summary := _pick_fields(item, keys))]
 
 
 def _sanitize_log_line(line: str) -> str:
@@ -359,9 +349,7 @@ class RuntimeManager:
             return [dict(item) for item in runtime.mcp_server_status]
         raw_status = (await client.call("mcpServerStatus/list", {"limit": limit})).get("data", [])
         runtime.mcp_server_status = [
-            _summarize_mcp_server_status(item)
-            for item in raw_status
-            if isinstance(item, dict)
+            _summarize_mcp_server_status(item) for item in raw_status if isinstance(item, dict)
         ]
         return [dict(item) for item in runtime.mcp_server_status]
 
@@ -508,12 +496,10 @@ class RuntimeManager:
             return runtime
         account = (await client.call("account/read", {"refreshToken": False})).get("account")
         runtime.auth_state = _summarize_account(account)
-        raw_models = (
-            await client.call("model/list", {"limit": 50, "includeHidden": False})
-        ).get("data", [])
-        runtime.models = _summarize_models(
-            [item for item in raw_models if isinstance(item, dict)]
+        raw_models = (await client.call("model/list", {"limit": 50, "includeHidden": False})).get(
+            "data", []
         )
+        runtime.models = _summarize_models([item for item in raw_models if isinstance(item, dict)])
         raw_modes = (await client.call("collaborationMode/list", {})).get("data", [])
         runtime.collaboration_modes = _summarize_named_items(
             [item for item in raw_modes if isinstance(item, dict)],
@@ -562,9 +548,9 @@ class RuntimeManager:
         runtime.threads = _summarize_threads(
             [item for item in raw_threads if isinstance(item, dict)]
         )
-        runtime.loaded_thread_ids = (
-            await client.call("thread/loaded/list", {})
-        ).get("threadIds", [])
+        runtime.loaded_thread_ids = (await client.call("thread/loaded/list", {})).get(
+            "threadIds", []
+        )
         runtime.unresolved_requests = await self.database.list_unresolved_server_requests(
             instance_id
         )

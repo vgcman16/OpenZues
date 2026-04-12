@@ -20,12 +20,12 @@ from openzues.schemas import (
 )
 from openzues.services.access import AccessService
 from openzues.services.codex_desktop import CodexDesktopService
-from openzues.services.cortex import build_cortex, build_doctrines
 from openzues.services.control_chat import (
     ControlChatService,
     plan_attention_queue,
     plan_control_chat,
 )
+from openzues.services.cortex import build_cortex, build_doctrines
 from openzues.services.environment import EnvironmentService
 from openzues.services.gateway_bootstrap import GatewayBootstrapService
 from openzues.services.gateway_capability import GatewayCapabilityService
@@ -48,6 +48,9 @@ from openzues.services.vault import VaultService
 from openzues.settings import Settings, settings
 
 app = typer.Typer(help="OpenZues local control plane")
+_ATTENTION_QUEUE_IDLE_REPLY = (
+    "The attention queue is clear right now. There is no bounded move to fire."
+)
 gateway_app = typer.Typer(help="Inspect and stamp the saved gateway bootstrap profile.")
 hermes_app = typer.Typer(help="Inspect and tune Hermes runtime posture.")
 routes_app = typer.Typer(help="Inspect and test notification routes.")
@@ -241,10 +244,7 @@ def _emit_gateway_capability(payload: dict[str, object], *, json_output: bool) -
     _emit_payload(payload, json_output=False)
     connected_lane_health = payload.get("connected_lane_health")
     if isinstance(connected_lane_health, dict):
-        typer.echo(
-            "lane health: "
-            + str(connected_lane_health.get("summary") or "")
-        )
+        typer.echo("lane health: " + str(connected_lane_health.get("summary") or ""))
     inventory = payload.get("inventory")
     if isinstance(inventory, dict):
         typer.echo("inventory: " + str(inventory.get("summary") or ""))
@@ -264,11 +264,7 @@ def _emit_gateway_capability(payload: dict[str, object], *, json_output: bool) -
             state = str(memory_proof_continuity.get("state") or "").strip()
             score = memory_proof_continuity.get("score")
             if state:
-                suffix = (
-                    f" ({score}/100)"
-                    if isinstance(score, int)
-                    else ""
-                )
+                suffix = f" ({score}/100)" if isinstance(score, int) else ""
                 typer.echo(f"memory relay: {state}{suffix}")
             summary = str(memory_proof_continuity.get("summary") or "").strip()
             if summary:
@@ -411,10 +407,7 @@ def _emit_hermes_doctor(payload: dict[str, object], *, json_output: bool) -> Non
     _emit_payload(payload, json_output=False)
     profile = payload.get("profile")
     if isinstance(profile, dict):
-        typer.echo(
-            "profile: "
-            + str(profile.get("summary") or "")
-        )
+        typer.echo("profile: " + str(profile.get("summary") or ""))
     promotion_loop = payload.get("promotion_loop")
     if isinstance(promotion_loop, dict):
         typer.echo("learning: " + str(promotion_loop.get("summary") or ""))
@@ -750,7 +743,9 @@ def _control_chat_plan_payload(plan) -> dict[str, object]:
         "opportunity_id": plan.opportunity_id,
         "target_label": plan.target_label,
         "mission_payload": (
-            plan.mission_payload.model_dump(mode="json") if plan.mission_payload is not None else None
+            plan.mission_payload.model_dump(mode="json")
+            if plan.mission_payload is not None
+            else None
         ),
     }
 
@@ -767,7 +762,9 @@ def _attention_queue_plan_payload(plan) -> dict[str, object] | None:
         "opportunity_id": plan.opportunity_id,
         "target_label": plan.target_label,
         "mission_payload": (
-            plan.mission_payload.model_dump(mode="json") if plan.mission_payload is not None else None
+            plan.mission_payload.model_dump(mode="json")
+            if plan.mission_payload is not None
+            else None
         ),
     }
 
@@ -777,7 +774,11 @@ def _find_launchpad_opportunity(dashboard: SimpleNamespace, opportunity_id: str)
     if not wanted:
         return None
     return next(
-        (opportunity for opportunity in dashboard.launchpad.opportunities if opportunity.id == wanted),
+        (
+            opportunity
+            for opportunity in dashboard.launchpad.opportunities
+            if opportunity.id == wanted
+        ),
         None,
     )
 
@@ -819,8 +820,7 @@ def _build_status_payload(dashboard: SimpleNamespace) -> dict[str, object]:
 async def _build_operator_dashboard(services: CliServices) -> SimpleNamespace:
     project_rows = await services.database.list_projects()
     projects = [
-        ProjectView.model_validate(services.project_service.inspect(row))
-        for row in project_rows
+        ProjectView.model_validate(services.project_service.inspect(row)) for row in project_rows
     ]
     instances = await services.manager.list_views()
     missions = await services.mission_service.list_views()
@@ -1307,7 +1307,7 @@ def queue_command(
                     "executed": False,
                     "action_kind": "idle",
                     "status": "observed",
-                    "reply": "The attention queue is clear right now. There is no bounded move to fire.",
+                    "reply": _ATTENTION_QUEUE_IDLE_REPLY,
                     "signal_id": None,
                     "mission_id": None,
                     "opportunity_id": None,
@@ -1337,7 +1337,7 @@ def queue_command(
                 "executed": False,
                 "action_kind": "idle",
                 "status": "observed",
-                "reply": "The attention queue is clear right now. There is no bounded move to fire.",
+                "reply": _ATTENTION_QUEUE_IDLE_REPLY,
                 "signal_id": None,
                 "mission_id": None,
                 "opportunity_id": None,
@@ -1506,9 +1506,9 @@ def setup_show(
 ) -> None:
     if ctx.invoked_subcommand is not None:
         return
-    payload = _run(
-        _run_with_services(lambda services: services.setup.inspect())
-    ).model_dump(mode="json")
+    payload = _run(_run_with_services(lambda services: services.setup.inspect())).model_dump(
+        mode="json"
+    )
     _emit_payload(payload, json_output=json_output)
 
 

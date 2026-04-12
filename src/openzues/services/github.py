@@ -45,9 +45,7 @@ class GitHubService:
         commits = self._run(["git", "log", "--oneline", "--decorate", "-5"], cwd=str(project_path))
         if commits.returncode == 0:
             result["recent_commits"] = [
-                {"summary": line.strip()}
-                for line in commits.stdout.splitlines()
-                if line.strip()
+                {"summary": line.strip()} for line in commits.stdout.splitlines() if line.strip()
             ]
 
         prs = self._run(

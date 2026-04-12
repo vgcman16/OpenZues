@@ -417,8 +417,7 @@ def test_build_ops_mesh_surfaces_scope_drift_item() -> None:
         objective="Build the forum moderation queue end to end.",
         status="active",
         current_command=(
-            'powershell.exe -Command "Get-Content '
-            'src\\\\openzues\\\\web\\\\static\\\\app.css"'
+            'powershell.exe -Command "Get-Content src\\\\openzues\\\\web\\\\static\\\\app.css"'
         ),
         last_commentary="Polishing gradients and chat bubble spacing in the dashboard shell.",
         last_checkpoint=None,
@@ -1866,7 +1865,6 @@ async def test_ops_mesh_service_migrates_legacy_secret_records(tmp_path: Path) -
     assert route_row["secret_token"] is None
     assert route_row["vault_secret_id"] is not None
     assert (
-        await vault.get_secret_value(int(integration_row["vault_secret_id"]))
-        == "ghp_legacy_1234"
+        await vault.get_secret_value(int(integration_row["vault_secret_id"])) == "ghp_legacy_1234"
     )
     assert await vault.get_secret_value(int(route_row["vault_secret_id"])) == "legacy-route-token"

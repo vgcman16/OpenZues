@@ -428,7 +428,8 @@ class HermesPlatformService:
     ) -> HermesExecutorArmResultView:
         if not _which("docker"):
             raise ValueError(
-                "Docker Backend needs the `docker` command available on the host before it can be armed."
+                "Docker Backend needs the `docker` command available on the host "
+                "before it can be armed."
             )
 
         resolved_cwd, derived_from = await self._resolve_workspace_shell_cwd(cwd)
@@ -529,10 +530,14 @@ class HermesPlatformService:
         summary = "Docker preflight has not run yet."
 
         if command_path is None:
-            summary = "Docker Backend needs the `docker` command available on the host before preflight can pass."
+            summary = (
+                "Docker Backend needs the `docker` command available on the host "
+                "before preflight can pass."
+            )
         elif resolved_cwd is None:
             summary = (
-                "Docker Backend needs a concrete workspace path before preflight can validate the staged profile."
+                "Docker Backend needs a concrete workspace path before preflight "
+                "can validate the staged profile."
             )
         else:
             version_code, version_stdout, version_stderr = await _run_process_capture(
@@ -542,7 +547,9 @@ class HermesPlatformService:
             if version_code == 0:
                 docker_version = version_stdout or None
             else:
-                summary = version_stderr or version_stdout or "Docker CLI could not report its version."
+                summary = (
+                    version_stderr or version_stdout or "Docker CLI could not report its version."
+                )
 
             if docker_version is not None:
                 info_code, info_stdout, info_stderr = await _run_process_capture(
@@ -897,7 +904,9 @@ class HermesPlatformService:
 
         instances = await self.manager.list_views()
         connected_with_cwd = [
-            instance for instance in instances if instance.connected and _normalize_cwd(instance.cwd)
+            instance
+            for instance in instances
+            if instance.connected and _normalize_cwd(instance.cwd)
         ]
         if connected_with_cwd:
             return str(connected_with_cwd[0].cwd), "connected_lane"
@@ -936,8 +945,7 @@ class HermesPlatformService:
         project_by_id = {project.id: project for project in projects}
         gateway_row = await self.database.get_gateway_bootstrap()
         current_target_toolsets: dict[tuple[str, int], list[str]] = {
-            ("task_blueprint", task.id): list(task.toolsets or [])
-            for task in tasks
+            ("task_blueprint", task.id): list(task.toolsets or []) for task in tasks
         }
         if gateway_row is not None:
             current_target_toolsets[("gateway_bootstrap", 1)] = list(
@@ -1273,9 +1281,7 @@ class HermesPlatformService:
             HermesCapabilityItemView(
                 key="codex_desktop",
                 label="Codex Desktop Lanes",
-                status=(
-                    "ready" if connected_instances else "partial" if instances else "missing"
-                ),  # type: ignore[arg-type]
+                status=("ready" if connected_instances else "partial" if instances else "missing"),  # type: ignore[arg-type]
                 summary=(
                     f"{len(connected_instances)} connected lane(s) are available for "
                     "OpenZues executor work."
@@ -1341,12 +1347,14 @@ class HermesPlatformService:
                         and docker_control.connected
                     )
                     else (
-                        f"{docker_preflight_summary} Waiting on `{docker_control.name if docker_control else 'a control lane'}`."
+                        f"{docker_preflight_summary} Waiting on "
+                        f"`{docker_control.name if docker_control else 'a control lane'}`."
                     )
                     if docker_available and docker_cwd and docker_image and docker_preflight_summary
                     else (
                         f"Docker staging is armed for `{docker_cwd}` on `{docker_image}` and "
-                        f"waiting on `{docker_control.name if docker_control else 'a control lane'}`."
+                        f"waiting on "
+                        f"`{docker_control.name if docker_control else 'a control lane'}`."
                     )
                     if docker_available and docker_cwd and docker_image
                     else (
@@ -1421,7 +1429,9 @@ class HermesPlatformService:
                 else None
             )
             control_instance = (
-                instances_by_id.get(control_instance_id) if control_instance_id is not None else None
+                instances_by_id.get(control_instance_id)
+                if control_instance_id is not None
+                else None
             )
             states.append(
                 HermesExecutorProfileStateView(
@@ -1433,9 +1443,7 @@ class HermesPlatformService:
                     mount_workspace=bool(docker_profile.get("mount_workspace")),
                     control_instance_id=control_instance_id,
                     control_instance_name=control_instance.name if control_instance else None,
-                    derived_from=(
-                        str(docker_profile.get("derived_from") or "").strip() or None
-                    ),
+                    derived_from=(str(docker_profile.get("derived_from") or "").strip() or None),
                     armed_at=str(docker_profile.get("armed_at") or "").strip() or None,
                     last_checked_at=(
                         str(docker_profile.get("last_checked_at") or "").strip() or None
@@ -1446,9 +1454,7 @@ class HermesPlatformService:
                     last_preflight_summary=(
                         str(docker_profile.get("last_preflight_summary") or "").strip() or None
                     ),
-                    command_path=(
-                        str(docker_profile.get("command_path") or "").strip() or None
-                    ),
+                    command_path=(str(docker_profile.get("command_path") or "").strip() or None),
                     docker_version=(
                         str(docker_profile.get("docker_version") or "").strip() or None
                     ),
@@ -1541,8 +1547,7 @@ class HermesPlatformService:
         return _build_deck(
             headline="Plugin and app architecture is mapped",
             summary=(
-                "OpenZues inventories both live Codex plugin surfaces and Hermes plugin "
-                "families."
+                "OpenZues inventories both live Codex plugin surfaces and Hermes plugin families."
             ),
             items=items,
         )

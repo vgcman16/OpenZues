@@ -121,8 +121,7 @@ def _search_candidates(mission: MissionView) -> list[tuple[str, str]]:
             "memory_proof"
             if checkpoint.kind in {"recovery", "continuity_auto"}
             and (
-                is_mempalace_direct_proof_mission(mission)
-                or is_mempalace_automation_task(mission)
+                is_mempalace_direct_proof_mission(mission) or is_mempalace_automation_task(mission)
             )
             else "checkpoint"
         )
@@ -218,7 +217,7 @@ class RecallService:
         return DashboardRecallView(
             mode="query",
             query=query.strip(),
-            headline=f'Recall found {len(items)} match{"es" if len(items) != 1 else ""}',
+            headline=f"Recall found {len(items)} match{'es' if len(items) != 1 else ''}",
             summary=(
                 f'Saved mission memory matched "{query.strip()}". These results are built from '
                 "persisted checkpoints, summaries, and proof handoffs. Preferred provider: "

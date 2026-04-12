@@ -648,7 +648,7 @@ class HermesRuntimeProfileView(BaseModel):
     plugin_discovery_enabled: bool = True
     channel_inventory_enabled: bool = True
     acp_inventory_enabled: bool = True
-    executor_profiles: list["HermesExecutorProfileStateView"] = Field(default_factory=list)
+    executor_profiles: list[HermesExecutorProfileStateView] = Field(default_factory=list)
     promotion_history_count: int = 0
     last_learning_promotion_at: str | None = None
     last_learning_fingerprint: str | None = None
@@ -1376,9 +1376,7 @@ class MissionView(BaseModel):
     scope_drift_level: ScopeDriftLevel = "aligned"
     scope_drift_summary: str | None = None
     live_telemetry: MissionLiveTelemetryView = Field(default_factory=MissionLiveTelemetryView)
-    delegation_brief: MissionDelegationBriefView = Field(
-        default_factory=MissionDelegationBriefView
-    )
+    delegation_brief: MissionDelegationBriefView = Field(default_factory=MissionDelegationBriefView)
     checkpoints: list[MissionCheckpointView] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
 import re
-from typing import Any, Iterable
+from collections.abc import Iterable
+from datetime import UTC, datetime
+from typing import Any
 
 MEMPALACE_DEFAULT_NAME = "MemPalace"
 MEMPALACE_DEFAULT_KIND = "mempalace"
@@ -59,14 +60,14 @@ MEMPALACE_CONTROL_PLANE_PROOF_STATUS_VERIFIED = "verified"
 MEMPALACE_CONTROL_PLANE_PROOF_STATUS_FAILED = "failed"
 MEMPALACE_CONTROL_PLANE_PROOF_STATUS_UNAVAILABLE = "unavailable"
 MEMPALACE_CONTROL_PLANE_PROOF_STATUS_NONE = "none"
-MEMPALACE_SUCCESSFUL_CONTROL_PLANE_PROOF_STATUSES = (
-    MEMPALACE_CONTROL_PLANE_PROOF_STATUS_VERIFIED,
-)
+MEMPALACE_SUCCESSFUL_CONTROL_PLANE_PROOF_STATUSES = (MEMPALACE_CONTROL_PLANE_PROOF_STATUS_VERIFIED,)
 MEMPALACE_WRITEBACK_ACTION = (
     "Review the checkpoint, then write durable decisions, recovered history, and the next-start "
     "handoff back through MemPalace before you resume or stop."
 )
-WRITEBACK_LINE_RE = re.compile(r"^(?P<label>Writeback (?:status|at|scope)):\s*(?P<value>.+?)\s*$", re.IGNORECASE)
+WRITEBACK_LINE_RE = re.compile(
+    r"^(?P<label>Writeback (?:status|at|scope)):\s*(?P<value>.+?)\s*$", re.IGNORECASE
+)
 ROUNDTRIP_LINE_RE = re.compile(
     r"^(?P<label>Roundtrip (?:status|at|scope|detail)):\s*(?P<value>.+?)\s*$",
     re.IGNORECASE,
@@ -264,7 +265,8 @@ def parse_mempalace_control_plane_proof_signal(text: str | None) -> dict[str, An
         "at_text": at_text,
         "scope": scope,
         "detail": detail,
-        "successful": status in MEMPALACE_SUCCESSFUL_CONTROL_PLANE_PROOF_STATUSES and at is not None,
+        "successful": status in MEMPALACE_SUCCESSFUL_CONTROL_PLANE_PROOF_STATUSES
+        and at is not None,
     }
 
 
@@ -282,7 +284,10 @@ def build_mempalace_maintenance_objective(
             f"Project: {label}",
             f"Workspace: {path}",
             "",
-            "Maintain durable project memory for this workspace using the existing MemPalace integration.",
+            (
+                "Maintain durable project memory for this workspace using the "
+                "existing MemPalace integration."
+            ),
             "",
             MEMPALACE_MEMORY_TASK_MARKER,
             "- Start by confirming whether MemPalace tools are actually available on this lane.",
@@ -299,20 +304,37 @@ def build_mempalace_maintenance_objective(
             "- After any durable writeback, immediately verify recall on the same lane through "
             "`mempalace_search` or `mempalace_diary_read`, and report what the readback proved "
             "or why it could not be completed.",
-            "- If MemPalace is unavailable on this lane, say that plainly in the checkpoint, capture "
+            "- If MemPalace is unavailable on this lane, say that plainly in the "
+            "checkpoint, capture "
             "the exact restore step, and do not pretend memory was refreshed.",
             "- Do not default to `mempalace compress` or lossy AAAK compaction. Raw recall is the "
-            "default; only recommend compression as a deliberate operator follow-up when the evidence "
+            "default; only recommend compression as a deliberate operator "
+            "follow-up when the evidence "
             "clearly justifies it.",
             "",
             "Start the handoff with exactly these lines:",
-            f"- {MEMPALACE_WRITEBACK_STATUS_PREFIX} one of wrote, corrected, deferred, unavailable, or none",
-            f"- {MEMPALACE_WRITEBACK_AT_PREFIX} an absolute ISO-8601 UTC timestamp when a MemPalace write happened, otherwise n/a",
+            (
+                f"- {MEMPALACE_WRITEBACK_STATUS_PREFIX} one of wrote, corrected, "
+                "deferred, unavailable, or none"
+            ),
+            (
+                f"- {MEMPALACE_WRITEBACK_AT_PREFIX} an absolute ISO-8601 UTC "
+                "timestamp when a MemPalace write happened, otherwise n/a"
+            ),
             f"- {MEMPALACE_WRITEBACK_SCOPE_PREFIX} {label}",
-            f"- {MEMPALACE_ROUNDTRIP_STATUS_PREFIX} one of verified, failed, deferred, unavailable, or none",
-            f"- {MEMPALACE_ROUNDTRIP_AT_PREFIX} an absolute ISO-8601 UTC timestamp when post-write recall was tested, otherwise n/a",
+            (
+                f"- {MEMPALACE_ROUNDTRIP_STATUS_PREFIX} one of verified, failed, "
+                "deferred, unavailable, or none"
+            ),
+            (
+                f"- {MEMPALACE_ROUNDTRIP_AT_PREFIX} an absolute ISO-8601 UTC "
+                "timestamp when post-write recall was tested, otherwise n/a"
+            ),
             f"- {MEMPALACE_ROUNDTRIP_SCOPE_PREFIX} {label}",
-            f"- {MEMPALACE_ROUNDTRIP_DETAIL_PREFIX} a concise search/read proof or failure mode",
+            (
+                f"- {MEMPALACE_ROUNDTRIP_DETAIL_PREFIX} a concise search/read "
+                "proof or failure mode"
+            ),
             "",
             "Then return a concise handoff with:",
             "- memory status on this lane",
@@ -358,7 +380,8 @@ def build_mempalace_control_plane_proof_objective(
             "MemPalace availability.",
             "- This is a read-only proof. Do not write, compact, or mutate MemPalace state in this "
             "mission.",
-            "- Use `mempalace_search` for the current project label or workspace path to prove live "
+            "- Use `mempalace_search` for the current project label or workspace "
+            "path to prove live "
             "recall.",
             "- If search is inconclusive but diary recall is available, use `mempalace_diary_read` "
             "to confirm recent durable memory without writing anything new.",
@@ -366,10 +389,19 @@ def build_mempalace_control_plane_proof_objective(
             "guessing.",
             "",
             "End the final checkpoint with exactly these lines:",
-            f"- {MEMPALACE_CONTROL_PLANE_PROOF_STATUS_PREFIX} one of verified, failed, unavailable, or none",
-            f"- {MEMPALACE_CONTROL_PLANE_PROOF_AT_PREFIX} an absolute ISO-8601 UTC timestamp when the live proof ran, otherwise n/a",
+            (
+                f"- {MEMPALACE_CONTROL_PLANE_PROOF_STATUS_PREFIX} one of "
+                "verified, failed, unavailable, or none"
+            ),
+            (
+                f"- {MEMPALACE_CONTROL_PLANE_PROOF_AT_PREFIX} an absolute "
+                "ISO-8601 UTC timestamp when the live proof ran, otherwise n/a"
+            ),
             f"- {MEMPALACE_CONTROL_PLANE_PROOF_SCOPE_PREFIX} {label}",
-            f"- {MEMPALACE_CONTROL_PLANE_PROOF_DETAIL_PREFIX} concise live proof detail from mempalace_status/search/diary_read",
+            (
+                f"- {MEMPALACE_CONTROL_PLANE_PROOF_DETAIL_PREFIX} concise live "
+                "proof detail from mempalace_status/search/diary_read"
+            ),
             "",
             "Then summarize:",
             "- lane memory tool status",
@@ -388,7 +420,9 @@ def is_mempalace_direct_proof_mission(mission: Any) -> bool:
 
 
 def build_mempalace_protocol_lines(integrations: Iterable[Any]) -> list[str]:
-    memory_sources = [integration for integration in integrations if is_mempalace_integration(integration)]
+    memory_sources = [
+        integration for integration in integrations if is_mempalace_integration(integration)
+    ]
     if not memory_sources:
         return []
 
@@ -411,13 +445,16 @@ def build_mempalace_protocol_lines(integrations: Iterable[Any]) -> list[str]:
         ],
         "- Before answering questions about prior decisions, people, projects, or earlier runs, "
         "query MemPalace first instead of guessing from thread memory.",
-        "- Prefer verbatim recall when you need to explain why a decision was made or what tradeoff "
+        "- Prefer verbatim recall when you need to explain why a decision was "
+        "made or what tradeoff "
         "was accepted.",
-        "- If this run produces durable context the next operator or mission will need, write it back "
+        "- If this run produces durable context the next operator or mission "
+        "will need, write it back "
         "through MemPalace before you stop when the lane exposes the save/diary tools.",
         "- If a fact changes, update or invalidate the stale memory record instead of leaving both "
         "versions implied as current.",
-        "- If MemPalace is unavailable on this lane, say that plainly and continue without pretending "
+        "- If MemPalace is unavailable on this lane, say that plainly and "
+        "continue without pretending "
         "you verified historical context.",
     ]
     return lines

@@ -162,11 +162,7 @@ class RemoteOpsService:
         try:
             mission = await self.missions.create(
                 MissionCreate(
-                    **{
-                        key: value
-                        for key, value in resolved_payload.items()
-                        if key != "dry_run"
-                    }
+                    **{key: value for key, value in resolved_payload.items() if key != "dry_run"}
                 )
             )
         except Exception as exc:
@@ -359,11 +355,7 @@ class RemoteOpsService:
             if isinstance(result, dict) and isinstance(result.get("summary"), str)
             else None
         )
-        summary = (
-            result_summary
-            or str(row.get("error") or "")
-            or f"{row['kind']} {row['status']}"
-        )
+        summary = result_summary or str(row.get("error") or "") or f"{row['kind']} {row['status']}"
         return RemoteRequestView.model_validate(
             {
                 **row,

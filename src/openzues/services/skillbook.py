@@ -271,9 +271,7 @@ def resolve_skill_profile(
     all_pins = list(explicit_pins)
     enabled_pins = [pin for pin in all_pins if pin.enabled]
     blocked_identities = {
-        _skill_identity(pin.name, pin.source)
-        for pin in all_pins
-        if pin.name or pin.source
+        _skill_identity(pin.name, pin.source) for pin in all_pins if pin.name or pin.source
     }
     instructions = [
         SkillInstruction(

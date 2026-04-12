@@ -137,10 +137,7 @@ def _build_prune_notes(project: ProjectView, missions: list[MissionView]) -> lis
             "Long exploratory loops need compression. Preserve only truths, drift "
             "signatures, and the next safe move."
         )
-    if any(
-        mission.status == "blocked" and mission.phase == "approval"
-        for mission in missions
-    ):
+    if any(mission.status == "blocked" and mission.phase == "approval" for mission in missions):
         notes.append(
             "Approval pauses are situational. Keep the decision and its consequence, "
             "but prune the temporary waiting state."
@@ -248,9 +245,7 @@ def build_dream_deck(
         freshness_hours = min(
             (
                 hours
-                for hours in (
-                    _hours_since(mission.updated_at.isoformat()) for mission in scoped
-                )
+                for hours in (_hours_since(mission.updated_at.isoformat()) for mission in scoped)
                 if hours is not None
             ),
             default=None,
@@ -339,8 +334,7 @@ def build_dream_deck(
         ready = sum(1 for dream in dreams if dream.status in {"fresh", "ready"})
         headline = "Dream passes are ready" if ready else "Dream signal is forming"
         summary = (
-            f"{ready} workspace(s) have enough mission memory to justify a "
-            "consolidation pass."
+            f"{ready} workspace(s) have enough mission memory to justify a consolidation pass."
             if ready
             else "Recent missions are starting to accumulate durable signal, but most "
             "workspaces still want another landing first."

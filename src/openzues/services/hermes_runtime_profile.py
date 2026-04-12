@@ -236,9 +236,7 @@ def build_executor_launch_assessment(
                     f"{label} needs a concrete workspace path before backend orchestration can "
                     "launch."
                 ),
-                warnings=[
-                    "Save a project path or lane cwd before retrying this executor profile."
-                ],
+                warnings=["Save a project path or lane cwd before retrying this executor profile."],
             )
         if instance is None:
             return ExecutorLaunchAssessment(
@@ -437,9 +435,7 @@ def build_executor_profile_lines(
             ),
         ]
         if docker_cwd and docker_image:
-            lines.append(
-                f"- Docker staging is armed for `{docker_cwd}` on image `{docker_image}`."
-            )
+            lines.append(f"- Docker staging is armed for `{docker_cwd}` on image `{docker_image}`.")
         else:
             lines.append(
                 "- Arm the Docker backend with a concrete workspace and image before the next "
@@ -450,10 +446,11 @@ def build_executor_profile_lines(
         elif preflight_status == "ready":
             lines.append("- Docker preflight last passed for the staged backend profile.")
         lines.append(
-            (
-                "- Workspace mounting is enabled for the staged container profile."
-                if mount_workspace
-                else "- Use isolated container defaults unless workspace mounting is explicitly enabled."
+            "- Workspace mounting is enabled for the staged container profile."
+            if mount_workspace
+            else (
+                "- Use isolated container defaults unless workspace mounting is "
+                "explicitly enabled."
             )
         )
         if instance_name:

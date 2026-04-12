@@ -8,11 +8,7 @@ from openzues.services.codex_desktop import CodexDesktopService
 
 def write_desktop_package(base: Path, version: str, *, contents: bytes = b"codex") -> Path:
     executable = (
-        base
-        / f"OpenAI.Codex_{version}_x64__2p2nqsd0c76g0"
-        / "app"
-        / "resources"
-        / "codex.exe"
+        base / f"OpenAI.Codex_{version}_x64__2p2nqsd0c76g0" / "app" / "resources" / "codex.exe"
     )
     executable.parent.mkdir(parents=True, exist_ok=True)
     executable.write_bytes(contents)
@@ -34,8 +30,8 @@ def test_discover_picks_latest_desktop_package_and_session(tmp_path) -> None:
                 "Starting app-server connection hostId=local transport=stdio",
                 "2026-04-10T04:15:00.336Z info [StdioConnection] "
                 "stdio_transport_spawned executablePath="
-                "\"C:\\\\Program Files\\\\WindowsApps\\\\OpenAI.Codex_26.406.3494.0"
-                "_x64__2p2nqsd0c76g0\\\\app\\\\resources\\\\codex.exe\"",
+                '"C:\\\\Program Files\\\\WindowsApps\\\\OpenAI.Codex_26.406.3494.0'
+                '_x64__2p2nqsd0c76g0\\\\app\\\\resources\\\\codex.exe"',
                 "2026-04-10T04:15:02.136Z info [AppServerConnection] "
                 "Current reported app-server version: "
                 "currentVersion=0.119.0-alpha.11 hostId=local",

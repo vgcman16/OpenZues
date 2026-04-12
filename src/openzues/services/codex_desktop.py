@@ -51,9 +51,7 @@ class CodexDesktopService:
         approval_policy: str | None = "never",
         sandbox_mode: str | None = "workspace-write",
     ) -> None:
-        local_appdata = Path(
-            os.getenv("LOCALAPPDATA", str(Path.home() / "AppData" / "Local"))
-        )
+        local_appdata = Path(os.getenv("LOCALAPPDATA", str(Path.home() / "AppData" / "Local")))
         self.runtime_root = runtime_root or (local_appdata / "OpenZues" / "runtime")
         self.package_root = package_root or Path(r"C:\Program Files\WindowsApps")
         self.logs_root = logs_root or (

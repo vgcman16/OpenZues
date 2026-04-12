@@ -1226,10 +1226,7 @@ async def test_get_view_surfaces_adaptive_delegation_brief(tmp_path) -> None:
     view = await service.get_view(mission_id)
 
     assert view.delegation_brief.enabled is True
-    assert (
-        view.delegation_brief.mode
-        == "conductor_architect_planner_coder_auditor"
-    )
+    assert view.delegation_brief.mode == "conductor_architect_planner_coder_auditor"
     assert view.delegation_brief.activation == "ready_now"
     role_names = [role.name for role in view.delegation_brief.roles]
     assert role_names == ["Architect", "Planner", "Coder", "Auditor"]
@@ -1708,8 +1705,7 @@ async def test_reconcile_uses_scope_realign_reflex_for_drifting_mission(tmp_path
         mission_id,
         phase="executing",
         current_command=(
-            'powershell.exe -Command "Get-Content '
-            'src\\\\openzues\\\\web\\\\static\\\\app.css"'
+            'powershell.exe -Command "Get-Content src\\\\openzues\\\\web\\\\static\\\\app.css"'
         ),
         last_commentary="Polishing gradients and chat bubble spacing in the dashboard shell.",
     )

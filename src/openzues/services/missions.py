@@ -245,11 +245,7 @@ def _build_delegation_brief(
     has_workspace = bool(mission.get("project_id") is not None or mission.get("cwd"))
     in_progress = bool(mission.get("in_progress"))
     drifted = scope is not None and scope.drift_level in {"drifting", "critical"}
-    activation = (
-        "after_rebuild"
-        if recovery_mode or turns_started <= 1 or drifted
-        else "ready_now"
-    )
+    activation = "after_rebuild" if recovery_mode or turns_started <= 1 or drifted else "ready_now"
     confidence = "high" if has_workspace and bool(mission.get("run_verification")) else "medium"
     if command_count == 0 and turns_started <= 1:
         confidence = "low"
@@ -661,9 +657,7 @@ class MissionService:
         self._task: asyncio.Task[None] | None = None
         self._stop_event = asyncio.Event()
         self._locks: defaultdict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
-        self._event_listeners: list[
-            Callable[[str, dict[str, Any]], Awaitable[None] | None]
-        ] = []
+        self._event_listeners: list[Callable[[str, dict[str, Any]], Awaitable[None] | None]] = []
 
     def add_event_listener(
         self,
@@ -1225,9 +1219,8 @@ class MissionService:
         mission: dict[str, Any],
     ) -> None:
         existing_checkpoint = str(mission.get("last_checkpoint") or "")
-        if (
-            str(mission.get("status") or "") == "paused"
-            and existing_checkpoint.startswith("Auto-yielded the lane after")
+        if str(mission.get("status") or "") == "paused" and existing_checkpoint.startswith(
+            "Auto-yielded the lane after"
         ):
             return
         if str(mission.get("status") or "") != "active":
@@ -1779,7 +1772,7 @@ class MissionService:
                     "Recent mission issue:",
                     str(mission["last_error"]),
                 ]
-        )
+            )
         return "\n".join(instructions)
 
     def _build_stale_thread_recovery_prompt(
@@ -1931,9 +1924,7 @@ class MissionService:
                 status="failed",
                 phase="failed",
                 failure_count=int(mission["failure_count"]) + 1,
-                last_error=(
-                    f"{stale_error} Fresh-thread recovery did not return a thread ID."
-                ),
+                last_error=(f"{stale_error} Fresh-thread recovery did not return a thread ID."),
                 in_progress=0,
                 last_activity_at=utcnow(),
             )
@@ -2449,13 +2440,10 @@ class MissionService:
                 and str(candidate.get("status") or "") == "blocked"
                 and str(candidate.get("phase") or "") == "queued"
             ]
-            if (
-                not force
-                and self._should_auto_yield_for_queue(
-                    mission,
-                    queue_depth=len(queued_followers),
-                    last_activity_seconds=last_activity_seconds,
-                )
+            if not force and self._should_auto_yield_for_queue(
+                mission,
+                queue_depth=len(queued_followers),
+                last_activity_seconds=last_activity_seconds,
             ):
                 await self._yield_for_queue_locked(mission_id, mission)
                 return
@@ -2582,9 +2570,7 @@ class MissionService:
             "toolsets": toolsets,
             "tool_policy": tool_policy,
             "preferred_memory_provider": preferred_memory_provider,
-            "preferred_memory_provider_label": memory_provider_label(
-                preferred_memory_provider
-            ),
+            "preferred_memory_provider_label": memory_provider_label(preferred_memory_provider),
             "preferred_executor": preferred_executor,
             "preferred_executor_label": executor_label(preferred_executor),
             "runtime_profile_summary": build_runtime_profile_summary(
@@ -2620,9 +2606,7 @@ class MissionService:
         recent_event_count_30s = int(metrics.get("recent_event_count_30s") or 0)
         recent_event_count_5m = int(metrics.get("recent_event_count_5m") or 0)
         recent_output_delta_count_30s = int(metrics.get("recent_output_delta_count_30s") or 0)
-        recent_turn_activity_count_30s = int(
-            metrics.get("recent_turn_activity_count_30s") or 0
-        )
+        recent_turn_activity_count_30s = int(metrics.get("recent_turn_activity_count_30s") or 0)
         in_progress = bool(mission.get("in_progress"))
         streaming = bool(
             recent_output_delta_count_30s > 0

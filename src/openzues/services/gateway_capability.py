@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
 import logging
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -15,10 +15,10 @@ from openzues.schemas import (
     GatewayCapabilityConnectedLaneHealthView,
     GatewayCapabilityDiagnosticsView,
     GatewayCapabilityInventoryItemView,
-    GatewayCapabilityMemoryProofReferenceView,
     GatewayCapabilityInventoryView,
     GatewayCapabilityLaneView,
     GatewayCapabilityLaunchPolicyView,
+    GatewayCapabilityMemoryProofReferenceView,
     GatewayCapabilityView,
     InstanceView,
     MissionCreate,
@@ -166,9 +166,10 @@ def _build_mempalace_tool_proof(
         if not (is_mempalace_integration(entry) or tool_names.intersection(known_tools)):
             continue
 
-        server_name = str(
-            entry.get("name") or entry.get("source") or "MemPalace MCP server"
-        ).strip() or "MemPalace MCP server"
+        server_name = (
+            str(entry.get("name") or entry.get("source") or "MemPalace MCP server").strip()
+            or "MemPalace MCP server"
+        )
         missing_tools = [
             tool_name for tool_name in MEMPALACE_REQUIRED_TOOLS if tool_name not in tool_names
         ]
@@ -249,7 +250,9 @@ def _build_memory_loop_freshness(tasks: list[Any]) -> dict[str, str] | None:
         return None
 
     task = max(tasks, key=_task_reference_time)
-    task_name = str(_task_value(task, "name") or "MemPalace Memory Loop").strip() or "MemPalace Memory Loop"
+    task_name = (
+        str(_task_value(task, "name") or "MemPalace Memory Loop").strip() or "MemPalace Memory Loop"
+    )
     last_status = str(_task_value(task, "last_status") or "").strip().lower()
     last_launched_at = str(_task_value(task, "last_launched_at") or "").strip() or None
     last_result_summary = str(_task_value(task, "last_result_summary") or "").strip()
@@ -293,9 +296,7 @@ def _build_memory_loop_freshness(tasks: list[Any]) -> dict[str, str] | None:
         }
     return {
         "status": "info",
-        "summary": (
-            f"{task_name} is armed but has not completed its first maintenance pass yet."
-        ),
+        "summary": (f"{task_name} is armed but has not completed its first maintenance pass yet."),
         "action": "",
     }
 
@@ -317,11 +318,7 @@ def _memory_task_report_text(
     latest_missions_by_task: dict[int, MissionView],
 ) -> str:
     task_id = _task_value(task, "id")
-    latest_mission = (
-        latest_missions_by_task.get(task_id)
-        if isinstance(task_id, int)
-        else None
-    )
+    latest_mission = latest_missions_by_task.get(task_id) if isinstance(task_id, int) else None
     if latest_mission is not None and latest_mission.last_checkpoint:
         return latest_mission.last_checkpoint
     return str(_task_value(task, "last_result_summary") or "")
@@ -361,7 +358,12 @@ def _build_memory_writeback_freshness(
             continue
         status = str(signal["status"] or "").strip() or "unreported"
         detail = f"{scope_label} writeback status is '{status}'."
-        if signal.get("at_text") and str(signal["at_text"]).lower() not in {"n/a", "na", "none", "unknown"}:
+        if signal.get("at_text") and str(signal["at_text"]).lower() not in {
+            "n/a",
+            "na",
+            "none",
+            "unknown",
+        }:
             detail += f" Reported time: {signal['at_text']}."
         warnings.append(detail)
 
@@ -369,16 +371,17 @@ def _build_memory_writeback_freshness(
         successful.sort(key=lambda item: item[0], reverse=True)
         latest_at, latest_scope = successful[0]
         newest_age = _format_age(_minutes_since(latest_at.isoformat()))
-        summary = (
-            f"Last durable writeback was reported {newest_age} for {latest_scope}."
-        )
+        summary = f"Last durable writeback was reported {newest_age} for {latest_scope}."
         if len(successful) > 1:
             summary += f" {len(successful)} memory scope(s) have explicit writeback proof."
         return {
             "status": "ready",
             "summary": summary,
             "evidence": [
-                f"{scope_label} writeback reported at {at.astimezone(UTC).isoformat().replace('+00:00', 'Z')}."
+                (
+                    f"{scope_label} writeback reported at "
+                    f"{at.astimezone(UTC).isoformat().replace('+00:00', 'Z')}."
+                )
                 for at, scope_label in successful[:3]
             ],
             "action": "",
@@ -442,7 +445,12 @@ def _build_memory_roundtrip_freshness(
         detail = f"{scope_label} roundtrip status is '{status}'."
         if signal.get("detail"):
             detail += f" {signal['detail']}"
-        if signal.get("at_text") and str(signal["at_text"]).lower() not in {"n/a", "na", "none", "unknown"}:
+        if signal.get("at_text") and str(signal["at_text"]).lower() not in {
+            "n/a",
+            "na",
+            "none",
+            "unknown",
+        }:
             detail += f" Reported time: {signal['at_text']}."
         warnings.append(detail)
 
@@ -606,11 +614,7 @@ def _build_direct_memory_proof_state(
     project_labels: dict[int, str],
 ) -> dict[str, Any] | None:
     latest = max(
-        (
-            mission
-            for mission in missions
-            if is_mempalace_direct_proof_mission(mission)
-        ),
+        (mission for mission in missions if is_mempalace_direct_proof_mission(mission)),
         key=lambda mission: mission.updated_at,
         default=None,
     )
@@ -618,17 +622,19 @@ def _build_direct_memory_proof_state(
         return None
 
     scope_label = (
-        project_labels.get(latest.project_id)
-        if latest.project_id is not None
-        else None
-    ) or latest.project_label or latest.instance_name or "connected memory lane"
+        (project_labels.get(latest.project_id) if latest.project_id is not None else None)
+        or latest.project_label
+        or latest.instance_name
+        or "connected memory lane"
+    )
     checkpoint_excerpt = _clip_text(latest.last_checkpoint or latest.objective, limit=240)
     signal = parse_mempalace_control_plane_proof_signal(latest.last_checkpoint)
 
     if signal is None:
         summary = (
             f"Mission {latest.id} ({latest.name}) is the latest direct MemPalace proof "
-            f"checkpoint for {scope_label}, but no structured control-plane proof block was reported."
+            "checkpoint for "
+            f"{scope_label}, but no structured control-plane proof block was reported."
         )
         reference = GatewayCapabilityMemoryProofReferenceView(
             mission_id=latest.id,
@@ -646,7 +652,8 @@ def _build_direct_memory_proof_state(
         return {
             "status": "info",
             "summary": (
-                f"Last backend-triggered memory proof for {scope_label} did not report a structured "
+                f"Last backend-triggered memory proof for {scope_label} did not "
+                "report a structured "
                 "control-plane proof block yet."
             ),
             "evidence": [summary],
@@ -672,10 +679,7 @@ def _build_direct_memory_proof_state(
             f"{proof_age} for {signal_scope}."
         )
         evidence = [
-            (
-                f"{signal_scope} direct proof verified through live MemPalace calls "
-                f"{proof_age}."
-            )
+            (f"{signal_scope} direct proof verified through live MemPalace calls {proof_age}.")
         ]
         if detail:
             evidence.append(detail)
@@ -741,18 +745,16 @@ def _build_memory_proof_continuity(
     if mission is None:
         return None
     instance_connected = next(
-        (
-            instance.connected
-            for instance in instances
-            if instance.id == mission.instance_id
-        ),
+        (instance.connected for instance in instances if instance.id == mission.instance_id),
         False,
     )
     return build_continuity_packet(
         mission,
         instance_connected=instance_connected,
         checkpoints=mission.checkpoints,
-        project_label=project_labels.get(mission.project_id) if mission.project_id is not None else None,
+        project_label=project_labels.get(mission.project_id)
+        if mission.project_id is not None
+        else None,
     )
 
 
@@ -871,26 +873,15 @@ class GatewayCapabilityService:
                 *gateway.warnings,
                 *(gateway.launch_route.warnings if gateway.launch_route is not None else []),
                 *(diagnostics_view.evidence[:2] if diagnostics_view.fail_count else []),
-                (
-                    inventory.memory_summary
-                    if inventory.memory_status == "warn"
-                    else ""
-                ),
-                (
-                    inventory.summary
-                    if inventory.tracked_gap_count
-                    else ""
-                ),
+                (inventory.memory_summary if inventory.memory_status == "warn" else ""),
+                (inventory.summary if inventory.tracked_gap_count else ""),
                 (
                     "All registered lanes are offline right now."
-                    if connected_lane_health.total_count and not connected_lane_health.connected_count
+                    if connected_lane_health.total_count
+                    and not connected_lane_health.connected_count
                     else ""
                 ),
-                (
-                    approval_posture.summary
-                    if approval_posture.approval_count
-                    else ""
-                ),
+                (approval_posture.summary if approval_posture.approval_count else ""),
             ]
         )
         warnings = [warning for warning in warnings if warning]
@@ -946,13 +937,16 @@ class GatewayCapabilityService:
                 instance = instance_by_id[instance_id]
                 if not instance.connected:
                     raise ValueError(
-                        f"{instance.name} is not connected, so Gateway Doctor cannot launch a direct memory proof there yet."
+                        f"{instance.name} is not connected, so Gateway Doctor cannot "
+                        "launch a direct memory proof there yet."
                     )
                 raise ValueError(
-                    f"{instance.name} does not currently expose the full live MemPalace tool contract needed for a direct proof."
+                    f"{instance.name} does not currently expose the full live "
+                    "MemPalace tool contract needed for a direct proof."
                 )
             raise ValueError(
-                "No connected lane currently exposes the full live MemPalace tool contract needed for a direct proof."
+                "No connected lane currently exposes the full live MemPalace tool "
+                "contract needed for a direct proof."
             )
 
         runtime = await self.manager.get(target.instance_id)
@@ -960,7 +954,8 @@ class GatewayCapabilityService:
             runtime = await self.manager.connect_instance(target.instance_id)
         if not runtime.connected or runtime.client is None:
             raise ValueError(
-                f"{target.instance_name} is not connected, so Gateway Doctor cannot launch a direct memory proof there yet."
+                f"{target.instance_name} is not connected, so Gateway Doctor cannot "
+                "launch a direct memory proof there yet."
             )
 
         existing = await self._find_inflight_memory_proof(target.session_key)
@@ -1043,7 +1038,9 @@ class GatewayCapabilityService:
             return None
 
         project_by_id = {project.id: project for project in projects}
-        candidate_by_key: dict[tuple[int, int | None], tuple[tuple[int, int, str], _MemoryProofLaunchTarget]] = {}
+        candidate_by_key: dict[
+            tuple[int, int | None], tuple[tuple[int, int, str], _MemoryProofLaunchTarget]
+        ] = {}
 
         def add_candidate(
             *,
@@ -1060,7 +1057,11 @@ class GatewayCapabilityService:
             instance = ready_instances[instance_id]
             project = project_by_id.get(project_id) if project_id is not None else None
             resolved_project_label = project.label if project is not None else project_label
-            resolved_cwd = cwd or (project.path if project is not None else instance.cwd) or gateway.default_cwd
+            resolved_cwd = (
+                cwd
+                or (project.path if project is not None else instance.cwd)
+                or gateway.default_cwd
+            )
             scope_label = resolved_project_label or instance.name
             target = _MemoryProofLaunchTarget(
                 instance_id=instance.id,
@@ -1184,9 +1185,12 @@ class GatewayCapabilityService:
                 level = "warn"
                 summary = (
                     f"{lane_approvals} approval request(s) are waiting while the lane publishes "
-                    f"{app_count} app(s), {plugin_count} plugin(s), and {mcp_server_count} MCP server(s)."
+                    f"{app_count} app(s), {plugin_count} plugin(s), and "
+                    f"{mcp_server_count} MCP server(s)."
                 )
-                warnings.append("Resolve the pending approval queue before assuming this lane is clear.")
+                warnings.append(
+                    "Resolve the pending approval queue before assuming this lane is clear."
+                )
                 warning_count += 1
             else:
                 connected_count += 1
@@ -1198,7 +1202,10 @@ class GatewayCapabilityService:
                         f"plugin(s), and {mcp_server_count} MCP server(s)."
                     )
                 else:
-                    summary = "Lane is connected, but it is not publishing any apps, plugins, or MCP servers yet."
+                    summary = (
+                        "Lane is connected, but it is not publishing any apps, plugins, "
+                        "or MCP servers yet."
+                    )
 
             lanes.append(
                 GatewayCapabilityLaneView(
@@ -1227,7 +1234,8 @@ class GatewayCapabilityService:
         elif warning_count:
             headline = "Connected lane health has live warnings"
             summary = (
-                f"{warning_count} connected lane(s) need attention across approvals or runtime posture."
+                f"{warning_count} connected lane(s) need attention across approvals "
+                "or runtime posture."
             )
         else:
             headline = "Connected lane health is ready"
@@ -1337,16 +1345,16 @@ class GatewayCapabilityService:
             if item.readiness in {"lane_gap", "auth_gap", "degraded"}
         ]
         enabled_memory_tasks = [
-            task
-            for task in task_blueprints
-            if task.enabled and is_mempalace_automation_task(task)
+            task for task in task_blueprints if task.enabled and is_mempalace_automation_task(task)
         ]
         disabled_memory_tasks = [
             task
             for task in task_blueprints
             if not task.enabled and is_mempalace_automation_task(task)
         ]
-        tracked_memory_project_ids = {integration.project_id for integration in tracked_memory_integrations}
+        tracked_memory_project_ids = {
+            integration.project_id for integration in tracked_memory_integrations
+        }
         enabled_memory_task_project_ids = {task.project_id for task in enabled_memory_tasks}
         matched_enabled_memory_task_count = sum(
             1
@@ -1359,7 +1367,8 @@ class GatewayCapabilityService:
         connected_observed_memory_lanes = [
             instance.name
             for instance in instances
-            if instance.connected and any(is_mempalace_integration(entry) for entry in instance.mcp_servers)
+            if instance.connected
+            and any(is_mempalace_integration(entry) for entry in instance.mcp_servers)
         ]
         memory_tool_proofs: list[dict[str, Any]] = []
         for instance in instances:
@@ -1453,18 +1462,18 @@ class GatewayCapabilityService:
                 "lane(s)."
             )
             tool_gap_action = str(memory_tool_gap_proofs[0]["action"] or "")
-        elif connected_observed_memory_lanes and (tracked_memory_ready or observed_memory_ready_lanes):
-            tool_gap_clause = " Callable tool proof is unavailable on the connected MemPalace lane right now."
+        elif connected_observed_memory_lanes and (
+            tracked_memory_ready or observed_memory_ready_lanes
+        ):
+            tool_gap_clause = (
+                " Callable tool proof is unavailable on the connected MemPalace lane right now."
+            )
             tool_gap_action = (
                 "Refresh the connected MemPalace lane so OpenZues can read the live MemPalace "
                 "tool catalog before relying on automatic memory maintenance."
             )
 
-        if (
-            tracked_memory_ready
-            and matched_enabled_memory_task_count
-            and memory_tool_ready_proofs
-        ):
+        if tracked_memory_ready and matched_enabled_memory_task_count and memory_tool_ready_proofs:
             memory_status = "ready"
             memory_summary = (
                 f"MemPalace is tracked and live for {len(tracked_memory_ready)} project or global "
@@ -1479,7 +1488,8 @@ class GatewayCapabilityService:
             memory_summary = (
                 f"MemPalace is tracked and live for {len(tracked_memory_ready)} project or global "
                 "integration scope(s), and the automatic memory loop is armed, but callable tool "
-                f"proof is not complete yet.{tool_gap_clause or ' No live MemPalace tool proof is visible yet.'}"
+                "proof is not complete yet."
+                f"{tool_gap_clause or ' No live MemPalace tool proof is visible yet.'}"
             )
             memory_recommended_action = tool_gap_action or (
                 "Refresh the connected MemPalace lane so OpenZues can prove the live MemPalace "
@@ -1511,7 +1521,10 @@ class GatewayCapabilityService:
             if len(tracked_memory_gaps) == 1:
                 memory_summary = tracked_memory_gaps[0].summary
                 if enabled_memory_tasks:
-                    memory_summary += " Automatic memory maintenance is staged, but the live lane gap is still open."
+                    memory_summary += (
+                        " Automatic memory maintenance is staged, but the live lane "
+                        "gap is still open."
+                    )
                 memory_recommended_action = tracked_memory_gaps[0].recommended_action
             else:
                 memory_summary = (
@@ -1519,7 +1532,10 @@ class GatewayCapabilityService:
                     f"{len(tracked_memory_gaps)} still have live lane or auth gaps."
                 )
                 if enabled_memory_tasks:
-                    memory_summary += " Automatic memory maintenance is staged, but it cannot run cleanly until those gaps close."
+                    memory_summary += (
+                        " Automatic memory maintenance is staged, but it cannot run "
+                        "cleanly until those gaps close."
+                    )
                 memory_recommended_action = tracked_memory_gaps[0].recommended_action
             memory_summary += tool_ready_clause
         elif observed_memory_ready_lanes:
@@ -1536,7 +1552,8 @@ class GatewayCapabilityService:
                 )
             else:
                 memory_summary = (
-                    f"MemPalace is visible on {observed_memory_ready_lanes} connected lane(s), but no "
+                    f"MemPalace is visible on {observed_memory_ready_lanes} "
+                    "connected lane(s), but no "
                     "tracked project memory integration is using it yet."
                 )
             memory_recommended_action = (
@@ -1555,10 +1572,12 @@ class GatewayCapabilityService:
         else:
             memory_status = "info"
             memory_summary = (
-                "MemPalace is not staged through a tracked integration or published on any live lane yet."
+                "MemPalace is not staged through a tracked integration or published "
+                "on any live lane yet."
             )
             memory_recommended_action = (
-                "Enable the MemPalace preset during onboarding when a workspace needs durable recall."
+                "Enable the MemPalace preset during onboarding when a workspace "
+                "needs durable recall."
             )
 
         if memory_loop_freshness is not None and memory_loop_freshness["status"] == "warn":
@@ -1600,14 +1619,11 @@ class GatewayCapabilityService:
             memory_summary += f" {direct_memory_proof['summary']}"
             if direct_memory_proof["status"] == "warn" and memory_status == "ready":
                 memory_status = "warn"
-            if (
-                direct_memory_proof["action"]
-                and (
-                    not memory_recommended_action
-                    or memory_recommended_action.startswith("Let the scheduled MemPalace loop")
-                    or "explicit writeback" in memory_recommended_action
-                    or "confirm the freshly written memory can be recalled" in memory_recommended_action
-                )
+            if direct_memory_proof["action"] and (
+                not memory_recommended_action
+                or memory_recommended_action.startswith("Let the scheduled MemPalace loop")
+                or "explicit writeback" in memory_recommended_action
+                or "confirm the freshly written memory can be recalled" in memory_recommended_action
             ):
                 memory_recommended_action = direct_memory_proof["action"]
 
@@ -1620,12 +1636,16 @@ class GatewayCapabilityService:
             headline = "Gateway inventory is active"
             summary = (
                 f"{tracked_ready_count} tracked capability(ies) are ready; "
-                f"{app_count} app(s), {plugin_count} plugin(s), and {mcp_server_count} MCP server(s) "
+                f"{app_count} app(s), {plugin_count} plugin(s), and "
+                f"{mcp_server_count} MCP server(s) "
                 "are visible across live lane catalogs."
             )
         else:
             headline = "Gateway inventory is idle"
-            summary = "No lane-published apps, plugins, MCP servers, or tracked integrations are visible yet."
+            summary = (
+                "No lane-published apps, plugins, MCP servers, or tracked "
+                "integrations are visible yet."
+            )
 
         items.sort(key=lambda item: (item.kind, item.name.lower()))
         return GatewayCapabilityInventoryView(
@@ -1670,8 +1690,14 @@ class GatewayCapabilityService:
         if approval_count:
             headline = "Approvals are waiting"
             summary = (
-                f"{approval_count} approval request(s) are waiting across {lane_count_with_approvals} "
-                f"lane(s). {'Launches pause automatically.' if gateway.pause_on_approval else 'Launches will not pause automatically.'}"
+                f"{approval_count} approval request(s) are waiting across "
+                f"{lane_count_with_approvals} "
+                "lane(s). "
+                + (
+                    "Launches pause automatically."
+                    if gateway.pause_on_approval
+                    else "Launches will not pause automatically."
+                )
             )
         elif not gateway.pause_on_approval:
             headline = "Approval pauses are disabled"
@@ -1679,7 +1705,8 @@ class GatewayCapabilityService:
         elif gateway.setup_mode == "remote" and not api_key_count:
             headline = "Remote approval posture is not armed"
             summary = (
-                "Remote-first gateway posture is saved, but no active operator API key is available yet."
+                "Remote-first gateway posture is saved, but no active operator API "
+                "key is available yet."
             )
         elif recent_remote_request_count:
             failed_recent = sum(request.status == "failed" for request in remote_requests[:25])
@@ -1691,7 +1718,8 @@ class GatewayCapabilityService:
         else:
             headline = "Approval posture is armed"
             summary = (
-                "Launches pause on approval, and no pending approval requests are blocking the gateway."
+                "Launches pause on approval, and no pending approval requests are "
+                "blocking the gateway."
             )
 
         return GatewayCapabilityApprovalPostureView(
@@ -1711,7 +1739,9 @@ class GatewayCapabilityService:
         ok_count = sum(check.status == "ok" for check in checks)
         warn_count = sum(check.status == "warn" for check in checks)
         fail_count = sum(check.status == "fail" for check in checks)
-        evidence = [_diagnostic_evidence(check) for check in checks if check.status in {"warn", "fail"}]
+        evidence = [
+            _diagnostic_evidence(check) for check in checks if check.status in {"warn", "fail"}
+        ]
         if fail_count:
             headline = "Gateway diagnostics need repair"
             summary = f"{fail_count} diagnostic check(s) failed and {warn_count} more are warning."

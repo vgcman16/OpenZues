@@ -608,10 +608,12 @@ class GatewayBootstrapService:
             clauses.append(f"executor {executor_label(preferred_executor)}")
         clauses.extend(
             [
-            "verification on" if bool(row["run_verification"]) else "verification off",
-            "built-in agents on" if bool(row["use_builtin_agents"]) else "built-in agents off",
-            "auto-commit on" if bool(row["auto_commit"]) else "auto-commit off",
-            "pause on approvals" if bool(row["pause_on_approval"]) else "approval pause disabled",
+                "verification on" if bool(row["run_verification"]) else "verification off",
+                "built-in agents on" if bool(row["use_builtin_agents"]) else "built-in agents off",
+                "auto-commit on" if bool(row["auto_commit"]) else "auto-commit off",
+                "pause on approvals"
+                if bool(row["pause_on_approval"])
+                else "approval pause disabled",
             ]
         )
         if bool(row["auto_recover"]):
@@ -622,9 +624,7 @@ class GatewayBootstrapService:
         if max_turns is not None:
             clauses.append(f"max {int(max_turns)} turns")
         toolsets = [
-            str(toolset).strip()
-            for toolset in row.get("toolsets", [])
-            if str(toolset).strip()
+            str(toolset).strip() for toolset in row.get("toolsets", []) if str(toolset).strip()
         ]
         if toolsets:
             preview = ", ".join(toolsets[:4])

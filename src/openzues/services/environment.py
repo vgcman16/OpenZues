@@ -109,9 +109,7 @@ class EnvironmentService:
             codex_status = "ok"
             codex_detail = codex_probe.stdout or codex_probe.stderr or "Codex CLI is available."
             codex_action = None
-        elif "Access is denied" in (
-            codex_probe.stderr or codex_probe.error or codex_probe.stdout
-        ):
+        elif "Access is denied" in (codex_probe.stderr or codex_probe.error or codex_probe.stdout):
             codex_status = "warn"
             codex_detail = codex_probe.stderr or codex_probe.error or "Codex CLI launch is blocked."
             codex_action = (
@@ -212,8 +210,7 @@ class EnvironmentService:
             session_detail = "No recent Codex Desktop session logs were found."
             session_value = None
             session_action = (
-                "Open Codex Desktop once if you want OpenZues "
-                "to verify the latest desktop session."
+                "Open Codex Desktop once if you want OpenZues to verify the latest desktop session."
             )
         else:
             session_status = "ok" if desktop.session.initialized else "info"
@@ -259,8 +256,7 @@ class EnvironmentService:
                 status="info" if code_dir else "warn",
                 detail=code_dir or "Using the default Codex home directory.",
                 action=(
-                    "Set CODEX_HOME if you want a custom profile, skills, or automation "
-                    "location."
+                    "Set CODEX_HOME if you want a custom profile, skills, or automation location."
                 )
                 if not code_dir
                 else None,

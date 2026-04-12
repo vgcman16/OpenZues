@@ -1096,9 +1096,11 @@ class ForumDatabase:
                     ),
                     "action": "Guide toward resolution",
                 }
-            elif thread["state"] == "solved" and not bool(thread["canonical"]) and int(
-                thread["signal_score"]
-            ) >= 24:
+            elif (
+                thread["state"] == "solved"
+                and not bool(thread["canonical"])
+                and int(thread["signal_score"]) >= 24
+            ):
                 knowledge_candidates += 1
                 item = {
                     "priority": "Knowledge",

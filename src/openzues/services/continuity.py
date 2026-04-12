@@ -290,8 +290,7 @@ def _build_summary(state: str, mission: MissionRecord) -> str:
     if state == "anchored":
         if status in {"paused", "completed"}:
             return (
-                "This mission is packed cleanly enough for a low-friction "
-                "handoff or later resume."
+                "This mission is packed cleanly enough for a low-friction handoff or later resume."
             )
         return (
             "This mission retains a strong working memory and can survive "

@@ -60,9 +60,7 @@ def build_access_posture(
     api_key_count = sum(operator.has_api_key for operator in operators if operator.enabled)
     recent_cutoff = datetime.now(UTC) - timedelta(hours=24)
     recent_requests = [
-        request
-        for request in remote_requests
-        if request.requested_at >= recent_cutoff
+        request for request in remote_requests if request.requested_at >= recent_cutoff
     ]
     failed_recent = [request for request in recent_requests if request.status == "failed"]
 
@@ -146,8 +144,7 @@ class AccessService:
         teams = {team.id: team for team in await self.list_team_views()}
         rows = await self.database.list_operators()
         operators = [
-            self._serialize_operator(row, team=teams.get(int(row["team_id"])))
-            for row in rows
+            self._serialize_operator(row, team=teams.get(int(row["team_id"]))) for row in rows
         ]
         return sorted(
             operators,

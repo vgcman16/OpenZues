@@ -164,9 +164,7 @@ def build_learning_reviews(
         stable_toolsets = [_mission_toolsets(mission) for mission in stable]
         risky_toolsets = [_mission_toolsets(mission) for mission in risky]
         stable_toolset_counts: Counter[str] = Counter(
-            toolset
-            for toolsets in stable_toolsets
-            for toolset in toolsets
+            toolset for toolsets in stable_toolsets for toolset in toolsets
         )
         preferred_toolsets = _recommended_toolsets(stable_toolset_counts)
         risky_missing_toolsets = [
@@ -292,9 +290,7 @@ def build_doctrines(
         unstable = [
             mission
             for mission in items
-            if mission.status == "failed"
-            or mission.phase == "offline"
-            or _is_orbiting(mission)
+            if mission.status == "failed" or mission.phase == "offline" or _is_orbiting(mission)
         ]
         approval_bound = [
             mission
@@ -317,9 +313,7 @@ def build_doctrines(
         if len(unstable) >= 2 and not checkpointed:
             recommended_max_turns = min(recommended_max_turns, 2)
 
-        use_builtin_agents = _count_truthy(
-            [mission.use_builtin_agents for mission in baseline]
-        )
+        use_builtin_agents = _count_truthy([mission.use_builtin_agents for mission in baseline])
         run_verification = any(mission.failure_count for mission in items) or _count_truthy(
             [mission.run_verification for mission in baseline]
         )
@@ -568,9 +562,7 @@ def doctrine_index(
     doctrines: list[DashboardDoctrineView],
 ) -> dict[int, DashboardDoctrineView]:
     return {
-        doctrine.project_id: doctrine
-        for doctrine in doctrines
-        if doctrine.project_id is not None
+        doctrine.project_id: doctrine for doctrine in doctrines if doctrine.project_id is not None
     }
 
 

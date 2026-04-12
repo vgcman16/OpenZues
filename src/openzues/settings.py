@@ -33,9 +33,9 @@ class Settings(BaseSettings):
     default_codex_args: str = "app-server"
     desktop_approval_policy: str | None = "never"
     desktop_sandbox_mode: str | None = Field(
-        default_factory=lambda: "danger-full-access"
-        if sys.platform.startswith("win")
-        else "workspace-write"
+        default_factory=lambda: (
+            "danger-full-access" if sys.platform.startswith("win") else "workspace-write"
+        )
     )
     attention_queue_enabled: bool = True
     attention_queue_poll_interval_seconds: int = 30

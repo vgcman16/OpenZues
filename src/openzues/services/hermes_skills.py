@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import re
 import sys
+from collections.abc import Iterable
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 import yaml
 
@@ -319,19 +320,23 @@ def resolve_hermes_skill_matches(
 ) -> tuple[HermesSkillMatch, ...]:
     context = _normalize_text(
         " ".join(
-            part
-            for part in (objective, project_label, project_path, additional_context)
-            if part
+            part for part in (objective, project_label, project_path, additional_context) if part
         )
     )
     if not context:
         return ()
     context_terms = _term_set(context)
-    active_toolset_set = {str(toolset or "").strip().lower() for toolset in active_toolsets if str(toolset or "").strip()}
+    active_toolset_set = {
+        str(toolset or "").strip().lower()
+        for toolset in active_toolsets
+        if str(toolset or "").strip()
+    }
     ranked: list[tuple[int, str, HermesSkillSpec]] = []
     for spec in iter_hermes_skill_specs():
-        if spec.requires_toolsets and active_toolset_set and not (
-            set(spec.requires_toolsets) & active_toolset_set
+        if (
+            spec.requires_toolsets
+            and active_toolset_set
+            and not (set(spec.requires_toolsets) & active_toolset_set)
         ):
             continue
         score = _match_score(spec, context, context_terms)

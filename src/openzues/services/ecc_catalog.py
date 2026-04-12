@@ -1,9 +1,9 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
-from copy import deepcopy
 import json
 import re
 import tomllib
+from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from functools import lru_cache
@@ -436,6 +436,7 @@ def _term_set(*values: str | None) -> frozenset[str]:
             terms.add(token)
     return frozenset(terms)
 
+
 def _ensure_trailing_newline(text: str) -> str:
     return text if text.endswith("\n") else f"{text}\n"
 
@@ -574,7 +575,9 @@ def _catalog_for_root(root_key: str) -> tuple[EccSkillSpec, ...]:
         if not text:
             continue
         frontmatter, _body = _frontmatter_parts(text)
-        name = str(frontmatter.get("name") or skill_path.parent.name).strip() or skill_path.parent.name
+        name = (
+            str(frontmatter.get("name") or skill_path.parent.name).strip() or skill_path.parent.name
+        )
         description = str(frontmatter.get("description") or "").strip()
         match_phrases = tuple(
             phrase
@@ -823,6 +826,7 @@ def _deserialize_operation(payload: dict[str, Any]) -> EccInstallFileOperation:
         metadata=metadata,
     )
 
+
 def _load_install_state(workspace_root: Path) -> EccInstallState | None:
     state_path = _find_install_state_path(workspace_root)
     if state_path is None:
@@ -944,7 +948,9 @@ def _expected_mcp_servers_from_operations(
                 )
             )
         if operation.destination_relative_path == ".codex/config.toml":
-            ordered.extend(_extract_mcp_servers_from_toml(_parse_toml_object_text(operation.rendered_content)))
+            ordered.extend(
+                _extract_mcp_servers_from_toml(_parse_toml_object_text(operation.rendered_content))
+            )
     return _unique_ordered(ordered)
 
 
@@ -984,9 +990,9 @@ def _legacy_surface_repairs(
         if not destination_path.exists():
             entries.append(EccRepairEntry(relative_path, "missing", "restore-from-baseline"))
             return
-        if compare_text and _normalized_text_value(_read_text(destination_path)) != _normalized_text_value(
-            _read_text(source_path)
-        ):
+        if compare_text and _normalized_text_value(
+            _read_text(destination_path)
+        ) != _normalized_text_value(_read_text(source_path)):
             entries.append(EccRepairEntry(relative_path, "drifted", "restore-from-baseline"))
 
     maybe_add("AGENTS.md")
@@ -1075,23 +1081,34 @@ def _doctor_for_workspace(
     actual_mcp_servers = _workspace_mcp_servers(workspace_root)
     expected_codex_roles = _codex_role_names(baseline_root)
     actual_codex_roles = _codex_role_names(workspace_root)
-    missing_mcp_servers = tuple(server for server in expected_mcp_servers if server not in actual_mcp_servers)
-    missing_codex_roles = tuple(role for role in expected_codex_roles if role not in actual_codex_roles)
+    missing_mcp_servers = tuple(
+        server for server in expected_mcp_servers if server not in actual_mcp_servers
+    )
+    missing_codex_roles = tuple(
+        role for role in expected_codex_roles if role not in actual_codex_roles
+    )
     drifted_paths: list[str] = []
     for relative_path in ("AGENTS.md", ".codex/AGENTS.md", ".mcp.json"):
         source_path = baseline_root / relative_path
         destination_path = workspace_root / relative_path
         if source_path.exists() and destination_path.exists():
-            if _normalized_text_value(_read_text(source_path)) != _normalized_text_value(_read_text(destination_path)):
+            if _normalized_text_value(_read_text(source_path)) != _normalized_text_value(
+                _read_text(destination_path)
+            ):
                 drifted_paths.append(relative_path)
     for role_path in _codex_role_paths(baseline_root):
         relative_path = _relative_surface_path(baseline_root, role_path)
         destination_path = workspace_root / relative_path
-        if destination_path.exists() and _normalized_text_value(_read_text(role_path)) != _normalized_text_value(
-            _read_text(destination_path)
-        ):
+        if destination_path.exists() and _normalized_text_value(
+            _read_text(role_path)
+        ) != _normalized_text_value(_read_text(destination_path)):
             drifted_paths.append(relative_path)
-    is_ready = not missing_surface_paths and not missing_mcp_servers and not missing_codex_roles and not drifted_paths
+    is_ready = (
+        not missing_surface_paths
+        and not missing_mcp_servers
+        and not missing_codex_roles
+        and not drifted_paths
+    )
     return EccWorkspaceDoctor(
         level="ready" if is_ready else "warn",
         headline="ECC workspace surface detected" if is_ready else "ECC workspace needs repair",
@@ -1302,7 +1319,9 @@ def _remove_workspace_path(workspace_root: Path, relative_path: str) -> bool:
 def _surface_from_source_repo(root: Path) -> EccWorkspaceSurface:
     manifest = _install_manifest_for_root(str(root))
     install_profiles = _install_profile_summaries(root, manifest)
-    skill_count = sum(1 for _ in (root / "skills").rglob("SKILL.md")) if (root / "skills").exists() else 0
+    skill_count = (
+        sum(1 for _ in (root / "skills").rglob("SKILL.md")) if (root / "skills").exists() else 0
+    )
     roles = _codex_role_names(root)
     return EccWorkspaceSurface(
         kind="ecc_source",
@@ -1361,7 +1380,10 @@ def inspect_ecc_harness_surface(project_path: str | Path | None) -> EccWorkspace
         return EccWorkspaceSurface(
             kind="ecc_workspace",
             headline="Everything Claude Code workspace detected",
-            summary="Installed ECC workspace detected with Codex-facing files and a tracked baseline.",
+            summary=(
+                "Installed ECC workspace detected with Codex-facing files and a "
+                "tracked baseline."
+            ),
             surface_paths=_surface_paths(workspace_root),
             baseline_path=str(source_root) if source_root is not None else None,
             install_state_paths=install_state_paths,
@@ -1405,6 +1427,7 @@ def build_ecc_workspace_lines(project_path: str | Path | None) -> list[str]:
     if surface.doctor is not None:
         lines.extend(["", "ECC doctor:", surface.doctor.headline, surface.doctor.summary])
     return lines
+
 
 def _serialize_doctor(doctor: EccWorkspaceDoctor | None) -> dict[str, Any] | None:
     if doctor is None:
@@ -1518,6 +1541,7 @@ __all__ = [
     "serialize_ecc_workspace_surface",
 ]
 
+
 def _toml_literal(value: Any) -> str:
     if isinstance(value, bool):
         return "true" if value else "false"
@@ -1560,7 +1584,9 @@ def _merge_missing_dict_values(target: dict[str, Any], source: dict[str, Any]) -
             _merge_missing_dict_values(target[key], value)
 
 
-def _nested_dict_value(payload: dict[str, Any], path_parts: tuple[str, ...]) -> dict[str, Any] | None:
+def _nested_dict_value(
+    payload: dict[str, Any], path_parts: tuple[str, ...]
+) -> dict[str, Any] | None:
     current: Any = payload
     for part in path_parts:
         if not isinstance(current, dict) or part not in current:
@@ -1679,7 +1705,9 @@ def _resolve_install_plan(
             skipped_modules.append(module_id)
             continue
         absent_paths = [
-            relative_path for relative_path in module.paths if not (source_root / relative_path).exists()
+            relative_path
+            for relative_path in module.paths
+            if not (source_root / relative_path).exists()
         ]
         if absent_paths:
             skipped_modules.append(module_id)
@@ -1709,7 +1737,9 @@ def _build_install_operation(
     destination_relative_path = source_relative_path
     destination_path = workspace_root / destination_relative_path
     current_text = _read_text(destination_path)
-    previous_content = previous_operation.previous_content if previous_operation is not None else current_text
+    previous_content = (
+        previous_operation.previous_content if previous_operation is not None else current_text
+    )
 
     if source_relative_path == ".codex/config.toml":
         rendered = _merge_codex_config_text(current_text, source_text)
@@ -1799,7 +1829,9 @@ def _restore_operation(
         destination_path.write_text(operation.previous_content, encoding="utf-8")
         return
     if operation.kind == "merge-json" and operation.merge_payload and destination_path.exists():
-        current_payload = _parse_json_object_text(_read_text(destination_path), label="Workspace .mcp.json")
+        current_payload = _parse_json_object_text(
+            _read_text(destination_path), label="Workspace .mcp.json"
+        )
         updated_payload = _deep_remove_subset(current_payload, operation.merge_payload)
         if updated_payload is _JSON_REMOVE_SENTINEL:
             destination_path.unlink(missing_ok=True)
@@ -1850,6 +1882,7 @@ def _snapshot_legacy_operations(workspace_root: Path) -> tuple[EccInstallFileOpe
         )
     return tuple(operations)
 
+
 def run_ecc_workspace_install(
     project_path: str | Path,
     *,
@@ -1867,7 +1900,9 @@ def run_ecc_workspace_install(
         raise ValueError("ECC install manifests are unavailable for the configured source repo.")
 
     previous_state = _load_install_state(workspace_root)
-    previous_operations = _operation_map_by_destination(previous_state.operations) if previous_state else {}
+    previous_operations = (
+        _operation_map_by_destination(previous_state.operations) if previous_state else {}
+    )
     module_lookup = _module_map(manifest)
     operations: list[EccInstallFileOperation] = []
     for module_id in plan.selected_modules:
@@ -1913,8 +1948,16 @@ def run_ecc_workspace_install(
     )
     planned_paths = _unique_ordered(
         [
-            *(operation.destination_relative_path or "" for operation in operations if operation.destination_relative_path),
-            *(operation.destination_relative_path or "" for operation in stale_operations if operation.destination_relative_path),
+            *(
+                operation.destination_relative_path or ""
+                for operation in operations
+                if operation.destination_relative_path
+            ),
+            *(
+                operation.destination_relative_path or ""
+                for operation in stale_operations
+                if operation.destination_relative_path
+            ),
             ".codex/ecc-install-state.json",
         ]
     )
@@ -2010,7 +2053,11 @@ def run_ecc_workspace_uninstall(
     ]
     planned_paths = _unique_ordered(
         [
-            *(operation.destination_relative_path or "" for operation in install_state.operations if operation.destination_relative_path),
+            *(
+                operation.destination_relative_path or ""
+                for operation in install_state.operations
+                if operation.destination_relative_path
+            ),
             _relative_surface_path(workspace_root, install_state.install_state_path),
         ]
     )

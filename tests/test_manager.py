@@ -200,9 +200,7 @@ async def test_interrupt_turn_uses_latest_active_turn_from_events(tmp_path) -> N
     database = Database(tmp_path / "manager.db")
     await database.initialize()
     manager = RuntimeManager(database, BroadcastHub())
-    client = FakeInterruptClient(
-        thread_list=[{"id": "thread_123", "status": {"type": "active"}}]
-    )
+    client = FakeInterruptClient(thread_list=[{"id": "thread_123", "status": {"type": "active"}}])
     runtime = InstanceRuntime(
         instance_id=1,
         name="Local Codex Desktop",
@@ -262,9 +260,7 @@ async def test_interrupt_turn_ignores_stale_event_when_thread_is_idle(tmp_path) 
     database = Database(tmp_path / "manager.db")
     await database.initialize()
     manager = RuntimeManager(database, BroadcastHub())
-    client = FakeInterruptClient(
-        thread_list=[{"id": "thread_idle", "status": {"type": "idle"}}]
-    )
+    client = FakeInterruptClient(thread_list=[{"id": "thread_idle", "status": {"type": "idle"}}])
     runtime = InstanceRuntime(
         instance_id=1,
         name="Local Codex Desktop",

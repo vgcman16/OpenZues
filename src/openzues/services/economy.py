@@ -330,9 +330,7 @@ def build_economy(
         ]
 
         checkpoint_count = sum(1 for mission in scoped_missions if mission.last_checkpoint)
-        active_count = sum(
-            mission.status in {"active", "blocked"} for mission in scoped_missions
-        )
+        active_count = sum(mission.status in {"active", "blocked"} for mission in scoped_missions)
         failure_count = sum(mission.status == "failed" for mission in scoped_missions)
         approval_count = sum(
             mission.status == "blocked" and mission.phase == "approval"
@@ -349,8 +347,7 @@ def build_economy(
             else 100
         )
         drift_mission_count = sum(
-            assessment.drift_level in {"drifting", "critical"}
-            for assessment in scope_assessments
+            assessment.drift_level in {"drifting", "critical"} for assessment in scope_assessments
         )
         checkpoint_pressure_tokens = scope_checkpoint_pressure_threshold(
             mission.model for mission in scoped_missions
@@ -473,9 +470,7 @@ def build_economy(
         )
     elif speculative:
         headline = "Autonomy economy is speculative"
-        summary = (
-            f"{speculative} live scope(s) are still searching for their first durable anchor."
-        )
+        summary = f"{speculative} live scope(s) are still searching for their first durable anchor."
     else:
         headline = "Autonomy economy is balanced"
         summary = "Current scopes are neither obviously compounding nor obviously leaking."

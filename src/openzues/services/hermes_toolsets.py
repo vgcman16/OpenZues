@@ -103,7 +103,10 @@ _SPECS: tuple[HermesToolsetSpec, ...] = (
     HermesToolsetSpec(
         name="session_search",
         capability_family="memory",
-        summary="Search saved missions, checkpoints, and proof handoffs before restating the same uncertainty.",
+        summary=(
+            "Search saved missions, checkpoints, and proof handoffs before "
+            "restating the same uncertainty."
+        ),
         posture="partial",
         warning=(
             "Session-search recall is live through the OpenZues recall deck, API, and CLI, but "
@@ -113,7 +116,10 @@ _SPECS: tuple[HermesToolsetSpec, ...] = (
     HermesToolsetSpec(
         name="clarify",
         capability_family="operator alignment",
-        summary="Ask for the exact missing operator decision instead of guessing through ambiguity.",
+        summary=(
+            "Ask for the exact missing operator decision instead of guessing "
+            "through ambiguity."
+        ),
     ),
     HermesToolsetSpec(
         name="code_execution",
@@ -124,7 +130,10 @@ _SPECS: tuple[HermesToolsetSpec, ...] = (
     HermesToolsetSpec(
         name="delegation",
         capability_family="multi-agent delegation",
-        summary="Use Codex built-in agents when the mission posture says parallel helper roles are worth it.",
+        summary=(
+            "Use Codex built-in agents when the mission posture says parallel "
+            "helper roles are worth it."
+        ),
     ),
     HermesToolsetSpec(
         name="homeassistant",
@@ -144,7 +153,10 @@ _SPECS: tuple[HermesToolsetSpec, ...] = (
     HermesToolsetSpec(
         name="hermes-acp",
         capability_family="editor bridge",
-        summary="Shape the run like a local coding/editor bridge with repo execution and delegation.",
+        summary=(
+            "Shape the run like a local coding/editor bridge with repo "
+            "execution and delegation."
+        ),
         expands_to=("safe", "skills", "file", "terminal", "delegation", "debugging"),
         posture="partial",
         warning=(
@@ -166,14 +178,28 @@ _SPECS: tuple[HermesToolsetSpec, ...] = (
     HermesToolsetSpec(
         name="hermes-cli",
         capability_family="operator workflow",
-        summary="Bias the run toward terminal-first control, repo inspection, and iterative coding loops.",
+        summary=(
+            "Bias the run toward terminal-first control, repo inspection, and "
+            "iterative coding loops."
+        ),
         expands_to=("safe", "skills", "file", "terminal", "search", "delegation", "debugging"),
     ),
     HermesToolsetSpec(
         name="hermes-gateway",
         capability_family="gateway orchestration",
-        summary="Bias the run toward remote ingress, schedules, memory upkeep, and operator delivery.",
-        expands_to=("safe", "skills", "messaging", "cronjob", "memory", "session_search", "clarify"),
+        summary=(
+            "Bias the run toward remote ingress, schedules, memory upkeep, and "
+            "operator delivery."
+        ),
+        expands_to=(
+            "safe",
+            "skills",
+            "messaging",
+            "cronjob",
+            "memory",
+            "session_search",
+            "clarify",
+        ),
         posture="partial",
         warning=(
             "Gateway/channel parity is still incomplete, so this toolset currently guides launch "
@@ -314,11 +340,7 @@ _SPECS: tuple[HermesToolsetSpec, ...] = (
 )
 
 _SPEC_BY_NAME = {spec.name: spec for spec in _SPECS}
-_ALIASES = {
-    alias: spec.name
-    for spec in _SPECS
-    for alias in spec.aliases
-}
+_ALIASES = {alias: spec.name for spec in _SPECS for alias in spec.aliases}
 
 
 def _dedupe(values: Iterable[str]) -> list[str]:
@@ -375,9 +397,7 @@ def infer_hermes_toolsets(
         return explicit
 
     context = " ".join(
-        part
-        for part in (objective or "", project_label or "", project_path or "")
-        if part
+        part for part in (objective or "", project_label or "", project_path or "") if part
     ).lower()
 
     selected = ["safe", "skills"]
@@ -389,15 +409,61 @@ def infer_hermes_toolsets(
         selected.append("debugging")
     if cadence_minutes is not None:
         selected.append("cronjob")
-    if any(keyword in context for keyword in ("browser", "frontend", "ui", "page", "dashboard", "website", "render", "css", "layout", "screenshot")):
+    if any(
+        keyword in context
+        for keyword in (
+            "browser",
+            "frontend",
+            "ui",
+            "page",
+            "dashboard",
+            "website",
+            "render",
+            "css",
+            "layout",
+            "screenshot",
+        )
+    ):
         selected.extend(["browser", "vision"])
-    if any(keyword in context for keyword in ("research", "docs", "readme", "search", "investigate", "inventory", "parity", "audit")):
+    if any(
+        keyword in context
+        for keyword in (
+            "research",
+            "docs",
+            "readme",
+            "search",
+            "investigate",
+            "inventory",
+            "parity",
+            "audit",
+        )
+    ):
         selected.append("search")
-    if any(keyword in context for keyword in ("memory", "mempalace", "checkpoint", "recall", "continuity")):
+    if any(
+        keyword in context
+        for keyword in ("memory", "mempalace", "checkpoint", "recall", "continuity")
+    ):
         selected.extend(["memory", "session_search"])
-    if any(keyword in context for keyword in ("image", "mockup", "illustration", "artwork")):
+    if any(
+        keyword in context for keyword in ("image", "mockup", "illustration", "artwork")
+    ):
         selected.append("image_gen")
-    if setup_mode == "remote" or any(keyword in context for keyword in ("remote", "operator", "notify", "inbox", "channel", "slack", "telegram", "discord", "whatsapp", "email", "message")):
+    if setup_mode == "remote" or any(
+        keyword in context
+        for keyword in (
+            "remote",
+            "operator",
+            "notify",
+            "inbox",
+            "channel",
+            "slack",
+            "telegram",
+            "discord",
+            "whatsapp",
+            "email",
+            "message",
+        )
+    ):
         selected.extend(["messaging", "clarify"])
     return _dedupe(selected)
 
@@ -410,9 +476,7 @@ def build_hermes_tool_policy(
     selected = normalize_hermes_toolsets(toolsets)
     expanded = expand_hermes_toolsets(selected)
     families = _dedupe(
-        _SPEC_BY_NAME[item].capability_family
-        for item in expanded
-        if item in _SPEC_BY_NAME
+        _SPEC_BY_NAME[item].capability_family for item in expanded if item in _SPEC_BY_NAME
     )
     warnings = _dedupe(
         _SPEC_BY_NAME[item].warning or ""
@@ -431,9 +495,11 @@ def build_hermes_tool_policy(
             "OpenZues will treat "
             + ", ".join(selected[:4])
             + (
-                f", and {selected[4]}" if len(selected) == 5 else
-                f", plus {len(selected) - 4} more toolsets" if len(selected) > 5 else
-                ""
+                f", and {selected[4]}"
+                if len(selected) == 5
+                else f", plus {len(selected) - 4} more toolsets"
+                if len(selected) > 5
+                else ""
             )
             + " as the active Hermes-inspired tool posture for this run."
         )
@@ -455,9 +521,7 @@ def build_hermes_tool_policy_lines(policy: HermesToolPolicyView | None) -> list[
         f"- Active toolsets: {', '.join(policy.toolsets)}.",
     ]
     if policy.capability_families:
-        lines.append(
-            f"- Capability families: {', '.join(policy.capability_families)}."
-        )
+        lines.append(f"- Capability families: {', '.join(policy.capability_families)}.")
     lines.append(
         "- Treat this policy as the preferred tool posture before broadening scope or asking "
         "for a new runtime surface."

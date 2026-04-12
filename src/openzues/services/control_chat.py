@@ -359,11 +359,14 @@ def _should_pause_long_run_mission_for_queue(mission: MissionView) -> bool:
     if quiet_minutes is None or quiet_minutes < 8:
         return False
     orbit_threshold = max(6, mission.turns_completed * 4 + 4)
-    return has_checkpoint_pressure(
-        total_tokens=mission.total_tokens,
-        model=mission.model,
-        has_checkpoint=bool(mission.last_checkpoint),
-    ) or mission.command_count >= orbit_threshold
+    return (
+        has_checkpoint_pressure(
+            total_tokens=mission.total_tokens,
+            model=mission.model,
+            has_checkpoint=bool(mission.last_checkpoint),
+        )
+        or mission.command_count >= orbit_threshold
+    )
 
 
 def _find_signal_mission_fingerprint(
@@ -443,9 +446,7 @@ def _find_existing_followup_mission(
     payload: MissionCreate,
 ) -> MissionView | None:
     candidates = [
-        mission
-        for mission in dashboard.missions
-        if _matches_mission_payload(mission, payload)
+        mission for mission in dashboard.missions if _matches_mission_payload(mission, payload)
     ]
     if not candidates:
         return None
@@ -675,7 +676,9 @@ def plan_control_chat(prompt: str, dashboard: DashboardView) -> ControlChatPlan:
                     action_kind="launch_opportunity",
                     opportunity_id=recovery.id,
                     target_label=recovery.title,
-                    mission_payload=MissionCreate.model_validate(recovery.mission_draft.model_dump()),
+                    mission_payload=MissionCreate.model_validate(
+                        recovery.mission_draft.model_dump()
+                    ),
                     reply=(
                         f"I launched `{recovery.title}` because the strongest next move is a "
                         "recovery "
@@ -690,7 +693,9 @@ def plan_control_chat(prompt: str, dashboard: DashboardView) -> ControlChatPlan:
                     action_kind="launch_opportunity",
                     opportunity_id=hardener.id,
                     target_label=hardener.title,
-                    mission_payload=MissionCreate.model_validate(hardener.mission_draft.model_dump()),
+                    mission_payload=MissionCreate.model_validate(
+                        hardener.mission_draft.model_dump()
+                    ),
                     reply=(
                         f"I launched `{hardener.title}` because a verified hardening pass is the "
                         "shortest path to durable progress from the finished checkpoint."
@@ -835,11 +840,7 @@ def plan_attention_queue(dashboard: DashboardView) -> AttentionQueuePlan | None:
         )
 
     orphan_approval_signal = next(
-        (
-            signal
-            for signal in actionable_signals
-            if signal.id.endswith("orphan-approval")
-        ),
+        (signal for signal in actionable_signals if signal.id.endswith("orphan-approval")),
         None,
     )
     if orphan_approval_signal is not None:
@@ -925,8 +926,10 @@ def plan_attention_queue(dashboard: DashboardView) -> AttentionQueuePlan | None:
         if signal.mission_id is not None and signal.id.endswith("-failed"):
             recovery = _find_signal_opportunity(dashboard, signal, kind="recovery_run")
             mission = _find_mission(dashboard, signal.mission_id)
-            target_label = recovery.title if recovery is not None else (
-                mission.name if mission is not None else signal.title
+            target_label = (
+                recovery.title
+                if recovery is not None
+                else (mission.name if mission is not None else signal.title)
             )
             recovery_payload = (
                 MissionCreate.model_validate(recovery.mission_draft.model_dump())
@@ -1015,8 +1018,10 @@ def plan_attention_queue(dashboard: DashboardView) -> AttentionQueuePlan | None:
                     ),
                 )
             hardener = _find_signal_opportunity(dashboard, signal, kind="checkpoint_hardener")
-            target_label = hardener.title if hardener is not None else (
-                mission.name if mission is not None else signal.title
+            target_label = (
+                hardener.title
+                if hardener is not None
+                else (mission.name if mission is not None else signal.title)
             )
             hardener_payload = (
                 MissionCreate.model_validate(hardener.mission_draft.model_dump())
@@ -1178,8 +1183,7 @@ class ControlChatService:
             )
             if gateway_needs_repair:
                 summary = (
-                    f"{summary} Gateway Doctor still warns: "
-                    f"{dashboard.gateway_capability.summary}"
+                    f"{summary} Gateway Doctor still warns: {dashboard.gateway_capability.summary}"
                 )
             placeholder = (
                 "Try: keep going, status, recover the failed run, or harden the finished one"
@@ -1360,10 +1364,7 @@ class ControlChatService:
             executed = True
             mission_id = mission.id
             target_label = mission.name
-        elif (
-            plan.action_kind == "launch_opportunity"
-            and plan.mission_payload is not None
-        ):
+        elif plan.action_kind == "launch_opportunity" and plan.mission_payload is not None:
             mission = await self.missions.create(plan.mission_payload)
             executed = True
             mission_id = mission.id
@@ -1522,9 +1523,7 @@ class ControlChatService:
     def _approval_command_preview(self, payload: dict[str, Any]) -> str:
         commands = self._approval_command_texts(payload)
         preview = (
-            commands[0]
-            if commands
-            else str(payload.get("reason") or payload.get("message") or "")
+            commands[0] if commands else str(payload.get("reason") or payload.get("message") or "")
         )
         preview = " ".join(preview.split())
         return preview[:220] if preview else "approval request"
@@ -1555,9 +1554,7 @@ class ControlChatService:
         if any(pattern in text for text in lowered for pattern in UNSAFE_APPROVAL_COMMAND_PATTERNS):
             return None
         if not any(
-            pattern in text
-            for text in lowered
-            for pattern in SAFE_APPROVAL_COMMAND_PATTERNS
+            pattern in text for text in lowered for pattern in SAFE_APPROVAL_COMMAND_PATTERNS
         ):
             return None
 

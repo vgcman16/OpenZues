@@ -453,7 +453,7 @@ def write_fake_ecc_source_repo(repo_root: Path) -> Path:
         encoding="utf-8",
     )
     (repo_root / ".codex" / "config.toml").write_text(
-        "[mcp_servers.context7]\ncommand = \"npx\"\n\n[agents.explorer]\nmodel = \"gpt-5.4\"\n",
+        '[mcp_servers.context7]\ncommand = "npx"\n\n[agents.explorer]\nmodel = "gpt-5.4"\n',
         encoding="utf-8",
     )
     (codex_agents_dir / "explorer.toml").write_text('model = "gpt-5.4"\n', encoding="utf-8")
@@ -474,7 +474,7 @@ def write_fake_ecc_workspace(workspace_root: Path) -> Path:
         encoding="utf-8",
     )
     (workspace_root / ".codex" / "config.toml").write_text(
-        "[mcp_servers.github]\ncommand = \"npx\"\n\n[mcp_servers.context7]\ncommand = \"npx\"\n",
+        '[mcp_servers.github]\ncommand = "npx"\n\n[mcp_servers.context7]\ncommand = "npx"\n',
         encoding="utf-8",
     )
     (workspace_root / ".mcp.json").write_text(
@@ -990,9 +990,7 @@ def make_dashboard_view(
                     "connected_count": len(
                         [instance for instance in instances if instance.connected]
                     ),
-                    "ready_count": len(
-                        [instance for instance in instances if instance.connected]
-                    ),
+                    "ready_count": len([instance for instance in instances if instance.connected]),
                     "warning_count": 0,
                     "offline_count": len(
                         [instance for instance in instances if not instance.connected]
@@ -1073,8 +1071,7 @@ def make_dashboard_view(
                 "reflex_cooldown_seconds": 900,
                 "allow_failover": True,
                 "launch_defaults_summary": (
-                    "Verification on, built-in agents on, approvals paused, "
-                    "and auto-commit off."
+                    "Verification on, built-in agents on, approvals paused, and auto-commit off."
                 ),
             },
             "ops_mesh": {
@@ -1781,9 +1778,7 @@ def test_project_harness_actions_preview_and_apply_manifest_install(tmp_path) ->
     assert install_state["request"]["legacyMode"] is False
     assert install_state["resolution"]["selectedModules"] == preview["selected_modules"]
     assert install_state["resolution"]["skippedModules"] == preview["skipped_modules"]
-    operation_paths = {
-        operation["sourceRelativePath"] for operation in install_state["operations"]
-    }
+    operation_paths = {operation["sourceRelativePath"] for operation in install_state["operations"]}
     assert ".mcp.json" in operation_paths
     assert ".agents/coordination/README.md" in operation_paths
     assert "skills/python-patterns/SKILL.md" in operation_paths
@@ -1878,9 +1873,10 @@ def test_project_harness_install_merges_existing_codex_and_mcp_configs(tmp_path)
         operation["destinationRelativePath"]: operation for operation in install_state["operations"]
     }
     assert operations_by_path[".codex/config.toml"]["kind"] == "render-template"
-    assert "approval_policy = \"on-request\"" in operations_by_path[".codex/config.toml"][
-        "previousContent"
-    ]
+    assert (
+        'approval_policy = "on-request"'
+        in operations_by_path[".codex/config.toml"]["previousContent"]
+    )
     assert operations_by_path[".mcp.json"]["kind"] == "merge-json"
     assert operations_by_path[".mcp.json"]["mergePayload"] == {
         "mcpServers": {"context7": {"command": "npx"}}
@@ -2038,6 +2034,7 @@ def test_project_harness_install_prunes_stale_files_on_profile_switch(tmp_path) 
         "workflow-quality",
     ]
 
+
 def test_project_harness_actions_preview_and_apply_repairs(tmp_path) -> None:
     ecc_root = write_fake_ecc_source_repo(tmp_path / "everything-claude-code-main")
     (ecc_root / "AGENTS.md").write_text(
@@ -2111,9 +2108,7 @@ def test_project_harness_actions_preview_and_apply_repairs(tmp_path) -> None:
     )
     assert install_state["request"]["legacyMode"] is True
     assert install_state["resolution"]["selectedModules"] == ["legacy-codex-install"]
-    operation_paths = {
-        operation["sourceRelativePath"] for operation in install_state["operations"]
-    }
+    operation_paths = {operation["sourceRelativePath"] for operation in install_state["operations"]}
     assert "AGENTS.md" in operation_paths
     assert ".mcp.json" in operation_paths
     assert ".codex/agents/reviewer.toml" in operation_paths
@@ -2502,7 +2497,9 @@ def test_workspace_shell_arm_api_uses_saved_gateway_workspace(tmp_path) -> None:
 
 
 def test_docker_arm_api_uses_saved_gateway_workspace(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr("openzues.services.hermes_platform._which", lambda command: command == "docker")
+    monkeypatch.setattr(
+        "openzues.services.hermes_platform._which", lambda command: command == "docker"
+    )
 
     workspace_path = tmp_path / "workspace"
     workspace_path.mkdir()
@@ -2566,13 +2563,17 @@ def test_docker_arm_api_uses_saved_gateway_workspace(tmp_path, monkeypatch) -> N
 
 
 def test_docker_preflight_api_reports_ready_backend(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr("openzues.services.hermes_platform._which", lambda command: command == "docker")
+    monkeypatch.setattr(
+        "openzues.services.hermes_platform._which", lambda command: command == "docker"
+    )
     monkeypatch.setattr(
         "openzues.services.hermes_platform.shutil.which",
         lambda command: "C:\\docker\\docker.exe" if command == "docker" else None,
     )
 
-    async def fake_run_process_capture(*args: str, timeout_seconds: float = 20.0) -> tuple[int, str, str]:
+    async def fake_run_process_capture(
+        *args: str, timeout_seconds: float = 20.0
+    ) -> tuple[int, str, str]:
         del timeout_seconds
         command = tuple(args)
         if command[-1] == "--version":
@@ -2708,9 +2709,7 @@ def test_launch_routing_uses_gateway_default_cwd_when_task_has_no_workspace_cont
         task = make_task_blueprint_view(task_id=77, name="Fallback route").model_copy(
             update={"instance_id": None, "project_id": None, "cwd": None}
         )
-        route = asyncio.run(
-            LaunchRoutingService(database, manager).describe(task=task)
-        )
+        route = asyncio.run(LaunchRoutingService(database, manager).describe(task=task))
         gateway = asyncio.run(database.get_gateway_bootstrap())
 
     assert route.mode == "workspace_affinity"
@@ -2739,8 +2738,7 @@ def test_setup_endpoint_reports_reentrant_posture_after_bootstrap(tmp_path) -> N
                 "issue_api_key": True,
                 "task_name": "Autonomous Ship Loop",
                 "objective_template": (
-                    "Inspect the repo, ship the next verified slice, and "
-                    "checkpoint it."
+                    "Inspect the repo, ship the next verified slice, and checkpoint it."
                 ),
             },
         )
@@ -2812,8 +2810,7 @@ def test_setup_launch_endpoint_reports_saved_remote_handoff_gap(tmp_path) -> Non
                 "issue_api_key": True,
                 "task_name": "Remote Ship Loop",
                 "objective_template": (
-                    "Inspect the repo, ship the next verified slice, and "
-                    "checkpoint it."
+                    "Inspect the repo, ship the next verified slice, and checkpoint it."
                 ),
             },
         )
@@ -2845,8 +2842,7 @@ def test_setup_reset_config_and_credentials_clears_profile_and_api_key(tmp_path)
                 "issue_api_key": True,
                 "task_name": "Autonomous Ship Loop",
                 "objective_template": (
-                    "Inspect the repo, ship the next verified slice, and "
-                    "checkpoint it."
+                    "Inspect the repo, ship the next verified slice, and checkpoint it."
                 ),
             },
         )
@@ -2893,8 +2889,7 @@ def test_setup_reset_full_removes_bootstrap_managed_resources(tmp_path) -> None:
                 "skill_source": "agent-browser",
                 "task_name": "Autonomous Ship Loop",
                 "objective_template": (
-                    "Inspect the repo, ship the next verified slice, and "
-                    "checkpoint it."
+                    "Inspect the repo, ship the next verified slice, and checkpoint it."
                 ),
             },
         )
@@ -3047,8 +3042,7 @@ def test_gateway_capability_endpoint_summarizes_connected_lane_health_inventory_
                         detail="Approval policy is set to default desktop handling.",
                         value="approval=default",
                         action=(
-                            "Set OPENZUES_DESKTOP_APPROVAL_POLICY to override this launch "
-                            "policy."
+                            "Set OPENZUES_DESKTOP_APPROVAL_POLICY to override this launch policy."
                         ),
                     ),
                     DiagnosticCheck(
@@ -3281,8 +3275,9 @@ def test_gateway_capability_warns_when_mempalace_tool_contract_is_incomplete(tmp
     assert capability["inventory"]["memory_status"] == "warn"
     assert "callable tool proof is not complete yet" in capability["inventory"]["memory_summary"]
     assert "missing mempalace_diary_write" in capability["inventory"]["memory_evidence"][0]
-    assert "Expose mempalace_status, mempalace_search, and mempalace_diary_write" in (
-        capability["inventory"]["memory_recommended_action"]
+    assert (
+        "Expose mempalace_status, mempalace_search, and mempalace_diary_write"
+        in (capability["inventory"]["memory_recommended_action"])
     )
 
     dashboard = dashboard_response.json()
@@ -3359,12 +3354,12 @@ def test_gateway_capability_warns_when_mempalace_memory_loop_last_failed(tmp_pat
     capability = capability_response.json()
     assert capability["inventory"]["memory_status"] == "warn"
     assert "last failed" in capability["inventory"]["memory_summary"]
-    assert "Inspect the failed MemPalace maintenance run" in (
-        capability["inventory"]["memory_recommended_action"]
+    assert (
+        "Inspect the failed MemPalace maintenance run"
+        in (capability["inventory"]["memory_recommended_action"])
     )
     assert any(
-        "MemPalace Memory Loop last failed"
-        in line
+        "MemPalace Memory Loop last failed" in line
         for line in capability["inventory"]["memory_evidence"]
     )
 
@@ -3574,8 +3569,7 @@ def test_gateway_capability_surfaces_mempalace_roundtrip_from_latest_mission_che
     capability = capability_response.json()
     assert capability["inventory"]["memory_status"] == "ready"
     assert (
-        "Last MemPalace roundtrip proof was reported"
-        in capability["inventory"]["memory_summary"]
+        "Last MemPalace roundtrip proof was reported" in capability["inventory"]["memory_summary"]
     )
     assert any(
         "Memory Workspace roundtrip verified at 2026-04-11T15:13:00Z." in line
@@ -3720,8 +3714,9 @@ def test_gateway_capability_warns_when_mempalace_roundtrip_is_unavailable(tmp_pa
     assert capability["level"] == "warn"
     assert capability["inventory"]["memory_status"] == "warn"
     assert "roundtrip status is 'unavailable'" in capability["inventory"]["memory_summary"]
-    assert "confirm the freshly written memory can be recalled" in (
-        capability["inventory"]["memory_recommended_action"]
+    assert (
+        "confirm the freshly written memory can be recalled"
+        in (capability["inventory"]["memory_recommended_action"])
     )
     assert any(
         "mempalace_search could not confirm the freshly written handoff on this lane." in line
@@ -3962,8 +3957,9 @@ def test_gateway_capability_prefers_direct_memory_proof_reference(tmp_path) -> N
 
     assert capability_response.status_code == 200
     capability = capability_response.json()
-    assert "Last backend-triggered control-plane proof verified live MemPalace access" in (
-        capability["inventory"]["memory_summary"]
+    assert (
+        "Last backend-triggered control-plane proof verified live MemPalace access"
+        in (capability["inventory"]["memory_summary"])
     )
     assert capability["inventory"]["memory_proof_launchable"] is True
     assert capability["inventory"]["memory_proof_target_instance_id"] == instance_id
@@ -6577,19 +6573,18 @@ def test_hermes_profile_shapes_bootstrap_launch_draft(tmp_path: Path) -> None:
         assert payload["mission_draft"]["preferred_memory_provider"] == "mem0"
         assert payload["mission_draft"]["preferred_executor"] == "workspace_shell"
         assert payload["mission_draft"]["preferred_memory_provider_label"] == "Mem0"
+        assert payload["mission_draft"]["preferred_executor_label"] == "Workspace Shell Profile"
         assert (
-            payload["mission_draft"]["preferred_executor_label"]
-            == "Workspace Shell Profile"
-        )
-        assert "Preferred executor profile: Workspace Shell Profile." in (
-            payload["mission_draft"]["objective"]
+            "Preferred executor profile: Workspace Shell Profile."
+            in (payload["mission_draft"]["objective"])
         )
         assert "Preferred memory provider: Mem0." in payload["mission_draft"]["objective"]
 
         dashboard = client.get("/api/dashboard").json()
         assert "memory Mem0" in dashboard["gateway_bootstrap"]["launch_defaults_summary"]
-        assert "executor Workspace Shell Profile" in (
-            dashboard["gateway_bootstrap"]["launch_defaults_summary"]
+        assert (
+            "executor Workspace Shell Profile"
+            in (dashboard["gateway_bootstrap"]["launch_defaults_summary"])
         )
 
 

@@ -334,6 +334,5 @@ def test_recall_api_and_dashboard_surface_saved_results(tmp_path) -> None:
         dashboard_payload = client.get("/api/dashboard").json()
         assert dashboard_payload["recall"]["headline"]
         assert any(
-            item["mission_id"] == mission_id
-            for item in dashboard_payload["recall"]["items"]
+            item["mission_id"] == mission_id for item in dashboard_payload["recall"]["items"]
         )

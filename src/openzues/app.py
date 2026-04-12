@@ -1352,18 +1352,15 @@ def create_app(
         active_ops_mesh_service,
         active_hub,
     )
-    active_gateway_capability_service = (
-        gateway_capability_service
-        or GatewayCapabilityService(
-            active_database,
-            active_manager,
-            active_mission_service,
-            active_access_service,
-            active_remote_ops_service,
-            active_ops_mesh_service,
-            active_gateway_bootstrap_service,
-            active_environment_service,
-        )
+    active_gateway_capability_service = gateway_capability_service or GatewayCapabilityService(
+        active_database,
+        active_manager,
+        active_mission_service,
+        active_access_service,
+        active_remote_ops_service,
+        active_ops_mesh_service,
+        active_gateway_bootstrap_service,
+        active_environment_service,
     )
     active_recall_service = RecallService(active_mission_service, active_database)
     active_hermes_platform_service = HermesPlatformService(

@@ -379,9 +379,7 @@ def _project_ids_for_lane(
         if mission.project_id is not None and mission.instance_id == instance.id
     }
     project_ids.update(
-        project.id
-        for project in projects
-        if _path_matches_project(instance.cwd, project.path)
+        project.id for project in projects if _path_matches_project(instance.cwd, project.path)
     )
     return sorted(project_id for project_id in project_ids if project_id is not None)
 
@@ -446,8 +444,8 @@ def _capability_aliases(
     base_url: str | None = None,
 ) -> set[str]:
     return {
-        * _capability_terms(name, kind, source),
-        * _capability_terms_for_url(base_url),
+        *_capability_terms(name, kind, source),
+        *_capability_terms_for_url(base_url),
     }
 
 
@@ -681,9 +679,7 @@ def _build_integrations_inventory(
                 lane_match_count += 1
                 for match in matches:
                     matched_capability_keys.add(match["key"])
-                    capability_labels.add(
-                        f"{match['kind'].replace('_', ' ')}: {match['name']}"
-                    )
+                    capability_labels.add(f"{match['kind'].replace('_', ' ')}: {match['name']}")
             status, summary = _integration_lane_status(
                 integration=integration,
                 lane=instance,
@@ -750,10 +746,12 @@ def _build_integrations_inventory(
                 name=integration.name,
                 kind=integration.kind,
                 tracked=True,
-                source_kinds=sorted({
-                    "integration",
-                    *(match_type for lane in lane_views for match_type in lane.match_types),
-                }),
+                source_kinds=sorted(
+                    {
+                        "integration",
+                        *(match_type for lane in lane_views for match_type in lane.match_types),
+                    }
+                ),
                 project_labels=project_labels,
                 base_url=integration.base_url,
                 auth_scheme=integration.auth_scheme,
@@ -879,8 +877,7 @@ def _build_integrations_inventory(
     observed_count = sum(not item.tracked for item in items)
     ready_count = sum(item.readiness == "ready" for item in items)
     gap_count = sum(
-        item.tracked and item.readiness in {"auth_gap", "lane_gap", "degraded"}
-        for item in items
+        item.tracked and item.readiness in {"auth_gap", "lane_gap", "degraded"} for item in items
     )
 
     if gap_count:
@@ -1132,8 +1129,7 @@ def _build_skills_registry(
         matched_skill_count = sum(
             any(
                 any(
-                    _skill_matches_pin(skill, pin)
-                    for skill in lane_skill_rows.get(instance.id, [])
+                    _skill_matches_pin(skill, pin) for skill in lane_skill_rows.get(instance.id, [])
                 )
                 for instance in relevant_instances
             )
@@ -1144,8 +1140,7 @@ def _build_skills_registry(
             for pin in project_pins
             if not any(
                 any(
-                    _skill_matches_pin(skill, pin)
-                    for skill in lane_skill_rows.get(instance.id, [])
+                    _skill_matches_pin(skill, pin) for skill in lane_skill_rows.get(instance.id, [])
                 )
                 for instance in relevant_instances
             )
@@ -1434,8 +1429,7 @@ def _build_task_objective(
             ]
         )
         if any(
-            skill.enabled and is_local_skill_source_available(skill.source)
-            for skill in skill_pins
+            skill.enabled and is_local_skill_source_available(skill.source) for skill in skill_pins
         ):
             sections.append(
                 "- If a skill includes a Source path, open that SKILL.md before running the "
@@ -1526,16 +1520,8 @@ def _project_skillbook_pins(
         project_path=project.path,
         toolsets=sorted(
             {
-                *{
-                    toolset
-                    for mission in missions
-                    for toolset in mission.toolsets
-                },
-                *{
-                    toolset
-                    for task in task_blueprints
-                    for toolset in task.toolsets
-                },
+                *{toolset for mission in missions for toolset in mission.toolsets},
+                *{toolset for task in task_blueprints for toolset in task.toolsets},
             }
         ),
     )
@@ -1636,9 +1622,7 @@ def _build_task_views(
             start_immediately=True,
             tool_policy=task.tool_policy,
             preferred_memory_provider=preferred_memory_provider,
-            preferred_memory_provider_label=memory_provider_label(
-                preferred_memory_provider
-            ),
+            preferred_memory_provider_label=memory_provider_label(preferred_memory_provider),
             preferred_executor=preferred_executor,
             preferred_executor_label=executor_label(preferred_executor),
             runtime_profile_summary=build_runtime_profile_summary(
@@ -2250,9 +2234,7 @@ class OpsMeshService:
             self._task = None
 
     async def list_task_blueprint_views(self) -> list[TaskBlueprintView]:
-        projects = {
-            int(project["id"]): project for project in await self.database.list_projects()
-        }
+        projects = {int(project["id"]): project for project in await self.database.list_projects()}
         tasks: list[TaskBlueprintView] = []
         for row in await self.database.list_task_blueprints():
             task = _serialize_task(row)
@@ -2277,9 +2259,7 @@ class OpsMeshService:
 
     async def list_notification_route_views(self) -> list[NotificationRouteView]:
         await self._migrate_legacy_secret_refs()
-        secrets_by_id = {
-            secret.id: secret for secret in await self.vault.list_secret_views()
-        }
+        secrets_by_id = {secret.id: secret for secret in await self.vault.list_secret_views()}
         routes: list[NotificationRouteView] = []
         for row in await self.database.list_notification_routes():
             secret_id = row.get("vault_secret_id")
@@ -2302,9 +2282,7 @@ class OpsMeshService:
 
     async def list_integration_views(self) -> list[IntegrationView]:
         await self._migrate_legacy_secret_refs()
-        secrets_by_id = {
-            secret.id: secret for secret in await self.vault.list_secret_views()
-        }
+        secrets_by_id = {secret.id: secret for secret in await self.vault.list_secret_views()}
         secret_probe: dict[int, str | None] = {}
         integrations: list[IntegrationView] = []
         for row in await self.database.list_integrations():
@@ -2584,9 +2562,7 @@ class OpsMeshService:
             enabled=payload.enabled,
         )
         row = next(
-            skill
-            for skill in await self.database.list_skill_pins()
-            if int(skill["id"]) == skill_id
+            skill for skill in await self.database.list_skill_pins() if int(skill["id"]) == skill_id
         )
         return _serialize_skill_pin(row)
 
@@ -2877,8 +2853,7 @@ class OpsMeshService:
         missions = await self.missions.list_views()
         instances = await self.manager.list_views()
         playbooks = [
-            PlaybookView.model_validate(row)
-            for row in await self.database.list_playbooks()
+            PlaybookView.model_validate(row) for row in await self.database.list_playbooks()
         ]
 
         for task in tasks:
@@ -2888,8 +2863,7 @@ class OpsMeshService:
             if next_run is None or next_run > datetime.now(UTC):
                 continue
             active = any(
-                mission.task_blueprint_id == task.id
-                and mission.status in {"active", "blocked"}
+                mission.task_blueprint_id == task.id and mission.status in {"active", "blocked"}
                 for mission in missions
             )
             if active:
@@ -2975,9 +2949,7 @@ class OpsMeshService:
         )
 
     async def _build_draft_for_task(self, task: TaskBlueprintView) -> MissionDraftView:
-        projects = {
-            int(project["id"]): project for project in await self.database.list_projects()
-        }
+        projects = {int(project["id"]): project for project in await self.database.list_projects()}
         project = projects.get(task.project_id) if task.project_id is not None else None
         task = _attach_task_tool_policy(
             task,
@@ -2992,8 +2964,7 @@ class OpsMeshService:
         integrations = [
             integration
             for integration in await self.list_integration_views()
-            if integration.enabled
-            and integration.project_id in {None, task.project_id}
+            if integration.enabled and integration.project_id in {None, task.project_id}
         ]
         skill_pins = materialize_skillbook_pins(
             task.project_id or 0,
@@ -3017,11 +2988,7 @@ class OpsMeshService:
                 instance_id = launch_route.resolved_instance.id
                 resolved_instance_name = launch_route.resolved_instance.label
                 selected_instance = next(
-                    (
-                        item
-                        for item in await self.manager.list_views()
-                        if item.id == instance_id
-                    ),
+                    (item for item in await self.manager.list_views() if item.id == instance_id),
                     None,
                 )
                 if selected_instance is not None:
@@ -3078,9 +3045,7 @@ class OpsMeshService:
             start_immediately=True,
             tool_policy=task.tool_policy,
             preferred_memory_provider=preferred_memory_provider,
-            preferred_memory_provider_label=memory_provider_label(
-                preferred_memory_provider
-            ),
+            preferred_memory_provider_label=memory_provider_label(preferred_memory_provider),
             preferred_executor=preferred_executor,
             preferred_executor_label=executor_label(preferred_executor),
             runtime_profile_summary=build_runtime_profile_summary(
