@@ -155,6 +155,14 @@ def _thread_status_type(thread_state: dict[str, Any] | None) -> str | None:
     return None
 
 
+def _runtime_is_ready(runtime: Any) -> bool:
+    if not bool(getattr(runtime, "connected", False)):
+        return False
+    if hasattr(runtime, "client") and getattr(runtime, "client", None) is None:
+        return False
+    return True
+
+
 def _thread_live_summary(
     *,
     streaming: bool,
@@ -926,12 +934,12 @@ class MissionService:
             )
 
         runtime = await self.manager.get(int(mission["instance_id"]))
-        if not runtime.connected:
+        if not _runtime_is_ready(runtime):
             try:
                 runtime = await self.manager.connect_instance(int(mission["instance_id"]))
             except Exception as exc:
                 raise RuntimeError(f"Instance is offline: {exc}") from exc
-        if not runtime.connected:
+        if not _runtime_is_ready(runtime):
             raise RuntimeError("Instance is offline.")
 
         await self._start_turn_with_prompt(
@@ -1891,7 +1899,7 @@ class MissionService:
         stale_error: str,
     ) -> bool:
         runtime = await self.manager.get(int(mission["instance_id"]))
-        if not runtime.connected:
+        if not _runtime_is_ready(runtime):
             return False
 
         checkpoints = await self.database.list_mission_checkpoints(mission_id, limit=4)
@@ -2263,7 +2271,7 @@ class MissionService:
                             mission["instance_id"] = shell_runtime.instance_id
 
             runtime = await self.manager.get(int(mission["instance_id"]))
-            if not runtime.connected:
+            if not _runtime_is_ready(runtime):
                 try:
                     runtime = await self.manager.connect_instance(int(mission["instance_id"]))
                 except Exception as exc:
@@ -2274,7 +2282,7 @@ class MissionService:
                     ):
                         return
                     return
-            if not runtime.connected:
+            if not _runtime_is_ready(runtime):
                 if await self._attempt_failover(
                     mission_id,
                     mission,

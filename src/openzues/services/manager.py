@@ -355,13 +355,23 @@ class RuntimeManager:
 
     async def connect_instance(self, instance_id: int) -> InstanceRuntime:
         runtime = await self.get(instance_id)
-        (
-            resolved_transport,
-            resolved_command,
-            resolved_args,
-            resolved_websocket_url,
-            transport_note,
-        ) = self._resolve_connection(runtime)
+        try:
+            (
+                resolved_transport,
+                resolved_command,
+                resolved_args,
+                resolved_websocket_url,
+                transport_note,
+            ) = self._resolve_connection(runtime)
+        except Exception as exc:
+            runtime.connected = False
+            runtime.initialized = False
+            runtime.error = str(exc)
+            await self.publish_snapshot(
+                "instance/error",
+                {"instanceId": instance_id, "error": str(exc)},
+            )
+            return runtime
         runtime.resolved_transport = resolved_transport
         runtime.resolved_command = resolved_command
         runtime.resolved_args = resolved_args

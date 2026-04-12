@@ -74,7 +74,7 @@ class EnvironmentService:
         gh_exe = shutil.which("gh")
         gh_probe = self._run(["gh", "auth", "status"]) if gh_exe else None
         gh_status: DiagnosticStatus = (
-            "ok" if gh_probe and gh_probe.returncode == 0 else ("warn" if gh_exe else "fail")
+            "ok" if gh_probe and gh_probe.returncode == 0 else "warn"
         )
         gh_detail = (
             gh_probe.stdout or gh_probe.stderr
@@ -97,13 +97,16 @@ class EnvironmentService:
         codex_exe = shutil.which("codex")
         codex_probe = self._run(["codex", "--version"]) if codex_exe else None
         if codex_probe is None:
-            codex_status: DiagnosticStatus = "warn" if desktop.source_path else "fail"
+            codex_status: DiagnosticStatus = "warn"
             codex_detail = "Codex executable not found on PATH."
             codex_action = (
                 "Use Desktop transport to stage a runnable Codex binary "
                 "from the local desktop install."
                 if desktop.source_path
-                else "Install or expose Codex CLI before using stdio transport."
+                else (
+                    "Install or expose Codex CLI before using stdio transport, "
+                    "or use WebSocket transport."
+                )
             )
         elif codex_probe.returncode == 0:
             codex_status = "ok"
@@ -132,9 +135,15 @@ class EnvironmentService:
         )
 
         if desktop.source_path is None:
-            desktop_status: DiagnosticStatus = "fail"
-            desktop_detail = "Codex Desktop package was not found in WindowsApps."
-            desktop_action = "Install the Codex desktop app to use one-click desktop transport."
+            desktop_status: DiagnosticStatus = "warn"
+            desktop_detail = (
+                "Codex Desktop package was not found. Desktop transport is optional until "
+                "you want one-click local bridging."
+            )
+            desktop_action = (
+                "Install the Codex desktop app to use one-click desktop transport, "
+                "or keep using WebSocket or saved disconnected lanes."
+            )
             desktop_value = None
         else:
             desktop_status = "ok"
@@ -172,10 +181,16 @@ class EnvironmentService:
         )
 
         if desktop.source_path is None:
-            bridge_status: DiagnosticStatus = "fail"
-            bridge_detail = "Desktop bridge is unavailable because Codex Desktop is not installed."
+            bridge_status: DiagnosticStatus = "warn"
+            bridge_detail = (
+                "Desktop bridge is unavailable until Codex Desktop is installed, "
+                "but the gateway can still use WebSocket or saved lane posture."
+            )
             bridge_value = None
-            bridge_action = None
+            bridge_action = (
+                "Install Codex Desktop when you want one-click local bridging, "
+                "or keep using WebSocket transport."
+            )
         elif desktop.staged_path is None or not desktop.staged_ready:
             bridge_status = "info"
             bridge_detail = (
