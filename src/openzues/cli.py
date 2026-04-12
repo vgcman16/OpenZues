@@ -5,6 +5,7 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 
 import typer
 import uvicorn
@@ -12,6 +13,7 @@ import uvicorn
 from openzues.app import build_brief, build_launchpad, build_radar
 from openzues.database import Database
 from openzues.schemas import (
+    DashboardView,
     HermesRuntimeProfileUpdate,
     MissionCreate,
     OnboardingBootstrapCreate,
@@ -705,8 +707,9 @@ async def _run_control_chat_prompt(
     plan_only: bool,
 ) -> dict[str, object]:
     dashboard = await _build_operator_dashboard(services)
+    typed_dashboard = cast(DashboardView, dashboard)
     if plan_only:
-        plan = plan_control_chat(prompt, dashboard)
+        plan = plan_control_chat(prompt, typed_dashboard)
         return {
             "mode": "plan",
             "executed": False,
@@ -721,7 +724,7 @@ async def _run_control_chat_prompt(
                 else None
             ),
         }
-    result = await services.control_chat.submit(prompt, dashboard)
+    result = await services.control_chat.submit(prompt, typed_dashboard)
     return {
         "mode": "executed",
         "executed": result.executed,
@@ -793,8 +796,9 @@ def _build_status_payload(dashboard: SimpleNamespace) -> dict[str, object]:
     paused_count = sum(1 for mission in dashboard.missions if mission.status == "paused")
     failed_count = sum(1 for mission in dashboard.missions if mission.status == "failed")
     connected_count = sum(1 for instance in dashboard.instances if instance.connected)
-    status_plan = plan_control_chat("status", dashboard)
-    queue_plan = plan_attention_queue(dashboard)
+    typed_dashboard = cast(DashboardView, dashboard)
+    status_plan = plan_control_chat("status", typed_dashboard)
+    queue_plan = plan_attention_queue(typed_dashboard)
     return {
         "headline": dashboard.brief.headline,
         "summary": dashboard.brief.summary,
@@ -1299,7 +1303,8 @@ def queue_command(
 ) -> None:
     async def _action(services: CliServices) -> dict[str, object]:
         dashboard = await _build_operator_dashboard(services)
-        plan = plan_attention_queue(dashboard)
+        typed_dashboard = cast(DashboardView, dashboard)
+        plan = plan_attention_queue(typed_dashboard)
         if plan_only:
             if plan is None:
                 return {
@@ -1347,7 +1352,7 @@ def queue_command(
         latest_before = await services.database.get_latest_attention_queue_action(
             plan.signal_fingerprint
         )
-        executed = await services.control_chat.tick_attention_queue(dashboard)
+        executed = await services.control_chat.tick_attention_queue(typed_dashboard)
         latest_after = await services.database.get_latest_attention_queue_action(
             plan.signal_fingerprint
         )

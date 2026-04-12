@@ -16,11 +16,13 @@ from openzues.schemas import (
     HermesExecutorPreflightView,
     HermesExecutorProfileStateView,
     HermesLearningPromotionCandidateView,
+    HermesParityStatus,
     HermesPromotionLoopView,
     HermesRuntimeProfileUpdate,
     HermesRuntimeProfileView,
     HermesUpdateView,
     InstanceView,
+    LaunchRouteStatus,
     ProjectView,
     TaskBlueprintView,
 )
@@ -178,6 +180,22 @@ async def _run_process_capture(
 def _normalize_cwd(value: str | None) -> str | None:
     text = str(value or "").strip()
     return text or None
+
+
+def _string_or_none(value: object) -> str | None:
+    text = str(value or "").strip()
+    return text or None
+
+
+def _launch_route_status_or_none(value: object) -> LaunchRouteStatus | None:
+    text = _string_or_none(value)
+    if text == "ready":
+        return "ready"
+    if text == "staged":
+        return "staged"
+    if text == "repair":
+        return "repair"
+    return None
 
 
 def _source_label_for_executor_resolution(derived_from: str) -> str:
@@ -504,6 +522,7 @@ class HermesPlatformService:
         executor_profiles = _executor_profiles_payload(profile)
         previous_docker_profile = executor_profiles.get("docker", {})
         explicit_cwd = _normalize_cwd(cwd)
+        resolved_cwd: str | None
         if explicit_cwd is not None:
             resolved_cwd = explicit_cwd
             derived_from = "explicit"
@@ -525,7 +544,7 @@ class HermesPlatformService:
         docker_version: str | None = None
         daemon_version: str | None = None
         image_present: bool | None = None
-        status = "repair"
+        status: LaunchRouteStatus = "repair"
         headline = "Docker backend preflight needs repair"
         summary = "Docker preflight has not run yet."
 
@@ -624,7 +643,7 @@ class HermesPlatformService:
             executor_key="docker",
             executor_label="Docker Backend",
             ok=status == "ready",
-            status=status,  # type: ignore[arg-type]
+            status=status,
             cwd=resolved_cwd,
             image=docker_image,
             derived_from=derived_from,
@@ -753,16 +772,16 @@ class HermesPlatformService:
             headline=headline,
             summary=summary,
             enabled=enabled,
-            repo_root=snapshot.get("repo_root"),
-            startup_revision=snapshot.get("startup_revision"),
-            current_revision=snapshot.get("current_revision"),
-            pending_revision=snapshot.get("pending_revision"),
+            repo_root=_string_or_none(snapshot.get("repo_root")),
+            startup_revision=_string_or_none(snapshot.get("startup_revision")),
+            current_revision=_string_or_none(snapshot.get("current_revision")),
+            pending_revision=_string_or_none(snapshot.get("pending_revision")),
             pending_restart=pending_restart,
             restart_in_progress=bool(snapshot.get("restart_in_progress")),
             safe_to_restart=safe_to_restart,
-            last_checked_at=snapshot.get("last_checked_at"),
-            last_restart_at=snapshot.get("last_restart_at"),
-            last_error=snapshot.get("last_error"),
+            last_checked_at=_string_or_none(snapshot.get("last_checked_at")),
+            last_restart_at=_string_or_none(snapshot.get("last_restart_at")),
+            last_error=_string_or_none(snapshot.get("last_error")),
             auto_restart=bool(snapshot.get("auto_restart")),
         )
 
@@ -1273,15 +1292,40 @@ class HermesPlatformService:
         docker_cwd = _normalize_cwd(docker_profile.get("cwd"))
         docker_image = _normalize_cwd(docker_profile.get("image"))
         docker_mount_workspace = bool(docker_profile.get("mount_workspace"))
-        docker_control = instances_by_id.get(int(docker_profile.get("control_instance_id") or 0))
+        docker_control_id = _string_or_none(docker_profile.get("control_instance_id"))
+        docker_control = instances_by_id.get(int(docker_control_id)) if docker_control_id else None
         docker_preflight_status = str(docker_profile.get("last_preflight_status") or "").strip()
         docker_preflight_summary = str(docker_profile.get("last_preflight_summary") or "").strip()
         docker_available = _which("docker")
+        codex_desktop_status: HermesParityStatus = (
+            "ready" if connected_instances else "partial" if instances else "missing"
+        )
+        workspace_shell_status: HermesParityStatus = (
+            "ready"
+            if connected_shell_instances
+            else "partial"
+            if shell_instances or any(instance.cwd for instance in instances)
+            else "missing"
+        )
+        docker_status: HermesParityStatus = (
+            "ready"
+            if (
+                docker_available
+                and docker_cwd
+                and docker_image
+                and docker_preflight_status == "ready"
+                and docker_control
+                and docker_control.connected
+            )
+            else "partial"
+            if docker_available
+            else "missing"
+        )
         items = [
             HermesCapabilityItemView(
                 key="codex_desktop",
                 label="Codex Desktop Lanes",
-                status=("ready" if connected_instances else "partial" if instances else "missing"),  # type: ignore[arg-type]
+                status=codex_desktop_status,
                 summary=(
                     f"{len(connected_instances)} connected lane(s) are available for "
                     "OpenZues executor work."
@@ -1294,13 +1338,7 @@ class HermesPlatformService:
             HermesCapabilityItemView(
                 key="workspace_shell",
                 label="Workspace Shell Profile",
-                status=(
-                    "ready"
-                    if connected_shell_instances
-                    else "partial"
-                    if shell_instances or any(instance.cwd for instance in instances)
-                    else "missing"
-                ),  # type: ignore[arg-type]
+                status=workspace_shell_status,
                 summary=(
                     f"{len(connected_shell_instances)} connected shell-backed lane(s) are armed."
                     if connected_shell_instances
@@ -1322,20 +1360,7 @@ class HermesPlatformService:
             HermesCapabilityItemView(
                 key="docker",
                 label="Docker Backend",
-                status=(
-                    "ready"
-                    if (
-                        docker_available
-                        and docker_cwd
-                        and docker_image
-                        and docker_preflight_status == "ready"
-                        and docker_control
-                        and docker_control.connected
-                    )
-                    else "partial"
-                    if docker_available
-                    else "missing"
-                ),  # type: ignore[arg-type]
+                status=docker_status,
                 summary=(
                     f"{docker_preflight_summary} Control lane `{docker_control.name}` is connected."
                     if (
@@ -1382,11 +1407,12 @@ class HermesPlatformService:
         )
         for key, label, command in executor_specs:
             available = _which(command)
+            backend_status: HermesParityStatus = "partial" if available else "missing"
             items.append(
                 HermesCapabilityItemView(
                     key=key,
                     label=label,
-                    status=("partial" if available else "missing"),  # type: ignore[arg-type]
+                    status=backend_status,
                     summary=(
                         f"The `{command}` command is available locally, so this backend "
                         "can be wired next."
@@ -1423,10 +1449,9 @@ class HermesPlatformService:
         docker_cwd = _normalize_cwd(docker_profile.get("cwd"))
         docker_image = _normalize_cwd(docker_profile.get("image"))
         if docker_cwd or docker_image:
+            raw_control_instance_id = _string_or_none(docker_profile.get("control_instance_id"))
             control_instance_id = (
-                int(docker_profile.get("control_instance_id"))
-                if str(docker_profile.get("control_instance_id") or "").strip()
-                else None
+                int(raw_control_instance_id) if raw_control_instance_id is not None else None
             )
             control_instance = (
                 instances_by_id.get(control_instance_id)
@@ -1448,8 +1473,8 @@ class HermesPlatformService:
                     last_checked_at=(
                         str(docker_profile.get("last_checked_at") or "").strip() or None
                     ),
-                    last_preflight_status=(
-                        str(docker_profile.get("last_preflight_status") or "").strip() or None
+                    last_preflight_status=_launch_route_status_or_none(
+                        docker_profile.get("last_preflight_status")
                     ),
                     last_preflight_summary=(
                         str(docker_profile.get("last_preflight_summary") or "").strip() or None
@@ -1494,7 +1519,7 @@ class HermesPlatformService:
             HermesCapabilityItemView(
                 key="codex_apps",
                 label="Live Codex Apps",
-                status=("ready" if live_app_count else "partial" if instances else "missing"),  # type: ignore[arg-type]
+                status="ready" if live_app_count else "partial" if instances else "missing",
                 summary=(
                     f"Connected lanes currently expose {live_app_count} app surface(s)."
                     if live_app_count
@@ -1505,7 +1530,7 @@ class HermesPlatformService:
             HermesCapabilityItemView(
                 key="codex_plugins",
                 label="Live Codex Plugins",
-                status=("ready" if live_plugin_count else "partial" if instances else "missing"),  # type: ignore[arg-type]
+                status="ready" if live_plugin_count else "partial" if instances else "missing",
                 summary=(
                     f"Connected lanes currently expose {live_plugin_count} plugin surface(s)."
                     if live_plugin_count
@@ -1516,7 +1541,7 @@ class HermesPlatformService:
             HermesCapabilityItemView(
                 key="codex_mcp",
                 label="Live MCP Servers",
-                status=("ready" if live_mcp_count else "partial" if instances else "missing"),  # type: ignore[arg-type]
+                status="ready" if live_mcp_count else "partial" if instances else "missing",
                 summary=(
                     f"Connected lanes currently expose {live_mcp_count} MCP server(s)."
                     if live_mcp_count

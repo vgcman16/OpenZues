@@ -3,7 +3,7 @@ from __future__ import annotations
 import shutil
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, TypedDict
 
 from openzues.database import Database
 from openzues.schemas import LaunchRouteStatus
@@ -39,6 +39,14 @@ class ExecutorLaunchAssessment:
     status: LaunchRouteStatus
     summary: str
     warnings: list[str]
+
+
+class MissionDraftRuntimeProfileFields(TypedDict):
+    preferred_memory_provider: str
+    preferred_memory_provider_label: str
+    preferred_executor: str
+    preferred_executor_label: str
+    runtime_profile_summary: str
 
 
 def _titleize_slug(value: str) -> str:
@@ -307,7 +315,7 @@ def build_runtime_profile_fields(
     *,
     preferred_memory_provider: str,
     preferred_executor: str,
-) -> dict[str, str]:
+) -> MissionDraftRuntimeProfileFields:
     return {
         "preferred_memory_provider": preferred_memory_provider,
         "preferred_memory_provider_label": memory_provider_label(preferred_memory_provider),
@@ -378,11 +386,11 @@ def build_executor_profile_lines(
     runtime_profile: dict[str, Any] | None = None,
 ) -> list[str]:
     executor_key = str(preferred_executor or DEFAULT_HERMES_EXECUTOR).strip().lower()
-    executor_profiles = (
-        runtime_profile.get("executor_profiles")
-        if isinstance(runtime_profile, dict)
-        and isinstance(runtime_profile.get("executor_profiles"), dict)
-        else {}
+    executor_profiles_raw = (
+        runtime_profile.get("executor_profiles") if isinstance(runtime_profile, dict) else None
+    )
+    executor_profiles: dict[str, Any] = (
+        executor_profiles_raw if isinstance(executor_profiles_raw, dict) else {}
     )
     if executor_key == "codex_desktop":
         lines = [
@@ -416,10 +424,9 @@ def build_executor_profile_lines(
         return lines
 
     if executor_key == "docker":
-        docker_profile = (
-            executor_profiles.get("docker")
-            if isinstance(executor_profiles.get("docker"), dict)
-            else {}
+        docker_profile_raw = executor_profiles.get("docker")
+        docker_profile: dict[str, Any] = (
+            docker_profile_raw if isinstance(docker_profile_raw, dict) else {}
         )
         docker_cwd = str(docker_profile.get("cwd") or cwd or "").strip() or None
         docker_image = str(docker_profile.get("image") or "").strip() or None

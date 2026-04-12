@@ -661,6 +661,7 @@ def _install_manifest_for_root(root_key: str) -> EccInstallManifest | None:
     components_raw = components_payload.get("components")
     if not isinstance(profiles_raw, dict) or not isinstance(modules_raw, list):
         return None
+    components_list = components_raw if isinstance(components_raw, list) else []
     profiles = tuple(
         EccInstallProfile(
             id=str(profile_id),
@@ -677,8 +678,8 @@ def _install_manifest_for_root(root_key: str) -> EccInstallManifest | None:
             description=str(component_payload.get("description") or "").strip(),
             modules=_string_list(component_payload.get("modules")),
         )
-        for component_payload in components_raw
-        if isinstance(components_raw, list) and isinstance(component_payload, dict)
+        for component_payload in components_list
+        if isinstance(component_payload, dict)
     )
     modules = tuple(
         EccInstallModule(
@@ -835,13 +836,16 @@ def _load_install_state(workspace_root: Path) -> EccInstallState | None:
     if payload.get("schemaVersion") != _INSTALL_STATE_SCHEMA_VERSION:
         return None
     operations_raw = payload.get("operations")
+    operations_list = operations_raw if isinstance(operations_raw, list) else []
     operations = tuple(
         _deserialize_operation(operation_payload)
-        for operation_payload in operations_raw
-        if isinstance(operations_raw, list) and isinstance(operation_payload, dict)
+        for operation_payload in operations_list
+        if isinstance(operation_payload, dict)
     )
-    request = payload.get("request") if isinstance(payload.get("request"), dict) else {}
-    resolution = payload.get("resolution") if isinstance(payload.get("resolution"), dict) else {}
+    request_raw = payload.get("request")
+    request: dict[str, Any] = request_raw if isinstance(request_raw, dict) else {}
+    resolution_raw = payload.get("resolution")
+    resolution: dict[str, Any] = resolution_raw if isinstance(resolution_raw, dict) else {}
     source_root = str(payload.get("sourceRoot") or "").strip() or None
     return EccInstallState(
         source_root=source_root,
@@ -1087,7 +1091,7 @@ def _doctor_for_workspace(
     missing_codex_roles = tuple(
         role for role in expected_codex_roles if role not in actual_codex_roles
     )
-    drifted_paths: list[str] = []
+    legacy_drifted_paths: list[str] = []
     for relative_path in ("AGENTS.md", ".codex/AGENTS.md", ".mcp.json"):
         source_path = baseline_root / relative_path
         destination_path = workspace_root / relative_path
@@ -1095,19 +1099,19 @@ def _doctor_for_workspace(
             if _normalized_text_value(_read_text(source_path)) != _normalized_text_value(
                 _read_text(destination_path)
             ):
-                drifted_paths.append(relative_path)
+                legacy_drifted_paths.append(relative_path)
     for role_path in _codex_role_paths(baseline_root):
         relative_path = _relative_surface_path(baseline_root, role_path)
         destination_path = workspace_root / relative_path
         if destination_path.exists() and _normalized_text_value(
             _read_text(role_path)
         ) != _normalized_text_value(_read_text(destination_path)):
-            drifted_paths.append(relative_path)
+            legacy_drifted_paths.append(relative_path)
     is_ready = (
         not missing_surface_paths
         and not missing_mcp_servers
         and not missing_codex_roles
-        and not drifted_paths
+        and not legacy_drifted_paths
     )
     return EccWorkspaceDoctor(
         level="ready" if is_ready else "warn",
@@ -1123,42 +1127,9 @@ def _doctor_for_workspace(
         missing_mcp_servers=missing_mcp_servers,
         expected_codex_roles=expected_codex_roles,
         missing_codex_roles=missing_codex_roles,
-        drifted_paths=tuple(drifted_paths),
+        drifted_paths=tuple(legacy_drifted_paths),
         repair_actions=() if is_ready else _workspace_doctor_actions(workspace_root),
     )
-
-
-def _toml_literal(value: Any) -> str:
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    if isinstance(value, (int, float)):
-        return str(value)
-    if isinstance(value, str):
-        return json.dumps(value)
-    if isinstance(value, list):
-        return "[" + ", ".join(_toml_literal(item) for item in value) + "]"
-    raise ValueError(f"Unsupported TOML value: {value!r}")
-
-
-def _format_toml_table(payload: dict[str, Any], prefix: tuple[str, ...] = ()) -> list[str]:
-    lines: list[str] = []
-    scalar_items = [(key, value) for key, value in payload.items() if not isinstance(value, dict)]
-    table_items = [(key, value) for key, value in payload.items() if isinstance(value, dict)]
-    if prefix:
-        lines.append(f"[{'.'.join(prefix)}]")
-    for key, value in scalar_items:
-        lines.append(f"{key} = {_toml_literal(value)}")
-    if scalar_items and table_items:
-        lines.append("")
-    for index, (key, value) in enumerate(table_items):
-        lines.extend(_format_toml_table(value, (*prefix, key)))
-        if index < len(table_items) - 1:
-            lines.append("")
-    return lines
-
-
-def _format_toml_text(payload: dict[str, Any]) -> str:
-    return _ensure_trailing_newline("\n".join(_format_toml_table(payload)))
 
 
 def _merge_existing_over_source(source: dict[str, Any], existing: dict[str, Any]) -> dict[str, Any]:
@@ -2202,7 +2173,7 @@ def run_ecc_workspace_repair(
             ),
         )
 
-    changed_paths: list[str] = []
+    legacy_changed_paths: list[str] = []
     for entry in repair_entries:
         source_text = _read_text(source_root / entry.relative_path)
         if source_text is None:
@@ -2210,7 +2181,7 @@ def run_ecc_workspace_repair(
         destination_path = workspace_root / entry.relative_path
         destination_path.parent.mkdir(parents=True, exist_ok=True)
         destination_path.write_text(source_text, encoding="utf-8")
-        changed_paths.append(entry.relative_path)
+        legacy_changed_paths.append(entry.relative_path)
 
     operations = _snapshot_legacy_operations(workspace_root)
     _write_install_state(
@@ -2222,7 +2193,7 @@ def run_ecc_workspace_repair(
         legacy_mode=True,
         operations=operations,
     )
-    changed_paths.append(".codex/ecc-install-state.json")
+    legacy_changed_paths.append(".codex/ecc-install-state.json")
     resulting_state = _load_install_state(workspace_root)
     doctor = _doctor_for_workspace(
         workspace_root,
@@ -2238,6 +2209,6 @@ def run_ecc_workspace_repair(
         baseline_path=str(source_root),
         profile=None,
         selected_modules=(_PROJECT_CODEX_INSTALL_MODULE_ID,),
-        changed_paths=_unique_ordered(changed_paths),
+        changed_paths=_unique_ordered(legacy_changed_paths),
         doctor=doctor,
     )

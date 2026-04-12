@@ -7,7 +7,7 @@ import re
 from collections import defaultdict
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 
 from openzues.database import Database, utcnow
 from openzues.schemas import (
@@ -245,8 +245,12 @@ def _build_delegation_brief(
     has_workspace = bool(mission.get("project_id") is not None or mission.get("cwd"))
     in_progress = bool(mission.get("in_progress"))
     drifted = scope is not None and scope.drift_level in {"drifting", "critical"}
-    activation = "after_rebuild" if recovery_mode or turns_started <= 1 or drifted else "ready_now"
-    confidence = "high" if has_workspace and bool(mission.get("run_verification")) else "medium"
+    activation: Literal["disabled", "after_rebuild", "ready_now"] = (
+        "after_rebuild" if recovery_mode or turns_started <= 1 or drifted else "ready_now"
+    )
+    confidence: Literal["low", "medium", "high"] = (
+        "high" if has_workspace and bool(mission.get("run_verification")) else "medium"
+    )
     if command_count == 0 and turns_started <= 1:
         confidence = "low"
 
@@ -422,6 +426,12 @@ def _build_delegation_brief(
         )
 
     if needs_brainstorm:
+        mode: Literal[
+            "single_lane",
+            "conductor_coder_auditor",
+            "conductor_architect_planner_coder_auditor",
+            "conductor_brainstorm_architect_planner_coder_auditor",
+        ] = "conductor_brainstorm_architect_planner_coder_auditor"
         mode = "conductor_brainstorm_architect_planner_coder_auditor"
         summary = (
             "Zues wants the main lane to conduct while a brainstormer opens option space, an "
@@ -430,11 +440,13 @@ def _build_delegation_brief(
         )
     elif needs_architect or needs_planner:
         mode = "conductor_architect_planner_coder_auditor"
+        mode = "conductor_architect_planner_coder_auditor"
         summary = (
             "Zues wants the main lane to conduct while architecture, planning, coding, and "
             "auditing stay explicitly split."
         )
     else:
+        mode = "conductor_coder_auditor"
         mode = "conductor_coder_auditor"
         summary = (
             "Zues wants the main lane to conduct while a coder lands the slice and an auditor "

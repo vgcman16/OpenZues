@@ -147,6 +147,7 @@ class RecallService:
     ) -> DashboardRecallView:
         bounded_limit = max(1, min(limit, 12))
         missions = await self.missions.list_views()
+        query_text = (query or "").strip()
         preferred_memory_provider, _preferred_executor = await load_saved_runtime_preferences(
             self.database
         )
@@ -158,8 +159,8 @@ class RecallService:
         ]
         if not scoped:
             return DashboardRecallView(
-                mode="query" if query and query.strip() else "recent",
-                query=query.strip() if query else None,
+                mode="query" if query_text else "recent",
+                query=query_text or None,
                 headline="No durable recall is available yet",
                 summary=(
                     "Once missions start leaving checkpoints, continuity packets, or proof "
@@ -202,8 +203,8 @@ class RecallService:
         if not items:
             return DashboardRecallView(
                 mode="query",
-                query=query.strip(),
-                headline=f'No saved recall matched "{query.strip()}"',
+                query=query_text,
+                headline=f'No saved recall matched "{query_text}"',
                 summary=(
                     "Try broader keywords, a project filter, or open the recent recall deck to "
                     f"reload the latest durable handoffs. Preferred provider: "
@@ -216,10 +217,10 @@ class RecallService:
             )
         return DashboardRecallView(
             mode="query",
-            query=query.strip(),
+            query=query_text,
             headline=f"Recall found {len(items)} match{'es' if len(items) != 1 else ''}",
             summary=(
-                f'Saved mission memory matched "{query.strip()}". These results are built from '
+                f'Saved mission memory matched "{query_text}". These results are built from '
                 "persisted checkpoints, summaries, and proof handoffs. Preferred provider: "
                 f"{preferred_memory_label}."
             ),

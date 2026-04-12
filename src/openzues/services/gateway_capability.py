@@ -25,6 +25,7 @@ from openzues.schemas import (
     MissionView,
     ProjectView,
     RemoteRequestView,
+    SignalLevel,
 )
 from openzues.services.access import AccessService, build_access_posture
 from openzues.services.continuity import build_continuity_packet
@@ -442,17 +443,17 @@ def _build_memory_roundtrip_freshness(
             successful.append((signal["at"], scope_label, signal.get("detail")))
             continue
         status = str(signal["status"] or "").strip() or "unreported"
-        detail = f"{scope_label} roundtrip status is '{status}'."
+        warning_detail = f"{scope_label} roundtrip status is '{status}'."
         if signal.get("detail"):
-            detail += f" {signal['detail']}"
+            warning_detail += f" {signal['detail']}"
         if signal.get("at_text") and str(signal["at_text"]).lower() not in {
             "n/a",
             "na",
             "none",
             "unknown",
         }:
-            detail += f" Reported time: {signal['at_text']}."
-        warnings.append(detail)
+            warning_detail += f" Reported time: {signal['at_text']}."
+        warnings.append(warning_detail)
 
     if successful:
         successful.sort(key=lambda item: item[0], reverse=True)
@@ -462,11 +463,11 @@ def _build_memory_roundtrip_freshness(
         if len(successful) > 1:
             summary += f" {len(successful)} memory scope(s) have explicit readback proof."
         evidence: list[str] = []
-        for at, scope_label, detail in successful[:3]:
+        for at, scope_label, proof_detail in successful[:3]:
             timestamp = at.astimezone(UTC).isoformat().replace("+00:00", "Z")
             line = f"{scope_label} roundtrip verified at {timestamp}."
-            if detail:
-                line += f" {detail}"
+            if proof_detail:
+                line += f" {proof_detail}"
             evidence.append(line)
         return {
             "status": "ready",
@@ -1141,7 +1142,7 @@ class GatewayCapabilityService:
 
         status_by_instance: dict[int, list[dict[str, Any]]] = {}
         for instance, response in zip(connected_instances, responses, strict=False):
-            if isinstance(response, Exception):
+            if isinstance(response, BaseException):
                 logger.warning(
                     "Gateway capability could not load MCP server status for instance %s: %s",
                     instance.id,
@@ -1149,7 +1150,7 @@ class GatewayCapabilityService:
                 )
                 status_by_instance[instance.id] = []
                 continue
-            status_by_instance[instance.id] = response
+            status_by_instance[instance.id] = response if isinstance(response, list) else []
         return status_by_instance
 
     def _build_lane_health(
@@ -1169,6 +1170,7 @@ class GatewayCapabilityService:
             plugin_count = len(instance.plugins)
             mcp_server_count = len(instance.mcp_servers)
             warnings: list[str] = []
+            level: SignalLevel
 
             if not instance.connected:
                 level = "warn"
@@ -1473,6 +1475,7 @@ class GatewayCapabilityService:
                 "tool catalog before relying on automatic memory maintenance."
             )
 
+        memory_status: SignalLevel
         if tracked_memory_ready and matched_enabled_memory_task_count and memory_tool_ready_proofs:
             memory_status = "ready"
             memory_summary = (
@@ -1768,7 +1771,7 @@ class GatewayCapabilityService:
         connected_lane_health: GatewayCapabilityConnectedLaneHealthView,
         inventory: GatewayCapabilityInventoryView,
         approval_posture: GatewayCapabilityApprovalPostureView,
-    ) -> str:
+    ) -> SignalLevel:
         if gateway.status == "degraded" or diagnostics.fail_count:
             return "critical"
         if (
@@ -1785,7 +1788,7 @@ class GatewayCapabilityService:
             return "ready"
         return "info"
 
-    def _build_headline(self, *, level: str, gateway: GatewayBootstrapView) -> str:
+    def _build_headline(self, *, level: SignalLevel, gateway: GatewayBootstrapView) -> str:
         if level == "critical":
             return "Gateway capability needs repair"
         if level == "warn":
