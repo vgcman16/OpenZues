@@ -18,6 +18,15 @@ from openzues.schemas import (
 from openzues.services.access import AccessService
 from openzues.services.gateway_bootstrap import GatewayBootstrapService
 from openzues.services.manager import RuntimeManager
+from openzues.services.memory_protocol import (
+    MEMPALACE_MEMORY_TASK_NAME,
+    MEMPALACE_MEMORY_TASK_SUMMARY,
+    build_mempalace_maintenance_objective,
+    is_mempalace_automation_task,
+    is_mempalace_integration,
+    mempalace_bootstrap_defaults,
+    mempalace_maintenance_cadence_minutes,
+)
 from openzues.services.ops_mesh import OpsMeshService
 from openzues.services.setup import SetupService
 
@@ -71,12 +80,14 @@ class OnboardingService:
         self.setup = setup
 
     async def bootstrap(self, payload: OnboardingBootstrapCreate) -> OnboardingBootstrapResultView:
+        payload = self._apply_integration_presets(payload)
         project_path = _normalize_path(payload.project_path)
         warnings: list[str] = []
         await self.setup.save_wizard_session(
             {
                 "mode": payload.setup_mode,
                 "flow": payload.setup_flow,
+                "use_mempalace": payload.use_mempalace,
                 "instance_mode": payload.instance_mode,
                 "instance_id": payload.instance_id,
                 "instance_name": payload.instance_name,
@@ -90,6 +101,7 @@ class OnboardingService:
                 "model": payload.model,
                 "max_turns": payload.max_turns,
                 "objective_template": payload.objective_template,
+                "toolsets": payload.toolsets,
             }
         )
 
@@ -113,6 +125,13 @@ class OnboardingService:
             project_id=project.id,
             cwd=project_path,
         )
+        memory_task_blueprint = await self._resolve_memory_task_blueprint(
+            payload,
+            instance_id=instance.id if instance is not None else None,
+            project_id=project.id,
+            project_label=project.label,
+            cwd=project_path,
+        )
         await self.gateway_bootstrap.save_from_onboarding(
             setup_mode=payload.setup_mode,
             setup_flow=payload.setup_flow,
@@ -133,6 +152,7 @@ class OnboardingService:
             auto_recover_limit=payload.auto_recover_limit,
             reflex_cooldown_seconds=payload.reflex_cooldown_seconds,
             allow_failover=payload.allow_failover,
+            toolsets=payload.toolsets,
         )
         await self.setup.record_bootstrap_footprint(
             instance=instance,
@@ -143,6 +163,7 @@ class OnboardingService:
             integration=integration,
             skill_pin=skill_pin,
             task_blueprint=task_blueprint,
+            memory_task_blueprint=memory_task_blueprint,
         )
 
         if payload.setup_mode == "remote" and instance is None:
@@ -191,6 +212,8 @@ class OnboardingService:
             configured_parts.append("integration inventory")
         if skill_pin is not None:
             configured_parts.append("project skill pin")
+        if memory_task_blueprint is not None:
+            configured_parts.append("memory upkeep loop")
 
         headline = (
             "Remote setup spine is staged"
@@ -230,10 +253,42 @@ class OnboardingService:
             integration=integration,
             skill_pin=skill_pin,
             task_blueprint=task_blueprint,
+            memory_task_blueprint=memory_task_blueprint,
             api_key=api_key,
             mission_draft=mission_draft,
             launch_route=launch_route,
         )
+
+    def _apply_integration_presets(
+        self, payload: OnboardingBootstrapCreate
+    ) -> OnboardingBootstrapCreate:
+        if not payload.use_mempalace:
+            return payload
+        defaults = mempalace_bootstrap_defaults()
+        notes = str(payload.integration_notes or "").strip() or defaults["integration_notes"]
+        auth_scheme = str(payload.integration_auth_scheme or "").strip().lower()
+        if auth_scheme in {"", "token"}:
+            auth_scheme = defaults["integration_auth_scheme"]
+        return payload.model_copy(
+            update={
+                "integration_name": defaults["integration_name"],
+                "integration_kind": defaults["integration_kind"],
+                "integration_base_url": defaults["integration_base_url"],
+                "integration_auth_scheme": auth_scheme,
+                "integration_notes": notes,
+            }
+        )
+
+    def _should_stage_mempalace_memory(self, payload: OnboardingBootstrapCreate) -> bool:
+        if payload.use_mempalace:
+            return True
+        integration = {
+            "name": payload.integration_name,
+            "kind": payload.integration_kind,
+            "base_url": payload.integration_base_url,
+            "notes": payload.integration_notes,
+        }
+        return is_mempalace_integration(integration)
 
     async def _resolve_bootstrap_instance(
         self,
@@ -674,6 +729,7 @@ class OnboardingService:
             auto_recover_limit=payload.auto_recover_limit,
             reflex_cooldown_seconds=payload.reflex_cooldown_seconds,
             allow_failover=payload.allow_failover,
+            toolsets=payload.toolsets,
             enabled=payload.enabled,
         )
         if existing is None:
@@ -715,6 +771,7 @@ class OnboardingService:
             auto_recover_limit=payload.auto_recover_limit,
             reflex_cooldown_seconds=payload.reflex_cooldown_seconds,
             allow_failover=payload.allow_failover,
+            toolsets=payload.toolsets,
         )
         return _resource(
             kind="task_blueprint",
@@ -722,4 +779,114 @@ class OnboardingService:
             label=str(existing["name"]),
             created=False,
             detail=f"Updated the recurring task to run every {payload.cadence_minutes} minutes.",
+        )
+
+    async def _resolve_memory_task_blueprint(
+        self,
+        payload: OnboardingBootstrapCreate,
+        *,
+        instance_id: int | None,
+        project_id: int,
+        project_label: str,
+        cwd: str,
+    ) -> OnboardingBootstrapResourceView | None:
+        if not self._should_stage_mempalace_memory(payload):
+            return None
+
+        cadence_minutes = mempalace_maintenance_cadence_minutes(payload.cadence_minutes)
+        max_turns = min(payload.max_turns or 2, 2)
+        objective_template = build_mempalace_maintenance_objective(
+            project_label=project_label,
+            project_path=cwd,
+        )
+        existing_tasks = await self.database.list_task_blueprints()
+        existing = next(
+            (
+                task
+                for task in existing_tasks
+                if int(task.get("project_id") or -1) == project_id
+                and is_mempalace_automation_task(task)
+            ),
+            None,
+        )
+
+        task_payload = TaskBlueprintCreate(
+            name=MEMPALACE_MEMORY_TASK_NAME,
+            summary=MEMPALACE_MEMORY_TASK_SUMMARY,
+            objective_template=objective_template,
+            instance_id=instance_id,
+            project_id=project_id,
+            cadence_minutes=cadence_minutes,
+            run_until_complete=False,
+            continuation_cooldown_minutes=10,
+            completion_marker=None,
+            cwd=cwd,
+            model=payload.model,
+            reasoning_effort=None,
+            collaboration_mode=None,
+            max_turns=max_turns,
+            use_builtin_agents=False,
+            run_verification=False,
+            auto_commit=False,
+            pause_on_approval=payload.pause_on_approval,
+            allow_auto_reflexes=False,
+            auto_recover=False,
+            auto_recover_limit=0,
+            reflex_cooldown_seconds=payload.reflex_cooldown_seconds,
+            allow_failover=payload.allow_failover,
+            toolsets=["safe", "memory", "session_search"],
+            enabled=payload.enabled,
+        )
+        cadence_detail = (
+            f"Scheduled every {cadence_minutes // 60}h to refresh durable memory."
+            if cadence_minutes % 60 == 0
+            else f"Scheduled every {cadence_minutes}m to refresh durable memory."
+        )
+        if existing is None:
+            created = await self.ops_mesh.create_task_blueprint(task_payload)
+            return _resource(
+                kind="task_blueprint",
+                identifier=created.id,
+                label=created.name,
+                created=True,
+                detail=cadence_detail,
+            )
+
+        await self.database.update_task_blueprint(
+            int(existing["id"]),
+            name=MEMPALACE_MEMORY_TASK_NAME,
+            summary=MEMPALACE_MEMORY_TASK_SUMMARY,
+            project_id=project_id,
+            instance_id=instance_id,
+            cadence_minutes=cadence_minutes,
+            enabled=int(payload.enabled),
+        )
+        await self.database.update_task_blueprint_payload(
+            int(existing["id"]),
+            objective_template=objective_template,
+            run_until_complete=False,
+            continuation_cooldown_minutes=10,
+            completion_marker=None,
+            cwd=cwd,
+            model=payload.model,
+            reasoning_effort=None,
+            collaboration_mode=None,
+            max_turns=max_turns,
+            use_builtin_agents=False,
+            run_verification=False,
+            auto_commit=False,
+            pause_on_approval=payload.pause_on_approval,
+            allow_auto_reflexes=False,
+            auto_recover=False,
+            auto_recover_limit=0,
+            reflex_cooldown_seconds=payload.reflex_cooldown_seconds,
+            allow_failover=payload.allow_failover,
+            toolsets=["safe", "memory", "session_search"],
+        )
+        return _resource(
+            kind="task_blueprint",
+            identifier=int(existing["id"]),
+            label=MEMPALACE_MEMORY_TASK_NAME,
+            created=False,
+            detail=f"Updated the MemPalace upkeep loop. {cadence_detail}",
         )

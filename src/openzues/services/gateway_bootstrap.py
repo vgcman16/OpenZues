@@ -18,6 +18,12 @@ from openzues.schemas import (
     TeamView,
 )
 from openzues.services.access import AccessService
+from openzues.services.hermes_runtime_profile import (
+    executor_label,
+    load_saved_runtime_preferences,
+    memory_provider_label,
+)
+from openzues.services.hermes_toolsets import build_hermes_tool_policy, infer_hermes_toolsets
 from openzues.services.launch_routing import LaunchRoutingService
 from openzues.services.manager import RuntimeManager
 
@@ -99,7 +105,7 @@ class GatewayBootstrapService:
         self.access = access
         self.launch_routing = launch_routing
 
-    async def get_view(self) -> GatewayBootstrapView:
+    async def get_view(self, *, allow_backfill: bool = True) -> GatewayBootstrapView:
         row = await self.database.get_gateway_bootstrap()
         instances = {instance.id: instance for instance in await self.manager.list_views()}
         teams = {team.id: team for team in await self.access.list_team_views()}
@@ -129,7 +135,7 @@ class GatewayBootstrapService:
 
         if row is None:
             setup_footprint = await self.database.get_setup_footprint()
-            if setup_footprint is None:
+            if allow_backfill and setup_footprint is None:
                 if await self._backfill_from_existing(
                     instances=instances,
                     projects=projects,
@@ -166,6 +172,8 @@ class GatewayBootstrapService:
                 auto_recover_limit=2,
                 reflex_cooldown_seconds=900,
                 allow_failover=True,
+                toolsets=[],
+                tool_policy=build_hermes_tool_policy([], setup_mode="local"),
                 launch_defaults_summary=(
                     "Verification on, built-in agents on, approvals paused, and auto-commit off."
                 ),
@@ -194,6 +202,17 @@ class GatewayBootstrapService:
         operator = operators.get(int(row["operator_id"])) if row["operator_id"] else None
         task = tasks.get(int(row["task_blueprint_id"])) if row["task_blueprint_id"] else None
         default_cwd = _normalize_path(row.get("default_cwd"))
+        toolsets = infer_hermes_toolsets(
+            str(getattr(task, "objective_template", "") or ""),
+            explicit_toolsets=row.get("toolsets") or (task.toolsets if task is not None else []),
+            project_label=project.label if project is not None else None,
+            project_path=project.path if project is not None else default_cwd,
+            setup_mode=setup_mode,
+            use_builtin_agents=bool(row["use_builtin_agents"]),
+            run_verification=bool(row["run_verification"]),
+            cadence_minutes=task.cadence_minutes if task is not None else None,
+        )
+        tool_policy = build_hermes_tool_policy(toolsets, setup_mode=setup_mode)
         warnings: list[str] = []
         broken_references = False
 
@@ -281,7 +300,14 @@ class GatewayBootstrapService:
                     "still needs to be armed."
                 )
 
-        launch_defaults_summary = self._summarize_launch_defaults(row)
+        preferred_memory_provider, preferred_executor = await load_saved_runtime_preferences(
+            self.database
+        )
+        launch_defaults_summary = self._summarize_launch_defaults(
+            row,
+            preferred_memory_provider=preferred_memory_provider,
+            preferred_executor=preferred_executor,
+        )
         launch_route = (
             await self.launch_routing.describe(task=task, persist=False)
             if self.launch_routing is not None
@@ -312,6 +338,8 @@ class GatewayBootstrapService:
             auto_recover_limit=int(row["auto_recover_limit"]),
             reflex_cooldown_seconds=int(row["reflex_cooldown_seconds"]),
             allow_failover=bool(row["allow_failover"]),
+            toolsets=toolsets,
+            tool_policy=tool_policy,
             launch_defaults_summary=launch_defaults_summary,
             launch_route=launch_route,
         )
@@ -331,6 +359,21 @@ class GatewayBootstrapService:
             setup_flow = "advanced"
         route_binding_mode = payload.route_binding_mode or self._default_route_binding_mode(
             setup_mode
+        )
+        toolsets = infer_hermes_toolsets(
+            str(task["objective_template"]) if task is not None else "",
+            explicit_toolsets=payload.toolsets
+            or (task.get("toolsets") if task is not None else []),
+            project_label=str(project["label"]) if project is not None else None,
+            project_path=(str(project["path"]) if project is not None else payload.default_cwd),
+            setup_mode=setup_mode,
+            use_builtin_agents=payload.use_builtin_agents,
+            run_verification=payload.run_verification,
+            cadence_minutes=(
+                int(task["cadence_minutes"])
+                if task is not None and task.get("cadence_minutes") is not None
+                else None
+            ),
         )
 
         default_cwd = _normalize_path(payload.default_cwd)
@@ -363,8 +406,9 @@ class GatewayBootstrapService:
             auto_recover_limit=payload.auto_recover_limit,
             reflex_cooldown_seconds=payload.reflex_cooldown_seconds,
             allow_failover=payload.allow_failover,
+            toolsets=toolsets,
         )
-        return await self.get_view()
+        return await self.get_view(allow_backfill=False)
 
     async def save_from_onboarding(
         self,
@@ -389,6 +433,7 @@ class GatewayBootstrapService:
         auto_recover_limit: int,
         reflex_cooldown_seconds: int,
         allow_failover: bool,
+        toolsets: list[str] | None = None,
     ) -> GatewayBootstrapView:
         return await self.save(
             GatewayBootstrapUpdate(
@@ -412,6 +457,7 @@ class GatewayBootstrapService:
                 auto_recover_limit=auto_recover_limit,
                 reflex_cooldown_seconds=reflex_cooldown_seconds,
                 allow_failover=allow_failover,
+                toolsets=toolsets or [],
             )
         )
 
@@ -472,20 +518,16 @@ class GatewayBootstrapService:
         if not tasks or not operators:
             return False
 
-        ordered_tasks = sorted(
-            tasks.values(),
-            key=lambda task: (
-                task.enabled is False,
-                task.cadence_minutes is None,
-                task.id,
-            ),
-        )
-        task = ordered_tasks[0]
-        instance = (
-            instances.get(task.instance_id)
-            if task.instance_id is not None
-            else next(iter(instances.values()), None)
-        )
+        enabled_tasks = [task for task in tasks.values() if task.enabled]
+        if len(enabled_tasks) != 1:
+            return False
+        task = enabled_tasks[0]
+        if task.instance_id is not None:
+            instance = instances.get(task.instance_id)
+        else:
+            if len(instances) != 1:
+                return False
+            instance = next(iter(instances.values()), None)
         project = (
             projects.get(task.project_id)
             if task.project_id is not None
@@ -527,6 +569,7 @@ class GatewayBootstrapService:
             auto_recover_limit=task.auto_recover_limit,
             reflex_cooldown_seconds=task.reflex_cooldown_seconds,
             allow_failover=task.allow_failover,
+            toolsets=task.toolsets,
         )
         return True
 
@@ -548,15 +591,29 @@ class GatewayBootstrapService:
             return "saved_lane"
         return self._default_route_binding_mode(setup_mode)
 
-    def _summarize_launch_defaults(self, row: dict) -> str:
+    def _summarize_launch_defaults(
+        self,
+        row: dict,
+        *,
+        preferred_memory_provider: str | None = None,
+        preferred_executor: str | None = None,
+    ) -> str:
         clauses = [
             f"{str(row.get('setup_mode') or 'local')} mode",
             f"{str(row.get('setup_flow') or 'quickstart')} flow",
+        ]
+        if preferred_memory_provider:
+            clauses.append(f"memory {memory_provider_label(preferred_memory_provider)}")
+        if preferred_executor:
+            clauses.append(f"executor {executor_label(preferred_executor)}")
+        clauses.extend(
+            [
             "verification on" if bool(row["run_verification"]) else "verification off",
             "built-in agents on" if bool(row["use_builtin_agents"]) else "built-in agents off",
             "auto-commit on" if bool(row["auto_commit"]) else "auto-commit off",
             "pause on approvals" if bool(row["pause_on_approval"]) else "approval pause disabled",
-        ]
+            ]
+        )
         if bool(row["auto_recover"]):
             clauses.append(f"auto-recover x{int(row['auto_recover_limit'])}")
         if bool(row["allow_failover"]):
@@ -564,4 +621,15 @@ class GatewayBootstrapService:
         max_turns = row.get("max_turns")
         if max_turns is not None:
             clauses.append(f"max {int(max_turns)} turns")
-        return ", ".join(clauses[:6]) + "."
+        toolsets = [
+            str(toolset).strip()
+            for toolset in row.get("toolsets", [])
+            if str(toolset).strip()
+        ]
+        if toolsets:
+            preview = ", ".join(toolsets[:4])
+            if len(toolsets) > 4:
+                preview += f", +{len(toolsets) - 4} more"
+            clauses.append(f"Hermes toolsets {preview}")
+        visible_clause_count = 9 if preferred_memory_provider or preferred_executor else 7
+        return ", ".join(clauses[:visible_clause_count]) + "."

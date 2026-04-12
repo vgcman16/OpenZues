@@ -13,6 +13,11 @@ from openzues.schemas import (
     MissionView,
     ProjectView,
 )
+from openzues.services.hermes_runtime_profile import (
+    DEFAULT_HERMES_EXECUTOR,
+    DEFAULT_HERMES_MEMORY_PROVIDER,
+    build_runtime_profile_fields,
+)
 
 
 def _parse_timestamp(value: str | None) -> datetime | None:
@@ -211,12 +216,18 @@ def build_dream_deck(
     projects: list[ProjectView],
     *,
     doctrines: list[DashboardDoctrineView] | None = None,
+    preferred_memory_provider: str = DEFAULT_HERMES_MEMORY_PROVIDER,
+    preferred_executor: str = DEFAULT_HERMES_EXECUTOR,
 ) -> DashboardDreamDeckView:
     doctrine_by_project = {
         doctrine.project_id: doctrine
         for doctrine in doctrines or []
         if doctrine.project_id is not None
     }
+    runtime_profile_fields = build_runtime_profile_fields(
+        preferred_memory_provider=preferred_memory_provider,
+        preferred_executor=preferred_executor,
+    )
     dreams: list[DashboardDreamView] = []
     status_rank = {"fresh": 0, "ready": 1, "forming": 2}
 
@@ -293,6 +304,7 @@ def build_dream_deck(
             reflex_cooldown_seconds=900,
             allow_failover=False,
             start_immediately=False,
+            **runtime_profile_fields,
         )
         dreams.append(
             DashboardDreamView(

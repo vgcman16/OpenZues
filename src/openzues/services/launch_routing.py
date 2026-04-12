@@ -13,6 +13,12 @@ from openzues.schemas import (
     LaunchRouteView,
     TaskBlueprintView,
 )
+from openzues.services.hermes_runtime_profile import (
+    build_executor_launch_assessment,
+    executor_candidate_rank,
+    executor_candidate_supported,
+    load_saved_runtime_preferences,
+)
 from openzues.services.manager import RuntimeManager
 
 
@@ -20,10 +26,7 @@ def _normalize_path(value: str | None) -> str | None:
     if not value:
         return None
     return (
-        str(Path(value).expanduser().resolve(strict=False))
-        .replace("\\", "/")
-        .rstrip("/")
-        .lower()
+        str(Path(value).expanduser().resolve(strict=False)).replace("\\", "/").rstrip("/").lower()
     )
 
 
@@ -37,6 +40,13 @@ def _path_matches_project(candidate: str | None, project_path: str | None) -> bo
         or candidate_norm.startswith(f"{project_norm}/")
         or project_norm.startswith(f"{candidate_norm}/")
     )
+
+
+def _path_matches_any_project(
+    candidate: str | None,
+    project_paths: tuple[str, ...],
+) -> bool:
+    return any(_path_matches_project(candidate, project_path) for project_path in project_paths)
 
 
 def _instance_resource(
@@ -79,6 +89,9 @@ class LaunchRoutingService:
         persist: bool = True,
     ) -> LaunchRouteView:
         gateway = await self.database.get_gateway_bootstrap()
+        _preferred_memory_provider, preferred_executor = await load_saved_runtime_preferences(
+            self.database
+        )
         instances = await self.manager.list_views()
         instances_by_id = {instance.id: instance for instance in instances}
 
@@ -113,6 +126,22 @@ class LaunchRoutingService:
                 str(gateway.get("default_cwd"))
                 if gateway is not None and gateway.get("default_cwd") is not None
                 else None
+            )
+        )
+        workspace_targets = tuple(
+            dict.fromkeys(
+                value
+                for value in (
+                    task.cwd if task is not None else None,
+                    project_path,
+                    (
+                        str(gateway.get("default_cwd"))
+                        if gateway is not None and gateway.get("default_cwd") is not None
+                        else None
+                    ),
+                    target_cwd,
+                )
+                if value
             )
         )
         operator_id = (
@@ -157,18 +186,38 @@ class LaunchRoutingService:
         candidate_instances = sorted(
             instances,
             key=lambda instance: (
+                0
+                if executor_candidate_supported(
+                    preferred_executor,
+                    instance=instance,
+                    target_cwd=target_cwd,
+                )
+                else 1,
+                *executor_candidate_rank(
+                    preferred_executor,
+                    instance=instance,
+                    target_cwd=target_cwd,
+                ),
                 (
                     0
-                    if last_route_instance_id is not None
-                    and instance.id == last_route_instance_id
+                    if last_route_instance_id is not None and instance.id == last_route_instance_id
                     else 1
                 ),
-                0 if _path_matches_project(instance.cwd, target_cwd) else 1,
+                0 if _path_matches_any_project(instance.cwd, workspace_targets) else 1,
                 0 if instance.connected else 1,
                 len(instance.unresolved_requests),
                 instance.id,
             ),
         )
+        eligible_candidate_instances = [
+            instance
+            for instance in candidate_instances
+            if executor_candidate_supported(
+                preferred_executor,
+                instance=instance,
+                target_cwd=target_cwd,
+            )
+        ]
 
         if route_binding_mode == "task_lane":
             matched_by = "task.instance"
@@ -222,7 +271,12 @@ class LaunchRoutingService:
             if (
                 last_route_instance is not None
                 and last_route_instance.connected
-                and _path_matches_project(last_route_instance.cwd, target_cwd)
+                and executor_candidate_supported(
+                    preferred_executor,
+                    instance=last_route_instance,
+                    target_cwd=target_cwd,
+                )
+                and _path_matches_any_project(last_route_instance.cwd, workspace_targets)
             ):
                 matched_by = "workspace.last_route"
                 resolved_instance = last_route_instance
@@ -230,9 +284,9 @@ class LaunchRoutingService:
                 project_match = next(
                     (
                         instance
-                        for instance in candidate_instances
+                        for instance in (eligible_candidate_instances or candidate_instances)
                         if instance.connected
-                        and _path_matches_project(instance.cwd, target_cwd)
+                        and _path_matches_any_project(instance.cwd, workspace_targets)
                     ),
                     None,
                 )
@@ -241,15 +295,21 @@ class LaunchRoutingService:
                     resolved_instance = project_match
                 else:
                     connected_instance = next(
-                        (instance for instance in candidate_instances if instance.connected),
+                        (
+                            instance
+                            for instance in (eligible_candidate_instances or candidate_instances)
+                            if instance.connected
+                        ),
                         None,
                     )
                     if connected_instance is not None:
                         matched_by = "workspace.connected_lane"
                         resolved_instance = connected_instance
-                    elif not strict_remote and candidate_instances:
+                    elif not strict_remote and (
+                        eligible_candidate_instances or candidate_instances
+                    ):
                         matched_by = "workspace.saved_lane"
-                        resolved_instance = candidate_instances[0]
+                        resolved_instance = (eligible_candidate_instances or candidate_instances)[0]
 
             if resolved_instance is None:
                 status = "staged"
@@ -268,8 +328,7 @@ class LaunchRoutingService:
                     )
                 elif matched_by == "workspace.project_lane":
                     summary = (
-                        "Launches prefer a connected lane already attached to the "
-                        "saved workspace."
+                        "Launches prefer a connected lane already attached to the saved workspace."
                     )
                 else:
                     summary = (
@@ -285,6 +344,24 @@ class LaunchRoutingService:
                 )
                 warnings.append("Launch continuity is saved, but the chosen lane is not connected.")
 
+        executor_assessment = build_executor_launch_assessment(
+            preferred_executor,
+            instance=resolved_instance,
+            instances=instances,
+            target_cwd=target_cwd,
+        )
+        warnings.extend(executor_assessment.warnings)
+        if executor_assessment.status == "repair":
+            status = "repair"
+            headline = f"{executor_assessment.summary.split('.', 1)[0]}"
+            summary = executor_assessment.summary
+        elif executor_assessment.status == "staged" and status == "ready":
+            status = "staged"
+            headline = "Launch route is staged"
+            summary = executor_assessment.summary
+        elif executor_assessment.summary:
+            summary = f"{summary} {executor_assessment.summary}"
+
         if (
             persist
             and gateway is not None
@@ -298,6 +375,12 @@ class LaunchRoutingService:
                 last_route_resolved_at=utcnow(),
             )
             gateway = await self.database.get_gateway_bootstrap()
+            if project_id is not None:
+                matched_by = "workspace.last_route"
+                summary = (
+                    "Launches will stick to the last healthy workspace lane "
+                    "while it remains available."
+                )
 
         route_last_resolved_at = (
             str(gateway.get("last_route_resolved_at"))
@@ -312,7 +395,7 @@ class LaunchRoutingService:
                     "Last successful workspace lane."
                     if last_route_instance_id is not None and instance.id == last_route_instance_id
                     else "Workspace match."
-                    if _path_matches_project(instance.cwd, target_cwd)
+                    if _path_matches_any_project(instance.cwd, workspace_targets)
                     else "Connected lane."
                     if instance.connected
                     else "Saved lane."

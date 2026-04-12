@@ -79,6 +79,7 @@ class SetupService:
         integration: OnboardingBootstrapResourceView | None,
         skill_pin: OnboardingBootstrapResourceView | None,
         task_blueprint: OnboardingBootstrapResourceView,
+        memory_task_blueprint: OnboardingBootstrapResourceView | None,
     ) -> None:
         await self.database.upsert_setup_footprint(
             {
@@ -90,6 +91,7 @@ class SetupService:
                 "integration": _footprint_resource(integration),
                 "skill_pin": _footprint_resource(skill_pin),
                 "task_blueprint": _footprint_resource(task_blueprint),
+                "memory_task_blueprint": _footprint_resource(memory_task_blueprint),
                 "updated_at": utcnow(),
             }
         )
@@ -171,6 +173,7 @@ class SetupService:
             "warnings": warnings,
             "mode": mode,
             "flow": flow,
+            "use_mempalace": bool(stored.get("use_mempalace", False)),
             "recommended_mode": recommended_mode,
             "recommended_flow": recommended_flow,
             "instance_mode": instance_mode,
@@ -187,6 +190,7 @@ class SetupService:
             "max_turns": stored.get("max_turns", 4),
             "objective_template": stored.get("objective_template")
             or DEFAULT_SETUP_OBJECTIVE_TEMPLATE,
+            "toolsets": stored.get("toolsets") or gateway.toolsets,
             "local_probe": local_probe,
             "remote_probe": remote_probe,
             "updated_at": updated_at,
@@ -700,8 +704,9 @@ class SetupService:
         preserved: list[str],
         warnings: list[str],
     ) -> None:
-        task = footprint.task_blueprint
-        if task is not None and task.created:
+        for task in [footprint.task_blueprint, footprint.memory_task_blueprint]:
+            if task is None or not task.created:
+                continue
             existing = await self.database.get_task_blueprint(task.id)
             if existing is not None:
                 await self.database.delete_task_blueprint(task.id)

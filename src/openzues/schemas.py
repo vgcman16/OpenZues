@@ -44,6 +44,7 @@ LaunchKind = Literal[
     "checkpoint_hardener",
     "recovery_run",
     "shadow_scout",
+    "gateway_repair",
 ]
 ReflexKind = Literal[
     "checkpoint_now",
@@ -74,11 +75,16 @@ OperatorRole = Literal["owner", "admin", "operator", "viewer"]
 RemoteRequestKind = Literal["mission.create", "task.trigger"]
 RemoteRequestStatus = Literal["accepted", "completed", "failed", "denied", "dry_run"]
 BootstrapInstanceMode = Literal["quick_connect_desktop", "create_desktop", "existing"]
+HermesToolPolicyEnforcement = Literal["advisory"]
+HermesParityStatus = Literal["ready", "partial", "advisory", "missing"]
+HermesPromotionStatus = Literal["pending", "applied", "already_armed"]
+HermesPromotionTargetKind = Literal["gateway_bootstrap", "task_blueprint"]
 InterferenceKind = Literal[
     "lane_braid",
     "checkpoint_eclipse",
     "task_overlap",
     "remote_echo",
+    "gateway_posture",
 ]
 ControlChatActionKind = Literal[
     "observe",
@@ -142,6 +148,107 @@ class ProjectCreate(BaseModel):
     label: str | None = None
 
 
+class ProjectHarnessCheckView(BaseModel):
+    key: str
+    label: str
+    status: DiagnosticStatus
+    detail: str
+    expected: list[str] = Field(default_factory=list)
+    observed: list[str] = Field(default_factory=list)
+    missing: list[str] = Field(default_factory=list)
+
+
+class ProjectHarnessRepairActionView(BaseModel):
+    title: str
+    detail: str
+    command: str | None = None
+
+
+class ProjectHarnessDoctorView(BaseModel):
+    level: SignalLevel = "info"
+    headline: str
+    summary: str
+    baseline_path: str | None = None
+    install_state_paths: list[str] = Field(default_factory=list)
+    expected_surface_paths: list[str] = Field(default_factory=list)
+    missing_surface_paths: list[str] = Field(default_factory=list)
+    expected_mcp_servers: list[str] = Field(default_factory=list)
+    missing_mcp_servers: list[str] = Field(default_factory=list)
+    expected_codex_roles: list[str] = Field(default_factory=list)
+    missing_codex_roles: list[str] = Field(default_factory=list)
+    drifted_paths: list[str] = Field(default_factory=list)
+    drift_notes: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    checks: list[ProjectHarnessCheckView] = Field(default_factory=list)
+    repair_actions: list[ProjectHarnessRepairActionView] = Field(default_factory=list)
+
+
+class ProjectHarnessInstallProfileView(BaseModel):
+    id: str
+    description: str
+    module_count: int
+    installable_module_count: int
+    skipped_module_count: int
+
+
+class ProjectHarnessOperationCreate(BaseModel):
+    mode: Literal[
+        "repair_preview",
+        "repair_apply",
+        "install_preview",
+        "install_apply",
+        "uninstall_preview",
+        "uninstall_apply",
+    ]
+    profile: str | None = None
+
+
+class ProjectHarnessOperationView(BaseModel):
+    mode: Literal[
+        "repair_preview",
+        "repair_apply",
+        "install_preview",
+        "install_apply",
+        "uninstall_preview",
+        "uninstall_apply",
+    ]
+    status: Literal["planned", "repaired", "installed", "uninstalled", "noop"]
+    headline: str
+    summary: str
+    project_path: str
+    baseline_path: str
+    profile: str | None = None
+    selected_modules: list[str] = Field(default_factory=list)
+    skipped_modules: list[str] = Field(default_factory=list)
+    planned_paths: list[str] = Field(default_factory=list)
+    changed_paths: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    doctor: ProjectHarnessDoctorView | None = None
+
+
+class ProjectAgentHarnessView(BaseModel):
+    kind: Literal["ecc_source", "ecc_workspace", "ecc_candidate"]
+    headline: str
+    summary: str
+    skill_count: int = 0
+    command_count: int = 0
+    agent_count: int = 0
+    rule_family_count: int = 0
+    codex_role_count: int = 0
+    mcp_servers: list[str] = Field(default_factory=list)
+    features: list[str] = Field(default_factory=list)
+    surface_paths: list[str] = Field(default_factory=list)
+    baseline_path: str | None = None
+    install_state_paths: list[str] = Field(default_factory=list)
+    install_manifest_version: int | None = None
+    install_profiles: list[ProjectHarnessInstallProfileView] = Field(default_factory=list)
+    default_install_profile: str | None = None
+    active_install_profile: str | None = None
+    active_install_modules: list[str] = Field(default_factory=list)
+    active_install_skipped_modules: list[str] = Field(default_factory=list)
+    doctor: ProjectHarnessDoctorView | None = None
+
+
 class ProjectView(BaseModel):
     id: int
     path: str
@@ -153,6 +260,7 @@ class ProjectView(BaseModel):
     recent_commits: list[dict[str, Any]] = Field(default_factory=list)
     pull_requests: list[dict[str, Any]] = Field(default_factory=list)
     last_scan_at: str | None = None
+    agent_harness: ProjectAgentHarnessView | None = None
 
 
 class TeamCreate(BaseModel):
@@ -334,6 +442,313 @@ class DiagnosticsView(BaseModel):
     checked_at: str
 
 
+class GatewayCapabilityDiagnosticsView(BaseModel):
+    headline: str
+    summary: str
+    ok_count: int = 0
+    warn_count: int = 0
+    fail_count: int = 0
+    evidence: list[str] = Field(default_factory=list)
+
+
+class GatewayCapabilityLaneView(BaseModel):
+    instance_id: int
+    instance_name: str
+    connected: bool
+    level: SignalLevel = "info"
+    summary: str
+    approval_count: int = 0
+    app_count: int = 0
+    plugin_count: int = 0
+    mcp_server_count: int = 0
+    warnings: list[str] = Field(default_factory=list)
+    last_event_at: str | None = None
+
+
+class GatewayCapabilityConnectedLaneHealthView(BaseModel):
+    headline: str
+    summary: str
+    total_count: int = 0
+    connected_count: int = 0
+    ready_count: int = 0
+    warning_count: int = 0
+    offline_count: int = 0
+    approval_count: int = 0
+    lanes: list[GatewayCapabilityLaneView] = Field(default_factory=list)
+
+
+class GatewayCapabilityInventoryItemView(BaseModel):
+    kind: Literal["app", "plugin", "mcp_server"]
+    name: str
+    ready_lane_count: int = 0
+    total_lane_count: int = 0
+    summary: str
+    lanes: list[str] = Field(default_factory=list)
+
+
+class GatewayCapabilityMemoryProofReferenceView(BaseModel):
+    mission_id: int
+    mission_name: str
+    task_blueprint_id: int | None = None
+    task_name: str
+    scope_label: str | None = None
+    proof_kind: Literal["control_plane", "roundtrip", "writeback", "checkpoint"]
+    proof_status: str
+    summary: str
+    checkpoint_excerpt: str | None = None
+    continuity_path: str
+    updated_at: datetime | None = None
+
+
+class GatewayCapabilityInventoryView(BaseModel):
+    headline: str
+    summary: str
+    app_count: int = 0
+    plugin_count: int = 0
+    mcp_server_count: int = 0
+    tracked_ready_count: int = 0
+    tracked_gap_count: int = 0
+    tracked_count: int = 0
+    observed_count: int = 0
+    memory_status: SignalLevel = "info"
+    memory_summary: str = ""
+    memory_recommended_action: str | None = None
+    memory_evidence: list[str] = Field(default_factory=list)
+    memory_proof_reference: GatewayCapabilityMemoryProofReferenceView | None = None
+    memory_proof_continuity: DashboardContinuityPacketView | None = None
+    memory_proof_launchable: bool = False
+    memory_proof_target_instance_id: int | None = None
+    memory_proof_launch_label: str | None = None
+    items: list[GatewayCapabilityInventoryItemView] = Field(default_factory=list)
+
+
+class GatewayCapabilityApprovalPostureView(BaseModel):
+    headline: str
+    summary: str
+    pause_on_approval: bool = True
+    approval_count: int = 0
+    lane_count_with_approvals: int = 0
+    operator_api_key_count: int = 0
+    recent_remote_request_count: int = 0
+
+
+class GatewayCapabilityLaunchPolicyView(BaseModel):
+    headline: str
+    summary: str
+    setup_mode: SetupMode = "local"
+    setup_flow: SetupFlow = "quickstart"
+    route_binding_mode: GatewayRouteBindingMode = "saved_lane"
+    run_verification: bool = True
+    use_builtin_agents: bool = True
+    auto_commit: bool = False
+    pause_on_approval: bool = True
+    auto_recover: bool = True
+    auto_recover_limit: int = 2
+    allow_failover: bool = True
+    model: str = "gpt-5.4"
+    max_turns: int | None = 4
+    toolsets: list[str] = Field(default_factory=list)
+    tool_policy: HermesToolPolicyView | None = None
+    launch_route: LaunchRouteView | None = None
+
+
+class GatewayCapabilityView(BaseModel):
+    level: SignalLevel = "info"
+    headline: str
+    summary: str
+    warnings: list[str] = Field(default_factory=list)
+    connected_lane_health: GatewayCapabilityConnectedLaneHealthView
+    inventory: GatewayCapabilityInventoryView
+    approval_posture: GatewayCapabilityApprovalPostureView
+    launch_policy: GatewayCapabilityLaunchPolicyView
+    diagnostics: GatewayCapabilityDiagnosticsView
+    checked_at: str
+
+
+class GatewayMemoryProofRun(BaseModel):
+    instance_id: int | None = None
+
+
+class HermesToolPolicyView(BaseModel):
+    toolsets: list[str] = Field(default_factory=list)
+    capability_families: list[str] = Field(default_factory=list)
+    headline: str
+    summary: str
+    enforcement: HermesToolPolicyEnforcement = "advisory"
+    warnings: list[str] = Field(default_factory=list)
+
+
+class HermesCapabilityItemView(BaseModel):
+    key: str
+    label: str
+    status: HermesParityStatus = "advisory"
+    summary: str
+    capabilities: list[str] = Field(default_factory=list)
+    evidence: list[str] = Field(default_factory=list)
+    recommended: bool = False
+
+
+class HermesCapabilityDeckView(BaseModel):
+    headline: str
+    summary: str
+    ready_count: int = 0
+    partial_count: int = 0
+    advisory_count: int = 0
+    missing_count: int = 0
+    items: list[HermesCapabilityItemView] = Field(default_factory=list)
+
+
+class HermesLearningPromotionCandidateView(BaseModel):
+    fingerprint: str
+    status: HermesPromotionStatus = "pending"
+    title: str
+    summary: str
+    target_kind: HermesPromotionTargetKind
+    target_id: int | None = None
+    target_label: str
+    recommended_toolsets: list[str] = Field(default_factory=list)
+    evidence_count: int = 0
+    applied_at: str | None = None
+
+
+class HermesPromotionLoopView(BaseModel):
+    headline: str
+    summary: str
+    auto_apply: bool = True
+    pending_count: int = 0
+    applied_count: int = 0
+    already_armed_count: int = 0
+    items: list[HermesLearningPromotionCandidateView] = Field(default_factory=list)
+
+
+class HermesUpdateView(BaseModel):
+    headline: str
+    summary: str
+    enabled: bool = False
+    repo_root: str | None = None
+    startup_revision: str | None = None
+    current_revision: str | None = None
+    pending_revision: str | None = None
+    pending_restart: bool = False
+    restart_in_progress: bool = False
+    safe_to_restart: bool = False
+    last_checked_at: str | None = None
+    last_restart_at: str | None = None
+    last_error: str | None = None
+    auto_restart: bool = False
+
+
+class HermesRuntimeProfileView(BaseModel):
+    headline: str
+    summary: str
+    hermes_source_path: str | None = None
+    preferred_memory_provider: str = "openzues_recall"
+    preferred_executor: str = "codex_desktop"
+    learning_autopromote_enabled: bool = True
+    plugin_discovery_enabled: bool = True
+    channel_inventory_enabled: bool = True
+    acp_inventory_enabled: bool = True
+    executor_profiles: list["HermesExecutorProfileStateView"] = Field(default_factory=list)
+    promotion_history_count: int = 0
+    last_learning_promotion_at: str | None = None
+    last_learning_fingerprint: str | None = None
+
+
+class HermesRuntimeProfileUpdate(BaseModel):
+    preferred_memory_provider: str | None = None
+    preferred_executor: str | None = None
+    learning_autopromote_enabled: bool | None = None
+    plugin_discovery_enabled: bool | None = None
+    channel_inventory_enabled: bool | None = None
+    acp_inventory_enabled: bool | None = None
+
+
+class WorkspaceShellArmRequest(BaseModel):
+    cwd: str | None = None
+    auto_connect: bool = False
+
+
+class DockerExecutorArmRequest(BaseModel):
+    cwd: str | None = None
+    image: str | None = None
+    auto_connect: bool = False
+    mount_workspace: bool = False
+
+
+class DockerExecutorPreflightRequest(BaseModel):
+    cwd: str | None = None
+    image: str | None = None
+
+
+class HermesExecutorProfileStateView(BaseModel):
+    key: str
+    label: str
+    armed: bool = False
+    cwd: str | None = None
+    image: str | None = None
+    mount_workspace: bool = False
+    control_instance_id: int | None = None
+    control_instance_name: str | None = None
+    derived_from: str | None = None
+    armed_at: str | None = None
+    last_checked_at: str | None = None
+    last_preflight_status: LaunchRouteStatus | None = None
+    last_preflight_summary: str | None = None
+    command_path: str | None = None
+    docker_version: str | None = None
+    daemon_version: str | None = None
+    image_present: bool | None = None
+    summary: str
+
+
+class HermesExecutorArmResultView(BaseModel):
+    headline: str
+    summary: str
+    executor_key: str
+    executor_label: str
+    cwd: str
+    derived_from: str
+    created: bool = False
+    connected: bool = False
+    instance: InstanceView
+    image: str | None = None
+    mount_workspace: bool | None = None
+
+
+class HermesExecutorPreflightView(BaseModel):
+    headline: str
+    summary: str
+    executor_key: str
+    executor_label: str
+    ok: bool = False
+    status: LaunchRouteStatus = "repair"
+    cwd: str | None = None
+    image: str | None = None
+    derived_from: str | None = None
+    command_path: str | None = None
+    docker_version: str | None = None
+    daemon_version: str | None = None
+    image_present: bool | None = None
+    checked_at: str
+
+
+class HermesDoctorView(BaseModel):
+    level: SignalLevel = "info"
+    headline: str
+    summary: str
+    warnings: list[str] = Field(default_factory=list)
+    profile: HermesRuntimeProfileView
+    promotion_loop: HermesPromotionLoopView
+    memory: HermesCapabilityDeckView
+    executors: HermesCapabilityDeckView
+    plugins: HermesCapabilityDeckView
+    delivery: HermesCapabilityDeckView
+    acp: HermesCapabilityDeckView
+    extras: HermesCapabilityDeckView
+    updates: HermesUpdateView
+    checked_at: str
+
+
 class TaskBlueprintCreate(BaseModel):
     name: str
     summary: str | None = None
@@ -358,6 +773,7 @@ class TaskBlueprintCreate(BaseModel):
     auto_recover_limit: int = Field(default=2, ge=0)
     reflex_cooldown_seconds: int = Field(default=900, ge=60)
     allow_failover: bool = True
+    toolsets: list[str] = Field(default_factory=list)
     enabled: bool = True
 
 
@@ -366,6 +782,7 @@ class TaskBlueprintView(TaskBlueprintCreate):
     last_launched_at: str | None = None
     last_status: str | None = None
     last_result_summary: str | None = None
+    tool_policy: HermesToolPolicyView | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -398,6 +815,17 @@ class NotificationRouteView(BaseModel):
     last_error: str | None = None
     created_at: datetime
     updated_at: datetime
+
+
+class NotificationRouteTestResultView(BaseModel):
+    ok: bool
+    route_id: int
+    route_name: str
+    target: str
+    event_type: str
+    summary: str
+    error: str | None = None
+    route: NotificationRouteView
 
 
 class IntegrationCreate(BaseModel):
@@ -468,6 +896,7 @@ class SkillPinView(SkillPinCreate):
 class OnboardingBootstrapCreate(BaseModel):
     setup_mode: SetupMode = "local"
     setup_flow: SetupFlow = "quickstart"
+    use_mempalace: bool = False
     instance_mode: BootstrapInstanceMode = "quick_connect_desktop"
     instance_id: int | None = None
     instance_name: str = "Local Codex Desktop"
@@ -508,6 +937,7 @@ class OnboardingBootstrapCreate(BaseModel):
     auto_recover_limit: int = Field(default=2, ge=0)
     reflex_cooldown_seconds: int = Field(default=900, ge=60)
     allow_failover: bool = True
+    toolsets: list[str] = Field(default_factory=list)
     enabled: bool = True
 
 
@@ -532,6 +962,7 @@ class OnboardingBootstrapResultView(BaseModel):
     integration: OnboardingBootstrapResourceView | None = None
     skill_pin: OnboardingBootstrapResourceView | None = None
     task_blueprint: OnboardingBootstrapResourceView
+    memory_task_blueprint: OnboardingBootstrapResourceView | None = None
     api_key: str | None = None
     mission_draft: MissionDraftView | None = None
     launch_route: LaunchRouteView | None = None
@@ -579,6 +1010,7 @@ class GatewayBootstrapUpdate(BaseModel):
     auto_recover_limit: int = Field(default=2, ge=0)
     reflex_cooldown_seconds: int = Field(default=900, ge=60)
     allow_failover: bool = True
+    toolsets: list[str] = Field(default_factory=list)
 
 
 class GatewayBootstrapView(BaseModel):
@@ -606,6 +1038,8 @@ class GatewayBootstrapView(BaseModel):
     auto_recover_limit: int = 2
     reflex_cooldown_seconds: int = 900
     allow_failover: bool = True
+    toolsets: list[str] = Field(default_factory=list)
+    tool_policy: HermesToolPolicyView | None = None
     launch_defaults_summary: str
     launch_route: LaunchRouteView | None = None
 
@@ -626,6 +1060,7 @@ class SetupFootprintView(BaseModel):
     integration: SetupFootprintResourceView | None = None
     skill_pin: SetupFootprintResourceView | None = None
     task_blueprint: SetupFootprintResourceView | None = None
+    memory_task_blueprint: SetupFootprintResourceView | None = None
     updated_at: datetime | None = None
 
 
@@ -642,6 +1077,7 @@ class SetupWizardSessionView(BaseModel):
     warnings: list[str] = Field(default_factory=list)
     mode: SetupMode = "local"
     flow: SetupFlow = "quickstart"
+    use_mempalace: bool = False
     recommended_mode: SetupMode = "local"
     recommended_flow: SetupFlow = "quickstart"
     instance_mode: BootstrapInstanceMode = "quick_connect_desktop"
@@ -657,6 +1093,7 @@ class SetupWizardSessionView(BaseModel):
     model: str = "gpt-5.4"
     max_turns: int | None = 4
     objective_template: str | None = None
+    toolsets: list[str] = Field(default_factory=list)
     local_probe: SetupWizardProbeView
     remote_probe: SetupWizardProbeView
     updated_at: datetime | None = None
@@ -665,6 +1102,7 @@ class SetupWizardSessionView(BaseModel):
 class SetupWizardSessionUpdate(BaseModel):
     mode: SetupMode | None = None
     flow: SetupFlow | None = None
+    use_mempalace: bool | None = None
     instance_mode: BootstrapInstanceMode | None = None
     instance_id: int | None = None
     instance_name: str | None = None
@@ -678,6 +1116,7 @@ class SetupWizardSessionUpdate(BaseModel):
     model: str | None = None
     max_turns: int | None = Field(default=None, ge=1)
     objective_template: str | None = None
+    toolsets: list[str] | None = None
 
 
 SetupLaunchHandoffStatus = Literal["ready", "staged", "repair", "bootstrap"]
@@ -784,6 +1223,7 @@ class RemoteMissionCreate(BaseModel):
     auto_recover_limit: int = Field(default=2, ge=0)
     reflex_cooldown_seconds: int = Field(default=900, ge=60)
     allow_failover: bool = True
+    toolsets: list[str] = Field(default_factory=list)
     start_immediately: bool = False
     dry_run: bool = False
 
@@ -814,11 +1254,17 @@ class MissionCreate(BaseModel):
     auto_recover_limit: int = Field(default=2, ge=0)
     reflex_cooldown_seconds: int = Field(default=900, ge=60)
     allow_failover: bool = True
+    toolsets: list[str] = Field(default_factory=list)
     start_immediately: bool = True
 
 
 class MissionDraftView(MissionCreate):
-    pass
+    tool_policy: HermesToolPolicyView | None = None
+    preferred_memory_provider: str | None = None
+    preferred_memory_provider_label: str | None = None
+    preferred_executor: str | None = None
+    preferred_executor_label: str | None = None
+    runtime_profile_summary: str | None = None
 
 
 class MissionReflexRun(BaseModel):
@@ -898,6 +1344,13 @@ class MissionView(BaseModel):
     auto_recover_limit: int = 2
     reflex_cooldown_seconds: int = 900
     allow_failover: bool = True
+    toolsets: list[str] = Field(default_factory=list)
+    tool_policy: HermesToolPolicyView | None = None
+    preferred_memory_provider: str | None = None
+    preferred_memory_provider_label: str | None = None
+    preferred_executor: str | None = None
+    preferred_executor_label: str | None = None
+    runtime_profile_summary: str | None = None
     in_progress: bool = False
     phase: str | None = None
     current_command: str | None = None
@@ -994,6 +1447,44 @@ class DashboardContinuityView(BaseModel):
     headline: str
     summary: str
     packets: list[DashboardContinuityPacketView] = Field(default_factory=list)
+
+
+class DashboardRecallItemView(BaseModel):
+    mission_id: int
+    mission_name: str
+    project_id: int | None = None
+    project_label: str | None = None
+    status: MissionStatus
+    phase: str | None = None
+    updated_at: datetime
+    freshness_minutes: int | None = None
+    score: int | None = None
+    match_source: Literal[
+        "recent",
+        "checkpoint",
+        "summary",
+        "commentary",
+        "objective",
+        "error",
+        "memory_proof",
+    ] = "recent"
+    excerpt: str
+    continuity_state: ContinuityState
+    continuity_score: int = Field(ge=0, le=100)
+    next_handoff: str
+    continuity_path: str
+    toolsets: list[str] = Field(default_factory=list)
+
+
+class DashboardRecallView(BaseModel):
+    mode: Literal["recent", "query"] = "recent"
+    query: str | None = None
+    headline: str
+    summary: str
+    preferred_memory_provider: str | None = None
+    preferred_memory_provider_label: str | None = None
+    total_matches: int = 0
+    items: list[DashboardRecallItemView] = Field(default_factory=list)
 
 
 class DashboardInterferenceVectorView(BaseModel):
@@ -1299,11 +1790,25 @@ class DashboardInoculationView(BaseModel):
     mission_id: int | None = None
 
 
+class DashboardLearningReviewView(BaseModel):
+    id: str
+    level: SignalLevel
+    title: str
+    summary: str
+    recommendation: str
+    evidence_count: int = 0
+    project_id: int | None = None
+    project_label: str | None = None
+    mission_id: int | None = None
+    recommended_toolsets: list[str] = Field(default_factory=list)
+
+
 class DashboardCortexView(BaseModel):
     headline: str
     summary: str
     doctrines: list[DashboardDoctrineView] = Field(default_factory=list)
     inoculations: list[DashboardInoculationView] = Field(default_factory=list)
+    reviews: list[DashboardLearningReviewView] = Field(default_factory=list)
 
 
 class DashboardReflexView(BaseModel):
@@ -1345,11 +1850,13 @@ class DashboardView(BaseModel):
     attention_queue: DashboardAttentionQueueView
     launchpad: DashboardLaunchpadView
     radar: DashboardRadarView
+    gateway_capability: GatewayCapabilityView
     gateway_bootstrap: GatewayBootstrapView
     ops_mesh: DashboardOpsMeshView
     economy: DashboardEconomyView
     interference: DashboardInterferenceView
     continuity: DashboardContinuityView
+    recall: DashboardRecallView
     dream_deck: DashboardDreamDeckView
     cortex: DashboardCortexView
     reflex_deck: DashboardReflexDeckView

@@ -8,6 +8,7 @@ from pathlib import Path
 from openzues.schemas import (
     DashboardInterferenceVectorView,
     DashboardInterferenceView,
+    GatewayCapabilityView,
     MissionView,
     ProjectView,
     RemoteRequestView,
@@ -128,6 +129,8 @@ def build_interference(
     projects: list[ProjectView],
     task_blueprints: list[TaskBlueprintView],
     remote_requests: list[RemoteRequestView],
+    *,
+    gateway_capability: GatewayCapabilityView | None = None,
 ) -> DashboardInterferenceView:
     projects_by_id = {project.id: project for project in projects}
     missions_by_id = {mission.id: mission for mission in missions}
@@ -294,6 +297,58 @@ def build_interference(
                     request_ids=[request.id for request in requests],
                 )
             )
+
+    if gateway_capability is not None and (
+        gateway_capability.level == "critical"
+        or gateway_capability.inventory.tracked_gap_count
+        or gateway_capability.approval_posture.approval_count
+        or (
+            gateway_capability.launch_policy.launch_route is not None
+            and gateway_capability.launch_policy.launch_route.status == "repair"
+        )
+        or (
+            gateway_capability.connected_lane_health.total_count > 0
+            and gateway_capability.connected_lane_health.ready_count == 0
+        )
+    ):
+        launch_route = gateway_capability.launch_policy.launch_route
+        scope_label = (
+            launch_route.preferred_instance.label
+            if launch_route is not None and launch_route.preferred_instance is not None
+            else (
+                launch_route.resolved_instance.label
+                if launch_route is not None and launch_route.resolved_instance is not None
+                else "Gateway launch policy"
+            )
+        )
+        route_warning = (
+            launch_route.warnings[0]
+            if launch_route is not None and launch_route.warnings
+            else gateway_capability.warnings[0]
+            if gateway_capability.warnings
+            else gateway_capability.summary
+        )
+        vectors.append(
+            DashboardInterferenceVectorView(
+                id="gateway-posture",
+                kind="gateway_posture",
+                level="critical" if gateway_capability.level == "critical" else "warn",
+                scope_label=scope_label,
+                project_id=None,
+                summary=(
+                    f"{gateway_capability.headline}. {gateway_capability.connected_lane_health.summary}"
+                ),
+                pressure=(
+                    "Operators can fork work around the saved launch posture when approvals, "
+                    "tracked gaps, or lane readiness are already degraded."
+                ),
+                treaty_prompt=(
+                    "Read the shared gateway doctor summary first. Repair the saved launch "
+                    "posture, lane readiness, approvals, or tracked inventory gaps before "
+                    f"starting another autonomous cycle. Current lead warning: {route_warning}"
+                ),
+            )
+        )
 
     level_rank = {"critical": 0, "warn": 1, "ready": 2, "info": 3}
     vectors = sorted(

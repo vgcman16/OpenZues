@@ -16,6 +16,21 @@ class Database:
     def __init__(self, path: Path) -> None:
         self.path = path
 
+    @staticmethod
+    def _decode_json_list(value: Any) -> list[str]:
+        try:
+            decoded = json.loads(str(value or "[]"))
+        except (TypeError, ValueError):
+            return []
+        if not isinstance(decoded, list):
+            return []
+        output: list[str] = []
+        for item in decoded:
+            text = str(item or "").strip()
+            if text:
+                output.append(text)
+        return output
+
     async def initialize(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         async with aiosqlite.connect(self.path) as db:
@@ -173,6 +188,7 @@ class Database:
                     auto_recover_limit INTEGER NOT NULL DEFAULT 2,
                     reflex_cooldown_seconds INTEGER NOT NULL DEFAULT 900,
                     allow_failover INTEGER NOT NULL DEFAULT 1,
+                    toolsets_json TEXT NOT NULL DEFAULT '[]',
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );
@@ -185,6 +201,12 @@ class Database:
                 CREATE TABLE IF NOT EXISTS setup_wizard_session (
                     id INTEGER PRIMARY KEY CHECK (id = 1),
                     session_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS hermes_runtime_profile (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    profile_json TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );
@@ -263,6 +285,7 @@ class Database:
                     auto_recover_limit INTEGER NOT NULL DEFAULT 2,
                     reflex_cooldown_seconds INTEGER NOT NULL DEFAULT 900,
                     allow_failover INTEGER NOT NULL DEFAULT 1,
+                    toolsets_json TEXT NOT NULL DEFAULT '[]',
                     in_progress INTEGER NOT NULL DEFAULT 0,
                     phase TEXT,
                     current_command TEXT,
@@ -379,9 +402,15 @@ class Database:
             )
             await self._ensure_column(db, "gateway_bootstrap", "last_route_instance_id", "INTEGER")
             await self._ensure_column(db, "gateway_bootstrap", "last_route_resolved_at", "TEXT")
+            await self._ensure_column(
+                db, "gateway_bootstrap", "toolsets_json", "TEXT NOT NULL DEFAULT '[]'"
+            )
             await self._ensure_column(db, "notification_routes", "vault_secret_id", "INTEGER")
             await self._ensure_column(db, "integrations", "vault_secret_id", "INTEGER")
             await self._ensure_column(db, "missions", "session_key", "TEXT")
+            await self._ensure_column(
+                db, "missions", "toolsets_json", "TEXT NOT NULL DEFAULT '[]'"
+            )
             await db.execute(
                 """
                 CREATE INDEX IF NOT EXISTS idx_missions_task
@@ -855,7 +884,11 @@ class Database:
             db.row_factory = aiosqlite.Row
             cursor = await db.execute("SELECT * FROM gateway_bootstrap WHERE id = 1")
             row = await cursor.fetchone()
-            return dict(row) if row else None
+            if row is None:
+                return None
+            item = dict(row)
+            item["toolsets"] = self._decode_json_list(item.pop("toolsets_json", "[]"))
+            return item
 
     async def clear_gateway_bootstrap(self) -> None:
         async with aiosqlite.connect(self.path) as db:
@@ -887,6 +920,7 @@ class Database:
         auto_recover_limit: int,
         reflex_cooldown_seconds: int,
         allow_failover: bool,
+        toolsets: list[str] | None = None,
     ) -> None:
         now = utcnow()
         async with aiosqlite.connect(self.path) as db:
@@ -916,11 +950,12 @@ class Database:
                     auto_recover_limit,
                     reflex_cooldown_seconds,
                     allow_failover,
+                    toolsets_json,
                     created_at,
                     updated_at
                 )
                 VALUES (
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                 )
                 ON CONFLICT(id) DO UPDATE SET
                     setup_mode = excluded.setup_mode,
@@ -945,6 +980,7 @@ class Database:
                     auto_recover_limit = excluded.auto_recover_limit,
                     reflex_cooldown_seconds = excluded.reflex_cooldown_seconds,
                     allow_failover = excluded.allow_failover,
+                    toolsets_json = excluded.toolsets_json,
                     updated_at = excluded.updated_at
                 """,
                 (
@@ -971,6 +1007,7 @@ class Database:
                     auto_recover_limit,
                     reflex_cooldown_seconds,
                     int(allow_failover),
+                    json.dumps(toolsets or []),
                     now,
                     now,
                 ),
@@ -1064,6 +1101,37 @@ class Database:
     async def clear_setup_wizard_session(self) -> None:
         async with aiosqlite.connect(self.path) as db:
             await db.execute("DELETE FROM setup_wizard_session WHERE id = 1")
+            await db.commit()
+
+    async def get_hermes_runtime_profile(self) -> dict[str, Any] | None:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute("SELECT * FROM hermes_runtime_profile WHERE id = 1")
+            row = await cursor.fetchone()
+            if row is None:
+                return None
+            item = dict(row)
+            item["profile"] = json.loads(item.pop("profile_json"))
+            return item
+
+    async def upsert_hermes_runtime_profile(self, profile: dict[str, Any]) -> None:
+        now = utcnow()
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute(
+                """
+                INSERT INTO hermes_runtime_profile (
+                    id,
+                    profile_json,
+                    created_at,
+                    updated_at
+                )
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    profile_json = excluded.profile_json,
+                    updated_at = excluded.updated_at
+                """,
+                (1, json.dumps(profile), now, now),
+            )
             await db.commit()
 
     async def list_notification_routes(self) -> list[dict[str, Any]]:
@@ -1348,6 +1416,7 @@ class Database:
         auto_recover_limit: int,
         reflex_cooldown_seconds: int,
         allow_failover: bool = True,
+        toolsets: list[str] | None = None,
         task_blueprint_id: int | None = None,
     ) -> int:
         now = utcnow()
@@ -1377,11 +1446,12 @@ class Database:
                     auto_recover_limit,
                     reflex_cooldown_seconds,
                     allow_failover,
+                    toolsets_json,
                     created_at,
                     updated_at
                 )
                 VALUES (
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                 )
                 """,
                 (
@@ -1407,6 +1477,7 @@ class Database:
                     auto_recover_limit,
                     reflex_cooldown_seconds,
                     int(allow_failover),
+                    json.dumps(toolsets or []),
                     now,
                     now,
                 ),
@@ -1419,14 +1490,23 @@ class Database:
         async with aiosqlite.connect(self.path) as db:
             db.row_factory = aiosqlite.Row
             rows = await db.execute_fetchall("SELECT * FROM missions ORDER BY id ASC")
-            return [dict(row) for row in rows]
+            output: list[dict[str, Any]] = []
+            for row in rows:
+                item = dict(row)
+                item["toolsets"] = self._decode_json_list(item.pop("toolsets_json", "[]"))
+                output.append(item)
+            return output
 
     async def get_mission(self, mission_id: int) -> dict[str, Any] | None:
         async with aiosqlite.connect(self.path) as db:
             db.row_factory = aiosqlite.Row
             cursor = await db.execute("SELECT * FROM missions WHERE id = ?", (mission_id,))
             row = await cursor.fetchone()
-            return dict(row) if row else None
+            if row is None:
+                return None
+            item = dict(row)
+            item["toolsets"] = self._decode_json_list(item.pop("toolsets_json", "[]"))
+            return item
 
     async def list_lane_snapshots(self, *, limit: int = 24) -> list[dict[str, Any]]:
         async with aiosqlite.connect(self.path) as db:
@@ -1494,9 +1574,15 @@ class Database:
                 (instance_id, thread_id),
             )
             row = await cursor.fetchone()
-            return dict(row) if row else None
+            if row is None:
+                return None
+            item = dict(row)
+            item["toolsets"] = self._decode_json_list(item.pop("toolsets_json", "[]"))
+            return item
 
     async def update_mission(self, mission_id: int, **fields: Any) -> None:
+        if "toolsets" in fields:
+            fields["toolsets_json"] = json.dumps(fields.pop("toolsets"))
         if not fields:
             return
         fields["updated_at"] = utcnow()

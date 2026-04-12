@@ -21,9 +21,25 @@ from openzues.schemas import (
     SkillPinView,
 )
 from openzues.services.continuity import build_continuity_packet
+from openzues.services.ecc_catalog import build_ecc_workspace_lines
 from openzues.services.followups import mission_row_matches_payload
+from openzues.services.hermes_runtime_profile import (
+    build_executor_launch_assessment,
+    build_executor_profile_lines,
+    build_memory_provider_lines,
+    build_runtime_profile_summary,
+    executor_label,
+    load_saved_runtime_preferences,
+    memory_provider_label,
+)
+from openzues.services.hermes_toolsets import (
+    build_hermes_tool_policy,
+    build_hermes_tool_policy_lines,
+    infer_hermes_toolsets,
+)
 from openzues.services.hub import BroadcastHub
 from openzues.services.manager import RuntimeManager
+from openzues.services.memory_protocol import build_mempalace_protocol_lines
 from openzues.services.run_pressure import (
     continuity_snapshot_threshold,
     has_checkpoint_pressure,
@@ -62,6 +78,22 @@ STALE_BLOCKER_PATTERNS = (
     re.compile(r"\bfailing\b", re.IGNORECASE),
     re.compile(r"\bbroken\b", re.IGNORECASE),
 )
+CONTRACT_SEAM_MARKERS = (
+    "schema",
+    "pydantic",
+    "dashboard",
+    "payload",
+    "contract",
+    "gateway",
+    "doctor",
+    "endpoint",
+    "api",
+    "cli",
+    "fixture",
+    "constructor",
+    "serializer",
+    "view",
+)
 
 
 def _parse_timestamp(value: str | None) -> datetime | None:
@@ -91,6 +123,27 @@ def _truncate_text(value: str | None, limit: int = 320) -> str:
     if len(text) <= limit:
         return text
     return text[: max(0, limit - 3)].rstrip() + "..."
+
+
+def _error_summary(value: Any, *, fallback: str) -> str:
+    if isinstance(value, BaseException):
+        detail = str(value).strip()
+        if detail:
+            return detail
+        return f"{value.__class__.__name__}: {fallback}"
+    if isinstance(value, dict):
+        for key in ("message", "detail", "summary", "error", "reason", "code"):
+            candidate = value.get(key)
+            if isinstance(candidate, str) and candidate.strip():
+                return candidate.strip()
+        rendered = str(value).strip()
+        if rendered and rendered not in {"{}", "None"}:
+            return rendered
+        return fallback
+    detail = str(value).strip()
+    if detail and detail not in {"{}", "None"}:
+        return detail
+    return fallback
 
 
 def _thread_status_type(thread_state: dict[str, Any] | None) -> str | None:
@@ -143,6 +196,33 @@ def _mission_text_blob(mission: dict[str, Any]) -> str:
         mission.get("last_error"),
     ]
     return " ".join(str(part or "") for part in parts).lower()
+
+
+def _looks_like_contract_seam(mission: dict[str, Any]) -> bool:
+    return _contains_any(_mission_text_blob(mission), CONTRACT_SEAM_MARKERS)
+
+
+def _contract_seam_instruction_lines(mission: dict[str, Any]) -> list[str]:
+    if not _looks_like_contract_seam(mission):
+        return []
+    lines = [
+        "Contract seam guard:",
+        (
+            "- Treat schema/API/dashboard/CLI/view work as one contract seam. If you add or "
+            "rename a required field, update constructors, payload builders, serializers, and "
+            "shared test fixtures in the same turn."
+        ),
+        (
+            "- Before calling this seam done, rerun the focused contract pack and at least one "
+            "broader surface pack so partial wiring cannot hide behind narrow green checks."
+        ),
+    ]
+    if bool(mission.get("run_verification")):
+        lines.append(
+            "- After dashboard or schema contract changes, rerun `tests/test_app.py` before "
+            "checkpointing."
+        )
+    return lines
 
 
 def _contains_any(text: str, terms: tuple[str, ...]) -> bool:
@@ -641,6 +721,32 @@ class MissionService:
         mission = await self.require_mission(mission_id)
         return await self._build_view(mission)
 
+    def _resolve_toolsets(
+        self,
+        mission: dict[str, Any],
+        *,
+        project: dict[str, Any] | None = None,
+        task: dict[str, Any] | None = None,
+    ) -> list[str]:
+        explicit_toolsets = mission.get("toolsets") or (task.get("toolsets") if task else [])
+        cadence_minutes = None
+        if task is not None and task.get("cadence_minutes") is not None:
+            cadence_minutes = int(task["cadence_minutes"])
+        return infer_hermes_toolsets(
+            str(mission.get("objective") or ""),
+            explicit_toolsets=explicit_toolsets,
+            project_label=str(project["label"]) if project is not None else None,
+            project_path=(
+                str(project["path"])
+                if project is not None
+                else (str(mission.get("cwd") or "") or None)
+            ),
+            setup_mode="local",
+            use_builtin_agents=bool(mission.get("use_builtin_agents", True)),
+            run_verification=bool(mission.get("run_verification", True)),
+            cadence_minutes=cadence_minutes,
+        )
+
     async def _find_duplicate_inflight_mission(
         self,
         payload: MissionCreate,
@@ -698,12 +804,28 @@ class MissionService:
         )
         if payload.project_id is not None and project is None:
             raise ValueError(f"Unknown project {payload.project_id}")
+        task: dict[str, Any] | None = None
         if payload.task_blueprint_id is not None:
             task = await self.database.get_task_blueprint(payload.task_blueprint_id)
             if task is None:
                 raise ValueError(f"Unknown task blueprint {payload.task_blueprint_id}")
         runtime = await self.manager.get(payload.instance_id)
         cwd = payload.cwd or (project["path"] if project is not None else runtime.cwd)
+        resolved_toolsets = infer_hermes_toolsets(
+            payload.objective,
+            explicit_toolsets=payload.toolsets or (task.get("toolsets") if task else []),
+            project_label=str(project["label"]) if project is not None else None,
+            project_path=str(cwd) if cwd is not None else None,
+            setup_mode="local",
+            use_builtin_agents=payload.use_builtin_agents,
+            run_verification=payload.run_verification,
+            cadence_minutes=(
+                int(task["cadence_minutes"])
+                if task is not None and task.get("cadence_minutes") is not None
+                else None
+            ),
+        )
+        payload = payload.model_copy(update={"toolsets": resolved_toolsets})
         duplicate = await self._find_duplicate_inflight_mission(payload, cwd=cwd)
         if duplicate is not None:
             return await self._build_view(duplicate)
@@ -731,6 +853,7 @@ class MissionService:
             auto_recover_limit=payload.auto_recover_limit,
             reflex_cooldown_seconds=payload.reflex_cooldown_seconds,
             allow_failover=payload.allow_failover,
+            toolsets=payload.toolsets,
         )
         await self.database.update_mission(
             mission_id,
@@ -863,16 +986,20 @@ class MissionService:
             updates["in_progress"] = 0
             updates["last_turn_id"] = extract_turn_id(params) or mission.get("last_turn_id")
             if turn.get("error"):
+                error_summary = _error_summary(
+                    turn["error"],
+                    fallback="Codex reported turn failure without detailed error output.",
+                )
                 updates["status"] = "failed"
                 updates["phase"] = "failed"
                 updates["failure_count"] = int(mission["failure_count"]) + 1
-                updates["last_error"] = str(turn["error"])
+                updates["last_error"] = error_summary
                 await self.database.append_mission_checkpoint(
                     mission_id=int(mission["id"]),
                     thread_id=thread_id,
                     turn_id=extract_turn_id(params),
                     kind="error",
-                    summary=str(turn["error"]),
+                    summary=error_summary,
                 )
             else:
                 next_completed = int(mission["turns_completed"]) + 1
@@ -2011,12 +2138,16 @@ class MissionService:
                 collaboration_mode=mission["collaboration_mode"],
             )
         except Exception as exc:
+            error_summary = _error_summary(
+                exc,
+                fallback="Codex runtime failed to start the turn without a detailed error.",
+            )
             if allow_stale_thread_recovery and _is_thread_not_found_error(exc):
                 recovered = await self._attempt_stale_thread_recovery(
                     mission_id,
                     mission,
                     stale_thread_id=thread_id,
-                    stale_error=str(exc),
+                    stale_error=error_summary,
                 )
                 if recovered:
                     return
@@ -2025,7 +2156,7 @@ class MissionService:
                 status="failed",
                 phase="failed",
                 failure_count=int(mission["failure_count"]) + 1,
-                last_error=str(exc),
+                last_error=error_summary,
                 in_progress=0,
                 last_activity_at=utcnow(),
             )
@@ -2034,11 +2165,11 @@ class MissionService:
                 thread_id=thread_id,
                 turn_id=None,
                 kind="error",
-                summary=str(exc),
+                summary=error_summary,
             )
             await self._publish_snapshot(
                 "mission/failed",
-                {"missionId": mission_id, "threadId": thread_id, "error": str(exc)},
+                {"missionId": mission_id, "threadId": thread_id, "error": error_summary},
             )
             return
 
@@ -2086,6 +2217,9 @@ class MissionService:
         lock = self._locks[mission_id]
         async with lock:
             mission = await self.require_mission(mission_id)
+            _preferred_memory_provider, preferred_executor = await load_saved_runtime_preferences(
+                self.database
+            )
             allow_failed_recovery = (
                 mission["status"] == "failed"
                 and bool(mission.get("auto_recover"))
@@ -2097,6 +2231,33 @@ class MissionService:
                 and not force
             ):
                 return
+
+            if str(preferred_executor or "").strip().lower() == "workspace_shell":
+                target_cwd = str(mission.get("cwd") or "").strip() or None
+                if target_cwd:
+                    current_runtime = await self.manager.get(int(mission["instance_id"]))
+                    current_cwd = str(current_runtime.cwd or "").strip().lower()
+                    if current_runtime.transport != "stdio" or current_cwd != target_cwd.lower():
+                        shell_runtime = await self.manager.ensure_workspace_shell_instance(
+                            cwd=target_cwd,
+                            auto_connect=False,
+                        )
+                        if shell_runtime.instance_id != int(mission["instance_id"]):
+                            await self.database.update_mission(
+                                mission_id,
+                                instance_id=shell_runtime.instance_id,
+                                last_activity_at=utcnow(),
+                            )
+                            await self._publish_snapshot(
+                                "mission/executor-promoted",
+                                {
+                                    "missionId": mission_id,
+                                    "executor": preferred_executor,
+                                    "fromInstanceId": int(current_runtime.instance_id),
+                                    "toInstanceId": int(shell_runtime.instance_id),
+                                },
+                            )
+                            mission["instance_id"] = shell_runtime.instance_id
 
             runtime = await self.manager.get(int(mission["instance_id"]))
             if not runtime.connected:
@@ -2117,6 +2278,31 @@ class MissionService:
                     offline_error="Instance is offline.",
                 ):
                     return
+                return
+            executor_assessment = build_executor_launch_assessment(
+                preferred_executor,
+                instance=runtime,
+                instances=self.manager.instances.values(),
+                target_cwd=str(mission.get("cwd") or "").strip() or None,
+            )
+            if executor_assessment.status == "repair":
+                blocker = (
+                    f"Executor launch blocked ({executor_label(preferred_executor)}): "
+                    f"{executor_assessment.summary}"
+                )
+                await self.database.update_mission(
+                    mission_id,
+                    status="blocked",
+                    phase="executor",
+                    in_progress=0,
+                    current_command=None,
+                    last_error=blocker,
+                    last_activity_at=utcnow(),
+                )
+                await self._publish_snapshot(
+                    "mission/blocked",
+                    {"missionId": mission_id, "reason": blocker},
+                )
                 return
 
             last_activity_seconds = _seconds_since(mission.get("last_activity_at"))
@@ -2341,10 +2527,14 @@ class MissionService:
 
     async def _build_view(self, mission: dict[str, Any]) -> MissionView:
         project_label = None
+        project: dict[str, Any] | None = None
         if mission["project_id"] is not None:
             project = await self.database.get_project(int(mission["project_id"]))
             if project is not None:
                 project_label = str(project["label"])
+        task: dict[str, Any] | None = None
+        if mission.get("task_blueprint_id") is not None:
+            task = await self.database.get_task_blueprint(int(mission["task_blueprint_id"]))
         runtime = self.manager.instances.get(int(mission["instance_id"]))
         checkpoints = [
             MissionCheckpointView.model_validate(item)
@@ -2370,6 +2560,11 @@ class MissionService:
             scope=scope,
             live_telemetry=live_telemetry,
         )
+        toolsets = self._resolve_toolsets(mission, project=project, task=task)
+        tool_policy = build_hermes_tool_policy(toolsets, setup_mode="local")
+        preferred_memory_provider, preferred_executor = await load_saved_runtime_preferences(
+            self.database
+        )
         payload = {
             **mission,
             "instance_name": runtime.name if runtime is not None else None,
@@ -2384,6 +2579,18 @@ class MissionService:
             "scope_drift_summary": scope.drift_summary,
             "live_telemetry": live_telemetry,
             "delegation_brief": delegation_brief,
+            "toolsets": toolsets,
+            "tool_policy": tool_policy,
+            "preferred_memory_provider": preferred_memory_provider,
+            "preferred_memory_provider_label": memory_provider_label(
+                preferred_memory_provider
+            ),
+            "preferred_executor": preferred_executor,
+            "preferred_executor_label": executor_label(preferred_executor),
+            "runtime_profile_summary": build_runtime_profile_summary(
+                preferred_memory_provider=preferred_memory_provider,
+                preferred_executor=preferred_executor,
+            ),
         }
         return MissionView.model_validate(payload)
 
@@ -2453,6 +2660,16 @@ class MissionService:
         project_label: str | None = None
         project_path: str | None = None
         explicit_pins: list[SkillPinView] = []
+        task: dict[str, Any] | None = None
+        if mission.get("task_blueprint_id") is not None:
+            task = await self.database.get_task_blueprint(int(mission["task_blueprint_id"]))
+        scoped_integrations = [
+            integration
+            for integration in await self.database.list_integrations()
+            if bool(integration.get("enabled", True))
+            and integration.get("project_id") in {None, mission.get("project_id")}
+        ]
+        project: dict[str, Any] | None = None
         if mission["project_id"] is not None:
             project = await self.database.get_project(int(mission["project_id"]))
             if project is not None:
@@ -2463,11 +2680,17 @@ class MissionService:
                 for item in await self.database.list_skill_pins()
                 if int(item["project_id"]) == int(mission["project_id"])
             ]
+        toolsets = self._resolve_toolsets(mission, project=project, task=task)
+        tool_policy = build_hermes_tool_policy(toolsets, setup_mode="local")
+        preferred_memory_provider, preferred_executor = await load_saved_runtime_preferences(
+            self.database
+        )
         skill_profile = resolve_skill_profile(
             str(mission.get("objective") or ""),
             explicit_pins=explicit_pins,
             project_label=project_label,
             project_path=project_path,
+            toolsets=toolsets,
         )
         delegation_brief = _build_delegation_brief(
             mission,
@@ -2498,6 +2721,9 @@ class MissionService:
             instructions.append(
                 "- Run relevant tests, builds, or browser checks after meaningful changes."
             )
+        contract_lines = _contract_seam_instruction_lines(mission)
+        if contract_lines:
+            instructions.extend(["", *contract_lines])
         if bool(mission["auto_commit"]):
             instructions.append(
                 "- Create focused git commits for verified milestones when appropriate."
@@ -2515,6 +2741,45 @@ class MissionService:
         skill_lines = build_prompt_skill_lines(skill_profile.skills)
         if skill_lines:
             instructions.extend(["", *skill_lines])
+        tool_policy_lines = build_hermes_tool_policy_lines(tool_policy)
+        if tool_policy_lines:
+            instructions.extend(["", *tool_policy_lines])
+        resolved_instance_name = str(mission.get("instance_name") or "").strip() or None
+        runtime_profile_row = await self.database.get_hermes_runtime_profile()
+        runtime_profile = (
+            runtime_profile_row.get("profile")
+            if isinstance(runtime_profile_row, dict)
+            and isinstance(runtime_profile_row.get("profile"), dict)
+            else None
+        )
+        executor_lines = build_executor_profile_lines(
+            preferred_executor,
+            instance_name=resolved_instance_name,
+            cwd=project_path or mission.get("cwd"),
+            runtime_profile=runtime_profile,
+        )
+        memory_provider_lines = build_memory_provider_lines(
+            preferred_memory_provider,
+            integrations=scoped_integrations,
+            toolsets=toolsets,
+        )
+        instructions.extend(
+            [
+                "",
+                build_runtime_profile_summary(
+                    preferred_memory_provider=preferred_memory_provider,
+                    preferred_executor=preferred_executor,
+                ),
+                *executor_lines,
+                *memory_provider_lines,
+            ]
+        )
+        memory_protocol_lines = build_mempalace_protocol_lines(scoped_integrations)
+        if memory_protocol_lines:
+            instructions.extend(["", *memory_protocol_lines])
+        ecc_workspace_lines = build_ecc_workspace_lines(project_path or mission.get("cwd"))
+        if ecc_workspace_lines:
+            instructions.extend(["", *ecc_workspace_lines])
         instructions.extend(
             [
                 "",

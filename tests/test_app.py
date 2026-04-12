@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import shutil
+import tomllib
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from openzues.app import (
@@ -18,6 +22,9 @@ from openzues.app import (
 )
 from openzues.schemas import (
     DashboardView,
+    DiagnosticCheck,
+    DiagnosticsView,
+    GatewayCapabilityView,
     InstanceView,
     MissionLiveTelemetryView,
     MissionView,
@@ -28,8 +35,24 @@ from openzues.schemas import (
 from openzues.services.control_chat import plan_attention_queue, plan_control_chat
 from openzues.services.control_plane import ControlPlaneLease
 from openzues.services.dreams import build_dream_deck
+from openzues.services.ecc_catalog import configure_ecc_catalog
+from openzues.services.hermes_skills import configure_hermes_skill_catalog
 from openzues.services.launch_routing import LaunchRoutingService
+from openzues.services.memory_protocol import (
+    build_mempalace_control_plane_proof_signal,
+    build_mempalace_roundtrip_signal,
+    build_mempalace_writeback_signal,
+)
 from openzues.settings import Settings
+
+
+@pytest.fixture(autouse=True)
+def _reset_external_catalogs() -> None:
+    configure_hermes_skill_catalog(None)
+    configure_ecc_catalog(None)
+    yield
+    configure_hermes_skill_catalog(None)
+    configure_ecc_catalog(None)
 
 
 class FakeControlPlaneLease(ControlPlaneLease):
@@ -54,14 +77,412 @@ def make_client(
     client_host: str = "testclient",
     attention_queue_enabled: bool = True,
     control_plane_lease: ControlPlaneLease | None = None,
+    hermes_source_path: Path | None = None,
+    ecc_source_path: Path | None = None,
+    reset_data_dir: bool = False,
 ):
+    data_dir = tmp_path / "data"
+    if reset_data_dir and data_dir.exists():
+        shutil.rmtree(data_dir)
     app_settings = Settings(
-        data_dir=tmp_path / "data",
-        db_path=tmp_path / "data" / "openzues-test.db",
+        data_dir=data_dir,
+        db_path=data_dir / "openzues-test.db",
         attention_queue_enabled=attention_queue_enabled,
+        hermes_source_path=hermes_source_path,
+        ecc_source_path=ecc_source_path,
     )
     app = create_app(app_settings, control_plane_lease=control_plane_lease)
     return TestClient(app, client=(client_host, 50000))
+
+
+def write_fake_hermes_skill(
+    repo_root: Path,
+    *,
+    relative_dir: str,
+    name: str,
+    description: str,
+    category: str,
+    tags: list[str],
+) -> Path:
+    skill_dir = repo_root / relative_dir
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    skill_path = skill_dir / "SKILL.md"
+    skill_path.write_text(
+        "\n".join(
+            [
+                "---",
+                f"name: {name}",
+                f"description: {description}",
+                "metadata:",
+                "  hermes:",
+                f"    category: {category}",
+                f"    tags: [{', '.join(tags)}]",
+                "---",
+                "",
+                f"# {name}",
+                "",
+                "## When to Use",
+                "Load this skill when the task needs the documented workflow.",
+                "",
+                "## Procedure",
+                "1. Open the skill.",
+                "2. Follow its steps.",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    return skill_path
+
+
+def write_fake_hermes_file(repo_root: Path, relative_path: str) -> Path:
+    path = repo_root / relative_path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("# stub\n", encoding="utf-8")
+    return path
+
+
+def write_fake_ecc_skill(
+    repo_root: Path,
+    *,
+    relative_dir: str,
+    name: str,
+    description: str,
+) -> Path:
+    skill_dir = repo_root / relative_dir
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    skill_path = skill_dir / "SKILL.md"
+    skill_path.write_text(
+        "\n".join(
+            [
+                "---",
+                f"name: {name}",
+                f"description: {description}",
+                "origin: ECC",
+                "---",
+                "",
+                f"# {name}",
+                "",
+                "## When to Use",
+                "Load this ECC skill when the task needs the documented workflow.",
+                "",
+                "## Procedure",
+                "1. Open the skill.",
+                "2. Follow the workflow.",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    return skill_path
+
+
+def write_fake_ecc_install_manifests(repo_root: Path) -> None:
+    manifests_root = repo_root / "manifests"
+    manifests_root.mkdir(parents=True, exist_ok=True)
+    (manifests_root / "install-profiles.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "profiles": {
+                    "core": {
+                        "description": "Minimal Codex-facing ECC baseline.",
+                        "modules": [
+                            "rules-core",
+                            "agents-core",
+                            "commands-core",
+                            "hooks-runtime",
+                            "platform-configs",
+                            "workflow-quality",
+                        ],
+                    },
+                    "developer": {
+                        "description": "Default engineering profile for Codex project installs.",
+                        "modules": [
+                            "rules-core",
+                            "agents-core",
+                            "commands-core",
+                            "hooks-runtime",
+                            "platform-configs",
+                            "workflow-quality",
+                            "framework-language",
+                            "database",
+                            "orchestration",
+                        ],
+                    },
+                },
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (manifests_root / "install-components.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "components": [
+                    {
+                        "id": "baseline:agents",
+                        "family": "baseline",
+                        "description": "Agent definitions and shared AGENTS guidance.",
+                        "modules": ["agents-core"],
+                    },
+                    {
+                        "id": "baseline:commands",
+                        "family": "baseline",
+                        "description": "Core command library.",
+                        "modules": ["commands-core"],
+                    },
+                    {
+                        "id": "baseline:hooks",
+                        "family": "baseline",
+                        "description": "Hook runtime helpers.",
+                        "modules": ["hooks-runtime"],
+                    },
+                    {
+                        "id": "baseline:platform",
+                        "family": "baseline",
+                        "description": "Platform configs and Codex baseline files.",
+                        "modules": ["platform-configs"],
+                    },
+                    {
+                        "id": "baseline:workflow",
+                        "family": "baseline",
+                        "description": "Quality and learning workflow skills.",
+                        "modules": ["workflow-quality"],
+                    },
+                    {
+                        "id": "lang:python",
+                        "family": "language",
+                        "description": "Python application engineering guidance.",
+                        "modules": ["framework-language"],
+                    },
+                    {
+                        "id": "capability:database",
+                        "family": "capability",
+                        "description": "Database-oriented skills.",
+                        "modules": ["database"],
+                    },
+                    {
+                        "id": "capability:orchestration",
+                        "family": "capability",
+                        "description": "Worktree and terminal orchestration guidance.",
+                        "modules": ["orchestration"],
+                    },
+                ],
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (manifests_root / "install-modules.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "modules": [
+                    {
+                        "id": "rules-core",
+                        "kind": "rules",
+                        "description": "Shared rules for non-Codex targets.",
+                        "paths": ["rules"],
+                        "targets": ["claude", "cursor"],
+                        "dependencies": [],
+                        "defaultInstall": True,
+                        "cost": "light",
+                        "stability": "stable",
+                    },
+                    {
+                        "id": "agents-core",
+                        "kind": "agents",
+                        "description": "Agent definitions and AGENTS guidance.",
+                        "paths": [".agents", "agents", "AGENTS.md"],
+                        "targets": ["codex", "claude"],
+                        "dependencies": [],
+                        "defaultInstall": True,
+                        "cost": "light",
+                        "stability": "stable",
+                    },
+                    {
+                        "id": "commands-core",
+                        "kind": "commands",
+                        "description": "Command shims for non-Codex targets.",
+                        "paths": ["commands"],
+                        "targets": ["claude", "cursor"],
+                        "dependencies": [],
+                        "defaultInstall": True,
+                        "cost": "medium",
+                        "stability": "stable",
+                    },
+                    {
+                        "id": "hooks-runtime",
+                        "kind": "hooks",
+                        "description": "Hook runtime helpers for non-Codex targets.",
+                        "paths": ["hooks", "scripts/hooks", "scripts/lib"],
+                        "targets": ["claude"],
+                        "dependencies": [],
+                        "defaultInstall": True,
+                        "cost": "medium",
+                        "stability": "stable",
+                    },
+                    {
+                        "id": "platform-configs",
+                        "kind": "platform",
+                        "description": "Codex platform configs and MCP catalog defaults.",
+                        "paths": [".codex", "mcp-configs"],
+                        "targets": ["codex", "claude"],
+                        "dependencies": [],
+                        "defaultInstall": True,
+                        "cost": "light",
+                        "stability": "stable",
+                    },
+                    {
+                        "id": "workflow-quality",
+                        "kind": "skills",
+                        "description": "Workflow-quality and learning skills.",
+                        "paths": ["skills/continuous-learning"],
+                        "targets": ["codex", "claude"],
+                        "dependencies": ["platform-configs"],
+                        "defaultInstall": True,
+                        "cost": "medium",
+                        "stability": "stable",
+                    },
+                    {
+                        "id": "framework-language",
+                        "kind": "skills",
+                        "description": "Language and framework guidance.",
+                        "paths": ["skills/python-patterns"],
+                        "targets": ["codex", "claude"],
+                        "dependencies": [
+                            "rules-core",
+                            "agents-core",
+                            "commands-core",
+                            "platform-configs",
+                        ],
+                        "defaultInstall": False,
+                        "cost": "medium",
+                        "stability": "stable",
+                    },
+                    {
+                        "id": "database",
+                        "kind": "skills",
+                        "description": "Database skills.",
+                        "paths": ["skills/postgres-patterns"],
+                        "targets": ["codex", "claude"],
+                        "dependencies": ["platform-configs"],
+                        "defaultInstall": False,
+                        "cost": "medium",
+                        "stability": "stable",
+                    },
+                    {
+                        "id": "orchestration",
+                        "kind": "skills",
+                        "description": "Orchestration skills.",
+                        "paths": ["skills/tmux-orchestrator"],
+                        "targets": ["codex", "claude"],
+                        "dependencies": ["platform-configs"],
+                        "defaultInstall": False,
+                        "cost": "medium",
+                        "stability": "stable",
+                    },
+                ],
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def write_fake_ecc_source_repo(repo_root: Path) -> Path:
+    write_fake_ecc_skill(
+        repo_root,
+        relative_dir="skills/workspace-surface-audit",
+        name="workspace-surface-audit",
+        description="Audit the project harness surface, installed skills, and Codex-facing config.",
+    )
+    write_fake_ecc_skill(
+        repo_root,
+        relative_dir="skills/continuous-learning",
+        name="continuous-learning",
+        description="Capture project learnings and feed them back into the workflow.",
+    )
+    write_fake_ecc_skill(
+        repo_root,
+        relative_dir="skills/python-patterns",
+        name="python-patterns",
+        description="Python engineering guidance for application codebases.",
+    )
+    write_fake_ecc_skill(
+        repo_root,
+        relative_dir="skills/postgres-patterns",
+        name="postgres-patterns",
+        description="Database design and query guidance for Postgres-backed projects.",
+    )
+    write_fake_ecc_skill(
+        repo_root,
+        relative_dir="skills/tmux-orchestrator",
+        name="tmux-orchestrator",
+        description="Coordinate parallel terminal workflows for project execution.",
+    )
+    commands_dir = repo_root / "commands"
+    commands_dir.mkdir(parents=True, exist_ok=True)
+    (commands_dir / "plan.md").write_text("# Plan\n", encoding="utf-8")
+    agents_dir = repo_root / "agents"
+    agents_dir.mkdir(parents=True, exist_ok=True)
+    (agents_dir / "planner.md").write_text("# Planner\n", encoding="utf-8")
+    project_agents_dir = repo_root / ".agents" / "coordination"
+    project_agents_dir.mkdir(parents=True, exist_ok=True)
+    (project_agents_dir / "README.md").write_text("# Coordination\n", encoding="utf-8")
+    rules_dir = repo_root / "rules" / "common"
+    rules_dir.mkdir(parents=True, exist_ok=True)
+    (rules_dir / "testing.md").write_text("# Testing\n", encoding="utf-8")
+    codex_agents_dir = repo_root / ".codex" / "agents"
+    codex_agents_dir.mkdir(parents=True, exist_ok=True)
+    mcp_configs_dir = repo_root / "mcp-configs"
+    mcp_configs_dir.mkdir(parents=True, exist_ok=True)
+    (mcp_configs_dir / "defaults.json").write_text(
+        '{"mcpServers":{"github":{"command":"npx"},"context7":{"command":"npx"}}}\n',
+        encoding="utf-8",
+    )
+    (repo_root / "AGENTS.md").write_text(
+        "# Everything Claude Code (ECC) — Agent Instructions\n",
+        encoding="utf-8",
+    )
+    (repo_root / ".codex" / "AGENTS.md").write_text(
+        "# ECC for Codex CLI\n",
+        encoding="utf-8",
+    )
+    (repo_root / ".codex" / "config.toml").write_text(
+        "[mcp_servers.context7]\ncommand = \"npx\"\n\n[agents.explorer]\nmodel = \"gpt-5.4\"\n",
+        encoding="utf-8",
+    )
+    (codex_agents_dir / "explorer.toml").write_text('model = "gpt-5.4"\n', encoding="utf-8")
+    (repo_root / ".mcp.json").write_text(
+        '{"mcpServers":{"github":{"command":"npx"},"context7":{"command":"npx"}}}',
+        encoding="utf-8",
+    )
+    (repo_root / "package.json").write_text('{"name":"ecc-universal"}', encoding="utf-8")
+    write_fake_ecc_install_manifests(repo_root)
+    return repo_root
+
+
+def write_fake_ecc_workspace(workspace_root: Path) -> Path:
+    codex_agents_dir = workspace_root / ".codex" / "agents"
+    codex_agents_dir.mkdir(parents=True, exist_ok=True)
+    (workspace_root / ".codex" / "AGENTS.md").write_text(
+        "# ECC for Codex CLI\n",
+        encoding="utf-8",
+    )
+    (workspace_root / ".codex" / "config.toml").write_text(
+        "[mcp_servers.github]\ncommand = \"npx\"\n\n[mcp_servers.context7]\ncommand = \"npx\"\n",
+        encoding="utf-8",
+    )
+    (workspace_root / ".mcp.json").write_text(
+        '{"mcpServers":{"github":{"command":"npx"}}}',
+        encoding="utf-8",
+    )
+    (codex_agents_dir / "explorer.toml").write_text('model = "gpt-5.4"\n', encoding="utf-8")
+    return workspace_root
 
 
 def make_instance_view(
@@ -89,6 +510,89 @@ def make_instance_view(
         mcp_servers=mcp_servers or [],
         unresolved_requests=unresolved_requests or [],
     )
+
+
+class FakeMissionRuntimeClient:
+    def __init__(self) -> None:
+        self.thread_id = "thread-memory-proof-direct"
+        self.turn_id = "turn-memory-proof-direct"
+        self.turn_prompts: list[str] = []
+
+    async def call(self, method: str, params: dict[str, object]) -> dict[str, object]:
+        if method == "mcpServerStatus/list":
+            return {
+                "data": [
+                    {
+                        "name": "MemPalace MCP Server",
+                        "source": "mempalace",
+                        "status": "ready",
+                        "authStatus": "ready",
+                        "tools": [
+                            "mempalace_status",
+                            "mempalace_search",
+                            "mempalace_diary_write",
+                            "mempalace_diary_read",
+                        ],
+                    }
+                ]
+            }
+        if method == "thread/list":
+            return {
+                "data": [
+                    {
+                        "id": self.thread_id,
+                        "status": {"type": "idle"},
+                    }
+                ]
+            }
+        if method in {
+            "account/read",
+            "model/list",
+            "collaborationMode/list",
+            "skills/list",
+            "app/list",
+            "plugin/list",
+            "thread/loaded/list",
+        }:
+            return {"data": []}
+        if method == "config/read":
+            return {"config": {}}
+        return {}
+
+    async def start_thread(
+        self,
+        *,
+        model: str,
+        cwd: str | None,
+        reasoning_effort: str | None,
+        collaboration_mode: str | None,
+    ) -> dict[str, object]:
+        return {
+            "thread": {
+                "id": self.thread_id,
+                "status": {"type": "idle"},
+            }
+        }
+
+    async def start_turn(
+        self,
+        *,
+        thread_id: str,
+        text: str,
+        cwd: str | None,
+        model: str | None,
+        reasoning_effort: str | None,
+        collaboration_mode: str | None,
+    ) -> dict[str, object]:
+        self.turn_prompts.append(text)
+        return {
+            "turn": {
+                "id": self.turn_id,
+            }
+        }
+
+    async def close(self) -> None:
+        return None
 
 
 def make_project_view(*, project_id: int = 1, label: str = "Sandbox") -> ProjectView:
@@ -142,6 +646,7 @@ def make_mission_view(
     last_reflex_at: str | None = None,
     cwd: str = "C:/workspace",
     thread_id: str | None = None,
+    toolsets: list[str] | None = None,
     updated_at: datetime | None = None,
 ) -> MissionView:
     now = datetime.now(UTC)
@@ -168,6 +673,7 @@ def make_mission_view(
         auto_recover=auto_recover,
         auto_recover_limit=auto_recover_limit,
         reflex_cooldown_seconds=reflex_cooldown_seconds,
+        toolsets=toolsets or [],
         in_progress=in_progress,
         phase=phase,
         current_command=current_command,
@@ -267,6 +773,174 @@ def make_remote_request_view(
     )
 
 
+def make_gateway_capability_view(
+    *,
+    level: str = "ready",
+    headline: str = "Gateway capability is operator-ready",
+    summary: str = "1/1 lane(s) connected. 1 tracked capability(ies) ready. approval pauses armed.",
+    warnings: list[str] | None = None,
+    ready_count: int = 1,
+    connected_count: int = 1,
+    total_count: int = 1,
+    warning_count: int = 0,
+    offline_count: int = 0,
+    approval_count: int = 0,
+    tracked_ready_count: int = 1,
+    tracked_gap_count: int = 0,
+    route_status: str = "ready",
+    route_warning: str | None = None,
+) -> GatewayCapabilityView:
+    return GatewayCapabilityView.model_validate(
+        {
+            "level": level,
+            "headline": headline,
+            "summary": summary,
+            "warnings": warnings or ([] if route_warning is None else [route_warning]),
+            "connected_lane_health": {
+                "headline": "Connected lane health",
+                "summary": (
+                    "A launch-ready lane is available."
+                    if ready_count
+                    else "Connected lanes need repair before launch."
+                ),
+                "total_count": total_count,
+                "connected_count": connected_count,
+                "ready_count": ready_count,
+                "warning_count": warning_count,
+                "offline_count": offline_count,
+                "approval_count": approval_count,
+                "lanes": [
+                    {
+                        "instance_id": 1,
+                        "instance_name": "Local Codex Desktop",
+                        "connected": connected_count > 0,
+                        "level": "ready" if ready_count else "warn",
+                        "summary": "Lane summary",
+                        "approval_count": approval_count,
+                        "app_count": 0,
+                        "plugin_count": 0,
+                        "mcp_server_count": 0,
+                        "warnings": [] if route_warning is None else [route_warning],
+                        "last_event_at": None,
+                    }
+                ],
+            },
+            "inventory": {
+                "headline": "Gateway inventory",
+                "summary": (
+                    "Tracked capability gaps need repair."
+                    if tracked_gap_count
+                    else "Tracked capabilities are ready."
+                ),
+                "app_count": 0,
+                "plugin_count": 0,
+                "mcp_server_count": 0,
+                "tracked_ready_count": tracked_ready_count,
+                "tracked_gap_count": tracked_gap_count,
+                "tracked_count": max(tracked_ready_count + tracked_gap_count, 1),
+                "observed_count": tracked_ready_count,
+                "items": [],
+            },
+            "approval_posture": {
+                "headline": "Approval posture",
+                "summary": (
+                    f"{approval_count} approval request(s) are waiting."
+                    if approval_count
+                    else "No approvals are waiting."
+                ),
+                "pause_on_approval": True,
+                "approval_count": approval_count,
+                "lane_count_with_approvals": 1 if approval_count else 0,
+                "operator_api_key_count": 1,
+                "recent_remote_request_count": 0,
+            },
+            "launch_policy": {
+                "headline": "Saved launch policy",
+                "summary": "Verification on, built-in agents on, approvals paused.",
+                "setup_mode": "remote" if route_status == "repair" else "local",
+                "setup_flow": "quickstart",
+                "route_binding_mode": "saved_lane",
+                "run_verification": True,
+                "use_builtin_agents": True,
+                "auto_commit": False,
+                "pause_on_approval": True,
+                "auto_recover": True,
+                "auto_recover_limit": 2,
+                "allow_failover": True,
+                "model": "gpt-5.4",
+                "max_turns": 4,
+                "launch_route": {
+                    "status": route_status,
+                    "mode": "saved_lane",
+                    "matched_by": "gateway.preferred_instance",
+                    "headline": "Saved launch route",
+                    "summary": "Launch route summary",
+                    "session_key": "session-gateway",
+                    "warnings": [] if route_warning is None else [route_warning],
+                    "preferred_instance": {
+                        "id": 1,
+                        "label": "Local Codex Desktop",
+                        "detail": "Preferred gateway lane",
+                        "connected": connected_count > 0,
+                    },
+                    "resolved_instance": None,
+                    "candidates": [],
+                    "last_resolved_at": None,
+                },
+            },
+            "diagnostics": {
+                "headline": "Gateway diagnostics",
+                "summary": "Diagnostics summary",
+                "ok_count": 1,
+                "warn_count": 0 if level != "critical" else 1,
+                "fail_count": 1 if level == "critical" else 0,
+                "evidence": [],
+            },
+            "checked_at": datetime.now(UTC).isoformat(),
+        }
+    )
+
+
+def make_gateway_repair_opportunity(
+    *,
+    instance_id: int = 1,
+    project_id: int | None = None,
+    cwd: str = "C:/workspace",
+) -> dict[str, object]:
+    return {
+        "id": "gateway-repair",
+        "kind": "gateway_repair",
+        "impact": "high",
+        "title": "Stabilize gateway posture",
+        "summary": "Repair the saved gateway posture before broader launches.",
+        "why_now": "Gateway Doctor says the saved launch posture still needs repair.",
+        "action_label": "Load gateway repair",
+        "mission_draft": {
+            "name": "Stabilize Gateway Posture",
+            "objective": "Repair the highest-risk gateway blocker and verify the fix.",
+            "instance_id": instance_id,
+            "project_id": project_id,
+            "task_blueprint_id": None,
+            "cwd": cwd,
+            "thread_id": None,
+            "model": "gpt-5.4-mini",
+            "reasoning_effort": None,
+            "collaboration_mode": None,
+            "max_turns": 3,
+            "use_builtin_agents": True,
+            "run_verification": True,
+            "auto_commit": False,
+            "pause_on_approval": True,
+            "allow_auto_reflexes": True,
+            "auto_recover": True,
+            "auto_recover_limit": 2,
+            "reflex_cooldown_seconds": 900,
+            "allow_failover": True,
+            "start_immediately": True,
+        },
+    }
+
+
 def make_dashboard_view(
     *,
     instances: list[InstanceView] | None = None,
@@ -304,6 +978,76 @@ def make_dashboard_view(
                 "opportunities": opportunities or [],
             },
             "radar": {"posture": "steady", "summary": "Radar summary", "signals": []},
+            "gateway_capability": {
+                "level": "info",
+                "headline": "Gateway capability is steady",
+                "summary": "Gateway capability summary",
+                "warnings": [],
+                "connected_lane_health": {
+                    "headline": "Connected lanes are healthy",
+                    "summary": "Lane health summary",
+                    "total_count": len(instances),
+                    "connected_count": len(
+                        [instance for instance in instances if instance.connected]
+                    ),
+                    "ready_count": len(
+                        [instance for instance in instances if instance.connected]
+                    ),
+                    "warning_count": 0,
+                    "offline_count": len(
+                        [instance for instance in instances if not instance.connected]
+                    ),
+                    "approval_count": 0,
+                    "lanes": [],
+                },
+                "inventory": {
+                    "headline": "Gateway inventory is ready",
+                    "summary": "Inventory summary",
+                    "app_count": 0,
+                    "plugin_count": 0,
+                    "mcp_server_count": 0,
+                    "tracked_ready_count": 0,
+                    "tracked_gap_count": 0,
+                    "tracked_count": 0,
+                    "observed_count": 0,
+                    "items": [],
+                },
+                "approval_posture": {
+                    "headline": "Approval posture is calm",
+                    "summary": "No approvals are waiting.",
+                    "pause_on_approval": True,
+                    "approval_count": 0,
+                    "lane_count_with_approvals": 0,
+                    "operator_api_key_count": 0,
+                    "recent_remote_request_count": 0,
+                },
+                "launch_policy": {
+                    "headline": "Saved local launch policy",
+                    "summary": "Verification on, built-in agents on, approvals paused.",
+                    "setup_mode": "local",
+                    "setup_flow": "quickstart",
+                    "route_binding_mode": "saved_lane",
+                    "run_verification": True,
+                    "use_builtin_agents": True,
+                    "auto_commit": False,
+                    "pause_on_approval": True,
+                    "auto_recover": True,
+                    "auto_recover_limit": 2,
+                    "allow_failover": True,
+                    "model": "gpt-5.4",
+                    "max_turns": 4,
+                    "launch_route": None,
+                },
+                "diagnostics": {
+                    "headline": "Diagnostics are healthy",
+                    "summary": "No active diagnostic failures.",
+                    "ok_count": 0,
+                    "warn_count": 0,
+                    "fail_count": 0,
+                    "evidence": [],
+                },
+                "checked_at": datetime.now(UTC).isoformat(),
+            },
             "gateway_bootstrap": {
                 "status": "unconfigured",
                 "headline": "Gateway bootstrap is not configured",
@@ -388,6 +1132,14 @@ def make_dashboard_view(
                 "summary": "No packets yet",
                 "packets": [],
             },
+            "recall": {
+                "mode": "recent",
+                "query": None,
+                "headline": "Recent recall is ready",
+                "summary": "Saved recall summary",
+                "total_matches": 0,
+                "items": [],
+            },
             "dream_deck": {
                 "headline": "No dream candidates yet",
                 "summary": "No dreams",
@@ -419,7 +1171,7 @@ def make_dashboard_view(
 
 
 def test_health_endpoint(tmp_path) -> None:
-    with make_client(tmp_path) as client:
+    with make_client(tmp_path, reset_data_dir=True) as client:
         response = client.get("/api/health")
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
@@ -448,7 +1200,7 @@ def test_dashboard_merges_repeated_plugin_warning_events(tmp_path) -> None:
         "path=C:\\Users\\skull\\.codex\\.tmp\\plugins\\plugins\\life-science-research\\.codex-plugin\\plugin.json"
     )
 
-    with make_client(tmp_path) as client:
+    with make_client(tmp_path, reset_data_dir=True) as client:
         database = client.app.state.database
         asyncio.run(
             database.append_event(
@@ -543,6 +1295,63 @@ def test_project_creation_appears_on_dashboard(tmp_path) -> None:
     assert dashboard["playbooks"] == []
 
 
+def test_project_creation_surfaces_ecc_source_workspace(tmp_path) -> None:
+    ecc_root = write_fake_ecc_source_repo(tmp_path / "everything-claude-code-main")
+
+    with make_client(tmp_path, ecc_source_path=ecc_root) as client:
+        create_response = client.post(
+            "/api/projects",
+            json={"path": str(ecc_root), "label": "ECC Repo"},
+        )
+        dashboard_response = client.get("/api/dashboard")
+
+    assert create_response.status_code == 200
+    project = create_response.json()
+    assert project["label"] == "ECC Repo"
+    assert project["agent_harness"]["kind"] == "ecc_source"
+    assert project["agent_harness"]["skill_count"] == 5
+    assert project["agent_harness"]["command_count"] == 1
+    assert project["agent_harness"]["agent_count"] == 1
+    assert project["agent_harness"]["codex_role_count"] == 1
+    assert project["agent_harness"]["mcp_servers"] == ["github", "context7"]
+    assert "skills/" in project["agent_harness"]["surface_paths"]
+    assert project["agent_harness"]["default_install_profile"] == "developer"
+    assert [profile["id"] for profile in project["agent_harness"]["install_profiles"]] == [
+        "core",
+        "developer",
+    ]
+    assert project["agent_harness"]["doctor"]["level"] == "ready"
+    assert project["agent_harness"]["doctor"]["baseline_path"] == str(ecc_root)
+
+    dashboard = dashboard_response.json()
+    assert dashboard["projects"][0]["agent_harness"]["headline"] == (
+        "Everything Claude Code source detected"
+    )
+
+
+def test_project_creation_surfaces_ecc_install_candidate_for_plain_workspace(tmp_path) -> None:
+    ecc_root = write_fake_ecc_source_repo(tmp_path / "everything-claude-code-main")
+    workspace_root = tmp_path / "plain-project"
+    workspace_root.mkdir(parents=True, exist_ok=True)
+    (workspace_root / "README.md").write_text("# Plain Project\n", encoding="utf-8")
+
+    with make_client(tmp_path, ecc_source_path=ecc_root) as client:
+        response = client.post(
+            "/api/projects",
+            json={"path": str(workspace_root), "label": "Plain Project"},
+        )
+
+    assert response.status_code == 200
+    project = response.json()
+    assert project["agent_harness"]["kind"] == "ecc_candidate"
+    assert project["agent_harness"]["default_install_profile"] == "developer"
+    assert [profile["id"] for profile in project["agent_harness"]["install_profiles"]] == [
+        "core",
+        "developer",
+    ]
+    assert project["agent_harness"]["doctor"] is None
+
+
 def test_playbook_creation_and_diagnostics_endpoint(tmp_path) -> None:
     with make_client(tmp_path) as client:
         create_response = client.post(
@@ -629,6 +1438,7 @@ def test_onboarding_bootstrap_creates_first_run_bundle_and_launch_draft(tmp_path
                 "cadence_minutes": 180,
                 "model": "gpt-5.4",
                 "max_turns": 4,
+                "toolsets": ["hermes-cli", "browser", "debugging"],
                 "use_builtin_agents": True,
                 "run_verification": True,
                 "auto_commit": False,
@@ -656,8 +1466,15 @@ def test_onboarding_bootstrap_creates_first_run_bundle_and_launch_draft(tmp_path
     assert payload["api_key"].startswith("ozk_")
     assert payload["mission_draft"]["name"] == "Kick off Autonomous Ship Loop"
     assert "Project skillbook:" in payload["mission_draft"]["objective"]
+    assert "Hermes tool policy:" in payload["mission_draft"]["objective"]
     assert "Known integration inventory:" in payload["mission_draft"]["objective"]
     assert payload["mission_draft"]["session_key"].startswith("launch:mode:task_lane:task:")
+    assert payload["mission_draft"]["toolsets"] == ["hermes-cli", "browser", "debugging"]
+    assert payload["mission_draft"]["tool_policy"]["toolsets"] == [
+        "hermes-cli",
+        "browser",
+        "debugging",
+    ]
     assert payload["launch_route"]["mode"] == "task_lane"
     assert payload["launch_route"]["matched_by"] == "task.instance"
     assert payload["launch_route"]["resolved_instance"]["label"] == "Bootstrap Lane"
@@ -680,7 +1497,778 @@ def test_onboarding_bootstrap_creates_first_run_bundle_and_launch_draft(tmp_path
     assert dashboard["gateway_bootstrap"]["route_binding_mode"] == "saved_lane"
     assert dashboard["gateway_bootstrap"]["run_verification"] is True
     assert dashboard["gateway_bootstrap"]["auto_commit"] is False
+    assert dashboard["gateway_bootstrap"]["toolsets"] == ["hermes-cli", "browser", "debugging"]
+    assert dashboard["gateway_bootstrap"]["tool_policy"]["toolsets"] == [
+        "hermes-cli",
+        "browser",
+        "debugging",
+    ]
     assert dashboard["gateway_bootstrap"]["launch_route"]["mode"] == "task_lane"
+
+
+def test_dashboard_auto_attaches_matching_hermes_skill_to_task_draft(tmp_path) -> None:
+    hermes_root = tmp_path / "hermes-agent-main"
+    hermes_skill_path = write_fake_hermes_skill(
+        hermes_root,
+        relative_dir="skills/research/arxiv-research",
+        name="ArXiv Research",
+        description="Search arXiv papers, summarize findings, and track citations for the topic",
+        category="research",
+        tags=["research", "arxiv", "papers", "citations"],
+    )
+
+    try:
+        with make_client(tmp_path, hermes_source_path=hermes_root) as client:
+            instance = client.post(
+                "/api/instances",
+                json={
+                    "name": "Hermes Lane",
+                    "transport": "desktop",
+                    "cwd": str(tmp_path),
+                    "auto_connect": False,
+                },
+            ).json()
+            project = client.post(
+                "/api/projects",
+                json={"path": str(tmp_path), "label": "Hermes Workspace"},
+            ).json()
+            task_response = client.post(
+                "/api/tasks",
+                json={
+                    "name": "Research Loop",
+                    "summary": "Keep gathering primary literature.",
+                    "objective_template": (
+                        "Research arxiv papers, summarize the evidence, and cite the strongest "
+                        "findings before proposing the next change."
+                    ),
+                    "instance_id": instance["id"],
+                    "project_id": project["id"],
+                    "cadence_minutes": 60,
+                    "cwd": str(tmp_path),
+                    "model": "gpt-5.4",
+                    "reasoning_effort": None,
+                    "collaboration_mode": None,
+                    "max_turns": 2,
+                    "use_builtin_agents": True,
+                    "run_verification": True,
+                    "auto_commit": False,
+                    "pause_on_approval": True,
+                    "allow_auto_reflexes": True,
+                    "auto_recover": True,
+                    "auto_recover_limit": 2,
+                    "reflex_cooldown_seconds": 900,
+                    "allow_failover": True,
+                    "enabled": True,
+                },
+            )
+            dashboard = client.get("/api/dashboard").json()
+
+        assert task_response.status_code == 200
+        skill_names = [skill["name"] for skill in dashboard["ops_mesh"]["skillbooks"][0]["skills"]]
+        assert "ArXiv Research" in skill_names
+        hermes_skill = next(
+            skill
+            for skill in dashboard["ops_mesh"]["skillbooks"][0]["skills"]
+            if skill["name"] == "ArXiv Research"
+        )
+        assert hermes_skill["id"] < 0
+        assert hermes_skill["source"] == str(hermes_skill_path)
+        task_objective = dashboard["ops_mesh"]["task_inbox"]["tasks"][0]["mission_draft"][
+            "objective"
+        ]
+        assert str(hermes_skill_path) in task_objective
+        assert "Read the linked Hermes SKILL.md" in task_objective
+    finally:
+        configure_hermes_skill_catalog(None)
+
+
+def test_dashboard_auto_attaches_matching_ecc_skill_and_surface_to_task_draft(
+    tmp_path,
+) -> None:
+    ecc_root = write_fake_ecc_source_repo(tmp_path / "everything-claude-code-main")
+    ecc_skill_path = ecc_root / "skills" / "workspace-surface-audit" / "SKILL.md"
+
+    with make_client(tmp_path, ecc_source_path=ecc_root) as client:
+        instance = client.post(
+            "/api/instances",
+            json={
+                "name": "ECC Lane",
+                "transport": "desktop",
+                "cwd": str(ecc_root),
+                "auto_connect": False,
+            },
+        ).json()
+        project = client.post(
+            "/api/projects",
+            json={"path": str(ecc_root), "label": "ECC Workspace"},
+        ).json()
+        task_response = client.post(
+            "/api/tasks",
+            json={
+                "name": "ECC Surface Loop",
+                "summary": "Map the harness surface.",
+                "objective_template": (
+                    "Audit the workspace surface, inspect the Codex config, and summarize the "
+                    "installed harness posture before changing anything."
+                ),
+                "instance_id": instance["id"],
+                "project_id": project["id"],
+                "cadence_minutes": 60,
+                "cwd": str(ecc_root),
+                "model": "gpt-5.4",
+                "reasoning_effort": None,
+                "collaboration_mode": None,
+                "max_turns": 2,
+                "use_builtin_agents": True,
+                "run_verification": True,
+                "auto_commit": False,
+                "pause_on_approval": True,
+                "allow_auto_reflexes": True,
+                "auto_recover": True,
+                "auto_recover_limit": 2,
+                "reflex_cooldown_seconds": 900,
+                "allow_failover": True,
+                "enabled": True,
+            },
+        )
+        dashboard = client.get("/api/dashboard").json()
+
+    assert task_response.status_code == 200
+    skill_names = [skill["name"] for skill in dashboard["ops_mesh"]["skillbooks"][0]["skills"]]
+    assert "workspace-surface-audit" in skill_names
+    ecc_skill = next(
+        skill
+        for skill in dashboard["ops_mesh"]["skillbooks"][0]["skills"]
+        if skill["name"] == "workspace-surface-audit"
+    )
+    assert ecc_skill["source"] == str(ecc_skill_path)
+    task_objective = dashboard["ops_mesh"]["task_inbox"]["tasks"][0]["mission_draft"]["objective"]
+    assert "ECC workspace surface:" in task_objective
+    assert "ECC source repo detected with 5 skill(s)" in task_objective
+    assert "ECC doctor:" in task_objective
+    assert str(ecc_skill_path) in task_objective
+
+
+def test_project_harness_endpoint_reports_ecc_workspace_drift_and_repairs(tmp_path) -> None:
+    ecc_root = write_fake_ecc_source_repo(tmp_path / "everything-claude-code-main")
+    (ecc_root / ".codex" / "agents" / "reviewer.toml").write_text(
+        'model = "gpt-5.4"\n',
+        encoding="utf-8",
+    )
+    (ecc_root / ".mcp.json").write_text(
+        (
+            '{"mcpServers":{"github":{"command":"npx"},"context7":{"command":"npx"},'
+            '"memory":{"command":"npx"}}}'
+        ),
+        encoding="utf-8",
+    )
+    workspace_root = write_fake_ecc_workspace(tmp_path / "ecc-installed-workspace")
+
+    with make_client(tmp_path, ecc_source_path=ecc_root) as client:
+        project_response = client.post(
+            "/api/projects",
+            json={"path": str(workspace_root), "label": "ECC Installed Workspace"},
+        )
+        project_id = project_response.json()["id"]
+        harness_response = client.get(f"/api/projects/{project_id}/harness")
+
+    assert project_response.status_code == 200
+    project = project_response.json()
+    assert project["agent_harness"]["kind"] == "ecc_workspace"
+    assert project["agent_harness"]["doctor"]["level"] == "warn"
+
+    assert harness_response.status_code == 200
+    harness = harness_response.json()
+    assert harness["doctor"]["baseline_path"] == str(ecc_root)
+    assert harness["doctor"]["install_state_paths"] == []
+    assert harness["doctor"]["missing_surface_paths"] == ["AGENTS.md"]
+    assert harness["doctor"]["missing_mcp_servers"] == ["memory"]
+    assert harness["doctor"]["missing_codex_roles"] == ["reviewer"]
+    assert ".mcp.json" in harness["doctor"]["drifted_paths"]
+    assert any(
+        action["command"] and "repair.js" in action["command"]
+        for action in harness["doctor"]["repair_actions"]
+    )
+
+
+def test_project_harness_actions_preview_and_apply_manifest_install(tmp_path) -> None:
+    ecc_root = write_fake_ecc_source_repo(tmp_path / "everything-claude-code-main")
+    workspace_root = tmp_path / "plain-ecc-install-workspace"
+    workspace_root.mkdir(parents=True, exist_ok=True)
+    (workspace_root / "README.md").write_text("# Plain Project\n", encoding="utf-8")
+
+    with make_client(tmp_path, ecc_source_path=ecc_root) as client:
+        project = client.post(
+            "/api/projects",
+            json={"path": str(workspace_root), "label": "Plain Install Workspace"},
+        ).json()
+        preview_response = client.post(
+            f"/api/projects/{project['id']}/harness/actions",
+            json={"mode": "install_preview", "profile": "developer"},
+        )
+        apply_response = client.post(
+            f"/api/projects/{project['id']}/harness/actions",
+            json={"mode": "install_apply", "profile": "developer"},
+        )
+        harness_response = client.get(f"/api/projects/{project['id']}/harness")
+
+    assert preview_response.status_code == 200
+    preview = preview_response.json()
+    assert preview["mode"] == "install_preview"
+    assert preview["status"] == "planned"
+    assert preview["profile"] == "developer"
+    assert preview["selected_modules"] == [
+        "agents-core",
+        "platform-configs",
+        "workflow-quality",
+        "framework-language",
+        "database",
+        "orchestration",
+    ]
+    assert preview["skipped_modules"] == [
+        "rules-core",
+        "commands-core",
+        "hooks-runtime",
+    ]
+    assert "AGENTS.md" in preview["planned_paths"]
+    assert ".agents/coordination/README.md" in preview["planned_paths"]
+    assert ".mcp.json" in preview["planned_paths"]
+    assert ".codex/AGENTS.md" in preview["planned_paths"]
+    assert ".codex/config.toml" in preview["planned_paths"]
+    assert "mcp-configs/defaults.json" in preview["planned_paths"]
+    assert "skills/python-patterns/SKILL.md" in preview["planned_paths"]
+    assert "skills/postgres-patterns/SKILL.md" in preview["planned_paths"]
+    assert "skills/tmux-orchestrator/SKILL.md" in preview["planned_paths"]
+    assert ".codex/ecc-install-state.json" in preview["planned_paths"]
+
+    assert apply_response.status_code == 200
+    applied = apply_response.json()
+    assert applied["mode"] == "install_apply"
+    assert applied["status"] == "installed"
+    assert applied["profile"] == "developer"
+    assert applied["selected_modules"] == preview["selected_modules"]
+    assert applied["skipped_modules"] == preview["skipped_modules"]
+    assert "AGENTS.md" in applied["changed_paths"]
+    assert ".agents/coordination/README.md" in applied["changed_paths"]
+    assert ".mcp.json" in applied["changed_paths"]
+    assert ".codex/AGENTS.md" in applied["changed_paths"]
+    assert ".codex/config.toml" in applied["changed_paths"]
+    assert "skills/continuous-learning/SKILL.md" in applied["changed_paths"]
+    assert "skills/python-patterns/SKILL.md" in applied["changed_paths"]
+    assert "skills/postgres-patterns/SKILL.md" in applied["changed_paths"]
+    assert "skills/tmux-orchestrator/SKILL.md" in applied["changed_paths"]
+    assert ".codex/ecc-install-state.json" in applied["changed_paths"]
+
+    assert (workspace_root / "AGENTS.md").read_text(encoding="utf-8") == (
+        ecc_root / "AGENTS.md"
+    ).read_text(encoding="utf-8")
+    assert json.loads((workspace_root / ".mcp.json").read_text(encoding="utf-8")) == json.loads(
+        (ecc_root / ".mcp.json").read_text(encoding="utf-8")
+    )
+    assert (workspace_root / ".codex" / "AGENTS.md").read_text(encoding="utf-8") == (
+        ecc_root / ".codex" / "AGENTS.md"
+    ).read_text(encoding="utf-8")
+    assert (workspace_root / ".agents" / "coordination" / "README.md").exists()
+    assert (workspace_root / "skills" / "python-patterns" / "SKILL.md").exists()
+    assert (workspace_root / "skills" / "postgres-patterns" / "SKILL.md").exists()
+    assert (workspace_root / "skills" / "tmux-orchestrator" / "SKILL.md").exists()
+
+    install_state = json.loads(
+        (workspace_root / ".codex" / "ecc-install-state.json").read_text(encoding="utf-8")
+    )
+    assert install_state["schemaVersion"] == "ecc.install.v1"
+    assert install_state["request"]["profile"] == "developer"
+    assert install_state["request"]["legacyMode"] is False
+    assert install_state["resolution"]["selectedModules"] == preview["selected_modules"]
+    assert install_state["resolution"]["skippedModules"] == preview["skipped_modules"]
+    operation_paths = {
+        operation["sourceRelativePath"] for operation in install_state["operations"]
+    }
+    assert ".mcp.json" in operation_paths
+    assert ".agents/coordination/README.md" in operation_paths
+    assert "skills/python-patterns/SKILL.md" in operation_paths
+
+    assert harness_response.status_code == 200
+    harness = harness_response.json()
+    assert harness["kind"] == "ecc_workspace"
+    assert harness["active_install_profile"] == "developer"
+    assert harness["active_install_modules"] == preview["selected_modules"]
+    assert harness["active_install_skipped_modules"] == preview["skipped_modules"]
+    assert harness["doctor"]["level"] == "ready"
+    assert harness["doctor"]["missing_surface_paths"] == []
+    assert harness["doctor"]["missing_mcp_servers"] == []
+    assert harness["doctor"]["missing_codex_roles"] == []
+    assert harness["doctor"]["drifted_paths"] == []
+    assert harness["doctor"]["install_state_paths"] == [".codex/ecc-install-state.json"]
+
+
+def test_project_harness_install_merges_existing_codex_and_mcp_configs(tmp_path) -> None:
+    ecc_root = write_fake_ecc_source_repo(tmp_path / "everything-claude-code-main")
+    (ecc_root / ".codex" / "config.toml").write_text(
+        (
+            'approval_policy = "never"\n'
+            'sandbox_mode = "danger-full-access"\n'
+            "web_search = true\n\n"
+            "[features]\n"
+            "fast_mode = true\n\n"
+            "[agents.explorer]\n"
+            'model = "gpt-5.4"\n\n'
+            "[agents.reviewer]\n"
+            'model = "gpt-5.4-mini"\n'
+        ),
+        encoding="utf-8",
+    )
+
+    workspace_root = tmp_path / "merged-install-workspace"
+    (workspace_root / ".codex").mkdir(parents=True, exist_ok=True)
+    (workspace_root / ".codex" / "config.toml").write_text(
+        (
+            'approval_policy = "on-request"\n'
+            'notify = ["terminal"]\n\n'
+            "[agents.explorer]\n"
+            'model = "custom-explorer"\n'
+        ),
+        encoding="utf-8",
+    )
+    (workspace_root / ".mcp.json").write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    "custom": {"command": "python", "args": ["-m", "custom"]},
+                    "github": {"command": "bun"},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with make_client(tmp_path, ecc_source_path=ecc_root) as client:
+        project = client.post(
+            "/api/projects",
+            json={"path": str(workspace_root), "label": "Merged Install Workspace"},
+        ).json()
+        apply_response = client.post(
+            f"/api/projects/{project['id']}/harness/actions",
+            json={"mode": "install_apply", "profile": "developer"},
+        )
+        harness_response = client.get(f"/api/projects/{project['id']}/harness")
+
+    assert apply_response.status_code == 200
+    config_payload = tomllib.loads(
+        (workspace_root / ".codex" / "config.toml").read_text(encoding="utf-8")
+    )
+    assert config_payload["approval_policy"] == "on-request"
+    assert config_payload["sandbox_mode"] == "danger-full-access"
+    assert config_payload["web_search"] is True
+    assert config_payload["notify"] == ["terminal"]
+    assert config_payload["features"]["fast_mode"] is True
+    assert config_payload["agents"]["explorer"]["model"] == "custom-explorer"
+    assert config_payload["agents"]["reviewer"]["model"] == "gpt-5.4-mini"
+
+    mcp_payload = json.loads((workspace_root / ".mcp.json").read_text(encoding="utf-8"))
+    assert sorted(mcp_payload["mcpServers"]) == ["context7", "custom", "github"]
+    assert mcp_payload["mcpServers"]["custom"]["command"] == "python"
+    assert mcp_payload["mcpServers"]["github"]["command"] == "bun"
+    assert mcp_payload["mcpServers"]["context7"]["command"] == "npx"
+
+    install_state = json.loads(
+        (workspace_root / ".codex" / "ecc-install-state.json").read_text(encoding="utf-8")
+    )
+    operations_by_path = {
+        operation["destinationRelativePath"]: operation for operation in install_state["operations"]
+    }
+    assert operations_by_path[".codex/config.toml"]["kind"] == "render-template"
+    assert "approval_policy = \"on-request\"" in operations_by_path[".codex/config.toml"][
+        "previousContent"
+    ]
+    assert operations_by_path[".mcp.json"]["kind"] == "merge-json"
+    assert operations_by_path[".mcp.json"]["mergePayload"] == {
+        "mcpServers": {"context7": {"command": "npx"}}
+    }
+
+    harness = harness_response.json()
+    assert harness_response.status_code == 200
+    assert harness["doctor"]["level"] == "ready"
+    assert harness["doctor"]["drifted_paths"] == []
+
+
+def test_project_harness_actions_preview_and_apply_uninstall(tmp_path) -> None:
+    ecc_root = write_fake_ecc_source_repo(tmp_path / "everything-claude-code-main")
+    workspace_root = tmp_path / "uninstall-workspace"
+    workspace_root.mkdir(parents=True, exist_ok=True)
+
+    with make_client(tmp_path, ecc_source_path=ecc_root) as client:
+        project = client.post(
+            "/api/projects",
+            json={"path": str(workspace_root), "label": "Uninstall Workspace"},
+        ).json()
+        install_response = client.post(
+            f"/api/projects/{project['id']}/harness/actions",
+            json={"mode": "install_apply", "profile": "developer"},
+        )
+        preview_response = client.post(
+            f"/api/projects/{project['id']}/harness/actions",
+            json={"mode": "uninstall_preview"},
+        )
+        apply_response = client.post(
+            f"/api/projects/{project['id']}/harness/actions",
+            json={"mode": "uninstall_apply"},
+        )
+        harness_response = client.get(f"/api/projects/{project['id']}/harness")
+
+    assert install_response.status_code == 200
+
+    assert preview_response.status_code == 200
+    preview = preview_response.json()
+    assert preview["mode"] == "uninstall_preview"
+    assert preview["status"] == "planned"
+    assert "AGENTS.md" in preview["planned_paths"]
+    assert ".mcp.json" in preview["planned_paths"]
+    assert ".codex/config.toml" in preview["planned_paths"]
+    assert ".codex/ecc-install-state.json" in preview["planned_paths"]
+
+    assert apply_response.status_code == 200
+    applied = apply_response.json()
+    assert applied["mode"] == "uninstall_apply"
+    assert applied["status"] == "uninstalled"
+    assert "AGENTS.md" in applied["changed_paths"]
+    assert ".mcp.json" in applied["changed_paths"]
+    assert ".codex/config.toml" in applied["changed_paths"]
+    assert ".codex/ecc-install-state.json" in applied["changed_paths"]
+
+    assert not (workspace_root / "AGENTS.md").exists()
+    assert not (workspace_root / ".mcp.json").exists()
+    assert not (workspace_root / ".codex" / "config.toml").exists()
+    assert not (workspace_root / "skills" / "python-patterns" / "SKILL.md").exists()
+    assert not (workspace_root / ".codex" / "ecc-install-state.json").exists()
+
+    assert harness_response.status_code == 200
+    assert harness_response.json()["kind"] == "ecc_candidate"
+
+
+def test_project_harness_uninstall_blocks_when_managed_files_drift(tmp_path) -> None:
+    ecc_root = write_fake_ecc_source_repo(tmp_path / "everything-claude-code-main")
+    workspace_root = tmp_path / "uninstall-drift-workspace"
+    workspace_root.mkdir(parents=True, exist_ok=True)
+
+    with make_client(tmp_path, ecc_source_path=ecc_root) as client:
+        project = client.post(
+            "/api/projects",
+            json={"path": str(workspace_root), "label": "Uninstall Drift Workspace"},
+        ).json()
+        install_response = client.post(
+            f"/api/projects/{project['id']}/harness/actions",
+            json={"mode": "install_apply", "profile": "developer"},
+        )
+        (workspace_root / "skills" / "python-patterns" / "SKILL.md").write_text(
+            "# drifted\n",
+            encoding="utf-8",
+        )
+        preview_response = client.post(
+            f"/api/projects/{project['id']}/harness/actions",
+            json={"mode": "uninstall_preview"},
+        )
+        apply_response = client.post(
+            f"/api/projects/{project['id']}/harness/actions",
+            json={"mode": "uninstall_apply"},
+        )
+
+    assert install_response.status_code == 200
+    assert preview_response.status_code == 200
+    preview = preview_response.json()
+    assert preview["status"] == "planned"
+    assert any("skills/python-patterns/SKILL.md" in warning for warning in preview["warnings"])
+
+    assert apply_response.status_code == 400
+    assert "managed files have drifted" in apply_response.json()["detail"]
+    assert (workspace_root / "skills" / "python-patterns" / "SKILL.md").exists()
+
+
+def test_project_harness_install_prunes_stale_files_on_profile_switch(tmp_path) -> None:
+    ecc_root = write_fake_ecc_source_repo(tmp_path / "everything-claude-code-main")
+    workspace_root = tmp_path / "profile-switch-workspace"
+    workspace_root.mkdir(parents=True, exist_ok=True)
+
+    with make_client(tmp_path, ecc_source_path=ecc_root) as client:
+        project = client.post(
+            "/api/projects",
+            json={"path": str(workspace_root), "label": "Profile Switch Workspace"},
+        ).json()
+        developer_response = client.post(
+            f"/api/projects/{project['id']}/harness/actions",
+            json={"mode": "install_apply", "profile": "developer"},
+        )
+        core_preview_response = client.post(
+            f"/api/projects/{project['id']}/harness/actions",
+            json={"mode": "install_preview", "profile": "core"},
+        )
+        core_apply_response = client.post(
+            f"/api/projects/{project['id']}/harness/actions",
+            json={"mode": "install_apply", "profile": "core"},
+        )
+        harness_response = client.get(f"/api/projects/{project['id']}/harness")
+
+    assert developer_response.status_code == 200
+
+    assert core_preview_response.status_code == 200
+    core_preview = core_preview_response.json()
+    assert "skills/python-patterns/SKILL.md" in core_preview["planned_paths"]
+    assert "skills/postgres-patterns/SKILL.md" in core_preview["planned_paths"]
+    assert "skills/tmux-orchestrator/SKILL.md" in core_preview["planned_paths"]
+    assert any("prune stale ECC-managed file" in warning for warning in core_preview["warnings"])
+
+    assert core_apply_response.status_code == 200
+    core_apply = core_apply_response.json()
+    assert core_apply["profile"] == "core"
+    assert "skills/python-patterns/SKILL.md" in core_apply["changed_paths"]
+    assert "skills/postgres-patterns/SKILL.md" in core_apply["changed_paths"]
+    assert "skills/tmux-orchestrator/SKILL.md" in core_apply["changed_paths"]
+
+    assert not (workspace_root / "skills" / "python-patterns" / "SKILL.md").exists()
+    assert not (workspace_root / "skills" / "postgres-patterns" / "SKILL.md").exists()
+    assert not (workspace_root / "skills" / "tmux-orchestrator" / "SKILL.md").exists()
+    assert (workspace_root / "skills" / "continuous-learning" / "SKILL.md").exists()
+
+    assert harness_response.status_code == 200
+    harness = harness_response.json()
+    assert harness["active_install_profile"] == "core"
+    assert harness["active_install_modules"] == [
+        "agents-core",
+        "platform-configs",
+        "workflow-quality",
+    ]
+
+def test_project_harness_actions_preview_and_apply_repairs(tmp_path) -> None:
+    ecc_root = write_fake_ecc_source_repo(tmp_path / "everything-claude-code-main")
+    (ecc_root / "AGENTS.md").write_text(
+        "# Everything Claude Code (ECC) - Agent Instructions\n",
+        encoding="utf-8",
+    )
+    (ecc_root / ".codex" / "agents" / "reviewer.toml").write_text(
+        'model = "gpt-5.4"\n',
+        encoding="utf-8",
+    )
+    (ecc_root / ".mcp.json").write_text(
+        (
+            '{"mcpServers":{"github":{"command":"npx"},"context7":{"command":"npx"},'
+            '"memory":{"command":"npx"}}}'
+        ),
+        encoding="utf-8",
+    )
+    workspace_root = write_fake_ecc_workspace(tmp_path / "ecc-repair-workspace")
+    (workspace_root / ".mcp.json").write_text(
+        '{"mcpServers":{"github":{"command":"npx"}}}',
+        encoding="utf-8",
+    )
+
+    with make_client(tmp_path, ecc_source_path=ecc_root) as client:
+        project = client.post(
+            "/api/projects",
+            json={"path": str(workspace_root), "label": "ECC Repair Workspace"},
+        ).json()
+        preview_response = client.post(
+            f"/api/projects/{project['id']}/harness/actions",
+            json={"mode": "repair_preview"},
+        )
+        apply_response = client.post(
+            f"/api/projects/{project['id']}/harness/actions",
+            json={"mode": "repair_apply"},
+        )
+        harness_response = client.get(f"/api/projects/{project['id']}/harness")
+
+    assert preview_response.status_code == 200
+    preview = preview_response.json()
+    assert preview["status"] == "planned"
+    assert "AGENTS.md" in preview["planned_paths"]
+    assert ".mcp.json" in preview["planned_paths"]
+    assert ".codex/agents/reviewer.toml" in preview["planned_paths"]
+    assert ".codex/ecc-install-state.json" in preview["planned_paths"]
+
+    assert apply_response.status_code == 200
+    applied = apply_response.json()
+    assert applied["status"] == "repaired"
+    assert "AGENTS.md" in applied["changed_paths"]
+    assert ".mcp.json" in applied["changed_paths"]
+    assert ".codex/agents/reviewer.toml" in applied["changed_paths"]
+    assert ".codex/ecc-install-state.json" in applied["changed_paths"]
+
+    assert (workspace_root / "AGENTS.md").read_text(encoding="utf-8") == (
+        ecc_root / "AGENTS.md"
+    ).read_text(encoding="utf-8")
+    assert (workspace_root / ".mcp.json").read_text(encoding="utf-8") == (
+        ecc_root / ".mcp.json"
+    ).read_text(encoding="utf-8")
+    assert (workspace_root / ".codex" / "agents" / "reviewer.toml").exists()
+    install_state = json.loads(
+        (workspace_root / ".codex" / "ecc-install-state.json").read_text(encoding="utf-8")
+    )
+    assert install_state["schemaVersion"] == "ecc.install.v1"
+    assert install_state["target"]["id"] == "codex-project"
+    assert install_state["target"]["target"] == "codex"
+    assert install_state["target"]["kind"] == "project"
+    assert install_state["target"]["installStatePath"] == str(
+        (workspace_root / ".codex" / "ecc-install-state.json").resolve(strict=False)
+    )
+    assert install_state["request"]["legacyMode"] is True
+    assert install_state["resolution"]["selectedModules"] == ["legacy-codex-install"]
+    operation_paths = {
+        operation["sourceRelativePath"] for operation in install_state["operations"]
+    }
+    assert "AGENTS.md" in operation_paths
+    assert ".mcp.json" in operation_paths
+    assert ".codex/agents/reviewer.toml" in operation_paths
+
+    assert harness_response.status_code == 200
+    harness = harness_response.json()
+    assert harness["doctor"]["missing_surface_paths"] == []
+    assert harness["doctor"]["missing_mcp_servers"] == []
+    assert harness["doctor"]["missing_codex_roles"] == []
+    assert harness["doctor"]["drifted_paths"] == []
+    assert harness["doctor"]["level"] == "ready"
+    assert harness["doctor"]["install_state_paths"] == [".codex/ecc-install-state.json"]
+
+
+def test_project_harness_actions_recreate_install_state_without_file_repairs(tmp_path) -> None:
+    ecc_root = write_fake_ecc_source_repo(tmp_path / "everything-claude-code-main")
+    (ecc_root / "AGENTS.md").write_text(
+        "# Everything Claude Code (ECC) - Agent Instructions\n",
+        encoding="utf-8",
+    )
+    (ecc_root / ".codex" / "agents" / "reviewer.toml").write_text(
+        'model = "gpt-5.4"\n',
+        encoding="utf-8",
+    )
+    (ecc_root / ".mcp.json").write_text(
+        (
+            '{"mcpServers":{"github":{"command":"npx"},"context7":{"command":"npx"},'
+            '"memory":{"command":"npx"}}}'
+        ),
+        encoding="utf-8",
+    )
+    workspace_root = write_fake_ecc_workspace(tmp_path / "ecc-state-only-workspace")
+    (workspace_root / "AGENTS.md").write_text(
+        (ecc_root / "AGENTS.md").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    (workspace_root / ".mcp.json").write_text(
+        (ecc_root / ".mcp.json").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    (workspace_root / ".codex" / "config.toml").write_text(
+        (ecc_root / ".codex" / "config.toml").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    (workspace_root / ".codex" / "agents" / "reviewer.toml").write_text(
+        (ecc_root / ".codex" / "agents" / "reviewer.toml").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+
+    with make_client(tmp_path, ecc_source_path=ecc_root) as client:
+        project = client.post(
+            "/api/projects",
+            json={"path": str(workspace_root), "label": "ECC State Only Workspace"},
+        ).json()
+        preview_response = client.post(
+            f"/api/projects/{project['id']}/harness/actions",
+            json={"mode": "repair_preview"},
+        )
+        apply_response = client.post(
+            f"/api/projects/{project['id']}/harness/actions",
+            json={"mode": "repair_apply"},
+        )
+        harness_response = client.get(f"/api/projects/{project['id']}/harness")
+
+    assert preview_response.status_code == 200
+    preview = preview_response.json()
+    assert preview["status"] == "planned"
+    assert preview["planned_paths"] == [".codex/ecc-install-state.json"]
+
+    assert apply_response.status_code == 200
+    applied = apply_response.json()
+    assert applied["status"] == "repaired"
+    assert applied["changed_paths"] == [".codex/ecc-install-state.json"]
+
+    install_state = json.loads(
+        (workspace_root / ".codex" / "ecc-install-state.json").read_text(encoding="utf-8")
+    )
+    assert install_state["schemaVersion"] == "ecc.install.v1"
+    assert install_state["resolution"]["selectedModules"] == ["legacy-codex-install"]
+
+    assert harness_response.status_code == 200
+    harness = harness_response.json()
+    assert harness["doctor"]["level"] == "ready"
+    assert harness["doctor"]["missing_surface_paths"] == []
+    assert harness["doctor"]["missing_mcp_servers"] == []
+    assert harness["doctor"]["missing_codex_roles"] == []
+    assert harness["doctor"]["drifted_paths"] == []
+    assert harness["doctor"]["install_state_paths"] == [".codex/ecc-install-state.json"]
+
+
+def test_onboarding_bootstrap_threads_mempalace_protocol_into_launch_draft(tmp_path) -> None:
+    with make_client(tmp_path) as client:
+        response = client.post(
+            "/api/onboarding/bootstrap",
+            json={
+                "setup_mode": "local",
+                "setup_flow": "quickstart",
+                "instance_mode": "create_desktop",
+                "instance_name": "Memory Lane",
+                "project_path": str(tmp_path),
+                "project_label": "Memory Workspace",
+                "operator_name": "Memory Builder",
+                "integration_name": "MemPalace",
+                "integration_kind": "mempalace",
+                "integration_base_url": "python -m mempalace.mcp_server",
+                "task_name": "Memory Ship Loop",
+                "objective_template": "Ship the next slice with durable memory recall.",
+            },
+        )
+
+    assert response.status_code == 200
+    objective = response.json()["mission_draft"]["objective"]
+    assert "MemPalace memory protocol:" in objective
+    assert "query MemPalace first instead of guessing" in objective
+    assert "write it back through MemPalace" in objective
+
+
+def test_onboarding_bootstrap_use_mempalace_preset_registers_memory_integration(tmp_path) -> None:
+    with make_client(tmp_path) as client:
+        response = client.post(
+            "/api/onboarding/bootstrap",
+            json={
+                "setup_mode": "local",
+                "setup_flow": "quickstart",
+                "instance_mode": "create_desktop",
+                "instance_name": "Memory Lane",
+                "project_path": str(tmp_path),
+                "project_label": "Memory Workspace",
+                "operator_name": "Memory Builder",
+                "use_mempalace": True,
+                "task_name": "Memory Ship Loop",
+                "objective_template": "Ship the next slice with durable memory recall.",
+            },
+        )
+        dashboard_response = client.get("/api/dashboard")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["integration"]["label"] == "MemPalace"
+    assert payload["memory_task_blueprint"]["label"] == "MemPalace Memory Loop"
+    assert "MemPalace memory protocol:" in payload["mission_draft"]["objective"]
+
+    dashboard = dashboard_response.json()
+    assert dashboard["ops_mesh"]["integrations"][0]["name"] == "MemPalace"
+    assert dashboard["ops_mesh"]["integrations"][0]["kind"] == "mempalace"
+    assert dashboard["ops_mesh"]["integrations"][0]["auth_scheme"] == "none"
+    assert dashboard["ops_mesh"]["integrations_inventory"]["items"][0]["name"] == "MemPalace"
+    task_names = [task["name"] for task in dashboard["task_blueprints"]]
+    assert "Memory Ship Loop" in task_names
+    assert "MemPalace Memory Loop" in task_names
+    memory_task = next(
+        task for task in dashboard["task_blueprints"] if task["name"] == "MemPalace Memory Loop"
+    )
+    assert memory_task["run_verification"] is False
+    assert memory_task["use_builtin_agents"] is False
 
 
 def test_onboarding_bootstrap_remote_mode_can_stage_without_default_lane(tmp_path) -> None:
@@ -772,9 +2360,10 @@ def test_remote_workspace_affinity_prefers_project_lane_and_persists_last_route(
             },
         )
         launch_response = client.get("/api/setup/launch")
+        payload = bootstrap_response.json()
+        handoff = launch_response.json()
 
     assert bootstrap_response.status_code == 200
-    payload = bootstrap_response.json()
     assert payload["mission_draft"]["instance_id"] == matching_instance["id"]
     assert payload["mission_draft"]["session_key"].startswith("launch:mode:workspace_affinity:")
     assert payload["launch_route"]["mode"] == "workspace_affinity"
@@ -783,13 +2372,279 @@ def test_remote_workspace_affinity_prefers_project_lane_and_persists_last_route(
     assert payload["launch_route"]["candidates"][0]["label"] == "Workspace Lane"
 
     assert launch_response.status_code == 200
-    handoff = launch_response.json()
     assert handoff["mission_draft"]["instance_id"] == matching_instance["id"]
     assert handoff["mission_draft"]["session_key"] == payload["mission_draft"]["session_key"]
     assert handoff["launch_route"]["mode"] == "workspace_affinity"
     assert handoff["launch_route"]["matched_by"] == "workspace.last_route"
     assert handoff["launch_route"]["resolved_instance"]["label"] == "Workspace Lane"
     assert handoff["launch_route"]["last_resolved_at"] is not None
+
+
+def test_workspace_shell_executor_prefers_lane_with_saved_cwd(tmp_path) -> None:
+    project_path = tmp_path / "workspace"
+    project_path.mkdir()
+    shell_path = tmp_path / "shell"
+    shell_path.mkdir()
+
+    with make_client(tmp_path) as client:
+        profile_response = client.put(
+            "/api/hermes/profile",
+            json={"preferred_executor": "workspace_shell"},
+        )
+        assert profile_response.status_code == 200
+
+        lane_without_cwd = client.post(
+            "/api/instances",
+            json={
+                "name": "Transient Lane",
+                "transport": "desktop",
+                "cwd": None,
+                "auto_connect": False,
+            },
+        ).json()
+        shell_lane = client.post(
+            "/api/instances",
+            json={
+                "name": "Shell Lane",
+                "transport": "desktop",
+                "cwd": str(shell_path),
+                "auto_connect": False,
+            },
+        ).json()
+
+        manager = client.app.state.manager
+        manager.instances[lane_without_cwd["id"]].connected = True
+        manager.instances[shell_lane["id"]].connected = True
+
+        bootstrap_response = client.post(
+            "/api/onboarding/bootstrap",
+            json={
+                "setup_mode": "remote",
+                "setup_flow": "advanced",
+                "instance_mode": "existing",
+                "instance_id": None,
+                "project_path": str(project_path),
+                "project_label": "Shell Workspace",
+                "operator_name": "Shell Builder",
+                "issue_api_key": True,
+                "task_name": "Shell Loop",
+                "objective_template": "Keep the shell workspace moving.",
+            },
+        )
+        payload = bootstrap_response.json()
+
+    assert bootstrap_response.status_code == 200
+    assert payload["launch_route"]["mode"] == "workspace_affinity"
+    assert payload["launch_route"]["matched_by"] == "workspace.connected_lane"
+    assert payload["launch_route"]["resolved_instance"]["label"] == "Shell Lane"
+    assert payload["launch_route"]["status"] == "ready"
+
+
+def test_workspace_shell_arm_api_uses_saved_gateway_workspace(tmp_path) -> None:
+    workspace_path = tmp_path / "workspace"
+    workspace_path.mkdir()
+
+    with make_client(tmp_path) as client:
+        instance = client.post(
+            "/api/instances",
+            json={
+                "name": "Local Codex Desktop",
+                "transport": "desktop",
+                "cwd": str(workspace_path),
+                "auto_connect": False,
+            },
+        ).json()
+        project = client.post(
+            "/api/projects",
+            json={"path": str(workspace_path), "label": "Shell Workspace"},
+        ).json()
+        gateway_response = client.put(
+            "/api/gateway/bootstrap",
+            json={
+                "setup_mode": "local",
+                "setup_flow": "quickstart",
+                "route_binding_mode": "saved_lane",
+                "preferred_instance_id": instance["id"],
+                "preferred_project_id": project["id"],
+                "default_cwd": str(workspace_path),
+                "model": "gpt-5.4",
+                "max_turns": 4,
+                "use_builtin_agents": True,
+                "run_verification": True,
+                "auto_commit": False,
+                "pause_on_approval": True,
+                "allow_auto_reflexes": True,
+                "auto_recover": True,
+                "auto_recover_limit": 2,
+                "reflex_cooldown_seconds": 900,
+                "allow_failover": True,
+                "toolsets": ["terminal"],
+            },
+        )
+        arm_response = client.post(
+            "/api/hermes/executors/workspace-shell/arm",
+            json={"cwd": None, "auto_connect": False},
+        )
+        doctor = client.get("/api/hermes/doctor").json()
+
+    assert gateway_response.status_code == 200
+    assert arm_response.status_code == 200
+    payload = arm_response.json()
+    assert payload["cwd"] == str(workspace_path)
+    assert payload["derived_from"] == "gateway_default_cwd"
+    assert payload["instance"]["transport"] == "stdio"
+    assert payload["connected"] is False
+    workspace_shell = next(
+        item for item in doctor["executors"]["items"] if item["key"] == "workspace_shell"
+    )
+    assert "explicit arm" in workspace_shell["capabilities"]
+    assert "shell-backed lane" in workspace_shell["summary"]
+
+
+def test_docker_arm_api_uses_saved_gateway_workspace(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr("openzues.services.hermes_platform._which", lambda command: command == "docker")
+
+    workspace_path = tmp_path / "workspace"
+    workspace_path.mkdir()
+
+    with make_client(tmp_path) as client:
+        instance = client.post(
+            "/api/instances",
+            json={
+                "name": "Local Codex Desktop",
+                "transport": "desktop",
+                "cwd": str(workspace_path),
+                "auto_connect": False,
+            },
+        ).json()
+        project = client.post(
+            "/api/projects",
+            json={"path": str(workspace_path), "label": "Docker Workspace"},
+        ).json()
+        gateway_response = client.put(
+            "/api/gateway/bootstrap",
+            json={
+                "setup_mode": "local",
+                "setup_flow": "quickstart",
+                "route_binding_mode": "saved_lane",
+                "preferred_instance_id": instance["id"],
+                "preferred_project_id": project["id"],
+                "default_cwd": str(workspace_path),
+                "model": "gpt-5.4",
+                "max_turns": 4,
+                "use_builtin_agents": True,
+                "run_verification": True,
+                "auto_commit": False,
+                "pause_on_approval": True,
+                "allow_auto_reflexes": True,
+                "auto_recover": True,
+                "auto_recover_limit": 2,
+                "reflex_cooldown_seconds": 900,
+                "allow_failover": True,
+                "toolsets": ["terminal"],
+            },
+        )
+        arm_response = client.post(
+            "/api/hermes/executors/docker/arm",
+            json={"cwd": None, "image": None, "auto_connect": False, "mount_workspace": False},
+        )
+        doctor = client.get("/api/hermes/doctor").json()
+
+    assert gateway_response.status_code == 200
+    assert arm_response.status_code == 200
+    payload = arm_response.json()
+    assert payload["cwd"] == str(workspace_path)
+    assert payload["derived_from"] == "gateway_default_cwd"
+    assert payload["instance"]["id"] == instance["id"]
+    assert payload["instance"]["transport"] == "desktop"
+    assert payload["connected"] is False
+    assert payload["image"] == "nikolaik/python-nodejs:python3.11-nodejs20"
+    docker = next(item for item in doctor["executors"]["items"] if item["key"] == "docker")
+    assert "explicit arm" in docker["capabilities"]
+    assert "Docker staging is armed" in docker["summary"]
+    assert doctor["profile"]["executor_profiles"][0]["key"] == "docker"
+
+
+def test_docker_preflight_api_reports_ready_backend(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr("openzues.services.hermes_platform._which", lambda command: command == "docker")
+    monkeypatch.setattr(
+        "openzues.services.hermes_platform.shutil.which",
+        lambda command: "C:\\docker\\docker.exe" if command == "docker" else None,
+    )
+
+    async def fake_run_process_capture(*args: str, timeout_seconds: float = 20.0) -> tuple[int, str, str]:
+        del timeout_seconds
+        command = tuple(args)
+        if command[-1] == "--version":
+            return 0, "Docker version 29.3.1, build c2be9cc", ""
+        if command[1:3] == ("info", "--format"):
+            return 0, "29.3.1", ""
+        if command[1:4] == ("image", "inspect", "nikolaik/python-nodejs:python3.11-nodejs20"):
+            return 0, "sha256:testimage", ""
+        raise AssertionError(f"Unexpected docker command: {command}")
+
+    monkeypatch.setattr(
+        "openzues.services.hermes_platform._run_process_capture",
+        fake_run_process_capture,
+    )
+
+    workspace_path = tmp_path / "workspace"
+    workspace_path.mkdir()
+
+    with make_client(tmp_path) as client:
+        instance = client.post(
+            "/api/instances",
+            json={
+                "name": "Local Codex Desktop",
+                "transport": "desktop",
+                "cwd": str(workspace_path),
+                "auto_connect": False,
+            },
+        ).json()
+        project = client.post(
+            "/api/projects",
+            json={"path": str(workspace_path), "label": "Docker Workspace"},
+        ).json()
+        client.put(
+            "/api/gateway/bootstrap",
+            json={
+                "setup_mode": "local",
+                "setup_flow": "quickstart",
+                "route_binding_mode": "saved_lane",
+                "preferred_instance_id": instance["id"],
+                "preferred_project_id": project["id"],
+                "default_cwd": str(workspace_path),
+                "model": "gpt-5.4",
+                "max_turns": 4,
+                "use_builtin_agents": True,
+                "run_verification": True,
+                "auto_commit": False,
+                "pause_on_approval": True,
+                "allow_auto_reflexes": True,
+                "auto_recover": True,
+                "auto_recover_limit": 2,
+                "reflex_cooldown_seconds": 900,
+                "allow_failover": True,
+                "toolsets": ["terminal"],
+            },
+        )
+        client.post(
+            "/api/hermes/executors/docker/arm",
+            json={"cwd": None, "image": None, "auto_connect": False, "mount_workspace": False},
+        )
+        preflight_response = client.post(
+            "/api/hermes/executors/docker/preflight",
+            json={"cwd": None, "image": None},
+        )
+        doctor = client.get("/api/hermes/doctor").json()
+
+    assert preflight_response.status_code == 200
+    payload = preflight_response.json()
+    assert payload["ok"] is True
+    assert payload["status"] == "ready"
+    assert payload["image_present"] is True
+    assert payload["daemon_version"] == "29.3.1"
+    assert doctor["profile"]["executor_profiles"][0]["last_preflight_status"] == "ready"
 
 
 def test_launch_routing_uses_gateway_default_cwd_when_task_has_no_workspace_context(
@@ -928,6 +2783,21 @@ def test_setup_wizard_endpoint_updates_saved_mode_and_flow(tmp_path) -> None:
     assert setup["wizard_session"]["flow"] == "advanced"
 
 
+def test_setup_wizard_endpoint_persists_mempalace_toggle(tmp_path) -> None:
+    with make_client(tmp_path) as client:
+        update_response = client.put(
+            "/api/setup/wizard",
+            json={"mode": "local", "flow": "quickstart", "use_mempalace": True},
+        )
+        setup_response = client.get("/api/setup")
+
+    assert update_response.status_code == 200
+    payload = update_response.json()
+    assert payload["use_mempalace"] is True
+    setup = setup_response.json()
+    assert setup["wizard_session"]["use_mempalace"] is True
+
+
 def test_setup_launch_endpoint_reports_saved_remote_handoff_gap(tmp_path) -> None:
     with make_client(tmp_path) as client:
         client.post(
@@ -1054,6 +2924,36 @@ def test_setup_reset_full_removes_bootstrap_managed_resources(tmp_path) -> None:
     assert setup["footprint"] is None
 
 
+def test_setup_reset_full_removes_bootstrap_managed_mempalace_loop(tmp_path) -> None:
+    with make_client(tmp_path) as client:
+        bootstrap_response = client.post(
+            "/api/onboarding/bootstrap",
+            json={
+                "setup_mode": "local",
+                "setup_flow": "quickstart",
+                "instance_mode": "create_desktop",
+                "instance_name": "Memory Lane",
+                "project_path": str(tmp_path),
+                "project_label": "Memory Workspace",
+                "operator_name": "Memory Builder",
+                "issue_api_key": True,
+                "use_mempalace": True,
+                "task_name": "Memory Ship Loop",
+                "objective_template": "Ship the next memory-backed slice.",
+            },
+        )
+        reset_response = client.post("/api/setup/reset", json={"scope": "full"})
+        dashboard_response = client.get("/api/dashboard")
+
+    assert bootstrap_response.status_code == 200
+    assert reset_response.status_code == 200
+    payload = reset_response.json()
+    assert "task blueprint 'Memory Ship Loop'" in payload["cleared"]
+    assert "task blueprint 'MemPalace Memory Loop'" in payload["cleared"]
+    dashboard = dashboard_response.json()
+    assert dashboard["task_blueprints"] == []
+
+
 def test_gateway_bootstrap_endpoint_updates_saved_launch_profile(tmp_path) -> None:
     with make_client(tmp_path) as client:
         project_response = client.post(
@@ -1131,6 +3031,958 @@ def test_gateway_bootstrap_endpoint_updates_saved_launch_profile(tmp_path) -> No
 
     assert read_response.status_code == 200
     assert read_response.json()["task_blueprint"]["label"] == "Gateway Loop"
+
+
+def test_gateway_capability_endpoint_summarizes_connected_lane_health_inventory_and_warnings(
+    tmp_path,
+) -> None:
+    class FakeEnvironmentService:
+        def collect(self) -> DiagnosticsView:
+            return DiagnosticsView(
+                checks=[
+                    DiagnosticCheck(
+                        key="desktop_policy",
+                        label="Desktop mission policy",
+                        status="warn",
+                        detail="Approval policy is set to default desktop handling.",
+                        value="approval=default",
+                        action=(
+                            "Set OPENZUES_DESKTOP_APPROVAL_POLICY to override this launch "
+                            "policy."
+                        ),
+                    ),
+                    DiagnosticCheck(
+                        key="python",
+                        label="Python runtime",
+                        status="ok",
+                        detail="Python executable is available.",
+                        value="Python 3.12.0",
+                    ),
+                ],
+                checked_at="2026-04-11T12:00:00Z",
+            )
+
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings, environment_service=FakeEnvironmentService())
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        bootstrap_response = client.post(
+            "/api/onboarding/bootstrap",
+            json={
+                "setup_mode": "local",
+                "setup_flow": "quickstart",
+                "instance_mode": "create_desktop",
+                "instance_name": "Gateway Lane",
+                "project_path": str(tmp_path),
+                "project_label": "Gateway Workspace",
+                "operator_name": "Remote Builder",
+                "issue_api_key": True,
+                "vault_secret_label": "GITHUB_TOKEN",
+                "vault_secret_value": "ghp_example_123",
+                "integration_name": "GitHub Inventory",
+                "integration_kind": "github",
+                "integration_base_url": "https://api.github.com",
+                "task_name": "Gateway Ship Loop",
+                "objective_template": "Ship the next verified gateway slice.",
+            },
+        )
+        assert bootstrap_response.status_code == 200
+
+        instance_id = bootstrap_response.json()["instance"]["id"]
+        runtime = client.app.state.manager.instances[instance_id]
+        runtime.connected = True
+        runtime.initialized = True
+        runtime.apps = [{"name": "Figma", "enabled": True}]
+        runtime.plugins = [
+            {"name": "GitHub", "enabled": True},
+            {"name": "Slack", "enabled": True},
+        ]
+        runtime.mcp_servers = [{"name": "GitHub MCP Server", "source": "github", "status": "ready"}]
+
+        database = client.app.state.database
+        asyncio.run(
+            database.upsert_server_request(
+                instance_id=instance_id,
+                request_id="approval-gateway-capability",
+                thread_id="thread-gateway-capability",
+                method="item/commandExecution/requestApproval",
+                payload={
+                    "command": 'powershell.exe -Command "git push"',
+                    "availableDecisions": ["accept", "cancel"],
+                },
+                status="pending",
+            )
+        )
+        runtime.unresolved_requests = asyncio.run(
+            database.list_unresolved_server_requests(instance_id)
+        )
+
+        capability_response = client.get("/api/gateway/capability")
+        dashboard_response = client.get("/api/dashboard")
+
+    assert capability_response.status_code == 200
+    capability = capability_response.json()
+    assert capability["connected_lane_health"]["connected_count"] == 1
+    assert capability["connected_lane_health"]["approval_count"] == 1
+    lane = capability["connected_lane_health"]["lanes"][0]
+    assert lane["instance_name"] == "Gateway Lane"
+    assert lane["plugin_count"] == 2
+    assert lane["app_count"] == 1
+    assert lane["mcp_server_count"] == 1
+    assert lane["approval_count"] == 1
+
+    assert capability["inventory"]["tracked_ready_count"] == 1
+    assert capability["inventory"]["app_count"] == 1
+    assert capability["inventory"]["plugin_count"] == 2
+    assert capability["inventory"]["mcp_server_count"] == 1
+    assert capability["approval_posture"]["approval_count"] == 1
+    assert capability["approval_posture"]["pause_on_approval"] is True
+    assert capability["launch_policy"]["setup_mode"] == "local"
+    assert capability["launch_policy"]["route_binding_mode"] == "saved_lane"
+    assert capability["diagnostics"]["warn_count"] == 1
+    assert "Desktop mission policy" in capability["diagnostics"]["evidence"][0]
+
+    dashboard = dashboard_response.json()
+    assert dashboard["gateway_capability"]["approval_posture"]["approval_count"] == 1
+    assert dashboard["gateway_capability"]["inventory"]["tracked_ready_count"] == 1
+    assert (
+        dashboard["gateway_capability"]["connected_lane_health"]["lanes"][0]["instance_name"]
+        == "Gateway Lane"
+    )
+
+
+def test_gateway_capability_surfaces_mempalace_memory_posture(tmp_path) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        bootstrap_response = client.post(
+            "/api/onboarding/bootstrap",
+            json={
+                "setup_mode": "local",
+                "setup_flow": "quickstart",
+                "instance_mode": "create_desktop",
+                "instance_name": "Memory Lane",
+                "project_path": str(tmp_path),
+                "project_label": "Memory Workspace",
+                "operator_name": "Memory Builder",
+                "use_mempalace": True,
+                "task_name": "Memory Ship Loop",
+                "objective_template": "Ship the next memory-backed slice.",
+            },
+        )
+        assert bootstrap_response.status_code == 200
+
+        instance_id = bootstrap_response.json()["instance"]["id"]
+        runtime = client.app.state.manager.instances[instance_id]
+        runtime.connected = True
+        runtime.initialized = True
+        runtime.mcp_servers = [
+            {
+                "name": "MemPalace MCP Server",
+                "source": "mempalace",
+                "status": "ready",
+                "authStatus": "ready",
+            }
+        ]
+        runtime.mcp_server_status = [
+            {
+                "name": "MemPalace MCP Server",
+                "source": "mempalace",
+                "status": "ready",
+                "authStatus": "ready",
+                "tools": [
+                    "mempalace_status",
+                    "mempalace_search",
+                    "mempalace_diary_write",
+                    "mempalace_diary_read",
+                ],
+            }
+        ]
+
+        capability_response = client.get("/api/gateway/capability")
+        dashboard_response = client.get("/api/dashboard")
+
+    assert capability_response.status_code == 200
+    capability = capability_response.json()
+    assert capability["inventory"]["memory_status"] == "ready"
+    assert "MemPalace is tracked and live" in capability["inventory"]["memory_summary"]
+    assert "Automatic memory loop is armed" in capability["inventory"]["memory_summary"]
+    assert "Callable tool proof passed" in capability["inventory"]["memory_summary"]
+    assert "scheduled MemPalace loop" in capability["inventory"]["memory_recommended_action"]
+    assert "mempalace_status" in capability["inventory"]["memory_evidence"][0]
+
+    dashboard = dashboard_response.json()
+    assert dashboard["gateway_capability"]["inventory"]["memory_status"] == "ready"
+
+
+def test_gateway_capability_warns_when_mempalace_tool_contract_is_incomplete(tmp_path) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        bootstrap_response = client.post(
+            "/api/onboarding/bootstrap",
+            json={
+                "setup_mode": "local",
+                "setup_flow": "quickstart",
+                "instance_mode": "create_desktop",
+                "instance_name": "Memory Lane",
+                "project_path": str(tmp_path),
+                "project_label": "Memory Workspace",
+                "operator_name": "Memory Builder",
+                "use_mempalace": True,
+                "task_name": "Memory Ship Loop",
+                "objective_template": "Ship the next memory-backed slice.",
+            },
+        )
+        assert bootstrap_response.status_code == 200
+
+        instance_id = bootstrap_response.json()["instance"]["id"]
+        runtime = client.app.state.manager.instances[instance_id]
+        runtime.connected = True
+        runtime.initialized = True
+        runtime.mcp_servers = [
+            {
+                "name": "MemPalace MCP Server",
+                "source": "mempalace",
+                "status": "ready",
+                "authStatus": "ready",
+            }
+        ]
+        runtime.mcp_server_status = [
+            {
+                "name": "MemPalace MCP Server",
+                "source": "mempalace",
+                "status": "ready",
+                "authStatus": "ready",
+                "tools": [
+                    "mempalace_status",
+                    "mempalace_search",
+                ],
+            }
+        ]
+
+        capability_response = client.get("/api/gateway/capability")
+        dashboard_response = client.get("/api/dashboard")
+
+    assert capability_response.status_code == 200
+    capability = capability_response.json()
+    assert capability["level"] == "warn"
+    assert capability["inventory"]["memory_status"] == "warn"
+    assert "callable tool proof is not complete yet" in capability["inventory"]["memory_summary"]
+    assert "missing mempalace_diary_write" in capability["inventory"]["memory_evidence"][0]
+    assert "Expose mempalace_status, mempalace_search, and mempalace_diary_write" in (
+        capability["inventory"]["memory_recommended_action"]
+    )
+
+    dashboard = dashboard_response.json()
+    assert dashboard["gateway_capability"]["level"] == "warn"
+    assert dashboard["gateway_capability"]["inventory"]["memory_status"] == "warn"
+
+
+def test_gateway_capability_warns_when_mempalace_memory_loop_last_failed(tmp_path) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        bootstrap_response = client.post(
+            "/api/onboarding/bootstrap",
+            json={
+                "setup_mode": "local",
+                "setup_flow": "quickstart",
+                "instance_mode": "create_desktop",
+                "instance_name": "Memory Lane",
+                "project_path": str(tmp_path),
+                "project_label": "Memory Workspace",
+                "operator_name": "Memory Builder",
+                "use_mempalace": True,
+                "task_name": "Memory Ship Loop",
+                "objective_template": "Ship the next memory-backed slice.",
+            },
+        )
+        assert bootstrap_response.status_code == 200
+
+        payload = bootstrap_response.json()
+        instance_id = payload["instance"]["id"]
+        runtime = client.app.state.manager.instances[instance_id]
+        runtime.connected = True
+        runtime.initialized = True
+        runtime.mcp_servers = [
+            {
+                "name": "MemPalace MCP Server",
+                "source": "mempalace",
+                "status": "ready",
+                "authStatus": "ready",
+            }
+        ]
+        runtime.mcp_server_status = [
+            {
+                "name": "MemPalace MCP Server",
+                "source": "mempalace",
+                "status": "ready",
+                "authStatus": "ready",
+                "tools": [
+                    "mempalace_status",
+                    "mempalace_search",
+                    "mempalace_diary_write",
+                    "mempalace_diary_read",
+                ],
+            }
+        ]
+
+        memory_task_id = payload["memory_task_blueprint"]["id"]
+        asyncio.run(
+            client.app.state.database.update_task_blueprint_payload(
+                memory_task_id,
+                last_launched_at=(datetime.now(UTC) - timedelta(hours=2)).isoformat(),
+                last_status="failed",
+                last_result_summary="MemPalace lane was unreachable during the writeback pass.",
+            )
+        )
+
+        capability_response = client.get("/api/gateway/capability")
+
+    assert capability_response.status_code == 200
+    capability = capability_response.json()
+    assert capability["inventory"]["memory_status"] == "warn"
+    assert "last failed" in capability["inventory"]["memory_summary"]
+    assert "Inspect the failed MemPalace maintenance run" in (
+        capability["inventory"]["memory_recommended_action"]
+    )
+    assert any(
+        "MemPalace Memory Loop last failed"
+        in line
+        for line in capability["inventory"]["memory_evidence"]
+    )
+
+
+def test_gateway_capability_surfaces_mempalace_writeback_timestamp(tmp_path) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        bootstrap_response = client.post(
+            "/api/onboarding/bootstrap",
+            json={
+                "setup_mode": "local",
+                "setup_flow": "quickstart",
+                "instance_mode": "create_desktop",
+                "instance_name": "Memory Lane",
+                "project_path": str(tmp_path),
+                "project_label": "Memory Workspace",
+                "operator_name": "Memory Builder",
+                "use_mempalace": True,
+                "task_name": "Memory Ship Loop",
+                "objective_template": "Ship the next memory-backed slice.",
+            },
+        )
+        assert bootstrap_response.status_code == 200
+
+        payload = bootstrap_response.json()
+        instance_id = payload["instance"]["id"]
+        runtime = client.app.state.manager.instances[instance_id]
+        runtime.connected = True
+        runtime.initialized = True
+        runtime.mcp_servers = [
+            {
+                "name": "MemPalace MCP Server",
+                "source": "mempalace",
+                "status": "ready",
+                "authStatus": "ready",
+            }
+        ]
+        runtime.mcp_server_status = [
+            {
+                "name": "MemPalace MCP Server",
+                "source": "mempalace",
+                "status": "ready",
+                "authStatus": "ready",
+                "tools": [
+                    "mempalace_status",
+                    "mempalace_search",
+                    "mempalace_diary_write",
+                    "mempalace_diary_read",
+                ],
+            }
+        ]
+
+        memory_task_id = payload["memory_task_blueprint"]["id"]
+        asyncio.run(
+            client.app.state.database.update_task_blueprint_payload(
+                memory_task_id,
+                last_launched_at="2026-04-11T15:10:00Z",
+                last_status="completed",
+                last_result_summary=build_mempalace_writeback_signal(
+                    status="wrote",
+                    at="2026-04-11T15:12:00Z",
+                    scope="Memory Workspace",
+                ),
+            )
+        )
+
+        capability_response = client.get("/api/gateway/capability")
+
+    assert capability_response.status_code == 200
+    capability = capability_response.json()
+    assert capability["inventory"]["memory_status"] == "ready"
+    assert "Last durable writeback was reported" in capability["inventory"]["memory_summary"]
+    assert any(
+        "Memory Workspace writeback reported at 2026-04-11T15:12:00Z." in line
+        for line in capability["inventory"]["memory_evidence"]
+    )
+
+
+def test_gateway_capability_surfaces_mempalace_roundtrip_from_latest_mission_checkpoint(
+    tmp_path,
+) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        bootstrap_response = client.post(
+            "/api/onboarding/bootstrap",
+            json={
+                "setup_mode": "local",
+                "setup_flow": "quickstart",
+                "instance_mode": "create_desktop",
+                "instance_name": "Memory Lane",
+                "project_path": str(tmp_path),
+                "project_label": "Memory Workspace",
+                "operator_name": "Memory Builder",
+                "use_mempalace": True,
+                "task_name": "Memory Ship Loop",
+                "objective_template": "Ship the next memory-backed slice.",
+            },
+        )
+        assert bootstrap_response.status_code == 200
+
+        payload = bootstrap_response.json()
+        instance_id = payload["instance"]["id"]
+        runtime = client.app.state.manager.instances[instance_id]
+        runtime.connected = True
+        runtime.initialized = True
+        runtime.mcp_servers = [
+            {
+                "name": "MemPalace MCP Server",
+                "source": "mempalace",
+                "status": "ready",
+                "authStatus": "ready",
+            }
+        ]
+        runtime.mcp_server_status = [
+            {
+                "name": "MemPalace MCP Server",
+                "source": "mempalace",
+                "status": "ready",
+                "authStatus": "ready",
+                "tools": [
+                    "mempalace_status",
+                    "mempalace_search",
+                    "mempalace_diary_write",
+                    "mempalace_diary_read",
+                ],
+            }
+        ]
+
+        memory_task_id = payload["memory_task_blueprint"]["id"]
+        database = client.app.state.database
+        asyncio.run(
+            database.update_task_blueprint_payload(
+                memory_task_id,
+                last_launched_at="2026-04-11T15:10:00Z",
+                last_status="completed",
+                last_result_summary=build_mempalace_writeback_signal(
+                    status="wrote",
+                    at="2026-04-11T15:12:00Z",
+                    scope="Memory Workspace",
+                ),
+            )
+        )
+        mission_id = asyncio.run(
+            database.create_mission(
+                name="MemPalace Memory Loop",
+                objective="Refresh durable project memory through MemPalace.",
+                status="completed",
+                instance_id=instance_id,
+                project_id=payload["project"]["id"],
+                task_blueprint_id=memory_task_id,
+                thread_id="thread-memory-proof",
+                cwd=str(tmp_path),
+                model="gpt-5.4",
+                reasoning_effort=None,
+                collaboration_mode=None,
+                max_turns=None,
+                use_builtin_agents=False,
+                run_verification=False,
+                auto_commit=False,
+                pause_on_approval=True,
+                allow_auto_reflexes=True,
+                auto_recover=True,
+                auto_recover_limit=2,
+                reflex_cooldown_seconds=900,
+                allow_failover=True,
+            )
+        )
+        asyncio.run(
+            database.update_mission(
+                mission_id,
+                last_checkpoint="\n".join(
+                    [
+                        build_mempalace_writeback_signal(
+                            status="wrote",
+                            at="2026-04-11T15:12:00Z",
+                            scope="Memory Workspace",
+                        ),
+                        build_mempalace_roundtrip_signal(
+                            status="verified",
+                            at="2026-04-11T15:13:00Z",
+                            scope="Memory Workspace",
+                            detail=(
+                                "mempalace_search returned the freshly written recovery handoff "
+                                "for the active workspace."
+                            ),
+                        ),
+                        "sources reviewed: latest checkpoint docs and active workspace files",
+                    ]
+                ),
+            )
+        )
+
+        capability_response = client.get("/api/gateway/capability")
+        dashboard_response = client.get("/api/dashboard")
+
+    assert capability_response.status_code == 200
+    capability = capability_response.json()
+    assert capability["inventory"]["memory_status"] == "ready"
+    assert (
+        "Last MemPalace roundtrip proof was reported"
+        in capability["inventory"]["memory_summary"]
+    )
+    assert any(
+        "Memory Workspace roundtrip verified at 2026-04-11T15:13:00Z." in line
+        and "mempalace_search returned the freshly written recovery handoff" in line
+        for line in capability["inventory"]["memory_evidence"]
+    )
+    proof_reference = capability["inventory"]["memory_proof_reference"]
+    assert proof_reference["mission_id"] == mission_id
+    assert proof_reference["proof_kind"] == "roundtrip"
+    assert proof_reference["proof_status"] == "verified"
+    assert proof_reference["continuity_path"] == f"/api/missions/{mission_id}/continuity"
+    assert "verified MemPalace roundtrip recall" in proof_reference["summary"]
+
+    assert dashboard_response.status_code == 200
+    dashboard = dashboard_response.json()
+    assert (
+        dashboard["gateway_capability"]["inventory"]["memory_proof_reference"]["mission_id"]
+        == mission_id
+    )
+
+
+def test_gateway_capability_warns_when_mempalace_roundtrip_is_unavailable(tmp_path) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        bootstrap_response = client.post(
+            "/api/onboarding/bootstrap",
+            json={
+                "setup_mode": "local",
+                "setup_flow": "quickstart",
+                "instance_mode": "create_desktop",
+                "instance_name": "Memory Lane",
+                "project_path": str(tmp_path),
+                "project_label": "Memory Workspace",
+                "operator_name": "Memory Builder",
+                "use_mempalace": True,
+                "task_name": "Memory Ship Loop",
+                "objective_template": "Ship the next memory-backed slice.",
+            },
+        )
+        assert bootstrap_response.status_code == 200
+
+        payload = bootstrap_response.json()
+        instance_id = payload["instance"]["id"]
+        runtime = client.app.state.manager.instances[instance_id]
+        runtime.connected = True
+        runtime.initialized = True
+        runtime.mcp_servers = [
+            {
+                "name": "MemPalace MCP Server",
+                "source": "mempalace",
+                "status": "ready",
+                "authStatus": "ready",
+            }
+        ]
+        runtime.mcp_server_status = [
+            {
+                "name": "MemPalace MCP Server",
+                "source": "mempalace",
+                "status": "ready",
+                "authStatus": "ready",
+                "tools": [
+                    "mempalace_status",
+                    "mempalace_search",
+                    "mempalace_diary_write",
+                    "mempalace_diary_read",
+                ],
+            }
+        ]
+
+        memory_task_id = payload["memory_task_blueprint"]["id"]
+        database = client.app.state.database
+        asyncio.run(
+            database.update_task_blueprint_payload(
+                memory_task_id,
+                last_launched_at="2026-04-11T15:10:00Z",
+                last_status="completed",
+                last_result_summary=build_mempalace_writeback_signal(
+                    status="wrote",
+                    at="2026-04-11T15:12:00Z",
+                    scope="Memory Workspace",
+                ),
+            )
+        )
+        mission_id = asyncio.run(
+            database.create_mission(
+                name="MemPalace Memory Loop",
+                objective="Refresh durable project memory through MemPalace.",
+                status="completed",
+                instance_id=instance_id,
+                project_id=payload["project"]["id"],
+                task_blueprint_id=memory_task_id,
+                thread_id="thread-memory-proof",
+                cwd=str(tmp_path),
+                model="gpt-5.4",
+                reasoning_effort=None,
+                collaboration_mode=None,
+                max_turns=None,
+                use_builtin_agents=False,
+                run_verification=False,
+                auto_commit=False,
+                pause_on_approval=True,
+                allow_auto_reflexes=True,
+                auto_recover=True,
+                auto_recover_limit=2,
+                reflex_cooldown_seconds=900,
+                allow_failover=True,
+            )
+        )
+        asyncio.run(
+            database.update_mission(
+                mission_id,
+                last_checkpoint="\n".join(
+                    [
+                        build_mempalace_writeback_signal(
+                            status="wrote",
+                            at="2026-04-11T15:12:00Z",
+                            scope="Memory Workspace",
+                        ),
+                        build_mempalace_roundtrip_signal(
+                            status="unavailable",
+                            at="2026-04-11T15:13:00Z",
+                            scope="Memory Workspace",
+                            detail=(
+                                "mempalace_search could not confirm the freshly written handoff "
+                                "on this lane."
+                            ),
+                        ),
+                    ]
+                ),
+            )
+        )
+
+        capability_response = client.get("/api/gateway/capability")
+
+    assert capability_response.status_code == 200
+    capability = capability_response.json()
+    assert capability["level"] == "warn"
+    assert capability["inventory"]["memory_status"] == "warn"
+    assert "roundtrip status is 'unavailable'" in capability["inventory"]["memory_summary"]
+    assert "confirm the freshly written memory can be recalled" in (
+        capability["inventory"]["memory_recommended_action"]
+    )
+    assert any(
+        "mempalace_search could not confirm the freshly written handoff on this lane." in line
+        for line in capability["inventory"]["memory_evidence"]
+    )
+    proof_reference = capability["inventory"]["memory_proof_reference"]
+    assert proof_reference["mission_id"] == mission_id
+    assert proof_reference["proof_kind"] == "roundtrip"
+    assert proof_reference["proof_status"] == "unavailable"
+    assert "roundtrip status 'unavailable'" in proof_reference["summary"]
+
+
+def test_gateway_memory_prove_launches_direct_mission(tmp_path) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        bootstrap_response = client.post(
+            "/api/onboarding/bootstrap",
+            json={
+                "setup_mode": "local",
+                "setup_flow": "quickstart",
+                "instance_mode": "create_desktop",
+                "instance_name": "Memory Lane",
+                "project_path": str(tmp_path),
+                "project_label": "Memory Workspace",
+                "operator_name": "Memory Builder",
+                "use_mempalace": True,
+                "task_name": "Memory Ship Loop",
+                "objective_template": "Ship the next memory-backed slice.",
+            },
+        )
+        assert bootstrap_response.status_code == 200
+
+        payload = bootstrap_response.json()
+        instance_id = payload["instance"]["id"]
+        runtime = client.app.state.manager.instances[instance_id]
+        fake_client = FakeMissionRuntimeClient()
+        runtime.connected = True
+        runtime.initialized = True
+        runtime.client = fake_client
+        runtime.mcp_servers = [
+            {
+                "name": "MemPalace MCP Server",
+                "source": "mempalace",
+                "status": "ready",
+                "authStatus": "ready",
+            }
+        ]
+        runtime.mcp_server_status = [
+            {
+                "name": "MemPalace MCP Server",
+                "source": "mempalace",
+                "status": "ready",
+                "authStatus": "ready",
+                "tools": [
+                    "mempalace_status",
+                    "mempalace_search",
+                    "mempalace_diary_write",
+                    "mempalace_diary_read",
+                ],
+            }
+        ]
+
+        response = client.post(
+            "/api/gateway/memory/prove",
+            json={"instance_id": instance_id},
+        )
+
+    assert response.status_code == 200, response.text
+    mission = response.json()
+    assert mission["name"].startswith("MemPalace Direct Proof:")
+    assert mission["instance_id"] == instance_id
+    assert mission["project_label"] == "Memory Workspace"
+    assert mission["thread_id"] == "thread-memory-proof-direct"
+    assert mission["max_turns"] == 1
+    assert mission["use_builtin_agents"] is False
+    assert mission["run_verification"] is False
+    assert mission["auto_commit"] is False
+    assert mission["allow_auto_reflexes"] is False
+    assert mission["auto_recover"] is False
+    assert mission["allow_failover"] is False
+    assert "MemPalace control-plane proof contract:" in mission["objective"]
+    assert fake_client.turn_prompts
+    assert "MemPalace control-plane proof contract:" in fake_client.turn_prompts[0]
+
+
+def test_gateway_capability_prefers_direct_memory_proof_reference(tmp_path) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        bootstrap_response = client.post(
+            "/api/onboarding/bootstrap",
+            json={
+                "setup_mode": "local",
+                "setup_flow": "quickstart",
+                "instance_mode": "create_desktop",
+                "instance_name": "Memory Lane",
+                "project_path": str(tmp_path),
+                "project_label": "Memory Workspace",
+                "operator_name": "Memory Builder",
+                "use_mempalace": True,
+                "task_name": "Memory Ship Loop",
+                "objective_template": "Ship the next memory-backed slice.",
+            },
+        )
+        assert bootstrap_response.status_code == 200
+
+        payload = bootstrap_response.json()
+        instance_id = payload["instance"]["id"]
+        runtime = client.app.state.manager.instances[instance_id]
+        runtime.connected = True
+        runtime.initialized = True
+        runtime.mcp_servers = [
+            {
+                "name": "MemPalace MCP Server",
+                "source": "mempalace",
+                "status": "ready",
+                "authStatus": "ready",
+            }
+        ]
+        runtime.mcp_server_status = [
+            {
+                "name": "MemPalace MCP Server",
+                "source": "mempalace",
+                "status": "ready",
+                "authStatus": "ready",
+                "tools": [
+                    "mempalace_status",
+                    "mempalace_search",
+                    "mempalace_diary_write",
+                    "mempalace_diary_read",
+                ],
+            }
+        ]
+
+        memory_task_id = payload["memory_task_blueprint"]["id"]
+        database = client.app.state.database
+        memory_loop_mission_id = asyncio.run(
+            database.create_mission(
+                name="MemPalace Memory Loop",
+                objective="Refresh durable project memory through MemPalace.",
+                status="completed",
+                instance_id=instance_id,
+                project_id=payload["project"]["id"],
+                task_blueprint_id=memory_task_id,
+                thread_id="thread-memory-proof",
+                cwd=str(tmp_path),
+                model="gpt-5.4",
+                reasoning_effort=None,
+                collaboration_mode=None,
+                max_turns=None,
+                use_builtin_agents=False,
+                run_verification=False,
+                auto_commit=False,
+                pause_on_approval=True,
+                allow_auto_reflexes=True,
+                auto_recover=True,
+                auto_recover_limit=2,
+                reflex_cooldown_seconds=900,
+                allow_failover=True,
+            )
+        )
+        asyncio.run(
+            database.update_mission(
+                memory_loop_mission_id,
+                last_checkpoint="\n".join(
+                    [
+                        build_mempalace_writeback_signal(
+                            status="wrote",
+                            at="2026-04-11T15:12:00Z",
+                            scope="Memory Workspace",
+                        ),
+                        build_mempalace_roundtrip_signal(
+                            status="verified",
+                            at="2026-04-11T15:13:00Z",
+                            scope="Memory Workspace",
+                            detail="mempalace_search returned the maintenance handoff.",
+                        ),
+                    ]
+                ),
+            )
+        )
+
+        direct_mission_id = asyncio.run(
+            database.create_mission(
+                name="MemPalace Direct Proof: Memory Workspace",
+                objective="MemPalace control-plane proof contract:",
+                status="completed",
+                instance_id=instance_id,
+                project_id=payload["project"]["id"],
+                task_blueprint_id=None,
+                thread_id="thread-memory-proof-direct",
+                cwd=str(tmp_path),
+                model="gpt-5.4",
+                reasoning_effort=None,
+                collaboration_mode=None,
+                max_turns=1,
+                use_builtin_agents=False,
+                run_verification=False,
+                auto_commit=False,
+                pause_on_approval=True,
+                allow_auto_reflexes=False,
+                auto_recover=False,
+                auto_recover_limit=0,
+                reflex_cooldown_seconds=900,
+                allow_failover=False,
+            )
+        )
+        asyncio.run(
+            database.update_mission(
+                direct_mission_id,
+                last_checkpoint="\n".join(
+                    [
+                        build_mempalace_control_plane_proof_signal(
+                            status="verified",
+                            at="2026-04-11T16:00:00Z",
+                            scope="Memory Workspace",
+                            detail=(
+                                "mempalace_status and mempalace_search both succeeded from the "
+                                "backend-triggered proof."
+                            ),
+                        ),
+                        "lane memory tool status: live and callable",
+                    ]
+                ),
+            )
+        )
+
+        capability_response = client.get("/api/gateway/capability")
+
+    assert capability_response.status_code == 200
+    capability = capability_response.json()
+    assert "Last backend-triggered control-plane proof verified live MemPalace access" in (
+        capability["inventory"]["memory_summary"]
+    )
+    assert capability["inventory"]["memory_proof_launchable"] is True
+    assert capability["inventory"]["memory_proof_target_instance_id"] == instance_id
+    assert capability["inventory"]["memory_proof_launch_label"] == (
+        "Run direct memory proof for Memory Workspace"
+    )
+    proof_reference = capability["inventory"]["memory_proof_reference"]
+    assert proof_reference["mission_id"] == direct_mission_id
+    assert proof_reference["proof_kind"] == "control_plane"
+    assert proof_reference["proof_status"] == "verified"
+    assert proof_reference["updated_at"]
+    assert "verified backend-triggered MemPalace access" in proof_reference["summary"]
+    proof_continuity = capability["inventory"]["memory_proof_continuity"]
+    assert proof_continuity["mission_id"] == direct_mission_id
+    assert proof_continuity["mission_name"] == "MemPalace Direct Proof: Memory Workspace"
+    assert proof_continuity["state"] in {"anchored", "warming", "fragile"}
+    assert proof_continuity["summary"]
+    assert "mempalace_status and mempalace_search both succeeded" in proof_continuity["anchor"]
+    assert proof_continuity["next_handoff"]
 
 
 def test_dashboard_backfills_gateway_bootstrap_from_existing_quickstart_artifacts(tmp_path) -> None:
@@ -1326,6 +4178,107 @@ def test_control_chat_launches_hardener_when_no_live_loop_is_running() -> None:
     assert decision.mission_payload.name == "Harden ForumForge"
 
 
+def test_control_chat_status_cites_gateway_doctor_when_posture_needs_repair() -> None:
+    gateway_capability = make_gateway_capability_view(
+        level="warn",
+        headline="Gateway capability has live gaps",
+        summary="Saved launch posture has tracked gaps and no launch-ready lane.",
+        ready_count=0,
+        connected_count=1,
+        total_count=1,
+        warning_count=1,
+        approval_count=1,
+        tracked_ready_count=0,
+        tracked_gap_count=1,
+        route_status="repair",
+        route_warning="Saved lane is connected, but approvals are still waiting.",
+    )
+    dashboard = make_dashboard_view(
+        instances=[make_instance_view(unresolved_requests=[{"id": "approval-1"}])],
+        opportunities=[make_gateway_repair_opportunity()],
+    ).model_copy(update={"gateway_capability": gateway_capability})
+
+    decision = plan_control_chat("status", dashboard)
+
+    assert decision.action_kind == "observe"
+    assert "Gateway Doctor says: Saved launch posture has tracked gaps" in decision.reply
+    assert "Stabilize gateway posture" in decision.reply
+
+
+def test_control_chat_prefers_gateway_repair_before_hardener_when_posture_needs_repair() -> None:
+    finished = make_mission_view(
+        mission_id=52,
+        name="ForumForge Slice",
+        status="completed",
+        phase="completed",
+        project_id=9,
+        project_label="ForumForge",
+        last_checkpoint="Feature shipped and verified.",
+    )
+    gateway_capability = make_gateway_capability_view(
+        level="warn",
+        headline="Gateway capability has live gaps",
+        summary="Connected lanes need repair before launch.",
+        ready_count=0,
+        connected_count=1,
+        total_count=1,
+        warning_count=1,
+        approval_count=0,
+        tracked_ready_count=0,
+        tracked_gap_count=1,
+        route_status="repair",
+        route_warning=None,
+    )
+    dashboard = make_dashboard_view(
+        instances=[make_instance_view()],
+        missions=[finished],
+        projects=[make_project_view(project_id=9, label="ForumForge")],
+        opportunities=[
+            make_gateway_repair_opportunity(project_id=9),
+            {
+                "id": "harden-52",
+                "kind": "checkpoint_hardener",
+                "impact": "high",
+                "title": "Harden ForumForge",
+                "summary": "Verify and tighten the checkpoint.",
+                "why_now": "The last run already landed a handoff.",
+                "action_label": "Load hardener",
+                "mission_draft": {
+                    "name": "Harden ForumForge",
+                    "objective": "Continue from the checkpoint and make it more durable.",
+                    "instance_id": 1,
+                    "project_id": 9,
+                    "task_blueprint_id": None,
+                    "cwd": "C:/workspace",
+                    "thread_id": "thread_52",
+                    "model": "gpt-5.4",
+                    "reasoning_effort": None,
+                    "collaboration_mode": None,
+                    "max_turns": 3,
+                    "use_builtin_agents": True,
+                    "run_verification": True,
+                    "auto_commit": False,
+                    "pause_on_approval": True,
+                    "allow_auto_reflexes": True,
+                    "auto_recover": True,
+                    "auto_recover_limit": 2,
+                    "reflex_cooldown_seconds": 900,
+                    "allow_failover": True,
+                    "start_immediately": True,
+                },
+            },
+        ],
+    ).model_copy(update={"gateway_capability": gateway_capability})
+
+    decision = plan_control_chat("continue", dashboard)
+
+    assert decision.action_kind == "launch_opportunity"
+    assert decision.opportunity_id == "gateway-repair"
+    assert decision.mission_payload is not None
+    assert decision.mission_payload.name == "Stabilize Gateway Posture"
+    assert "Gateway Doctor says Connected lanes need repair before launch" in decision.reply
+
+
 def test_control_chat_builds_new_mission_from_freeform_request() -> None:
     dashboard = make_dashboard_view(
         instances=[make_instance_view()],
@@ -1436,6 +4389,203 @@ def test_attention_queue_plans_recovery_from_failed_signal() -> None:
     assert decision.opportunity_id == "recover-61"
     assert decision.mission_payload is not None
     assert decision.status == "executed"
+
+
+def test_attention_queue_prefers_gateway_repair_before_recovery_when_posture_needs_repair() -> None:
+    failed = make_mission_view(
+        mission_id=61,
+        name="Vault Mesh Finish",
+        status="failed",
+        phase="failed",
+        project_id=11,
+        project_label="OpenZues",
+        last_checkpoint="Checkpoint exists",
+        last_error="thread not found",
+    )
+    project = make_project_view(project_id=11, label="OpenZues")
+    gateway_capability = make_gateway_capability_view(
+        level="warn",
+        headline="Gateway capability has live gaps",
+        summary="Connected lanes need repair before launch.",
+        ready_count=0,
+        connected_count=1,
+        total_count=1,
+        warning_count=1,
+        approval_count=0,
+        tracked_ready_count=0,
+        tracked_gap_count=1,
+        route_status="repair",
+        route_warning=None,
+    )
+    dashboard = make_dashboard_view(
+        instances=[make_instance_view()],
+        missions=[failed],
+        projects=[project],
+        opportunities=[
+            make_gateway_repair_opportunity(project_id=11),
+            {
+                "id": "recover-61",
+                "kind": "recovery_run",
+                "impact": "high",
+                "title": "Recover Vault Mesh Finish",
+                "summary": "Resume from the failure checkpoint.",
+                "why_now": "The failure already has thread context.",
+                "action_label": "Recover run",
+                "mission_draft": {
+                    "name": "Recover Vault Mesh Finish",
+                    "objective": "Recover from the failure and verify it.",
+                    "instance_id": 1,
+                    "project_id": 11,
+                    "task_blueprint_id": None,
+                    "cwd": "C:/workspace",
+                    "thread_id": "thread_61",
+                    "model": "gpt-5.4",
+                    "reasoning_effort": None,
+                    "collaboration_mode": None,
+                    "max_turns": 3,
+                    "use_builtin_agents": True,
+                    "run_verification": True,
+                    "auto_commit": False,
+                    "pause_on_approval": True,
+                    "allow_auto_reflexes": True,
+                    "auto_recover": True,
+                    "auto_recover_limit": 2,
+                    "reflex_cooldown_seconds": 900,
+                    "allow_failover": True,
+                    "start_immediately": True,
+                },
+            },
+        ],
+    ).model_copy(
+        update={
+            "gateway_capability": gateway_capability,
+            "radar": build_radar(
+                [make_instance_view()],
+                [failed],
+                [project],
+                gateway_capability=gateway_capability,
+            ),
+        }
+    )
+
+    decision = plan_attention_queue(dashboard)
+
+    assert decision is not None
+    assert decision.action_kind == "launch_opportunity"
+    assert decision.opportunity_id == "gateway-repair"
+    assert decision.mission_payload is not None
+    assert decision.mission_payload.name == "Stabilize Gateway Posture"
+    assert "Gateway Doctor says Connected lanes need repair before launch" in decision.reply
+
+
+def test_attention_queue_holds_when_gateway_posture_needs_repair_without_repair_draft() -> None:
+    failed = make_mission_view(
+        mission_id=61,
+        name="Vault Mesh Finish",
+        status="failed",
+        phase="failed",
+        project_id=11,
+        project_label="OpenZues",
+        last_checkpoint="Checkpoint exists",
+        last_error="thread not found",
+    )
+    project = make_project_view(project_id=11, label="OpenZues")
+    gateway_capability = make_gateway_capability_view(
+        level="warn",
+        headline="Gateway capability has live gaps",
+        summary="Connected lanes need repair before launch.",
+        ready_count=0,
+        connected_count=1,
+        total_count=1,
+        warning_count=1,
+        approval_count=0,
+        tracked_ready_count=0,
+        tracked_gap_count=1,
+        route_status="repair",
+        route_warning=None,
+    )
+    dashboard = make_dashboard_view(
+        instances=[make_instance_view()],
+        missions=[failed],
+        projects=[project],
+    ).model_copy(
+        update={
+            "gateway_capability": gateway_capability,
+            "radar": build_radar(
+                [make_instance_view()],
+                [failed],
+                [project],
+                gateway_capability=gateway_capability,
+            ),
+        }
+    )
+
+    decision = plan_attention_queue(dashboard)
+
+    assert decision is not None
+    assert decision.action_kind == "observe"
+    assert decision.status == "escalated"
+    assert decision.target_label == "Gateway capability has live gaps"
+    assert "There is no bounded gateway repair draft attached yet" in decision.reply
+
+
+def test_control_chat_view_cites_gateway_doctor_when_posture_needs_repair(tmp_path) -> None:
+    gateway_capability = make_gateway_capability_view(
+        level="warn",
+        headline="Gateway capability has live gaps",
+        summary="Connected lanes need repair before launch.",
+        ready_count=0,
+        connected_count=1,
+        total_count=1,
+        warning_count=1,
+        approval_count=1,
+        tracked_ready_count=0,
+        tracked_gap_count=1,
+        route_status="repair",
+        route_warning="Saved lane is still waiting on approval.",
+    )
+    dashboard = make_dashboard_view(
+        instances=[make_instance_view(unresolved_requests=[{"id": "approval-1"}])],
+        opportunities=[make_gateway_repair_opportunity()],
+    ).model_copy(update={"gateway_capability": gateway_capability})
+
+    with make_client(tmp_path) as client:
+        view = asyncio.run(client.app.state.control_chat_service.build_view(dashboard))
+
+    assert view.headline == "Chat is steering from Gateway Doctor"
+    assert "Connected lanes need repair before launch." in view.summary
+    assert view.input_placeholder == "Try: continue, status, or repair the gateway posture"
+
+
+def test_attention_queue_view_cites_gateway_posture_when_repair_is_needed(tmp_path) -> None:
+    gateway_capability = make_gateway_capability_view(
+        level="warn",
+        headline="Gateway capability has live gaps",
+        summary="Connected lanes need repair before launch.",
+        ready_count=0,
+        connected_count=1,
+        total_count=1,
+        warning_count=1,
+        approval_count=1,
+        tracked_ready_count=0,
+        tracked_gap_count=1,
+        route_status="repair",
+        route_warning="Saved lane is still waiting on approval.",
+    )
+    dashboard = make_dashboard_view(
+        instances=[make_instance_view(unresolved_requests=[{"id": "approval-1"}])],
+    ).model_copy(update={"gateway_capability": gateway_capability})
+
+    with make_client(tmp_path) as client:
+        view = asyncio.run(
+            client.app.state.control_chat_service.build_attention_queue_view(
+                dashboard,
+                enabled=True,
+            )
+        )
+
+    assert view.headline == "Attention queue is holding for gateway repair"
+    assert "Connected lanes need repair before launch." in view.summary
 
 
 def test_attention_queue_reuses_existing_hardener_instead_of_launching_duplicate() -> None:
@@ -2250,7 +5400,10 @@ def test_build_radar_flags_quiet_in_progress_thread_earlier() -> None:
             "live_telemetry": MissionLiveTelemetryView(
                 streaming=False,
                 last_thread_event_age_seconds=240,
-                summary="Mission is marked in progress, but no fresh thread activity has landed recently.",
+                summary=(
+                    "Mission is marked in progress, but no fresh thread activity "
+                    "has landed recently."
+                ),
             )
         }
     )
@@ -2387,11 +5540,19 @@ def test_build_radar_keeps_small_ready_handoff_set_expanded() -> None:
 
 
 def test_build_launchpad_suggests_workspace_scout_without_projects() -> None:
-    launchpad = build_launchpad([make_instance_view()], [], [])
+    launchpad = build_launchpad(
+        [make_instance_view()],
+        [],
+        [],
+        preferred_memory_provider="mempalace",
+        preferred_executor="workspace_shell",
+    )
 
     assert launchpad.opportunities[0].kind == "workspace_scout"
     assert launchpad.opportunities[0].mission_draft.instance_id == 1
     assert launchpad.opportunities[0].mission_draft.model == "gpt-5.4-mini"
+    assert launchpad.opportunities[0].mission_draft.preferred_memory_provider == "mempalace"
+    assert launchpad.opportunities[0].mission_draft.preferred_executor == "workspace_shell"
 
 
 def test_build_launchpad_prioritizes_checkpoint_hardener() -> None:
@@ -2447,6 +5608,88 @@ def test_build_launchpad_skips_duplicate_checkpoint_hardener_when_followup_exist
     assert not any(
         opportunity.kind == "checkpoint_hardener" for opportunity in launchpad.opportunities
     )
+
+
+def test_build_launchpad_suppresses_recently_completed_checkpoint_hardener() -> None:
+    now = datetime.now(UTC)
+    source = make_mission_view(
+        mission_id=7,
+        name="Ship checkout",
+        status="completed",
+        phase="completed",
+        project_id=5,
+        project_label="Checkout",
+        last_checkpoint="Implemented the first milestone.",
+        updated_at=now - timedelta(minutes=3),
+    )
+    completed_followup = make_mission_view(
+        mission_id=8,
+        name="Harden Checkout",
+        status="completed",
+        phase="completed",
+        project_id=5,
+        project_label="Checkout",
+        thread_id="thread_7",
+        updated_at=now - timedelta(minutes=10),
+    ).model_copy(
+        update={
+            "objective": (
+                "Continue from the latest checkpoint in the mission 'Ship checkout'. "
+                "First read the existing handoff in the thread, verify what is already true, "
+                "close the biggest gaps, and leave a stronger checkpoint with validation."
+            )
+        }
+    )
+    project = make_project_view(project_id=5, label="Checkout")
+
+    launchpad = build_launchpad([make_instance_view()], [source, completed_followup], [project])
+
+    assert not any(
+        opportunity.kind == "checkpoint_hardener" for opportunity in launchpad.opportunities
+    )
+
+
+def test_build_launchpad_relabels_later_checkpoint_hardener_as_optional() -> None:
+    now = datetime.now(UTC)
+    source = make_mission_view(
+        mission_id=7,
+        name="Ship checkout",
+        status="completed",
+        phase="completed",
+        project_id=5,
+        project_label="Checkout",
+        last_checkpoint="Implemented the first milestone.",
+        updated_at=now - timedelta(minutes=3),
+    )
+    completed_followup = make_mission_view(
+        mission_id=8,
+        name="Harden Checkout",
+        status="completed",
+        phase="completed",
+        project_id=5,
+        project_label="Checkout",
+        thread_id="thread_7",
+        updated_at=now - timedelta(hours=2),
+    ).model_copy(
+        update={
+            "objective": (
+                "Continue from the latest checkpoint in the mission 'Ship checkout'. "
+                "First read the existing handoff in the thread, verify what is already true, "
+                "close the biggest gaps, and leave a stronger checkpoint with validation."
+            )
+        }
+    )
+    project = make_project_view(project_id=5, label="Checkout")
+
+    launchpad = build_launchpad([make_instance_view()], [source, completed_followup], [project])
+
+    hardener = next(
+        opportunity
+        for opportunity in launchpad.opportunities
+        if opportunity.kind == "checkpoint_hardener"
+    )
+    assert hardener.action_label == "Load another hardener"
+    assert "optional tightening pass" in hardener.summary
 
 
 def test_build_launchpad_skips_recursive_checkpoint_hardener_for_followup_mission() -> None:
@@ -2913,6 +6156,74 @@ def test_build_cortex_surfaces_orbit_and_approval_inoculations() -> None:
     assert "approval-sentry" in inoculation_ids
 
 
+def test_build_cortex_surfaces_learning_reviews() -> None:
+    project = make_project_view(project_id=7, label="Beacon")
+    missions = [
+        make_mission_view(
+            mission_id=70,
+            name="Beacon UI ship",
+            status="completed",
+            project_id=7,
+            project_label="Beacon",
+            last_checkpoint="Browser verification passed and the queue handoff is clean.",
+            toolsets=["browser", "vision", "debugging", "delegation"],
+            run_verification=True,
+        ),
+        make_mission_view(
+            mission_id=71,
+            name="Beacon queue hardening",
+            status="paused",
+            project_id=7,
+            project_label="Beacon",
+            last_checkpoint="Checkpoint landed after browser-led verification and review.",
+            toolsets=["browser", "debugging", "delegation"],
+            run_verification=True,
+        ),
+        make_mission_view(
+            mission_id=72,
+            name="Beacon drifted loop",
+            status="active",
+            project_id=7,
+            project_label="Beacon",
+            command_count=9,
+            total_tokens=78000,
+            run_verification=False,
+            toolsets=["search"],
+        ),
+    ]
+
+    cortex = build_cortex([make_instance_view()], missions, [project])
+
+    assert cortex.reviews
+    assert any(
+        review.title == "Promote the winning tool posture for Beacon"
+        and "browser" in review.recommended_toolsets
+        for review in cortex.reviews
+    )
+    assert any(
+        review.title == "Anchor Beacon with checkpoint-first recovery"
+        and "memory" in review.recommended_toolsets
+        for review in cortex.reviews
+    )
+    assert any(
+        review.title == "Keep Beacon on proof-first loops"
+        and "debugging" in review.recommended_toolsets
+        for review in cortex.reviews
+    )
+
+
+def test_cortex_api_returns_review_contract(tmp_path) -> None:
+    with make_client(tmp_path) as client:
+        response = client.get("/api/cortex")
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert "headline" in payload
+        assert "doctrines" in payload
+        assert "inoculations" in payload
+        assert "reviews" in payload
+
+
 def test_build_launchpad_applies_learned_doctrine_to_ship_slice() -> None:
     project = make_project_view(project_id=9, label="Beacon")
     completed = make_mission_view(
@@ -2935,6 +6246,96 @@ def test_build_launchpad_applies_learned_doctrine_to_ship_slice() -> None:
     assert ship_slice.mission_draft.model == "gpt-5.4-mini"
     assert ship_slice.mission_draft.max_turns == 3
     assert ship_slice.mission_draft.auto_commit is False
+
+
+def test_build_radar_surfaces_gateway_capability_warning_signal() -> None:
+    gateway_capability = make_gateway_capability_view(
+        level="warn",
+        headline="Gateway capability has live gaps",
+        summary="Saved launch posture has tracked gaps and no launch-ready lane.",
+        ready_count=0,
+        connected_count=1,
+        total_count=1,
+        warning_count=1,
+        approval_count=1,
+        tracked_ready_count=0,
+        tracked_gap_count=1,
+        route_status="repair",
+        route_warning="Saved lane is connected, but approvals are still waiting.",
+    )
+
+    radar = build_radar(
+        [make_instance_view(unresolved_requests=[{"id": "approval-1"}])],
+        [],
+        [],
+        gateway_capability=gateway_capability,
+    )
+
+    gateway_signal = next(signal for signal in radar.signals if signal.id == "gateway/capability")
+    assert gateway_signal.level == "warn"
+    assert gateway_signal.title == "Gateway capability has live gaps"
+    assert "tracked gaps" in gateway_signal.detail
+
+
+def test_build_launchpad_prefers_gateway_ready_lanes_and_adds_gateway_repair_opportunity() -> None:
+    gateway_capability = make_gateway_capability_view(
+        level="warn",
+        headline="Gateway capability has live gaps",
+        summary="Connected lanes need repair before launch.",
+        ready_count=0,
+        connected_count=1,
+        total_count=1,
+        warning_count=1,
+        approval_count=1,
+        tracked_ready_count=0,
+        tracked_gap_count=1,
+        route_status="repair",
+        route_warning="Saved lane is still waiting on approval.",
+    )
+
+    launchpad = build_launchpad(
+        [make_instance_view(unresolved_requests=[{"id": "approval-1"}])],
+        [],
+        [make_project_view(project_id=9, label="Beacon")],
+        gateway_capability=gateway_capability,
+    )
+
+    assert launchpad.headline == "Gateway posture needs repair before broad launches"
+    assert launchpad.summary == "Connected lanes need repair before launch."
+    assert any(opportunity.kind == "gateway_repair" for opportunity in launchpad.opportunities)
+    assert not any(opportunity.kind == "ship_slice" for opportunity in launchpad.opportunities)
+
+
+def test_build_interference_surfaces_gateway_posture_vector() -> None:
+    gateway_capability = make_gateway_capability_view(
+        level="warn",
+        headline="Gateway capability has live gaps",
+        summary="Saved launch posture has tracked gaps and no launch-ready lane.",
+        ready_count=0,
+        connected_count=1,
+        total_count=1,
+        warning_count=1,
+        tracked_ready_count=0,
+        tracked_gap_count=1,
+        route_status="repair",
+        route_warning="Saved lane is disconnected from the launch policy.",
+    )
+
+    interference = build_interference(
+        [],
+        [],
+        [],
+        [],
+        gateway_capability=gateway_capability,
+    )
+
+    gateway_vector = next(
+        vector for vector in interference.vectors if vector.kind == "gateway_posture"
+    )
+    assert gateway_vector.level == "warn"
+    assert gateway_vector.scope_label == "Local Codex Desktop"
+    assert "Gateway capability has live gaps" in gateway_vector.summary
+    assert "Saved lane is disconnected" in gateway_vector.treaty_prompt
 
 
 def test_build_reflex_deck_creates_checkpoint_reflex_for_orbiting_mission() -> None:
@@ -2974,7 +6375,10 @@ def test_build_reflex_deck_arms_thread_heartbeat_for_quiet_in_progress_run() -> 
             "live_telemetry": MissionLiveTelemetryView(
                 streaming=False,
                 last_thread_event_age_seconds=240,
-                summary="Mission is marked in progress, but no fresh thread activity has landed recently.",
+                summary=(
+                    "Mission is marked in progress, but no fresh thread activity "
+                    "has landed recently."
+                ),
             )
         }
     )
@@ -3055,13 +6459,21 @@ def test_build_dream_deck_surfaces_ready_project_memory_pass() -> None:
         ),
     ]
 
-    deck = build_dream_deck([make_instance_view()], missions, [project])
+    deck = build_dream_deck(
+        [make_instance_view()],
+        missions,
+        [project],
+        preferred_memory_provider="mempalace",
+        preferred_executor="workspace_shell",
+    )
 
     assert deck.dreams
     dream = deck.dreams[0]
     assert dream.project_id == 8
     assert dream.status == "ready"
     assert dream.mission_draft.project_id == 8
+    assert dream.mission_draft.preferred_memory_provider == "mempalace"
+    assert dream.mission_draft.preferred_executor == "workspace_shell"
     assert dream.memory_prompt.startswith("# Dream: OpenZues Project Consolidation")
 
 
@@ -3070,3 +6482,150 @@ def test_build_dream_deck_stays_empty_without_project_signal() -> None:
 
     assert deck.dreams == []
     assert deck.headline == "No dream candidates yet"
+
+
+def test_hermes_doctor_api_reports_sections(tmp_path: Path) -> None:
+    hermes_root = tmp_path / "hermes-agent-main"
+    write_fake_hermes_file(hermes_root, "plugins/memory/mem0/__init__.py")
+    write_fake_hermes_file(hermes_root, "gateway/platforms/telegram.py")
+    write_fake_hermes_file(hermes_root, "gateway/platforms/webhook.py")
+    write_fake_hermes_file(hermes_root, "acp_adapter/server.py")
+    write_fake_hermes_file(hermes_root, "hermes_cli/curses_ui.py")
+
+    with make_client(tmp_path, hermes_source_path=hermes_root) as client:
+        payload = client.get("/api/hermes/doctor").json()
+        update_payload = client.get("/api/runtime/update").json()
+
+    assert payload["headline"]
+    assert "profile" in payload
+    assert "promotion_loop" in payload
+    assert "memory" in payload
+    assert any(item["label"] == "Mem0" for item in payload["memory"]["items"])
+    assert "executors" in payload
+    assert "plugins" in payload
+    assert "delivery" in payload
+    assert any(item["label"] == "Gateway API + Webhooks" for item in payload["delivery"]["items"])
+    assert "acp" in payload
+    assert "updates" in payload
+    assert update_payload["headline"]
+
+
+def test_hermes_profile_update_persists_saved_defaults(tmp_path: Path) -> None:
+    hermes_root = tmp_path / "hermes-agent-main"
+    write_fake_hermes_file(hermes_root, "plugins/memory/mem0/__init__.py")
+
+    with make_client(tmp_path, hermes_source_path=hermes_root) as client:
+        response = client.put(
+            "/api/hermes/profile",
+            json={
+                "preferred_memory_provider": "mem0",
+                "preferred_executor": "workspace_shell",
+                "learning_autopromote_enabled": False,
+                "plugin_discovery_enabled": False,
+                "channel_inventory_enabled": False,
+                "acp_inventory_enabled": False,
+            },
+        )
+        assert response.status_code == 200
+        payload = response.json()
+
+        assert payload["preferred_memory_provider"] == "mem0"
+        assert payload["preferred_executor"] == "workspace_shell"
+        assert payload["learning_autopromote_enabled"] is False
+        assert payload["plugin_discovery_enabled"] is False
+        assert payload["channel_inventory_enabled"] is False
+        assert payload["acp_inventory_enabled"] is False
+
+        fetched = client.get("/api/hermes/profile")
+        assert fetched.status_code == 200
+        refetched = fetched.json()
+        assert refetched["preferred_memory_provider"] == "mem0"
+        assert refetched["preferred_executor"] == "workspace_shell"
+
+
+def test_hermes_profile_shapes_bootstrap_launch_draft(tmp_path: Path) -> None:
+    hermes_root = tmp_path / "hermes-agent-main"
+    write_fake_hermes_file(hermes_root, "plugins/memory/mem0/__init__.py")
+
+    with make_client(tmp_path, hermes_source_path=hermes_root) as client:
+        profile_response = client.put(
+            "/api/hermes/profile",
+            json={
+                "preferred_memory_provider": "mem0",
+                "preferred_executor": "workspace_shell",
+            },
+        )
+        assert profile_response.status_code == 200
+
+        response = client.post(
+            "/api/onboarding/bootstrap",
+            json={
+                "setup_mode": "local",
+                "setup_flow": "quickstart",
+                "instance_mode": "create_desktop",
+                "instance_name": "Hermes Lane",
+                "project_path": str(tmp_path),
+                "project_label": "Hermes Workspace",
+                "operator_name": "Hermes Builder",
+                "task_name": "Hermes Ship Loop",
+                "objective_template": "Ship the next verified Hermes slice.",
+            },
+        )
+        assert response.status_code == 200
+        payload = response.json()
+
+        assert payload["mission_draft"]["preferred_memory_provider"] == "mem0"
+        assert payload["mission_draft"]["preferred_executor"] == "workspace_shell"
+        assert payload["mission_draft"]["preferred_memory_provider_label"] == "Mem0"
+        assert (
+            payload["mission_draft"]["preferred_executor_label"]
+            == "Workspace Shell Profile"
+        )
+        assert "Preferred executor profile: Workspace Shell Profile." in (
+            payload["mission_draft"]["objective"]
+        )
+        assert "Preferred memory provider: Mem0." in payload["mission_draft"]["objective"]
+
+        dashboard = client.get("/api/dashboard").json()
+        assert "memory Mem0" in dashboard["gateway_bootstrap"]["launch_defaults_summary"]
+        assert "executor Workspace Shell Profile" in (
+            dashboard["gateway_bootstrap"]["launch_defaults_summary"]
+        )
+
+
+def test_docker_executor_marks_launch_route_for_repair(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        "openzues.services.hermes_runtime_profile.shutil.which",
+        lambda _command: None,
+    )
+
+    with make_client(tmp_path) as client:
+        profile_response = client.put(
+            "/api/hermes/profile",
+            json={"preferred_executor": "docker"},
+        )
+        assert profile_response.status_code == 200
+
+        response = client.post(
+            "/api/onboarding/bootstrap",
+            json={
+                "setup_mode": "local",
+                "setup_flow": "quickstart",
+                "instance_mode": "create_desktop",
+                "instance_name": "Docker Lane",
+                "project_path": str(tmp_path),
+                "project_label": "Docker Workspace",
+                "operator_name": "Docker Builder",
+                "task_name": "Docker Ship Loop",
+                "objective_template": "Stage the next backend-ready slice.",
+            },
+        )
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["launch_route"]["status"] == "repair"
+        assert "docker" in payload["launch_route"]["summary"].lower()
+
+        dashboard = client.get("/api/dashboard").json()
+
+    assert dashboard["gateway_bootstrap"]["launch_route"]["status"] == "repair"
+    assert "docker" in dashboard["gateway_bootstrap"]["launch_route"]["summary"].lower()

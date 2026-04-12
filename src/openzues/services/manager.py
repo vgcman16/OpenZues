@@ -32,6 +32,47 @@ def _pick_fields(item: dict[str, Any], keys: tuple[str, ...]) -> dict[str, Any]:
     }
 
 
+def _ordered_names(items: list[str]) -> list[str]:
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for item in items:
+        name = str(item).strip()
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        ordered.append(name)
+    return ordered
+
+
+def _catalog_names(value: Any) -> list[str]:
+    if isinstance(value, dict):
+        return _ordered_names([str(key) for key in value])
+    if isinstance(value, list):
+        names: list[str] = []
+        for item in value:
+            if isinstance(item, str):
+                names.append(item)
+                continue
+            if not isinstance(item, dict):
+                continue
+            for key in ("name", "id", "uri", "method", "title"):
+                raw = item.get(key)
+                if isinstance(raw, str) and raw.strip():
+                    names.append(raw)
+                    break
+        return _ordered_names(names)
+    return []
+
+
+def _summarize_mcp_server_status(item: dict[str, Any]) -> dict[str, Any]:
+    summary = _pick_fields(item, ("name", "status", "source", "authStatus"))
+    for key in ("tools", "resources", "resourceTemplates"):
+        names = _catalog_names(item.get(key))
+        if names:
+            summary[key] = names
+    return summary
+
+
 def _summarize_account(account: dict[str, Any] | None) -> dict[str, Any] | None:
     if not isinstance(account, dict):
         return None
@@ -169,6 +210,7 @@ class InstanceRuntime:
     apps: list[dict[str, Any]] = field(default_factory=list)
     plugins: list[dict[str, Any]] = field(default_factory=list)
     mcp_servers: list[dict[str, Any]] = field(default_factory=list)
+    mcp_server_status: list[dict[str, Any]] = field(default_factory=list)
     config: dict[str, Any] | None = None
     threads: list[dict[str, Any]] = field(default_factory=list)
     loaded_thread_ids: list[str] = field(default_factory=list)
@@ -215,10 +257,15 @@ class RuntimeManager:
         database: Database,
         hub: BroadcastHub,
         desktop_service: CodexDesktopService | None = None,
+        *,
+        default_stdio_command: str = "codex",
+        default_stdio_args: str = "app-server",
     ) -> None:
         self.database = database
         self.hub = hub
         self.desktop_service = desktop_service
+        self.default_stdio_command = default_stdio_command
+        self.default_stdio_args = default_stdio_args
         self.instances: dict[int, InstanceRuntime] = {}
         self.event_listeners: list[RuntimeListener] = []
         self.server_request_listeners: list[RuntimeListener] = []
@@ -297,6 +344,27 @@ class RuntimeManager:
             raise KeyError(f"Unknown instance {instance_id}")
         return runtime
 
+    async def list_mcp_server_status(
+        self,
+        instance_id: int,
+        *,
+        limit: int = 50,
+        refresh: bool = True,
+    ) -> list[dict[str, Any]]:
+        runtime = await self.get(instance_id)
+        client = runtime.client
+        if client is None or not runtime.connected:
+            return [dict(item) for item in runtime.mcp_server_status]
+        if runtime.mcp_server_status and not refresh:
+            return [dict(item) for item in runtime.mcp_server_status]
+        raw_status = (await client.call("mcpServerStatus/list", {"limit": limit})).get("data", [])
+        runtime.mcp_server_status = [
+            _summarize_mcp_server_status(item)
+            for item in raw_status
+            if isinstance(item, dict)
+        ]
+        return [dict(item) for item in runtime.mcp_server_status]
+
     async def connect_instance(self, instance_id: int) -> InstanceRuntime:
         runtime = await self.get(instance_id)
         (
@@ -350,6 +418,7 @@ class RuntimeManager:
         runtime = await self.get(instance_id)
         if runtime.client is not None:
             await runtime.client.close()
+            runtime.client = None
         runtime.connected = False
         runtime.initialized = False
         runtime.pid = None
@@ -362,6 +431,15 @@ class RuntimeManager:
         self.instances.pop(instance_id, None)
         await self.database.delete_instance(instance_id)
         await self.publish_snapshot("instance/deleted", {"instanceId": instance_id})
+
+    async def close(self) -> None:
+        for runtime in self.instances.values():
+            if runtime.client is not None:
+                await runtime.client.close()
+                runtime.client = None
+            runtime.connected = False
+            runtime.initialized = False
+            runtime.pid = None
 
     async def quick_connect_desktop(
         self,
@@ -386,6 +464,42 @@ class RuntimeManager:
         elif cwd and not runtime.cwd:
             runtime.cwd = cwd
         return await self.connect_instance(runtime.instance_id)
+
+    async def ensure_workspace_shell_instance(
+        self,
+        *,
+        cwd: str,
+        auto_connect: bool = True,
+    ) -> InstanceRuntime:
+        normalized_cwd = str(cwd).strip()
+        if not normalized_cwd:
+            raise ValueError("Workspace shell executor needs a concrete cwd.")
+
+        matching = next(
+            (
+                instance
+                for instance in self.instances.values()
+                if instance.transport == "stdio"
+                and str(instance.cwd or "").strip().lower() == normalized_cwd.lower()
+            ),
+            None,
+        )
+        if matching is None:
+            matching = await self.create_instance(
+                name=f"Workspace Shell: {normalized_cwd}",
+                transport="stdio",
+                command=self.default_stdio_command,
+                args=self.default_stdio_args,
+                websocket_url=None,
+                cwd=normalized_cwd,
+                auto_connect=False,
+            )
+        elif not matching.cwd:
+            matching.cwd = normalized_cwd
+
+        if auto_connect and not matching.connected:
+            matching = await self.connect_instance(matching.instance_id)
+        return matching
 
     async def refresh_instance(self, instance_id: int) -> InstanceRuntime:
         runtime = await self.get(instance_id)
@@ -423,12 +537,10 @@ class RuntimeManager:
             [item for item in raw_plugins if isinstance(item, dict)],
             keys=("name", "enabled"),
         )
-        raw_mcp_servers = (
-            await client.call("mcpServerStatus/list", {"limit": 50})
-        ).get("data", [])
+        raw_mcp_servers = await self.list_mcp_server_status(instance_id, limit=50, refresh=True)
         runtime.mcp_servers = _summarize_named_items(
             [item for item in raw_mcp_servers if isinstance(item, dict)],
-            keys=("name", "status", "source"),
+            keys=("name", "status", "source", "authStatus"),
         )
         raw_config = (await client.call("config/read", {"includeLayers": False})).get("config")
         runtime.config = (

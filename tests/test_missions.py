@@ -13,10 +13,18 @@ from openzues.services.missions import MissionService
 
 
 class FakeRuntime:
-    def __init__(self, instance_id: int) -> None:
+    def __init__(
+        self,
+        instance_id: int,
+        *,
+        transport: str = "desktop",
+        cwd: str = "C:/workspace",
+        name: str = "Local Codex Desktop",
+    ) -> None:
         self.instance_id = instance_id
-        self.name = "Local Codex Desktop"
-        self.cwd = "C:/workspace"
+        self.name = name
+        self.transport = transport
+        self.cwd = cwd
         self.connected = False
         self.threads: list[dict] = []
         self.unresolved_requests: list[dict] = []
@@ -30,6 +38,7 @@ class FakeManager:
         self.thread_calls: list[dict] = []
         self.turn_calls: list[dict] = []
         self.fail_connect_for: set[int] = set()
+        self.start_turn_error: Exception | None = None
 
     async def get(self, instance_id: int) -> FakeRuntime:
         runtime = self.instances.get(instance_id)
@@ -42,6 +51,28 @@ class FakeManager:
             raise RuntimeError(f"offline lane {instance_id}")
         runtime = await self.get(instance_id)
         runtime.connected = True
+        return runtime
+
+    async def ensure_workspace_shell_instance(
+        self,
+        *,
+        cwd: str,
+        auto_connect: bool = True,
+    ) -> FakeRuntime:
+        runtime = self.instances.get(8)
+        if runtime is None:
+            runtime = FakeRuntime(
+                8,
+                transport="stdio",
+                cwd=cwd,
+                name=f"Workspace Shell: {cwd}",
+            )
+            self.instances[8] = runtime
+        else:
+            runtime.transport = "stdio"
+            runtime.cwd = cwd
+        if auto_connect:
+            runtime.connected = True
         return runtime
 
     async def start_thread(
@@ -78,6 +109,8 @@ class FakeManager:
         reasoning_effort: str | None,
         collaboration_mode: str | None,
     ) -> dict:
+        if self.start_turn_error is not None:
+            raise self.start_turn_error
         self.turn_calls.append(
             {
                 "instance_id": instance_id,
@@ -144,9 +177,90 @@ async def test_run_now_creates_thread_and_turn(tmp_path) -> None:
     assert "Mission charter:" in manager.turn_calls[0]["text"]
     assert "Objective gravity:" in manager.turn_calls[0]["text"]
     assert "Safest next handoff:" in manager.turn_calls[0]["text"]
+    assert "Hermes tool policy:" in manager.turn_calls[0]["text"]
+    assert "Active toolsets:" in manager.turn_calls[0]["text"]
     assert stored is not None
     assert stored["thread_id"] == "thread_auto_7"
     assert stored["in_progress"] == 1
+    assert "safe" in stored["toolsets"]
+    assert "terminal" in stored["toolsets"]
+
+
+@pytest.mark.asyncio
+async def test_run_now_blocks_when_executor_backend_is_unavailable(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setattr(
+        "openzues.services.hermes_runtime_profile.shutil.which",
+        lambda _command: None,
+    )
+
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    await database.upsert_hermes_runtime_profile(
+        {"preferred_executor": "docker", "preferred_memory_provider": "openzues_recall"}
+    )
+    manager = FakeManager()
+    service = MissionService(database, manager, BroadcastHub(), poll_interval_seconds=3600)
+
+    mission = await service.create(
+        MissionCreate(
+            name="Docker-backed shipper",
+            objective="Keep improving the backend.",
+            instance_id=7,
+            cwd="C:/workspace",
+            max_turns=2,
+            start_immediately=False,
+        )
+    )
+
+    view = await service.run_now(mission.id)
+    stored = await database.get_mission(mission.id)
+
+    assert manager.thread_calls == []
+    assert view.status == "blocked"
+    assert view.phase == "executor"
+    assert stored is not None
+    assert stored["status"] == "blocked"
+    assert stored["phase"] == "executor"
+    assert "Docker Backend" in str(stored["last_error"] or "")
+
+
+@pytest.mark.asyncio
+async def test_run_now_promotes_workspace_shell_to_stdio_lane(tmp_path) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    await database.upsert_hermes_runtime_profile(
+        {
+            "preferred_executor": "workspace_shell",
+            "preferred_memory_provider": "openzues_recall",
+        }
+    )
+    manager = FakeManager()
+    service = MissionService(database, manager, BroadcastHub(), poll_interval_seconds=3600)
+
+    mission = await service.create(
+        MissionCreate(
+            name="Workspace shell shipper",
+            objective="Keep improving the dashboard from the repo shell.",
+            instance_id=7,
+            cwd="C:/workspace",
+            max_turns=2,
+            start_immediately=False,
+        )
+    )
+
+    await service.run_now(mission.id)
+    stored = await database.get_mission(mission.id)
+
+    assert manager.thread_calls[0]["instance_id"] == 8
+    assert manager.turn_calls[0]["instance_id"] == 8
+    assert stored is not None
+    assert stored["instance_id"] == 8
+    assert stored["thread_id"] == "thread_auto_8"
+    assert manager.instances[8].transport == "stdio"
+    assert manager.instances[8].connected is True
 
 
 @pytest.mark.asyncio
@@ -676,6 +790,62 @@ async def test_turn_completed_without_final_answer_creates_continuity_snapshot(t
 
 
 @pytest.mark.asyncio
+async def test_turn_completed_normalizes_blank_error_payload(tmp_path) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    manager = FakeManager()
+    service = MissionService(database, manager, BroadcastHub(), poll_interval_seconds=3600)
+
+    mission_id = await database.create_mission(
+        name="Normalize mission turn failure",
+        objective="Keep failure summaries useful even when Codex sends an empty error.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread_error",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=4,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=True,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+    )
+    await database.update_mission(mission_id, in_progress=1, phase="thinking")
+
+    await service.handle_event(
+        7,
+        {
+            "method": "turn/completed",
+            "threadId": "thread_error",
+            "params": {
+                "threadId": "thread_error",
+                "turnId": "turn_error",
+                "turn": {"id": "turn_error", "error": RuntimeError("")},
+            },
+        },
+    )
+
+    mission = await database.get_mission(mission_id)
+    checkpoints = await database.list_mission_checkpoints(mission_id)
+
+    assert mission is not None
+    assert mission["status"] == "failed"
+    assert mission["phase"] == "failed"
+    assert mission["last_error"] == (
+        "RuntimeError: Codex reported turn failure without detailed error output."
+    )
+    assert checkpoints[0]["kind"] == "error"
+    assert checkpoints[0]["summary"] == mission["last_error"]
+
+
+@pytest.mark.asyncio
 async def test_restart_safe_snapshot_uses_recent_thread_trace(tmp_path) -> None:
     database = Database(tmp_path / "missions.db")
     await database.initialize()
@@ -1114,6 +1284,104 @@ async def test_build_turn_prompt_emits_agent_stack_roles(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_build_turn_prompt_emits_contract_seam_guardrails(tmp_path) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    manager = FakeManager()
+    manager.instances[7].connected = True
+    service = MissionService(database, manager, BroadcastHub(), poll_interval_seconds=3600)
+
+    mission_id = await database.create_mission(
+        name="Gateway dashboard contract seam",
+        objective=(
+            "Finish the gateway doctor dashboard contract by aligning the schema, API payload, "
+            "CLI view, and shared fixtures before checkpointing."
+        ),
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread_contract",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=4,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+    )
+
+    mission = await database.get_mission(mission_id)
+    assert mission is not None
+
+    prompt = await service._build_turn_prompt(mission)
+
+    assert "Contract seam guard:" in prompt
+    assert "shared test fixtures" in prompt
+    assert "tests/test_app.py" in prompt
+
+
+@pytest.mark.asyncio
+async def test_build_turn_prompt_includes_mempalace_protocol_for_project_memory(tmp_path) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    manager = FakeManager()
+    manager.instances[7].connected = True
+    service = MissionService(database, manager, BroadcastHub(), poll_interval_seconds=3600)
+
+    project_id = await database.create_project(path=str(tmp_path), label="Memory Workspace")
+    await database.create_integration(
+        name="MemPalace",
+        kind="mempalace",
+        project_id=project_id,
+        base_url="python -m mempalace.mcp_server",
+        auth_scheme="none",
+        vault_secret_id=None,
+        secret_label=None,
+        secret_value=None,
+        notes="Use the MCP tools for recall before answering historical questions.",
+        enabled=True,
+    )
+    mission_id = await database.create_mission(
+        name="Ship with memory",
+        objective="Land the next slice without losing prior project decisions.",
+        status="active",
+        instance_id=7,
+        project_id=project_id,
+        thread_id="thread_memory_protocol",
+        cwd=str(tmp_path),
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=4,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+    )
+
+    mission = await database.get_mission(mission_id)
+    assert mission is not None
+
+    prompt = await service._build_turn_prompt(mission)
+
+    assert "MemPalace memory protocol:" in prompt
+    assert "query MemPalace first instead of guessing" in prompt
+    assert "write it back through MemPalace" in prompt
+
+
+@pytest.mark.asyncio
 async def test_server_request_blocks_mission_when_approval_is_required(tmp_path) -> None:
     database = Database(tmp_path / "missions.db")
     await database.initialize()
@@ -1271,6 +1539,39 @@ async def test_stale_queued_blocker_does_not_deadlock_next_mission(tmp_path) -> 
     assert mission["in_progress"] == 1
     assert mission["last_error"] is None
     assert manager.thread_calls[0]["instance_id"] == 7
+
+
+@pytest.mark.asyncio
+async def test_run_now_normalizes_blank_start_turn_error(tmp_path) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    manager = FakeManager()
+    manager.instances[7].connected = True
+    manager.start_turn_error = RuntimeError("")
+    service = MissionService(database, manager, BroadcastHub(), poll_interval_seconds=3600)
+
+    mission = await service.create(
+        MissionCreate(
+            name="Recover useful lane errors",
+            objective="Fail with a useful summary when the runtime returns a blank error.",
+            instance_id=7,
+            cwd="C:/workspace",
+            start_immediately=False,
+        )
+    )
+
+    await service.run_now(mission.id)
+    stored = await database.get_mission(mission.id)
+    checkpoints = await database.list_mission_checkpoints(mission.id)
+
+    assert stored is not None
+    assert stored["status"] == "failed"
+    assert stored["phase"] == "failed"
+    assert stored["last_error"] == (
+        "RuntimeError: Codex runtime failed to start the turn without a detailed error."
+    )
+    assert checkpoints[0]["kind"] == "error"
+    assert checkpoints[0]["summary"] == stored["last_error"]
 
 
 @pytest.mark.asyncio

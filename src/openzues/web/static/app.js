@@ -1,7 +1,11 @@
 const state = {
   dashboard: null,
   diagnostics: null,
+  hermesDoctor: null,
   setup: null,
+  recall: null,
+  projectHarnessRuns: {},
+  projectHarnessProfiles: {},
   socket: null,
   refreshTimer: null,
   radarReserveExpanded: false,
@@ -81,6 +85,11 @@ const laneSnapshotsEl = document.querySelector("#lane-snapshots");
 const continuityHeadlineEl = document.querySelector("#continuity-headline");
 const continuitySummaryEl = document.querySelector("#continuity-summary");
 const continuityPacketsEl = document.querySelector("#continuity-packets");
+const recallHeadlineEl = document.querySelector("#recall-headline");
+const recallSummaryEl = document.querySelector("#recall-summary");
+const recallResultsEl = document.querySelector("#recall-results");
+const recallFormEl = document.querySelector("#recall-form");
+const recallQueryEl = document.querySelector("#recall-query");
 const dreamHeadlineEl = document.querySelector("#dream-headline");
 const dreamSummaryEl = document.querySelector("#dream-summary");
 const dreamsEl = document.querySelector("#dreams");
@@ -88,6 +97,7 @@ const cortexHeadlineEl = document.querySelector("#cortex-headline");
 const cortexSummaryEl = document.querySelector("#cortex-summary");
 const cortexDoctrinesEl = document.querySelector("#cortex-doctrines");
 const cortexInoculationsEl = document.querySelector("#cortex-inoculations");
+const cortexReviewsEl = document.querySelector("#cortex-reviews");
 const reflexHeadlineEl = document.querySelector("#reflex-headline");
 const reflexSummaryEl = document.querySelector("#reflex-summary");
 const reflexesEl = document.querySelector("#reflexes");
@@ -97,6 +107,7 @@ const intelligenceContinuityCountEl = document.querySelector("#intelligence-cont
 const intelligenceDreamCountEl = document.querySelector("#intelligence-dream-count");
 const intelligenceDoctrineCountEl = document.querySelector("#intelligence-doctrine-count");
 const intelligenceInoculationCountEl = document.querySelector("#intelligence-inoculation-count");
+const intelligenceReviewCountEl = document.querySelector("#intelligence-review-count");
 const intelligenceReflexCountEl = document.querySelector("#intelligence-reflex-count");
 const missionsEl = document.querySelector("#missions");
 const missionPresetsEl = document.querySelector("#mission-presets");
@@ -123,6 +134,7 @@ const onboardingChecklistEl = document.querySelector("#onboarding-checklist");
 const onboardingModeLabelEl = document.querySelector("#onboarding-mode-label");
 const onboardingFlowPillEl = document.querySelector("#onboarding-flow-pill");
 const onboardingModeSummaryEl = document.querySelector("#onboarding-mode-summary");
+const gatewayCapabilitySummaryEl = document.querySelector("#gateway-capability-summary");
 const gatewayBootstrapProfileEl = document.querySelector("#gateway-bootstrap-profile");
 const onboardingResultEl = document.querySelector("#onboarding-result");
 const onboardingFormEl = document.querySelector("#onboarding-form");
@@ -130,6 +142,16 @@ const onboardingSetupModeEl = document.querySelector("#onboarding-setup-mode");
 const onboardingSetupFlowEl = document.querySelector("#onboarding-setup-flow");
 const onboardingInstanceModeEl = document.querySelector("#onboarding-instance-mode");
 const onboardingInstanceSelectEl = document.querySelector("#onboarding-instance-select");
+const onboardingIntegrationDefaults = Object.freeze({
+  name: "GitHub Inventory",
+  kind: "github",
+  baseUrl: "https://api.github.com",
+});
+const onboardingMempalaceDefaults = Object.freeze({
+  name: "MemPalace",
+  kind: "mempalace",
+  baseUrl: "python -m mempalace.mcp_server",
+});
 const libraryShellEl = document.querySelector("#library-shell");
 const libraryShellSummaryEl = document.querySelector("#library-shell-summary");
 const libraryPlaybookCountEl = document.querySelector("#library-playbook-count");
@@ -138,6 +160,19 @@ const diagnosticsEl = document.querySelector("#diagnostics");
 const healthShellEl = document.querySelector("#health-shell");
 const healthShellSummaryEl = document.querySelector("#health-shell-summary");
 const healthShellStatusEl = document.querySelector("#health-shell-status");
+const hermesDoctorHeadlineEl = document.querySelector("#hermes-doctor-headline");
+const hermesDoctorSummaryEl = document.querySelector("#hermes-doctor-summary");
+const hermesDoctorLevelEl = document.querySelector("#hermes-doctor-level");
+const hermesDoctorPromotionCountEl = document.querySelector("#hermes-doctor-promotion-count");
+const hermesDoctorMemoryCountEl = document.querySelector("#hermes-doctor-memory-count");
+const hermesDoctorDeliveryCountEl = document.querySelector("#hermes-doctor-delivery-count");
+const hermesDoctorProfileEl = document.querySelector("#hermes-doctor-profile");
+const hermesProfileResultEl = document.querySelector("#hermes-profile-result");
+const hermesDoctorPromotionsEl = document.querySelector("#hermes-doctor-promotions");
+const hermesDoctorMemoryEl = document.querySelector("#hermes-doctor-memory");
+const hermesDoctorExecutorsEl = document.querySelector("#hermes-doctor-executors");
+const hermesDoctorSurfacesEl = document.querySelector("#hermes-doctor-surfaces");
+const hermesDoctorUpdatesEl = document.querySelector("#hermes-doctor-updates");
 const playbooksEl = document.querySelector("#playbooks");
 const projectsEl = document.querySelector("#projects");
 const eventsEl = document.querySelector("#events");
@@ -236,6 +271,19 @@ function escapeHtml(value) {
 
 function pill(label, tone = "") {
   return `<span class="pill ${tone}">${escapeHtml(label)}</span>`;
+}
+
+function signalTone(level) {
+  if (level === "ready") {
+    return "ok";
+  }
+  if (level === "critical") {
+    return "bad";
+  }
+  if (level === "warn") {
+    return "warn";
+  }
+  return "";
 }
 
 function formatNumber(value) {
@@ -427,6 +475,19 @@ function renderChatMessage({
   `;
 }
 
+function renderToolsetPills(policy, limit = 5) {
+  const toolsets = Array.isArray(policy?.toolsets) ? policy.toolsets.filter(Boolean) : [];
+  if (!toolsets.length) {
+    return "";
+  }
+  const pills = toolsets
+    .slice(0, limit)
+    .map((toolset) => pill(`tool ${toolset.replaceAll("_", " ")}`))
+    .join("");
+  const overflow = toolsets.length > limit ? pill(`+${toolsets.length - limit} more`) : "";
+  return `${pills}${overflow}`;
+}
+
 function disclosureKey(id) {
   return `openzues:${id}:open`;
 }
@@ -566,13 +627,29 @@ async function loadDashboard() {
 }
 
 async function loadDiagnostics() {
-  state.diagnostics = await api("/api/diagnostics");
+  const [diagnostics, hermesDoctor] = await Promise.all([
+    api("/api/diagnostics"),
+    api("/api/hermes/doctor"),
+  ]);
+  state.diagnostics = diagnostics;
+  state.hermesDoctor = hermesDoctor;
   renderDiagnostics();
 }
 
 async function loadSetup() {
   state.setup = await api("/api/setup");
   renderOnboarding();
+}
+
+async function loadRecall(query = "") {
+  const trimmed = query.trim();
+  const params = new URLSearchParams();
+  if (trimmed) {
+    params.set("query", trimmed);
+  }
+  params.set("limit", "6");
+  state.recall = await api(`/api/recall?${params.toString()}`);
+  renderRecall();
 }
 
 function scheduleRefresh() {
@@ -1645,6 +1722,7 @@ function renderBootstrapResult() {
     result.project,
     result.operator,
     result.task_blueprint,
+    result.memory_task_blueprint,
   ].filter(Boolean);
   const sourceLabel = state.lastBootstrapResult ? "Launch Handoff" : "Saved Launch Handoff";
   const actionLabel = state.lastBootstrapResult ? "Load launch draft" : "Load saved launch draft";
@@ -1719,8 +1797,178 @@ function renderGatewayBootstrapProfile() {
         ${pill(profile.run_verification ? "verification on" : "verification off", profile.run_verification ? "ok" : "warn")}
         ${pill(profile.use_builtin_agents ? "agents on" : "agents off", profile.use_builtin_agents ? "ok" : "warn")}
         ${pill(profile.pause_on_approval ? "approval pause" : "no approval pause", profile.pause_on_approval ? "ok" : "warn")}
+        ${renderToolsetPills(profile.tool_policy || { toolsets: profile.toolsets || [] })}
       </div>
       <p class="small-muted">${escapeHtml(profile.launch_defaults_summary)}</p>
+      ${
+        profile.tool_policy?.summary
+          ? `<p class="small-muted">${escapeHtml(profile.tool_policy.summary)}</p>`
+          : ""
+      }
+      ${
+        profile.tool_policy?.warnings?.length
+          ? `<div class="small-muted">${escapeHtml(profile.tool_policy.warnings[0])}</div>`
+          : ""
+      }
+    </article>
+  `;
+}
+
+function renderGatewayCapabilitySummary() {
+  if (!gatewayCapabilitySummaryEl) {
+    return;
+  }
+  const capability = state.dashboard?.gateway_capability;
+  if (!capability) {
+    gatewayCapabilitySummaryEl.innerHTML = "";
+    return;
+  }
+  const lanePills = capability.connected_lane_health.lanes
+    .slice(0, 4)
+    .map(
+      (lane) =>
+        `<span class="pill ${lane.connected ? (lane.level === "ready" ? "ok" : "warn") : "bad"}">${escapeHtml(
+          `${lane.instance_name}: ${lane.connected ? "connected" : "offline"}`,
+        )}</span>`,
+    )
+    .join("");
+  const inventoryItems = capability.inventory.items
+    .slice(0, 6)
+    .map(
+      (item) => `
+        <article class="library-card">
+          <div class="row">
+            <strong>${escapeHtml(item.name)}</strong>
+            <div class="pill-row">
+              ${pill(item.kind.replaceAll("_", " "))}
+              ${pill(`${item.ready_lane_count}/${item.total_lane_count} lanes`, item.ready_lane_count ? "ok" : "warn")}
+            </div>
+          </div>
+          <p class="small-muted">${escapeHtml(item.summary)}</p>
+        </article>
+      `,
+    )
+    .join("");
+  const memoryProof = capability.inventory.memory_proof_reference;
+  const memoryProofContinuity = capability.inventory.memory_proof_continuity;
+  const canOpenMemoryProofMission = Boolean(
+    memoryProof?.mission_id && getMissionById(memoryProof.mission_id),
+  );
+  const canLaunchMemoryProof = Boolean(
+    capability.inventory.memory_proof_launchable &&
+      capability.inventory.memory_proof_target_instance_id,
+  );
+  gatewayCapabilitySummaryEl.innerHTML = `
+    <article class="bootstrap-result gateway-bootstrap-profile">
+      <div class="section-header">
+        <div>
+          <p class="eyebrow">Gateway Doctor</p>
+          <h2>${escapeHtml(capability.headline)}</h2>
+        </div>
+        <p class="panel-lede">${escapeHtml(capability.summary)}</p>
+      </div>
+      ${
+        capability.warnings?.length
+          ? `<div class="ops-note">${capability.warnings.map((warning) => escapeHtml(warning)).join(" ")}</div>`
+          : ""
+      }
+      <div class="pill-row bootstrap-policy-pills">
+        ${pill(capability.level, capability.level === "ready" ? "ok" : capability.level === "critical" ? "bad" : "warn")}
+        ${pill(`${capability.connected_lane_health.connected_count}/${capability.connected_lane_health.total_count} lanes`, capability.connected_lane_health.connected_count ? "ok" : "warn")}
+        ${pill(`${capability.inventory.app_count} apps`)}
+        ${pill(`${capability.inventory.plugin_count} plugins`)}
+        ${pill(`${capability.inventory.mcp_server_count} MCP`, capability.inventory.mcp_server_count ? "ok" : "")}
+        ${pill(`${capability.inventory.tracked_ready_count} tracked ready`, capability.inventory.tracked_ready_count ? "ok" : "")}
+        ${pill(`${capability.inventory.tracked_gap_count} tracked gaps`, capability.inventory.tracked_gap_count ? "warn" : "")}
+        ${pill(`memory ${capability.inventory.memory_status}`, capability.inventory.memory_status === "ready" ? "ok" : capability.inventory.memory_status === "warn" ? "warn" : "")}
+        ${pill(`${capability.approval_posture.approval_count} approvals`, capability.approval_posture.approval_count ? "warn" : "ok")}
+      </div>
+      <div class="stack">
+        <div class="small-muted">${escapeHtml(capability.connected_lane_health.summary)}</div>
+        <div class="small-muted">${escapeHtml(capability.inventory.summary)}</div>
+        <div class="small-muted">${escapeHtml(capability.inventory.memory_summary || "")}</div>
+        ${Array.isArray(capability.inventory.memory_evidence) ? capability.inventory.memory_evidence.map((evidence) => `<div class="small-muted">${escapeHtml(evidence)}</div>`).join("") : ""}
+        ${
+          capability.inventory.memory_recommended_action
+            ? `<div class="small-muted">${escapeHtml(capability.inventory.memory_recommended_action)}</div>`
+            : ""
+        }
+        ${
+          memoryProof?.summary
+            ? `<div class="small-muted">${escapeHtml(memoryProof.summary)}</div>`
+            : ""
+        }
+        ${
+          memoryProof?.checkpoint_excerpt
+            ? `<div class="small-muted">Checkpoint: ${escapeHtml(clipText(memoryProof.checkpoint_excerpt, 180))}</div>`
+            : ""
+        }
+        ${
+          memoryProofContinuity
+            ? `
+                <div class="pill-row">
+                  ${pill(`relay ${memoryProofContinuity.state || "unknown"}`, memoryProofContinuity.state === "anchored" ? "ok" : memoryProofContinuity.state === "fragile" ? "bad" : "warn")}
+                  ${typeof memoryProofContinuity.score === "number" ? pill(`${memoryProofContinuity.score}/100`) : ""}
+                </div>
+                <div class="small-muted">${escapeHtml(memoryProofContinuity.summary || "")}</div>
+                <details class="continuity-detail">
+                  <summary>Proof relay</summary>
+                  <div class="continuity-rail">
+                    <div>
+                      <span>Anchor</span>
+                      <p>${escapeHtml(memoryProofContinuity.anchor || "")}</p>
+                    </div>
+                    <div>
+                      <span>Drift</span>
+                      <p>${escapeHtml(memoryProofContinuity.drift || "")}</p>
+                    </div>
+                    <div>
+                      <span>Next</span>
+                      <p>${escapeHtml(memoryProofContinuity.next_handoff || "")}</p>
+                    </div>
+                  </div>
+                </details>
+              `
+            : ""
+        }
+        ${
+          memoryProof || canLaunchMemoryProof
+            ? `
+                <div class="actions">
+                  ${
+                    canLaunchMemoryProof
+                      ? `<button type="button" class="ghost" data-action="launch-memory-proof" data-instance-id="${capability.inventory.memory_proof_target_instance_id}">${escapeHtml(
+                          capability.inventory.memory_proof_launch_label || "Run direct memory proof",
+                        )}</button>`
+                      : ""
+                  }
+                  ${
+                    canOpenMemoryProofMission
+                      ? `<button type="button" class="ghost" data-action="open-mission" data-mission-id="${memoryProof.mission_id}">Open proof mission</button>`
+                      : ""
+                  }
+                  ${
+                    memoryProof.continuity_path
+                      ? `<span class="small-muted">${escapeHtml(memoryProof.continuity_path)}</span>`
+                      : ""
+                  }
+                </div>
+              `
+            : ""
+        }
+        <div class="small-muted">${escapeHtml(capability.approval_posture.summary)}</div>
+        <div class="small-muted">${escapeHtml(capability.launch_policy.summary)}</div>
+        ${
+          capability.launch_policy?.tool_policy?.summary
+            ? `<div class="small-muted">${escapeHtml(capability.launch_policy.tool_policy.summary)}</div>`
+            : ""
+        }
+        <div class="small-muted">${escapeHtml(capability.diagnostics.summary)}</div>
+      </div>
+      ${(lanePills || renderToolsetPills(capability.launch_policy?.tool_policy || { toolsets: capability.launch_policy?.toolsets || [] }))
+        ? `<div class="pill-row">${lanePills}${renderToolsetPills(capability.launch_policy?.tool_policy || { toolsets: capability.launch_policy?.toolsets || [] })}</div>`
+        : ""}
+      ${inventoryItems ? `<div class="stack library-list">${inventoryItems}</div>` : ""}
     </article>
   `;
 }
@@ -1758,7 +2006,51 @@ function applyWizardSessionToForm(force = false) {
   setValue("model", wizard.model);
   setValue("max_turns", wizard.max_turns ?? "");
   setValue("objective_template", wizard.objective_template);
+  setValue(
+    "toolsets",
+    Array.isArray(wizard.toolsets) ? wizard.toolsets.join(", ") : "",
+  );
+  const mempalaceToggle = getOnboardingField("use_mempalace");
+  if (mempalaceToggle) {
+    mempalaceToggle.checked = Boolean(wizard.use_mempalace);
+  }
+  syncOnboardingIntegrationPreset();
   onboardingFormEl.dataset.prefilled = "true";
+}
+
+function getOnboardingField(name) {
+  return onboardingFormEl?.querySelector(`[name="${name}"]`) || null;
+}
+
+function syncOnboardingIntegrationPreset() {
+  const mempalaceToggle = getOnboardingField("use_mempalace");
+  const integrationNameField = getOnboardingField("integration_name");
+  const integrationKindField = getOnboardingField("integration_kind");
+  const integrationBaseUrlField = getOnboardingField("integration_base_url");
+  if (
+    !mempalaceToggle ||
+    !integrationNameField ||
+    !integrationKindField ||
+    !integrationBaseUrlField
+  ) {
+    return;
+  }
+  if (mempalaceToggle.checked) {
+    integrationNameField.value = onboardingMempalaceDefaults.name;
+    integrationKindField.value = onboardingMempalaceDefaults.kind;
+    integrationBaseUrlField.value = onboardingMempalaceDefaults.baseUrl;
+    return;
+  }
+  const usingMemPalacePreset =
+    integrationNameField.value.trim() === onboardingMempalaceDefaults.name &&
+    integrationKindField.value.trim() === onboardingMempalaceDefaults.kind &&
+    integrationBaseUrlField.value.trim() === onboardingMempalaceDefaults.baseUrl;
+  if (!usingMemPalacePreset) {
+    return;
+  }
+  integrationNameField.value = onboardingIntegrationDefaults.name;
+  integrationKindField.value = onboardingIntegrationDefaults.kind;
+  integrationBaseUrlField.value = onboardingIntegrationDefaults.baseUrl;
 }
 
 function renderOnboardingModeCallout(wizard) {
@@ -1873,6 +2165,7 @@ function renderOnboarding() {
     )
     .join("");
 
+  renderGatewayCapabilitySummary();
   renderGatewayBootstrapProfile();
   renderBootstrapResult();
   syncOnboardingMode();
@@ -2191,6 +2484,7 @@ function renderOpsMesh() {
                   ${pill(task.status, toneForTaskStatus(task.status))}
                   ${pill(task.cadence_label)}
                   ${task.project_label ? pill(task.project_label) : ""}
+                  ${renderToolsetPills(task.mission_draft?.tool_policy || { toolsets: task.mission_draft?.toolsets || [] }, 3)}
                 </div>
               </div>
               <p>${escapeHtml(task.summary)}</p>
@@ -2204,6 +2498,11 @@ function renderOpsMesh() {
                 ${task.skill_count ? ` ${task.skill_count} skill hint(s).` : ""}
                 ${task.integration_count ? ` ${task.integration_count} integration note(s).` : ""}
               </div>
+              ${
+                task.mission_draft?.tool_policy?.summary
+                  ? `<div class="small-muted">${escapeHtml(task.mission_draft.tool_policy.summary)}</div>`
+                  : ""
+              }
               ${
                 task.last_result_summary
                   ? `<div class="ops-note">${escapeHtml(task.last_result_summary)}</div>`
@@ -2424,14 +2723,20 @@ function renderOpsMesh() {
                               : ""
                           }
                         </div>
-                        <button
-                          type="button"
-                          class="danger"
-                          data-action="delete-skill-pin"
-                          data-skill-pin-id="${skill.id}"
-                        >
-                          Remove
-                        </button>
+                        ${
+                          Number(skill.id) > 0
+                            ? `
+                              <button
+                                type="button"
+                                class="danger"
+                                data-action="delete-skill-pin"
+                                data-skill-pin-id="${skill.id}"
+                              >
+                                Remove
+                              </button>
+                            `
+                            : `<span class="pill">Auto</span>`
+                        }
                       </div>
                     `,
                   )
@@ -2720,6 +3025,13 @@ function renderOpsMesh() {
               <div class="actions">
                 <button
                   type="button"
+                  data-action="test-route"
+                  data-route-id="${route.id}"
+                >
+                  Test Route
+                </button>
+                <button
+                  type="button"
                   class="danger"
                   data-action="delete-route"
                   data-route-id="${route.id}"
@@ -2915,6 +3227,71 @@ function renderContinuity() {
       `;
 }
 
+function renderRecall() {
+  const recall = state.recall || state.dashboard?.recall;
+  if (!recall) {
+    recallHeadlineEl.textContent = "Searching durable mission memory...";
+    recallSummaryEl.textContent = "";
+    recallResultsEl.innerHTML = "";
+    return;
+  }
+
+  recallHeadlineEl.textContent = recall.headline;
+  recallSummaryEl.textContent = recall.summary;
+  if (recallQueryEl && document.activeElement !== recallQueryEl) {
+    recallQueryEl.value = recall.query || "";
+  }
+
+  recallResultsEl.innerHTML = recall.items?.length
+    ? recall.items
+        .map(
+          (item) => `
+            <article class="continuity-card continuity-${escapeHtml(item.continuity_state)}">
+              <div class="signal-meta">
+                ${pill(item.match_source === "memory_proof" ? "proof" : item.match_source, item.match_source === "memory_proof" ? "ok" : "")}
+                ${item.score != null ? pill(`score ${item.score}`, "ok") : ""}
+                ${pill(`${item.continuity_score}/100`, item.continuity_state === "anchored" ? "ok" : item.continuity_state === "warming" ? "warn" : "bad")}
+                ${item.project_label ? pill(item.project_label) : ""}
+                ${Array.isArray(item.toolsets) ? item.toolsets.slice(0, 3).map((toolset) => pill(toolset)).join("") : ""}
+                ${
+                  item.freshness_minutes != null
+                    ? `<span class="signal-fresh">${escapeHtml(formatRelativeTimestamp(Date.now() - item.freshness_minutes * 60000))}</span>`
+                    : ""
+                }
+              </div>
+              <h4>${escapeHtml(item.mission_name)}</h4>
+              <p>${escapeHtml(item.excerpt)}</p>
+              <div class="continuity-rail">
+                <div>
+                  <strong>Status</strong>
+                  <p>${escapeHtml(item.status)}${item.phase ? ` (${escapeHtml(item.phase)})` : ""}</p>
+                </div>
+                <div>
+                  <strong>Next Handoff</strong>
+                  <p>${escapeHtml(item.next_handoff)}</p>
+                </div>
+                <div>
+                  <strong>Continuity</strong>
+                  <p>${escapeHtml(item.continuity_path)}</p>
+                </div>
+              </div>
+              <div class="row">
+                <button type="button" class="ghost" data-action="open-mission" data-mission-id="${item.mission_id}">Open mission</button>
+              </div>
+            </article>
+          `,
+        )
+        .join("")
+    : `
+        <article class="continuity-card empty-state">
+          <strong>No recall matches yet.</strong>
+          <p class="small-muted">
+            Search will light up once Zeus has more checkpoints, handoffs, or memory-proof traces to index.
+          </p>
+        </article>
+      `;
+}
+
 function getDreamById(dreamId) {
   return (state.dashboard?.dream_deck?.dreams ?? []).find((dream) => dream.id === dreamId);
 }
@@ -3027,6 +3404,7 @@ function renderCortex() {
     cortexSummaryEl.textContent = "";
     cortexDoctrinesEl.innerHTML = "";
     cortexInoculationsEl.innerHTML = "";
+    cortexReviewsEl.innerHTML = "";
     return;
   }
 
@@ -3091,6 +3469,37 @@ function renderCortex() {
           <strong>No inoculations yet.</strong>
           <p class="small-muted">
             Once OpenZues sees a few real autonomy patterns, it will start hardening future runs here.
+          </p>
+        </article>
+      `;
+
+  cortexReviewsEl.innerHTML = cortex.reviews.length
+    ? cortex.reviews
+        .map(
+          (review) => `
+            <article class="cortex-card review-card review-${escapeHtml(review.level)}">
+              <div class="signal-meta">
+                ${pill(review.level, toneForSignal(review.level))}
+                ${pill(`${review.evidence_count} evidence`, review.evidence_count ? "ok" : "")}
+                ${review.project_label ? pill(review.project_label) : ""}
+              </div>
+              <h4>${escapeHtml(review.title)}</h4>
+              <p>${escapeHtml(review.summary)}</p>
+              ${
+                review.recommended_toolsets?.length
+                  ? `<div class="cortex-readout">${renderToolsetPills({ toolsets: review.recommended_toolsets }, 4)}</div>`
+                  : ""
+              }
+              <div class="cortex-prescription">${escapeHtml(review.recommendation)}</div>
+            </article>
+          `,
+        )
+        .join("")
+    : `
+        <article class="cortex-card empty-state">
+          <strong>No Hermes learning reviews yet.</strong>
+          <p class="small-muted">
+            As repeatable successes and failures accumulate, Zues will extract reusable lessons here.
           </p>
         </article>
       `;
@@ -3223,6 +3632,9 @@ function applyMissionDraft(draft) {
   missionFormEl.querySelector('input[name="auto_recover_limit"]').value = draft.auto_recover_limit || 2;
   missionFormEl.querySelector('input[name="reflex_cooldown_seconds"]').value =
     draft.reflex_cooldown_seconds || 900;
+  missionFormEl.querySelector('input[name="toolsets"]').value = Array.isArray(draft.toolsets)
+    ? draft.toolsets.join(", ")
+    : "";
   missionFormEl.querySelector('input[name="use_builtin_agents"]').checked = !!draft.use_builtin_agents;
   missionFormEl.querySelector('input[name="run_verification"]').checked = !!draft.run_verification;
   missionFormEl.querySelector('input[name="auto_commit"]').checked = !!draft.auto_commit;
@@ -3401,6 +3813,7 @@ function renderDiagnostics() {
     if (healthShellSummaryEl) {
       healthShellSummaryEl.textContent = "Expand when you need diagnostics or environment repair clues.";
     }
+    renderHermesDoctor();
     return;
   }
   diagnosticsEl.innerHTML = diagnostics
@@ -3448,6 +3861,282 @@ function renderDiagnostics() {
         "System posture is healthy. The dock can stay collapsed until you need details.";
     }
   }
+  renderHermesDoctor();
+}
+
+function renderHermesDeck(targetEl, deck, emptyLabel) {
+  if (!targetEl) {
+    return;
+  }
+  const items = deck?.items ?? [];
+  if (!items.length) {
+    targetEl.innerHTML = `<article class="library-card empty-state"><p>${escapeHtml(emptyLabel)}</p></article>`;
+    return;
+  }
+  targetEl.innerHTML = items
+    .map(
+      (item) => `
+        <article class="library-card">
+          <div class="row">
+            <strong>${escapeHtml(item.label)}</strong>
+            <div class="pill-row">
+              ${pill(item.status, item.status === "ready" ? "ok" : item.status === "missing" ? "bad" : "warn")}
+              ${item.recommended ? pill("preferred", "ok") : ""}
+            </div>
+          </div>
+          <div class="small-muted">${escapeHtml(item.summary)}</div>
+          ${
+            item.capabilities?.length
+              ? `<div class="pill-row">${item.capabilities
+                  .slice(0, 5)
+                  .map((capability) => pill(capability))
+                  .join("")}</div>`
+              : ""
+          }
+          ${
+            item.evidence?.length
+              ? `<div class="action-text">${escapeHtml(item.evidence.slice(0, 2).join(" "))}</div>`
+              : ""
+          }
+        </article>
+      `,
+    )
+    .join("");
+}
+
+function renderHermesPromotions(targetEl, loop) {
+  if (!targetEl) {
+    return;
+  }
+  const items = loop?.items ?? [];
+  if (!items.length) {
+    targetEl.innerHTML = `<article class="library-card empty-state"><p>No promotable Hermes lessons have been mined yet.</p></article>`;
+    return;
+  }
+  targetEl.innerHTML = items
+    .map(
+      (item) => `
+        <article class="library-card">
+          <div class="row">
+            <strong>${escapeHtml(item.target_label)}</strong>
+            <div class="pill-row">
+              ${pill(item.status, item.status === "applied" || item.status === "already_armed" ? "ok" : "warn")}
+            </div>
+          </div>
+          <div class="small-muted">${escapeHtml(item.title)}</div>
+          <p>${escapeHtml(clipText(item.summary, 160))}</p>
+          ${
+            item.recommended_toolsets?.length
+              ? `<div class="pill-row">${item.recommended_toolsets
+                  .slice(0, 5)
+                  .map((toolset) => pill(toolset))
+                  .join("")}</div>`
+              : ""
+          }
+          ${
+            item.applied_at
+              ? `<div class="action-text">Applied ${escapeHtml(formatRelativeTimestamp(item.applied_at))}</div>`
+              : ""
+          }
+        </article>
+      `,
+    )
+    .join("");
+}
+
+function renderHermesDoctor() {
+  const doctor = state.hermesDoctor;
+  if (!doctor) {
+    if (hermesDoctorHeadlineEl) {
+      hermesDoctorHeadlineEl.textContent = "Reading Hermes parity posture...";
+    }
+    if (hermesDoctorSummaryEl) {
+      hermesDoctorSummaryEl.textContent =
+        "The Hermes import spine will surface here once the doctor finishes mapping providers, executors, delivery seams, and learning promotions.";
+    }
+    if (hermesDoctorLevelEl) {
+      hermesDoctorLevelEl.textContent = "checking";
+      hermesDoctorLevelEl.className = "pill";
+    }
+    return;
+  }
+
+  if (hermesDoctorHeadlineEl) {
+    hermesDoctorHeadlineEl.textContent = doctor.headline || "Hermes doctor is active";
+  }
+  if (hermesDoctorSummaryEl) {
+    hermesDoctorSummaryEl.textContent = doctor.summary || "";
+  }
+  if (hermesDoctorLevelEl) {
+    hermesDoctorLevelEl.textContent = doctor.level || "info";
+    hermesDoctorLevelEl.className =
+      doctor.level === "ready" ? "pill ok" : doctor.level === "warn" ? "pill warn" : "pill";
+  }
+  if (hermesDoctorPromotionCountEl) {
+    hermesDoctorPromotionCountEl.textContent = summarizeCount(
+      doctor.promotion_loop?.items?.length || 0,
+      "promotion",
+    );
+    hermesDoctorPromotionCountEl.className =
+      doctor.promotion_loop?.pending_count ? "pill warn" : "pill ok";
+  }
+  if (hermesDoctorMemoryCountEl) {
+    hermesDoctorMemoryCountEl.textContent = summarizeCount(doctor.memory?.items?.length || 0, "memory seam");
+    hermesDoctorMemoryCountEl.className =
+      doctor.memory?.missing_count ? "pill warn" : "pill ok";
+  }
+  if (hermesDoctorDeliveryCountEl) {
+    hermesDoctorDeliveryCountEl.textContent = summarizeCount(doctor.delivery?.items?.length || 0, "delivery seam");
+    hermesDoctorDeliveryCountEl.className =
+      doctor.delivery?.missing_count ? "pill warn" : "pill ok";
+  }
+  if (hermesDoctorProfileEl) {
+    const profile = doctor.profile || {};
+    const warnings = doctor.warnings || [];
+    const executorProfiles = Array.isArray(profile.executor_profiles)
+      ? profile.executor_profiles
+      : [];
+    const memoryOptions = (doctor.memory?.items || [])
+      .map(
+        (item) => `
+          <option value="${escapeHtml(item.key || "")}" ${
+            item.key === profile.preferred_memory_provider ? "selected" : ""
+          }>
+            ${escapeHtml(item.label || item.key || "Memory")}
+          </option>
+        `,
+      )
+      .join("");
+    const executorOptions = (doctor.executors?.items || [])
+      .map(
+        (item) => `
+          <option value="${escapeHtml(item.key || "")}" ${
+            item.key === profile.preferred_executor ? "selected" : ""
+          }>
+            ${escapeHtml(item.label || item.key || "Executor")}
+          </option>
+        `,
+      )
+      .join("");
+    hermesDoctorProfileEl.innerHTML = `
+      <article class="library-card">
+        <div class="row">
+          <strong>${escapeHtml(profile.headline || "Hermes runtime profile")}</strong>
+          <div class="pill-row">
+            ${pill(profile.preferred_memory_provider || "memory")}
+            ${pill(profile.preferred_executor || "executor")}
+            ${profile.learning_autopromote_enabled ? pill("auto-promote", "ok") : pill("manual", "warn")}
+          </div>
+        </div>
+        <div class="small-muted">${escapeHtml(profile.summary || "")}</div>
+        ${
+          warnings.length
+            ? `<div class="action-text">${escapeHtml(warnings.slice(0, 2).join(" "))}</div>`
+            : ""
+        }
+        <form id="hermes-profile-form" class="stack form-grid">
+          <select name="preferred_memory_provider">
+            ${memoryOptions}
+          </select>
+          <select name="preferred_executor">
+            ${executorOptions}
+          </select>
+          <div class="toggle-row">
+            <label class="checkbox">
+              <input name="learning_autopromote_enabled" type="checkbox" ${
+                profile.learning_autopromote_enabled ? "checked" : ""
+              } />
+              Auto-promote learned posture
+            </label>
+            <label class="checkbox">
+              <input name="plugin_discovery_enabled" type="checkbox" ${
+                profile.plugin_discovery_enabled ? "checked" : ""
+              } />
+              Plugin inventory
+            </label>
+            <label class="checkbox">
+              <input name="channel_inventory_enabled" type="checkbox" ${
+                profile.channel_inventory_enabled ? "checked" : ""
+              } />
+              Delivery inventory
+            </label>
+            <label class="checkbox">
+              <input name="acp_inventory_enabled" type="checkbox" ${
+                profile.acp_inventory_enabled ? "checked" : ""
+              } />
+              ACP inventory
+            </label>
+          </div>
+          <button type="submit">Save Hermes Profile</button>
+        </form>
+        ${
+          executorProfiles.length
+            ? `<div class="stack small-muted">${executorProfiles
+                .map(
+                  (item) =>
+                    `<div>${escapeHtml(item.label || item.key || "Executor")}: ${escapeHtml(
+                      item.summary || "",
+                    )}</div>`,
+                )
+                .join("")}</div>`
+            : ""
+        }
+        <div class="actions">
+          <button type="button" data-action="arm-workspace-shell">
+            Arm Workspace Shell
+          </button>
+          <button type="button" data-action="arm-docker-backend">
+            Arm Docker Backend
+          </button>
+          <button type="button" data-action="preflight-docker-backend">
+            Preflight Docker
+          </button>
+        </div>
+      </article>
+    `;
+  }
+  renderHermesPromotions(hermesDoctorPromotionsEl, doctor.promotion_loop);
+  renderHermesDeck(
+    hermesDoctorMemoryEl,
+    doctor.memory,
+    "Memory providers will appear here once the doctor has inventory to show.",
+  );
+  renderHermesDeck(
+    hermesDoctorExecutorsEl,
+    doctor.executors,
+    "Executor profiles will appear here once the doctor has inventory to show.",
+  );
+  const surfaceItems = [
+    ...(doctor.plugins?.items || []),
+    ...(doctor.delivery?.items || []),
+    ...(doctor.acp?.items || []),
+    ...(doctor.extras?.items || []),
+  ];
+  renderHermesDeck(
+    hermesDoctorSurfacesEl,
+    { items: surfaceItems },
+    "Plugin, delivery, ACP, and extra Hermes surfaces will appear here once mapped.",
+  );
+  if (hermesDoctorUpdatesEl) {
+    const updates = doctor.updates || {};
+    hermesDoctorUpdatesEl.innerHTML = `
+      <article class="library-card">
+        <div class="row">
+          <strong>${escapeHtml(updates.headline || "Runtime update posture")}</strong>
+          <div class="pill-row">
+            ${pill(updates.enabled ? "watching" : "idle", updates.enabled ? "ok" : "")}
+            ${updates.pending_restart ? pill("restart pending", "warn") : ""}
+          </div>
+        </div>
+        <div class="small-muted">${escapeHtml(updates.summary || "")}</div>
+        ${
+          updates.current_revision
+            ? `<div class="rail-code">${escapeHtml(clipText(updates.current_revision, 18))}</div>`
+            : ""
+        }
+      </article>
+    `;
+  }
 }
 
 function renderShellChrome() {
@@ -3465,6 +4154,7 @@ function renderShellChrome() {
   const dreams = state.dashboard?.dream_deck?.dreams ?? [];
   const doctrines = state.dashboard?.cortex?.doctrines ?? [];
   const inoculations = state.dashboard?.cortex?.inoculations ?? [];
+  const reviews = state.dashboard?.cortex?.reviews ?? [];
   const reflexes = state.dashboard?.reflex_deck?.reflexes ?? [];
   const playbooks = state.dashboard?.playbooks ?? [];
   const projects = state.dashboard?.projects ?? [];
@@ -3548,6 +4238,10 @@ function renderShellChrome() {
     intelligenceInoculationCountEl.textContent = summarizeCount(inoculations.length, "inoculation");
     intelligenceInoculationCountEl.className = inoculations.length ? "pill warn" : "pill";
   }
+  if (intelligenceReviewCountEl) {
+    intelligenceReviewCountEl.textContent = summarizeCount(reviews.length, "review");
+    intelligenceReviewCountEl.className = reviews.length ? "pill ok" : "pill";
+  }
   if (intelligenceReflexCountEl) {
     intelligenceReflexCountEl.textContent = summarizeCount(reflexes.length, "reflex");
     intelligenceReflexCountEl.className = reflexes.length ? "pill ok" : "pill";
@@ -3564,6 +4258,9 @@ function renderShellChrome() {
     } else if (reflexes.length) {
       intelligenceShellSummaryEl.textContent =
         "Intervention cues are armed. Expand this layer when you want to steer a live mission.";
+    } else if (reviews.length) {
+      intelligenceShellSummaryEl.textContent =
+        "Hermes-style review passes are mining reusable lessons from prior runs, so the next launch can start smarter.";
     } else if (continuityPackets.length || dreams.length || doctrines.length || inoculations.length) {
       intelligenceShellSummaryEl.textContent =
         "Continuity, doctrine, and hardening signals are available, but they stay tucked away until you need guidance.";
@@ -3651,6 +4348,7 @@ function renderMissions() {
     .map((mission) => {
       const liveTelemetry = mission.live_telemetry || {};
       const delegationBrief = mission.delegation_brief || {};
+      const toolPolicy = mission.tool_policy || { toolsets: mission.toolsets || [] };
       const lastThreadEventLabel =
         liveTelemetry.last_thread_event_age_seconds != null
           ? `last event ${formatAgeSeconds(liveTelemetry.last_thread_event_age_seconds)}`
@@ -3859,8 +4557,19 @@ function renderMissions() {
                   ${booleanBadge(mission.allow_auto_reflexes, "auto reflex")}
                   ${booleanBadge(mission.auto_recover, "auto recover")}
                   ${booleanBadge(mission.allow_failover, "lane failover")}
+                  ${renderToolsetPills(toolPolicy, 4)}
                   ${mission.last_reflex_kind ? pill(`last ${mission.last_reflex_kind}`, "warn") : ""}
                 </div>
+                ${
+                  toolPolicy.summary
+                    ? `<div class="small-muted">${escapeHtml(toolPolicy.summary)}</div>`
+                    : ""
+                }
+                ${
+                  toolPolicy.warnings?.length
+                    ? `<div class="small-muted">${escapeHtml(toolPolicy.warnings[0])}</div>`
+                    : ""
+                }
               </article>
 
               <article class="mini-stat">
@@ -4182,23 +4891,333 @@ function renderProjects() {
   }
 
   projectsEl.innerHTML = projects
-    .map(
-      (project) => `
-        <article class="project library-card">
-          <div class="row">
-            <strong>${escapeHtml(project.label)}</strong>
+    .map((project) => {
+      const harness = project.agent_harness;
+      const doctor = harness?.doctor || null;
+      const installProfiles = harness?.install_profiles || [];
+      const selectedInstallProfile = harness
+        ? (
+            state.projectHarnessProfiles[String(project.id)]
+            || harness.active_install_profile
+            || harness.default_install_profile
+            || installProfiles[0]?.id
+            || ""
+          )
+        : "";
+      const installProfileOptions = installProfiles
+        .map(
+          (profile) => `
+            <option value="${escapeHtml(profile.id)}" ${profile.id === selectedInstallProfile ? "selected" : ""}>
+              ${escapeHtml(`${profile.id} (${profile.installable_module_count} codex modules)`)}
+            </option>
+          `,
+        )
+        .join("");
+      const repairTitles = doctor?.repair_actions?.map((action) => action.title) || [];
+      const harnessRun = state.projectHarnessRuns[String(project.id)] || null;
+      const harnessKindLabel = harness?.kind === "ecc_source"
+        ? "ECC source"
+        : harness?.kind === "ecc_candidate"
+          ? "ECC candidate"
+          : "ECC workspace";
+      const harnessRunTone = harnessRun?.status === "repaired" || harnessRun?.status === "installed"
+        ? "ok"
+        : harnessRun?.status === "planned"
+          ? "warn"
+          : "";
+      return `
+          <article class="project library-card">
+            <div class="row">
+              <strong>${escapeHtml(project.label)}</strong>
             <div class="project-meta">
               ${project.exists ? pill("exists", "ok") : pill("missing", "bad")}
               ${project.is_git_repo ? pill("git", "ok") : pill("not git", "warn")}
               ${project.branch ? pill(project.branch) : ""}
+              </div>
             </div>
-          </div>
-          <p class="mono">${escapeHtml(project.path)}</p>
-          ${project.git_status ? `<pre>${escapeHtml(project.git_status)}</pre>` : ""}
-          <div class="stack">
-            <strong>Recent commits</strong>
+            <p class="mono">${escapeHtml(project.path)}</p>
             ${
-              project.recent_commits.length
+              harness
+                ? `
+                  <div class="stack">
+                    <div class="row">
+                      <strong>${escapeHtml(harness.headline)}</strong>
+                      <div class="pill-row">
+                        ${pill(harnessKindLabel, harness.kind === "ecc_candidate" ? "warn" : "ok")}
+                        ${
+                          harness.skill_count
+                            ? pill(`${harness.skill_count} skills`)
+                            : ""
+                        }
+                        ${
+                          harness.agent_count
+                            ? pill(`${harness.agent_count} agents`)
+                            : ""
+                        }
+                        ${
+                          harness.command_count
+                            ? pill(`${harness.command_count} commands`)
+                            : ""
+                        }
+                        ${
+                          harness.codex_role_count
+                            ? pill(`${harness.codex_role_count} Codex roles`)
+                            : ""
+                        }
+                        ${
+                          harness.mcp_servers.length
+                            ? pill(`${harness.mcp_servers.length} MCP`)
+                            : ""
+                        }
+                      </div>
+                    </div>
+                    <div class="small-muted">${escapeHtml(harness.summary)}</div>
+                    ${
+                      harness.features.length
+                        ? `<div class="small-muted">Features: ${escapeHtml(harness.features.join(", "))}</div>`
+                        : ""
+                    }
+                    ${
+                      harness.surface_paths.length
+                        ? `<div class="small-muted">Key paths: ${escapeHtml(harness.surface_paths.join(", "))}</div>`
+                        : ""
+                    }
+                    ${
+                      harness.install_state_paths.length
+                        ? `<div class="small-muted">Install state: ${escapeHtml(harness.install_state_paths.join(", "))}</div>`
+                        : ""
+                    }
+                    ${
+                      harness.install_profiles.length
+                        ? `<div class="small-muted">Install profiles: ${escapeHtml(harness.install_profiles.map((profile) => profile.id).join(", "))}</div>`
+                        : ""
+                    }
+                    ${
+                      harness.active_install_profile
+                        ? `<div class="small-muted">Active profile: ${escapeHtml(harness.active_install_profile)}</div>`
+                        : ""
+                    }
+                    ${
+                      harness.active_install_modules.length
+                        ? `<div class="small-muted">Installed modules: ${escapeHtml(harness.active_install_modules.join(", "))}</div>`
+                        : ""
+                    }
+                    ${
+                      harness.active_install_skipped_modules.length
+                        ? `<div class="small-muted">Skipped for Codex: ${escapeHtml(harness.active_install_skipped_modules.join(", "))}</div>`
+                        : ""
+                    }
+                    ${
+                      harness.kind !== "ecc_source" && harness.baseline_path && installProfiles.length
+                        ? `
+                          <div class="stack">
+                            <div class="row">
+                              <strong>ECC install profile</strong>
+                              <div class="pill-row">
+                                ${pill(`${installProfiles.length} profile${installProfiles.length === 1 ? "" : "s"}`)}
+                                ${
+                                  harness.default_install_profile
+                                    ? pill(`default ${harness.default_install_profile}`)
+                                    : ""
+                                }
+                              </div>
+                            </div>
+                            <select data-project-harness-profile="${project.id}">
+                              ${installProfileOptions}
+                            </select>
+                            <div class="row">
+                              <button
+                                type="button"
+                                class="ghost"
+                                data-action="run-project-harness"
+                                data-project-id="${project.id}"
+                                data-mode="install_preview"
+                              >
+                                Preview install
+                              </button>
+                              <button
+                                type="button"
+                                data-action="run-project-harness"
+                                data-project-id="${project.id}"
+                                data-mode="install_apply"
+                              >
+                                Apply install
+                              </button>
+                            </div>
+                            ${
+                              harness.install_state_paths.length
+                                ? `
+                                  <div class="row">
+                                    <button
+                                      type="button"
+                                      class="ghost"
+                                      data-action="run-project-harness"
+                                      data-project-id="${project.id}"
+                                      data-mode="uninstall_preview"
+                                    >
+                                      Preview uninstall
+                                    </button>
+                                    <button
+                                      type="button"
+                                      class="danger"
+                                      data-action="run-project-harness"
+                                      data-project-id="${project.id}"
+                                      data-mode="uninstall_apply"
+                                    >
+                                      Apply uninstall
+                                    </button>
+                                  </div>
+                                `
+                                : ""
+                            }
+                          </div>
+                        `
+                        : ""
+                    }
+                    ${
+                      doctor
+                        ? `
+                          <div class="stack">
+                            <div class="row">
+                              <strong>${escapeHtml(doctor.headline)}</strong>
+                              <div class="pill-row">
+                                ${pill(doctor.level, signalTone(doctor.level))}
+                                ${
+                                  doctor.missing_mcp_servers.length
+                                    ? pill(`${doctor.missing_mcp_servers.length} MCP gaps`, "warn")
+                                    : ""
+                                }
+                                ${
+                                  doctor.missing_codex_roles.length
+                                    ? pill(`${doctor.missing_codex_roles.length} role gaps`, "warn")
+                                    : ""
+                                }
+                                ${
+                                  doctor.drifted_paths.length
+                                    ? pill(`${doctor.drifted_paths.length} drifted files`, "warn")
+                                    : ""
+                                }
+                              </div>
+                            </div>
+                            <div class="small-muted">${escapeHtml(doctor.summary)}</div>
+                            ${
+                              doctor.missing_surface_paths.length
+                                ? `<div class="small-muted">Missing surfaces: ${escapeHtml(doctor.missing_surface_paths.join(", "))}</div>`
+                                : ""
+                            }
+                            ${
+                              doctor.missing_codex_roles.length
+                                ? `<div class="small-muted">Missing roles: ${escapeHtml(doctor.missing_codex_roles.join(", "))}</div>`
+                                : ""
+                            }
+                            ${
+                              doctor.missing_mcp_servers.length
+                                ? `<div class="small-muted">Missing MCP: ${escapeHtml(doctor.missing_mcp_servers.join(", "))}</div>`
+                                : ""
+                            }
+                            ${
+                              doctor.drifted_paths.length
+                                ? `<div class="small-muted">Drifted files: ${escapeHtml(doctor.drifted_paths.join(", "))}</div>`
+                                : ""
+                            }
+                            ${
+                              repairTitles.length
+                                ? `<div class="small-muted">Repair posture: ${escapeHtml(repairTitles.join(" / "))}</div>`
+                                : ""
+                            }
+                            ${
+                              harness.kind === "ecc_workspace" && harness.baseline_path
+                                ? `
+                                  <div class="row">
+                                    <button
+                                      type="button"
+                                      class="ghost"
+                                      data-action="run-project-harness"
+                                      data-project-id="${project.id}"
+                                      data-mode="repair_preview"
+                                    >
+                                      Dry-run repair
+                                    </button>
+                                    <button
+                                      type="button"
+                                      data-action="run-project-harness"
+                                      data-project-id="${project.id}"
+                                      data-mode="repair_apply"
+                                    >
+                                      Apply repair
+                                    </button>
+                                  </div>
+                                `
+                                : ""
+                            }
+                          </div>
+                        `
+                        : ""
+                    }
+                    ${
+                      harnessRun
+                        ? `
+                          <div class="stack">
+                            <div class="row">
+                              <strong>${escapeHtml(harnessRun.headline)}</strong>
+                              <div class="pill-row">
+                                ${pill(harnessRun.status, harnessRunTone)}
+                                ${
+                                  harnessRun.changed_paths?.length
+                                    ? pill(`${harnessRun.changed_paths.length} changed`, "ok")
+                                    : ""
+                                }
+                                ${
+                                  harnessRun.planned_paths?.length
+                                    ? pill(`${harnessRun.planned_paths.length} planned`)
+                                    : ""
+                                }
+                              </div>
+                            </div>
+                            <div class="small-muted">${escapeHtml(harnessRun.summary)}</div>
+                            ${
+                              harnessRun.profile
+                                ? `<div class="small-muted">Profile: ${escapeHtml(harnessRun.profile)}</div>`
+                                : ""
+                            }
+                            ${
+                              harnessRun.selected_modules?.length
+                                ? `<div class="small-muted">Modules: ${escapeHtml(harnessRun.selected_modules.join(", "))}</div>`
+                                : ""
+                            }
+                            ${
+                              harnessRun.skipped_modules?.length
+                                ? `<div class="small-muted">Skipped for Codex: ${escapeHtml(harnessRun.skipped_modules.join(", "))}</div>`
+                                : ""
+                            }
+                            ${
+                              harnessRun.changed_paths?.length
+                                ? `<div class="small-muted">Changed: ${escapeHtml(harnessRun.changed_paths.join(", "))}</div>`
+                                : ""
+                            }
+                            ${
+                              harnessRun.planned_paths?.length && !harnessRun.changed_paths?.length
+                                ? `<div class="small-muted">Planned: ${escapeHtml(harnessRun.planned_paths.join(", "))}</div>`
+                                : ""
+                            }
+                            ${
+                              harnessRun.warnings?.length
+                                ? `<div class="small-muted">Notes: ${escapeHtml(harnessRun.warnings.join(" / "))}</div>`
+                                : ""
+                            }
+                          </div>
+                        `
+                        : ""
+                    }
+                  </div>
+                `
+                : ""
+            }
+            ${project.git_status ? `<pre>${escapeHtml(project.git_status)}</pre>` : ""}
+            <div class="stack">
+              <strong>Recent commits</strong>
+              ${
+                project.recent_commits.length
                 ? project.recent_commits.map((commit) => `<div>${escapeHtml(commit.summary)}</div>`).join("")
                 : `<p class="mono">No commit data.</p>`
             }
@@ -4217,8 +5236,8 @@ function renderProjects() {
             }
           </div>
         </article>
-      `,
-    )
+      `;
+    })
     .join("");
 }
 
@@ -4283,6 +5302,7 @@ function render() {
   renderOnboarding();
   renderOpsMesh();
   renderContinuity();
+  renderRecall();
   renderDreams();
   renderCortex();
   renderReflexes();
@@ -4428,6 +5448,7 @@ missionFormEl.addEventListener("submit", async (event) => {
         ? Number(form.get("reflex_cooldown_seconds"))
         : 900,
       start_immediately: form.get("start_immediately") === "on",
+      toolsets: parseCsvList(form.get("toolsets") || ""),
     });
     resetMissionForm();
     showToast("Mission launched.");
@@ -4458,6 +5479,7 @@ async function persistSetupWizardSelection() {
     {
       mode: onboardingSetupModeEl.value,
       flow: onboardingSetupFlowEl.value,
+      use_mempalace: onboardingMempalaceToggleEl?.checked || false,
     },
     "PUT",
   );
@@ -4489,6 +5511,15 @@ if (onboardingInstanceModeEl) {
   });
 }
 
+const onboardingMempalaceToggleEl = getOnboardingField("use_mempalace");
+if (onboardingMempalaceToggleEl) {
+  onboardingMempalaceToggleEl.addEventListener("change", () => {
+    syncOnboardingIntegrationPreset();
+    persistSetupWizardSelection().catch((error) => showToast(normalizeError(error), true));
+  });
+  syncOnboardingIntegrationPreset();
+}
+
 if (onboardingFormEl) {
   onboardingFormEl.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -4496,6 +5527,7 @@ if (onboardingFormEl) {
     try {
       const setupMode = onboardingSetupModeEl?.value || "local";
       const setupFlow = onboardingSetupFlowEl?.value || "quickstart";
+      const useMempalace = form.get("use_mempalace") === "on";
       const result = await submitJson("/api/onboarding/bootstrap", {
         setup_mode: setupMode,
         setup_flow: setupMode === "remote" ? "advanced" : setupFlow,
@@ -4511,6 +5543,7 @@ if (onboardingFormEl) {
         operator_email: form.get("operator_email") || null,
         operator_role: "operator",
         issue_api_key: form.get("issue_api_key") === "on",
+        use_mempalace: useMempalace,
         vault_secret_label: form.get("vault_secret_label") || null,
         vault_secret_value: form.get("vault_secret_value") || null,
         vault_secret_kind: "token",
@@ -4518,7 +5551,7 @@ if (onboardingFormEl) {
         integration_name: form.get("integration_name") || null,
         integration_kind: form.get("integration_kind") || null,
         integration_base_url: form.get("integration_base_url") || null,
-        integration_auth_scheme: "token",
+        integration_auth_scheme: useMempalace ? "none" : "token",
         integration_notes: null,
         skill_name: form.get("skill_name") || null,
         skill_prompt_hint: form.get("skill_prompt_hint") || null,
@@ -4530,6 +5563,7 @@ if (onboardingFormEl) {
         completion_marker: null,
         model: form.get("model") || "gpt-5.4",
         max_turns: form.get("max_turns") ? Number(form.get("max_turns")) : 4,
+        toolsets: parseCsvList(form.get("toolsets") || ""),
         use_builtin_agents: form.get("use_builtin_agents") === "on",
         run_verification: form.get("run_verification") === "on",
         auto_commit: form.get("auto_commit") === "on",
@@ -4652,6 +5686,7 @@ taskFormEl.addEventListener("submit", async (event) => {
       reasoning_effort: null,
       collaboration_mode: null,
       max_turns: form.get("max_turns") ? Number(form.get("max_turns")) : null,
+      toolsets: parseCsvList(form.get("toolsets") || ""),
       use_builtin_agents: form.get("use_builtin_agents") === "on",
       run_verification: form.get("run_verification") === "on",
       auto_commit: form.get("auto_commit") === "on",
@@ -4794,6 +5829,50 @@ document.addEventListener("click", async (event) => {
       showToast("Task launched.");
       resetMissionForm();
     }
+    if (target.dataset.action === "run-project-harness") {
+      const projectId = Number(target.dataset.projectId || "0");
+      const mode = target.dataset.mode || "repair_preview";
+      const profileSelect = document.querySelector(`[data-project-harness-profile="${projectId}"]`);
+      const profile = profileSelect instanceof HTMLSelectElement ? profileSelect.value : "";
+      if (!projectId) {
+        throw new Error("That project harness action is no longer available.");
+      }
+      if (
+        mode === "repair_apply"
+        && !window.confirm(
+          "Apply the ECC repair baseline to this workspace's managed harness files?",
+        )
+      ) {
+        return;
+      }
+      if (
+        mode === "install_apply"
+        && !window.confirm(
+          `Apply the selected ECC install profile${profile ? ` (${profile})` : ""} to this project workspace?`,
+        )
+      ) {
+        return;
+      }
+      if (
+        mode === "uninstall_apply"
+        && !window.confirm(
+          "Remove the tracked ECC-managed files and the local install-state marker from this workspace?",
+        )
+      ) {
+        return;
+      }
+      if (profile) {
+        state.projectHarnessProfiles[String(projectId)] = profile;
+      }
+      const payload = { mode };
+      if (mode.startsWith("install") && profile) {
+        payload.profile = profile;
+      }
+      const result = await submitJson(`/api/projects/${projectId}/harness/actions`, payload);
+      state.projectHarnessRuns[String(projectId)] = result;
+      await loadDashboard();
+      showToast(result?.summary || "Project harness action complete.");
+    }
     if (target.dataset.action === "open-mission") {
       const mission = getMissionById(target.dataset.missionId);
       if (!mission) {
@@ -4801,6 +5880,17 @@ document.addEventListener("click", async (event) => {
       }
       focusCard(`#mission-card-${mission.id}`, "backstage-shell");
       showToast(`Moved to mission: ${mission.name}`);
+    }
+    if (target.dataset.action === "launch-memory-proof") {
+      const instanceId = Number(target.dataset.instanceId || "0");
+      const mission = await submitJson("/api/gateway/memory/prove", {
+        instance_id: instanceId || null,
+      });
+      await loadDashboard();
+      if (mission?.id) {
+        focusCard(`#mission-card-${mission.id}`, "backstage-shell");
+      }
+      showToast("Direct memory proof launched.");
     }
     if (target.dataset.action === "open-instance") {
       focusCard(`#instance-card-${target.dataset.instanceId}`, "health-shell");
@@ -4936,6 +6026,11 @@ document.addEventListener("click", async (event) => {
       await loadDashboard();
       showToast("Notification route deleted.");
     }
+    if (target.dataset.action === "test-route") {
+      const result = await submitJson(`/api/notification-routes/${target.dataset.routeId}/test`, {});
+      await loadDashboard();
+      showToast(result.summary || "Notification route tested.", !result.ok);
+    }
     if (target.dataset.action === "run-playbook") {
       const playbookId = target.dataset.playbookId;
       const variables = parseVariables(
@@ -4990,12 +6085,78 @@ document.addEventListener("click", async (event) => {
       await loadDashboard();
       showToast("Mission deleted.");
     }
+    if (target.dataset.action === "arm-workspace-shell") {
+      const result = await submitJson("/api/hermes/executors/workspace-shell/arm", {
+        cwd: null,
+        auto_connect: false,
+      });
+      if (hermesProfileResultEl) {
+        hermesProfileResultEl.textContent = result.summary || "Workspace shell lane is armed.";
+      }
+      await loadDiagnostics();
+      await loadDashboard();
+      showToast(result.summary || "Workspace shell lane is armed.");
+    }
+    if (target.dataset.action === "arm-docker-backend") {
+      const result = await submitJson("/api/hermes/executors/docker/arm", {
+        cwd: null,
+        image: null,
+        auto_connect: false,
+        mount_workspace: false,
+      });
+      if (hermesProfileResultEl) {
+        hermesProfileResultEl.textContent =
+          result.summary || "Docker backend profile is armed.";
+      }
+      await loadDiagnostics();
+      await loadDashboard();
+      showToast(result.summary || "Docker backend profile is armed.");
+    }
+    if (target.dataset.action === "preflight-docker-backend") {
+      const result = await submitJson("/api/hermes/executors/docker/preflight", {
+        cwd: null,
+        image: null,
+      });
+      if (hermesProfileResultEl) {
+        hermesProfileResultEl.textContent =
+          result.summary || "Docker backend preflight finished.";
+      }
+      await loadDiagnostics();
+      await loadDashboard();
+      showToast(result.summary || "Docker backend preflight finished.");
+    }
   } catch (error) {
     showToast(normalizeError(error), true);
   }
 });
 
 document.addEventListener("submit", async (event) => {
+  if (event.target?.id === "hermes-profile-form") {
+    event.preventDefault();
+    const form = new FormData(event.target);
+    try {
+      await submitJson("/api/hermes/profile", {
+        preferred_memory_provider: form.get("preferred_memory_provider") || null,
+        preferred_executor: form.get("preferred_executor") || null,
+        learning_autopromote_enabled: form.has("learning_autopromote_enabled"),
+        plugin_discovery_enabled: form.has("plugin_discovery_enabled"),
+        channel_inventory_enabled: form.has("channel_inventory_enabled"),
+        acp_inventory_enabled: form.has("acp_inventory_enabled"),
+      });
+      if (hermesProfileResultEl) {
+        hermesProfileResultEl.textContent =
+          "Hermes runtime defaults saved. The doctor will refresh with the new posture.";
+      }
+      await loadDiagnostics();
+      showToast("Hermes profile saved.");
+    } catch (error) {
+      if (hermesProfileResultEl) {
+        hermesProfileResultEl.textContent = normalizeError(error);
+      }
+      showToast(normalizeError(error), true);
+    }
+    return;
+  }
   const formEl = event.target.closest("[data-action-form]");
   if (!formEl) {
     return;
@@ -5045,6 +6206,19 @@ document.addEventListener("submit", async (event) => {
     showToast(normalizeError(error), true);
   }
 });
+
+if (recallFormEl) {
+  recallFormEl.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      await loadRecall(recallQueryEl?.value || "");
+      const query = (recallQueryEl?.value || "").trim();
+      showToast(query ? `Recall loaded for "${query}".` : "Recent recall loaded.");
+    } catch (error) {
+      showToast(normalizeError(error), true);
+    }
+  });
+}
 
 function connectSocket() {
   const protocol = window.location.protocol === "https:" ? "wss" : "ws";

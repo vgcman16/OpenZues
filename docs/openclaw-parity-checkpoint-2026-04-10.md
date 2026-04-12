@@ -1009,3 +1009,574 @@ Recommended next slice:
 - Verified: `7 passed` targeted route/radar/reflex/setup checks, `4 passed` isolated route-fallback checks, `5 passed` targeted mission recovery/telemetry checks, `102 passed` in the control-plane contract pack, `125 passed` across the broader changed surface, `node --check` passed, and `compileall` passed.
 - Next step: build the gateway capability / doctor contract across API, dashboard, and CLI, then decide whether launchpad/interference should consume the same capability summary before broadening further.
 - Blockers: none.
+
+## Update: Gateway Capability / Doctor Contract
+
+Date: 2026-04-11
+
+### Completed this turn
+
+- Landed one shared `GatewayCapabilityView` projection so OpenZues now exposes the gateway capability / doctor summary through:
+  - `GET /api/gateway/capability`
+  - dashboard payload via `dashboard.gateway_capability`
+  - CLI command `openzues gateway doctor`
+- Tightened the contract surface instead of leaving it implicit:
+  - `GET /api/gateway/capability` now declares `response_model=GatewayCapabilityView`
+  - CLI regression coverage now proves `gateway doctor --json` matches the API payload, excluding only the time-varying `checked_at` field
+- Kept the slice additive and anchored on existing sources instead of inventing a second gateway subsystem:
+  - `RuntimeManager` for connected-lane health, pending approvals, and live app/plugin/MCP catalogs
+  - `EnvironmentService.collect()` for doctor-style diagnostic evidence
+  - `build_ops_mesh(...)` inventory/auth posture for tracked-vs-observed capability readiness
+  - `GatewayBootstrapService.get_view()` for saved launch policy, launch-route warnings, and bootstrap posture
+- The contract now includes the exact operator-facing fields requested:
+  - connected-lane health
+  - app/plugin/MCP inventory
+  - approval posture
+  - launch-policy warnings and saved launch route
+- Added a dedicated dashboard summary card beside the existing bootstrap profile so operators can read one coherent gateway surface before drilling into raw diagnostics or the broader Ops Mesh inventory.
+
+Primary files carrying this slice:
+
+- `src/openzues/services/gateway_capability.py`
+- `src/openzues/schemas.py`
+- `src/openzues/app.py`
+- `src/openzues/cli.py`
+- `src/openzues/web/templates/index.html`
+- `src/openzues/web/static/app.js`
+- `tests/test_app.py`
+- `tests/test_cli.py`
+
+### Verification
+
+Focused contract checks passed:
+
+- `.\.venv\Scripts\python.exe -m pytest tests/test_app.py tests/test_ops_mesh.py -q -k "gateway or diagnostics or integrations_inventory"`
+- Result: `6 passed`
+
+CLI gateway-doctor parity smoke passed:
+
+- `.\.venv\Scripts\python.exe -m pytest tests/test_cli.py -q -k "gateway"`
+- Result: `1 passed`
+
+Broader changed-surface pack passed:
+
+- `.\.venv\Scripts\python.exe -m pytest tests/test_app.py tests/test_database.py tests/test_manager.py tests/test_ops_mesh.py -q`
+- Result: `105 passed`
+- `node --check src/openzues/web/static/app.js`
+- `.\.venv\Scripts\python.exe -m compileall src/openzues`
+
+Additional shell-level dashboard smoke passed:
+
+- fetched `/` through `TestClient` and confirmed the new `gateway-capability-summary` mount point exists
+- fetched `/api/dashboard` and confirmed `gateway_capability` is present and populated
+
+Browser verification note:
+
+- No browser-automation tool was exposed in this session, so this turn used HTML/API smoke plus the changed-surface pack instead of a live visual browser run.
+
+### What remains
+
+OpenZues still lacks larger OpenClaw parity surfaces:
+
+- launchpad and interference planning do not yet consume the new gateway capability summary directly
+- broader CLI parity beyond setup/bootstrap/control-plane/gateway-doctor commands
+- channel runtime and channel/account routing
+- browser-control runtime parity
+- canvas runtime
+- nodes, voice, companion apps, and packaging matrix
+
+### Next best slice
+
+Do not reopen route selection or jump to channels next. The next best slice is to make the newly-landed gateway contract actionable in the planning surfaces that already sit on top of it.
+
+Recommended next slice:
+
+- feed `gateway_capability` into launchpad and interference/radar planning so operator recommendations reflect one gateway truth instead of parallel heuristics
+- keep reusing the new capability projection rather than recomputing lane/inventory/approval posture again inside those surfaces
+- verify that remote-first staged gateways, disconnected saved lanes, and tracked-integration gaps change operator recommendations in the expected direction
+
+That keeps the work on the same high-leverage control-plane spine before broadening into OpenClaw’s channel/browser/node ecosystems.
+
+### Blockers
+
+- No credential blocker hit during this turn.
+- No approval blocker hit during this turn.
+- Full visual browser verification was not possible because no browser automation tool was available in the session.
+
+### Operator handoff
+
+- Completed: landed the gateway capability / doctor contract across API, dashboard, and CLI, using existing runtime, diagnostics, Ops Mesh inventory, and gateway bootstrap state, and tightened the API/CLI contract so the CLI payload is proven against the API shape.
+- Verified: focused gateway checks passed (`6 passed`), CLI gateway-doctor parity smoke passed (`1 passed`), the broader changed-surface pack passed (`105 passed`), `node --check` passed, `compileall` passed, and TestClient smoke confirmed the dashboard shell and payload expose the new contract.
+- Next step: wire `gateway_capability` into launchpad/interference/radar so the operator planning surfaces consume the same gateway truth.
+- Blockers: no product blocker; only the absence of a browser automation tool for live visual verification in this session.
+
+## Update: Gateway Capability Planning Consumers
+
+Date: 2026-04-11
+
+### Recovered context
+
+- Re-entered from stale-thread recovery and rebuilt footing from the parity ledger, current worktree, and targeted readback of the new gateway capability service instead of assuming the doctor seam still needed implementation.
+- Verified that the requested gateway capability / doctor contract was already materially present in the OpenZues worktree across API, dashboard, and CLI, so this turn did not redo that slice.
+- Tightened the recovery proof first: added explicit human-output CLI coverage for `openzues gateway doctor` and then continued immediately to the next smallest downstream seam named in the checkpoint.
+
+### Completed this turn
+
+- Fed the shared `GatewayCapabilityView` into the operator planning surfaces that previously relied on parallel heuristics:
+  - `build_radar(...)` now emits a gateway-level warning/critical signal when tracked inventory gaps, pending approvals, repair-state launch routes, or zero ready lanes make the saved gateway posture unsafe to trust.
+  - `build_launchpad(...)` now prefers gateway-ready lanes for fresh mission drafts instead of any merely connected lane, and it synthesizes one bounded `gateway_repair` draft when the gateway posture needs repair before broader launches.
+  - `build_interference(...)` now surfaces a `gateway_posture` vector when operators are likely to fork work around degraded launch posture, tracked gaps, or repair-state route warnings.
+- Kept the seam additive and downstream-only:
+  - no second gateway subsystem was added
+  - route resolution itself was not redesigned
+  - the new planning behavior only consumes the existing `GatewayCapabilityView`
+- Tightened the gateway-doctor regression bar:
+  - added a dedicated human-readable CLI regression so section summaries in `gateway doctor` cannot silently drift
+  - added direct planning-surface tests for radar, launchpad, and interference behavior under degraded gateway posture
+
+Primary files carrying this turn’s delta:
+
+- `src/openzues/app.py`
+- `src/openzues/schemas.py`
+- `src/openzues/services/interference.py`
+- `tests/test_app.py`
+- `tests/test_cli.py`
+
+### Verification
+
+Focused gateway-planning pack passed:
+
+- `.\.venv\Scripts\python.exe -m pytest tests/test_app.py tests/test_cli.py -q -k "gateway or build_launchpad_prefers_gateway_ready_lanes_and_adds_gateway_repair_opportunity or build_interference_surfaces_gateway_posture_vector or build_radar_surfaces_gateway_capability_warning_signal"`
+- Result: `9 passed`
+
+Target file packs passed:
+
+- `.\.venv\Scripts\python.exe -m pytest tests/test_app.py -q`
+- Result: `75 passed`
+- `.\.venv\Scripts\python.exe -m pytest tests/test_cli.py -q`
+- Result: `2 passed`
+
+Broader changed-surface pack passed:
+
+- `.\.venv\Scripts\python.exe -m pytest tests/test_app.py tests/test_database.py tests/test_manager.py tests/test_ops_mesh.py -q`
+- Result: `108 passed`
+
+Static integrity checks passed:
+
+- `node --check src/openzues/web/static/app.js`
+- `.\.venv\Scripts\python.exe -m compileall src/openzues`
+
+Observed harness caveat:
+
+- a single monolithic pytest invocation that added `tests/test_cli.py` on top of the broader app/database/manager/ops-mesh pack showed one order-sensitive failure in `test_remote_workspace_affinity_prefers_project_lane_and_persists_last_route`
+- the isolated route-affinity test passed immediately afterward, and the standard broader pack without CLI plus the full CLI pack both passed
+- that is not enough evidence to reopen the route-selection seam on this turn; it currently looks like a test-order or async-subprocess cleanup interaction around CLI coverage, not a stable product regression
+
+### What remains
+
+OpenZues still lacks larger OpenClaw parity surfaces:
+
+- control-chat and attention-queue guidance still do not explicitly cite the shared gateway capability view
+- broader CLI parity beyond setup/bootstrap/control-plane/gateway-doctor commands
+- channel runtime and channel/account routing
+- browser-control runtime parity
+- canvas runtime
+- nodes, voice, companion apps, and packaging matrix
+
+### Next best slice
+
+Do not reopen route selection or jump to channels next. The next smallest useful seam is to finish the operator-guidance convergence around the gateway truth that is now shared by doctor, radar, launchpad, and interference.
+
+Recommended next slice:
+
+- feed `gateway_capability` into control chat and attention-queue planning so operator recommendations, nudges, and manual command suggestions cite the same gateway truth
+- keep consuming the existing `GatewayCapabilityView` instead of recomputing lane health, approval posture, or tracked inventory readiness inside chat/planning helpers
+- verify that remote-first staged gateways, disconnected saved lanes, and tracked-integration gaps change operator guidance consistently across dashboard cards and control-chat actions
+
+That preserves the high-leverage control-plane spine before broadening into OpenClaw’s channel, browser, node, and companion-app ecosystems.
+
+### Blockers
+
+- No credential blocker hit during this turn.
+- No approval blocker hit during this turn.
+- Residual harness caveat only: the combined pytest invocation that mixes the broader app pack and CLI tests showed one order-sensitive route-affinity failure, but isolated route coverage and the standard packs passed.
+
+### Operator handoff
+
+- Completed: recovered the stale-thread footing, proved the gateway doctor seam was already landed, tightened its CLI regression bar, and wired the shared `gateway_capability` contract into radar, launchpad, and interference without reopening route resolution.
+- Verified: focused gateway-planning checks passed (`9 passed`), full `tests/test_app.py` passed (`75 passed`), full `tests/test_cli.py` passed (`2 passed`), the broader changed-surface app/database/manager/ops-mesh pack passed (`108 passed`), `node --check` passed, and `compileall` passed.
+- Next step: consume `gateway_capability` inside control chat and attention-queue planning so the remaining operator-guidance surfaces stop drifting from the gateway truth.
+- Blockers: no product blocker; only the noted order-sensitive pytest harness caveat when broad app coverage and CLI tests run as one combined command.
+
+## Update: Gateway Capability Chat And Queue Convergence
+
+Date: 2026-04-11
+
+### Recovered context
+
+- Re-entered from stale-thread recovery and rebuilt footing from the parity ledger, current worktree, and targeted readback of the gateway doctor seam before editing anything new.
+- Verified that the original requested gateway capability / doctor contract was already landed across API, dashboard, and CLI, and that radar, launchpad, and interference were already consuming the shared `GatewayCapabilityView`.
+- Continued immediately to the next smallest missing seam named in the checkpoint instead of redoing the doctor slice: control chat and the autonomous attention queue still drifted from the shared gateway truth.
+
+### Completed this turn
+
+- Fed the existing `dashboard.gateway_capability` contract into the remaining operator-guidance surfaces inside `control_chat.py`:
+  - `plan_control_chat(...)` now appends gateway posture to status replies when launch posture needs repair.
+  - `plan_control_chat(...)` now prefers the existing `gateway_repair` launchpad opportunity before broad recoveries, hardeners, or fresh launches when Gateway Doctor says repair-first.
+  - `plan_attention_queue(...)` now gates autonomous follow-through on the same repair-first gateway posture and will launch the bounded `gateway_repair` draft, or hold and explain the block if no repair draft exists yet.
+  - `build_view(...)` and `build_attention_queue_view(...)` now switch their operator-facing copy to the shared Gateway Doctor posture instead of generic momentum language when the gateway is degraded.
+- Kept the slice additive and downstream-only:
+  - no new gateway subsystem was introduced
+  - no routing logic was reopened
+  - no API, schema, or frontend contract changes were required
+- Preserved the current dirty-worktree edits in `control_chat.py` by keeping the new gateway logic in the planner/view sections and leaving the unrelated mission-payload `toolsets` propagation intact.
+
+Primary files carrying this turn's delta:
+
+- `src/openzues/services/control_chat.py`
+- `tests/test_app.py`
+
+### Verification
+
+Focused planner pack passed:
+
+- `.\.venv\Scripts\python.exe -m pytest tests/test_app.py -q -k "control_chat or attention_queue or gateway_repair or gateway_capability"`
+- Result: `27 passed`
+
+Broader changed-surface verification passed:
+
+- `.\.venv\Scripts\python.exe -m pytest tests/test_app.py -q`
+- Result: `96 passed`
+- `.\.venv\Scripts\python.exe -m pytest tests/test_database.py tests/test_manager.py tests/test_ops_mesh.py -q`
+- Result: `37 passed`
+- `.\.venv\Scripts\python.exe -m compileall src/openzues`
+
+### What remains
+
+OpenZues still lacks larger OpenClaw parity surfaces:
+
+- broader CLI parity beyond setup/bootstrap/control-plane/gateway-doctor commands
+- channel runtime and channel/account routing
+- browser-control runtime parity
+- canvas runtime
+- nodes, voice, companion apps, and packaging matrix
+
+Within the gateway/control-plane spine, the main remaining gap is not another doctor view; it is broader operator command-surface parity on top of the now-shared gateway truth.
+
+### Next best slice
+
+Do not reopen route selection or re-implement the gateway doctor seam next. The gateway truth is now coherent across API, dashboard, CLI, radar, launchpad, interference, control chat, and the attention queue.
+
+Recommended next slice:
+
+- extend broader operator CLI parity by reusing the existing planning helpers for one bounded command-driven action seam
+- keep consuming the shared `GatewayCapabilityView` and `gateway_repair` opportunity instead of adding a second CLI policy layer
+- verify that command-driven operator actions follow the same repair-first posture already enforced in dashboard chat and queue planning
+
+That keeps the work on the same control-plane spine before broadening into OpenClaw's channel, browser, node, and companion-app ecosystems.
+
+### Blockers
+
+- No credential blocker hit during this turn.
+- No approval blocker hit during this turn.
+- The previously noted order-sensitive pytest caveat still stands only for monolithic app-plus-CLI invocations; this turn stayed on the standard separated packs.
+
+### Operator handoff
+
+- Completed: recovered the trusted gateway parity footing, proved the doctor seam and planning consumers were already landed, and finished the remaining chat/queue convergence so those surfaces now cite and obey the same gateway truth.
+- Verified: focused planner coverage passed (`27 passed`), full `tests/test_app.py` passed (`96 passed`), the broader database/manager/ops-mesh pack passed (`37 passed`), and `compileall` passed.
+- Next step: keep the momentum on operator CLI parity by reusing the existing gateway-aware planning helpers for one bounded command-action seam instead of reopening gateway internals.
+- Blockers: no product blocker; only the standing monolithic pytest order-sensitivity caveat already captured in the ledger.
+
+### Re-entry checkpoint
+
+- Recovered context: the gateway doctor contract and its radar/launchpad/interference consumers were already verified before this turn; the live missing seam was gateway-aware control-chat and attention-queue guidance.
+- Verified state: those chat/queue consumers now share the same repair-first gateway posture and targeted plus broader verification are green.
+- Next step: add the next bounded operator CLI action seam on top of the same planning helpers and gateway truth.
+- Blockers: none beyond the known combined app-plus-CLI pytest order sensitivity.
+
+## Update: Gateway-Aware CLI Continue Action
+
+Date: 2026-04-11
+
+### Recovered context
+
+- Re-entered from the latest parity checkpoint instead of broadening scope blindly.
+- Verified that the shared gateway truth was already coherent across API, dashboard, CLI doctor, radar, launchpad, interference, control chat, and the attention queue.
+- Continued to the next bounded operator CLI seam named in the prior checkpoint: one command-driven action path that reuses the same gateway-aware planning helpers instead of inventing a second CLI policy layer.
+
+### Completed this turn
+
+- Added a top-level `openzues continue` command that reuses the existing gateway-aware control-chat planner for the operator's next step:
+  - `openzues continue --plan` previews the next bounded move without executing it
+  - `openzues continue` executes the same planner result through the existing `ControlChatService`
+- Kept the CLI slice thin and additive:
+  - reused `build_brief(...)`, `build_launchpad(...)`, `build_doctrines(...)`, and `GatewayCapabilityService.get_view()` to construct the planning context
+  - reused `plan_control_chat("continue", ...)` for preview mode
+  - reused `ControlChatService.submit("continue", ...)` for execute mode
+  - did not add a second launch-policy or gateway decision layer in the CLI
+- Added CLI coverage for:
+  - human-readable continue output formatting
+  - a real staged-workspace `continue --plan --json` path that proves the command respects the gateway-aware repair-first posture on live data
+
+Primary files carrying this turn's delta:
+
+- `src/openzues/cli.py`
+- `tests/test_cli.py`
+
+### Verification
+
+Focused CLI pack passed:
+
+- `.\.venv\Scripts\python.exe -m pytest tests/test_cli.py -q -k "continue or gateway"`
+- Result: `6 passed`
+
+Full CLI pack passed:
+
+- `.\.venv\Scripts\python.exe -m pytest tests/test_cli.py -q`
+- Result: `11 passed`
+
+Broader changed-surface verification passed:
+
+- `.\.venv\Scripts\python.exe -m pytest tests/test_app.py -q`
+- Result: `108 passed`
+- `.\.venv\Scripts\python.exe -m compileall src/openzues`
+- `node --check src/openzues/web/static/app.js`
+
+### What remains
+
+OpenZues still lacks larger OpenClaw parity surfaces:
+
+- broader CLI parity beyond setup/bootstrap/control-plane/gateway-doctor and the new gateway-aware `continue` action
+- channel runtime and channel/account routing
+- browser-control runtime parity
+- canvas runtime
+- nodes, voice, companion apps, and packaging matrix
+
+Within the operator-control spine, the remaining leverage is now broader command coverage on top of the same already-shared planning and gateway posture, not another gateway contract rewrite.
+
+### Next best slice
+
+Do not reopen route selection or rebuild the gateway doctor surface next. The next smallest useful CLI seam is another bounded operator command on top of the same planning contract.
+
+Recommended next slice:
+
+- add one explicit queue/control command that reuses the existing attention-queue planning helpers and the shared gateway posture
+- keep preview vs execute semantics explicit so operators can inspect the move before firing it
+- verify that the CLI action follows the same repair-first posture already enforced in dashboard chat and queue planning
+
+That keeps momentum on CLI parity without drifting into a parallel policy system or jumping early into channel/browser/node ecosystems.
+
+### Blockers
+
+- No credential blocker hit during this turn.
+- No approval blocker hit during this turn.
+- The standing monolithic pytest order-sensitivity caveat still applies only when broad app and CLI packs are combined into one command; this turn kept them separated.
+
+### Operator handoff
+
+- Completed: added a gateway-aware `openzues continue` CLI action that previews or executes the same repair-first planner already used in dashboard chat, without introducing a second CLI policy layer.
+- Verified: focused CLI checks passed (`6 passed`), the full CLI pack passed (`11 passed`), the broader app pack passed (`108 passed`), `compileall` passed, and `node --check` passed.
+- Next step: land one bounded attention-queue/control CLI command on top of the same planning helpers.
+- Blockers: none beyond the known combined app-plus-CLI pytest ordering caveat.
+
+### Re-entry checkpoint
+
+- Recovered context: gateway truth was already unified across doctor, planning surfaces, chat, and queue before this turn; the live missing seam was a command-driven operator action on top of that shared planner.
+- Verified state: `openzues continue` now reuses the same gateway-aware continue planner in preview and execute modes, and both focused plus broader verification are green.
+- Next step: add the next bounded queue/control CLI action while keeping preview/execute semantics explicit and reusing the shared gateway posture.
+- Blockers: none beyond the already-documented monolithic pytest ordering caveat.
+
+## Update: Gateway-Aware CLI Status Summary
+
+Date: 2026-04-12
+
+### Recovered context
+
+- Re-entered from stale-thread recovery and rebuilt footing from the parity ledger plus the live worktree before making changes.
+- Verified that the original requested gateway capability / doctor contract is already present across API, dashboard, and CLI, and that the subsequent `continue` and `queue` operator CLI seams are also already landed in the repo.
+- Continued to the next smallest missing parity seam instead of redoing the doctor surface: the CLI already had a rich `_emit_status(...)` renderer, but there was still no top-level `openzues status` command exposing the shared gateway-aware operator summary.
+
+### Completed this turn
+
+- Added a top-level `openzues status` command that reuses the existing operator planning surfaces instead of inventing another CLI policy layer.
+- The new status command now emits one operator-facing summary built from the same shared sources already used elsewhere:
+  - `build_brief(...)` for the headline and next actions
+  - `GatewayCapabilityService.get_view()` through the existing dashboard builder for gateway posture
+  - `build_radar(...)` and `build_launchpad(...)` for signal and opportunity context
+  - `plan_control_chat("status", ...)` for the bounded control-chat status summary
+  - `plan_attention_queue(...)` for the next autonomous queue move preview
+- Kept the slice additive and durable:
+  - no route-selection logic was reopened
+  - no second gateway subsystem was introduced
+  - the CLI reads the same gateway capability truth already used by API and dashboard surfaces
+- Tightened the CLI regression bar around this recovered truth:
+  - added status JSON coverage that proves the nested `gateway_capability` payload still matches `/api/gateway/capability`
+  - added human-output status coverage so terminal rendering of gateway, radar, launchpad, and queue summaries cannot silently drift
+
+Primary files carrying this turn's delta:
+
+- `src/openzues/cli.py`
+- `tests/test_cli.py`
+
+### Verification
+
+Focused CLI status/gateway/queue pack passed:
+
+- `.\.venv\Scripts\python.exe -m pytest tests/test_cli.py -q -k "status or gateway or queue"`
+- Result: `13 passed`
+
+Full CLI pack passed:
+
+- `.\.venv\Scripts\python.exe -m pytest tests/test_cli.py -q`
+- Result: `21 passed`
+
+Broader changed-surface pack passed:
+
+- `.\.venv\Scripts\python.exe -m pytest tests/test_app.py tests/test_database.py tests/test_manager.py tests/test_ops_mesh.py -q`
+- Result: `153 passed`
+
+Static integrity checks passed:
+
+- `.\.venv\Scripts\python.exe -m compileall src/openzues`
+- `node --check src/openzues/web/static/app.js`
+
+### What remains
+
+OpenZues still lacks larger OpenClaw parity surfaces:
+
+- broader CLI parity beyond gateway doctor, status, continue, recover, harden, and queue
+- channel runtime and channel/account routing
+- browser-control runtime parity
+- canvas runtime
+- nodes, voice, companion apps, and packaging matrix
+
+Within the operator-control spine, the remaining leverage is now not another shared gateway projection. The main open gap is more explicit operator actuation on top of the already-shared planner and gateway posture.
+
+### Next best slice
+
+Do not reopen route selection or rebuild the gateway doctor/status surfaces next. The next smallest useful seam is one explicit targeted operator CLI action on top of the same shared planner.
+
+Recommended next slice:
+
+- add one id-addressable CLI action that can fire a specific launchpad opportunity or queue recommendation without recomputing policy in a second place
+- keep preview vs execute semantics explicit so operators can inspect the chosen move before firing it
+- keep consuming the shared `GatewayCapabilityView`, launchpad, radar, and attention-queue planners instead of inventing another route/approval heuristic
+
+That preserves the high-leverage control-plane spine before broadening into OpenClaw's channel, browser, node, and companion-app ecosystems.
+
+### Blockers
+
+- No credential blocker hit during this turn.
+- No approval blocker hit during this turn.
+- The standing monolithic pytest order-sensitivity caveat remains only for combined app-plus-CLI mega-invocations; the standard separated packs used here are green.
+
+### Operator handoff
+
+- Completed: verified that the gateway doctor contract and the queue CLI seam were already present, then landed the missing top-level `status` command on the same shared gateway-aware planner and dashboard truth.
+- Verified: focused CLI status/gateway/queue checks passed (`13 passed`), the full CLI pack passed (`21 passed`), the broader app/database/manager/ops-mesh pack passed (`153 passed`), `compileall` passed, and `node --check` passed.
+- Next step: add one targeted operator CLI action by explicit opportunity or queue target while continuing to consume the same gateway-aware planning surfaces.
+- Blockers: none beyond the already-documented combined app-plus-CLI pytest ordering caveat.
+
+### Re-entry checkpoint
+
+- Recovered context: the gateway capability / doctor contract plus the `continue` and `queue` CLI seams were already landed in the repo before this turn; the live missing seam was status-level CLI observability on top of that shared planner.
+- Verified state: `openzues status` now exposes the same gateway-aware operator truth that powers API, dashboard, chat, and queue planning, and the focused plus broader verification packs are green.
+- Next step: add a targeted id-addressable operator CLI action on top of the same launchpad/queue/gateway contract.
+- Blockers: none beyond the known combined app-plus-CLI pytest order sensitivity already captured in the ledger.
+
+## Update: Launchpad Opportunity CLI Action
+
+Date: 2026-04-12
+
+### Recovered context
+
+- Re-entered from the latest verified parity checkpoint instead of reopening the already-landed gateway doctor seam.
+- Verified that the shared gateway capability truth is already coherent across API, dashboard, CLI doctor, status, continue, recover, harden, queue, radar, launchpad, interference, control chat, and the attention queue.
+- Continued to the next smallest missing seam named in the checkpoint: one explicit id-addressable operator CLI action on top of the existing launchpad and gateway-aware planner surfaces.
+
+### Completed this turn
+
+- Added a top-level `openzues launch <opportunity-id>` command for explicit launchpad actuation:
+  - `openzues launch <id> --plan` previews the selected launchpad move without executing it
+  - `openzues launch <id>` executes that exact launchpad draft through the existing mission creation path
+- Kept the slice thin and additive:
+  - reused `_build_operator_dashboard(...)` to resolve the current launchpad snapshot
+  - reused the existing `MissionDraftView -> MissionCreate` conversion instead of adding another operator policy layer
+  - reused the existing human/JSON action envelope already used by the other CLI operator commands
+  - did not reopen route selection, gateway posture computation, or attention-queue policy
+- Tightened operator discoverability in the human CLI status surface:
+  - `openzues status` now prints launchpad opportunity ids beside titles when they exist, so the new command is targetable from terminal output without forcing JSON-only discovery
+- Kept the queue-targeted follow-through explicitly out of this slice because the current queue executor is still whole-queue, not signal-addressable. That remains the next bounded seam if the operator CLI spine continues.
+
+Primary files carrying this turn's delta:
+
+- `src/openzues/cli.py`
+- `tests/test_cli.py`
+
+### Verification
+
+Focused CLI contract pack passed:
+
+- `.\.venv\Scripts\python.exe -m pytest tests/test_cli.py -q -k "launch or status or gateway or queue"`
+- Result: `17 passed`
+
+Full CLI pack passed:
+
+- `.\.venv\Scripts\python.exe -m pytest tests/test_cli.py -q`
+- Result: `26 passed`
+
+Broader changed-surface pack passed:
+
+- `.\.venv\Scripts\python.exe -m pytest tests/test_app.py tests/test_database.py tests/test_manager.py tests/test_ops_mesh.py -q`
+- Result: `154 passed`
+
+Static integrity checks passed:
+
+- `.\.venv\Scripts\python.exe -m compileall src/openzues`
+- `node --check src/openzues/web/static/app.js`
+
+### What remains
+
+OpenZues still lacks larger OpenClaw parity surfaces:
+
+- broader CLI parity beyond gateway doctor, status, continue, recover, harden, queue, and the new explicit launchpad-action command
+- explicit queue-signal targeting by id on top of the same attention-queue planner
+- channel runtime and channel/account routing
+- browser-control runtime parity
+- canvas runtime
+- nodes, voice, companion apps, and packaging matrix
+
+Within the operator-control spine, the remaining leverage is no longer another gateway summary projection. The next bounded seam is explicit queue-targeted actuation without recreating queue policy inside the CLI.
+
+### Next best slice
+
+Do not reopen route selection or rebuild the gateway doctor/status surfaces next. The next smallest useful seam is a signal-addressable queue action that still reuses the shared gateway-aware planner.
+
+Recommended next slice:
+
+- add one explicit CLI action for a selected queue signal id, but only after introducing a tiny selector in the queue planner/executor path instead of copying queue policy into the CLI
+- keep preview vs execute semantics explicit so operators can inspect the chosen queue move before firing it
+- keep consuming the existing `GatewayCapabilityView`, `plan_attention_queue(...)`, radar signals, and launchpad opportunities instead of inventing another route or approval heuristic
+
+That keeps the work on the same high-leverage control-plane spine before broadening into OpenClaw's channel, browser, node, and companion-app ecosystems.
+
+### Blockers
+
+- No credential blocker hit during this turn.
+- No approval blocker hit during this turn.
+- The standing monolithic pytest order-sensitivity caveat still applies only to combined app-plus-CLI mega-invocations; the standard separated packs used here are green.
+
+### Operator handoff
+
+- Completed: verified the gateway doctor/status/control-plane footing, landed `openzues launch <opportunity-id>` as the next explicit operator CLI action, and made human status output surface launchpad ids for terminal discoverability.
+- Verified: focused CLI launch/status/gateway/queue coverage passed (`17 passed`), the full CLI pack passed (`26 passed`), the broader app/database/manager/ops-mesh pack passed (`154 passed`), `compileall` passed, and `node --check` passed.
+- Next step: add explicit queue-signal targeting by id while keeping the selector in the shared queue planner/executor path rather than rebuilding policy in the CLI.
+- Blockers: none beyond the already-documented combined app-plus-CLI pytest ordering caveat.
+
+### Re-entry checkpoint
+
+- Recovered context: the gateway capability / doctor contract and the broader gateway-aware operator CLI/status surfaces were already landed before this turn; the live missing seam was explicit id-addressable launchpad actuation.
+- Verified state: `openzues launch <opportunity-id>` now previews or executes the selected launchpad draft through the existing mission creation spine, and human `status` output now exposes opportunity ids when available.
+- Next step: add an explicit queue-signal target path by introducing a small selector into the shared queue planner/executor lane.
+- Blockers: none beyond the known combined app-plus-CLI pytest order sensitivity already captured in the ledger.

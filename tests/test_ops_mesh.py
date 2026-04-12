@@ -17,10 +17,34 @@ from openzues.schemas import (
     ProjectView,
     SkillPinView,
 )
+from openzues.services.ecc_catalog import configure_ecc_catalog
+from openzues.services.hermes_skills import configure_hermes_skill_catalog
 from openzues.services.hub import BroadcastHub
+from openzues.services.memory_protocol import (
+    MEMPALACE_MEMORY_TASK_NAME,
+    MEMPALACE_MEMORY_TASK_SUMMARY,
+    MEMPALACE_ROUNDTRIP_AT_PREFIX,
+    MEMPALACE_ROUNDTRIP_DETAIL_PREFIX,
+    MEMPALACE_ROUNDTRIP_SCOPE_PREFIX,
+    MEMPALACE_ROUNDTRIP_STATUS_PREFIX,
+    MEMPALACE_WRITEBACK_AT_PREFIX,
+    MEMPALACE_WRITEBACK_SCOPE_PREFIX,
+    MEMPALACE_WRITEBACK_STATUS_PREFIX,
+    build_mempalace_maintenance_objective,
+    mempalace_maintenance_cadence_minutes,
+)
 from openzues.services.ops_mesh import OpsMeshService, _serialize_task, build_ops_mesh
 from openzues.services.vault import VaultService
 from openzues.settings import Settings
+
+
+@pytest.fixture(autouse=True)
+def _reset_external_catalogs() -> None:
+    configure_hermes_skill_catalog(None)
+    configure_ecc_catalog(None)
+    yield
+    configure_hermes_skill_catalog(None)
+    configure_ecc_catalog(None)
 
 
 def make_instance(
@@ -525,6 +549,53 @@ def test_build_ops_mesh_surfaces_failed_scheduled_playbook() -> None:
     assert "Inspect the saved playbook inputs" in item.recommended_action
 
 
+def test_build_ops_mesh_prompts_mempalace_writeback_for_completed_handoff() -> None:
+    mission = make_mission(
+        mission_id=31,
+        name="Memory Handoff",
+        status="completed",
+        last_checkpoint="Checkpoint is ready for the next operator.",
+        suggested_action=None,
+    )
+    integration = IntegrationView(
+        id=4,
+        name="MemPalace",
+        kind="mempalace",
+        project_id=1,
+        base_url="python -m mempalace.mcp_server",
+        auth_scheme="none",
+        vault_secret_id=None,
+        vault_secret_label=None,
+        secret_label=None,
+        has_secret=False,
+        secret_preview=None,
+        auth_status="satisfied",
+        auth_detail=None,
+        notes="Shared memory recall for project history.",
+        enabled=True,
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
+    )
+
+    ops_mesh = build_ops_mesh(
+        [make_instance()],
+        [mission],
+        [make_project()],
+        [],
+        [],
+        [],
+        [],
+        [integration],
+        [],
+        [],
+    )
+
+    item = next(item for item in ops_mesh.task_inbox.items if item.kind == "checkpoint_ready")
+    assert "memory writeback" in item.title.lower()
+    assert "write durable decisions" in item.recommended_action
+    assert "MemPalace" in item.recommended_action
+
+
 def test_build_ops_mesh_skills_registry_maps_lane_coverage_and_gaps() -> None:
     instance_primary = make_instance(
         skills=[
@@ -720,6 +791,49 @@ def test_build_ops_mesh_integrations_inventory_maps_lane_readiness() -> None:
     assert figma_item.source_kinds == ["app"]
 
 
+def test_build_ops_mesh_integrations_inventory_guides_mempalace_lane_gap() -> None:
+    integration = IntegrationView(
+        id=3,
+        name="MemPalace",
+        kind="mempalace",
+        project_id=1,
+        base_url="python -m mempalace.mcp_server",
+        auth_scheme="none",
+        vault_secret_id=None,
+        vault_secret_label=None,
+        secret_label=None,
+        has_secret=False,
+        secret_preview=None,
+        auth_status="satisfied",
+        auth_detail=None,
+        notes="Shared memory recall for project history.",
+        enabled=True,
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
+    )
+
+    ops_mesh = build_ops_mesh(
+        [make_instance()],
+        [],
+        [make_project()],
+        [],
+        [],
+        [],
+        [],
+        [integration],
+        [],
+        [],
+    )
+
+    mempalace_item = next(
+        item for item in ops_mesh.integrations_inventory.items if item.name == "MemPalace"
+    )
+    assert mempalace_item.readiness == "lane_gap"
+    assert mempalace_item.lane_match_count == 0
+    assert "mempalace.mcp_server" in mempalace_item.recommended_action
+    assert "project memory" in mempalace_item.recommended_action
+
+
 class FakeManager:
     def __init__(self, instance: InstanceView | None = None) -> None:
         self._instance = instance or make_instance()
@@ -835,6 +949,87 @@ async def test_ops_mesh_service_launches_due_task(tmp_path: Path) -> None:
     stored = await database.get_task_blueprint(1)
     assert stored is not None
     assert stored["last_status"] == "active"
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_launches_due_mempalace_memory_task(tmp_path: Path) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_project(path="C:/workspace", label="Memory Workspace")
+    await database.create_integration(
+        name="MemPalace",
+        kind="mempalace",
+        project_id=1,
+        base_url="python -m mempalace.mcp_server",
+        auth_scheme="none",
+        vault_secret_id=None,
+        secret_label=None,
+        secret_value=None,
+        notes="Durable workspace memory.",
+        enabled=True,
+    )
+    cadence_minutes = mempalace_maintenance_cadence_minutes(180)
+    await database.create_task_blueprint(
+        name=MEMPALACE_MEMORY_TASK_NAME,
+        summary=MEMPALACE_MEMORY_TASK_SUMMARY,
+        project_id=1,
+        instance_id=1,
+        cadence_minutes=cadence_minutes,
+        enabled=True,
+        payload={
+            "objective_template": build_mempalace_maintenance_objective(
+                project_label="Memory Workspace",
+                project_path="C:/workspace",
+            ),
+            "cwd": "C:/workspace",
+            "model": "gpt-5.4",
+            "reasoning_effort": None,
+            "collaboration_mode": None,
+            "max_turns": 2,
+            "use_builtin_agents": False,
+            "run_verification": False,
+            "auto_commit": False,
+            "pause_on_approval": True,
+            "allow_auto_reflexes": False,
+            "auto_recover": False,
+            "auto_recover_limit": 0,
+            "reflex_cooldown_seconds": 900,
+            "allow_failover": True,
+        },
+    )
+    await database.update_task_blueprint(
+        1,
+        last_launched_at=(datetime.now(UTC) - timedelta(minutes=cadence_minutes + 30)).isoformat(),
+    )
+
+    fake_missions = FakeMissionService()
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        fake_missions,  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    await service.tick_once()
+
+    assert len(fake_missions.created_payloads) == 1
+    payload = fake_missions.created_payloads[0]
+    assert payload.task_blueprint_id == 1
+    assert payload.use_builtin_agents is False
+    assert payload.run_verification is False
+    assert "MemPalace automatic maintenance contract:" in payload.objective
+    assert "Do not default to `mempalace compress`" in payload.objective
+    assert "MemPalace memory protocol:" in payload.objective
+    assert MEMPALACE_WRITEBACK_STATUS_PREFIX in payload.objective
+    assert MEMPALACE_WRITEBACK_AT_PREFIX in payload.objective
+    assert MEMPALACE_WRITEBACK_SCOPE_PREFIX in payload.objective
+    assert MEMPALACE_ROUNDTRIP_STATUS_PREFIX in payload.objective
+    assert MEMPALACE_ROUNDTRIP_AT_PREFIX in payload.objective
+    assert MEMPALACE_ROUNDTRIP_SCOPE_PREFIX in payload.objective
+    assert MEMPALACE_ROUNDTRIP_DETAIL_PREFIX in payload.objective
 
 
 @pytest.mark.asyncio
@@ -1337,6 +1532,61 @@ async def test_ops_mesh_service_emits_reflex_and_task_attention_notifications(
 
 
 @pytest.mark.asyncio
+async def test_test_notification_route_delivers_webhook_ping(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    route_id = await database.create_notification_route(
+        name="Inbox Hook",
+        kind="webhook",
+        target="https://example.invalid/inbox",
+        events=["ops/inbox/*"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token=None,
+        vault_secret_id=None,
+    )
+    deliveries: list[tuple[str, dict[str, object]]] = []
+
+    def fake_post_webhook(
+        self,  # noqa: ANN001
+        route: dict[str, object],
+        event_type: str,
+        event: dict[str, object],
+        secret_token: str | None,
+    ) -> None:
+        del route, secret_token
+        deliveries.append((event_type, event))
+
+    monkeypatch.setattr(OpsMeshService, "_post_webhook", fake_post_webhook)
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),
+        FakeMissionService([]),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.test_notification_route(route_id)
+    route_row = next(
+        row for row in await database.list_notification_routes() if int(row["id"]) == route_id
+    )
+
+    assert result.ok is True
+    assert result.event_type == "ops/inbox/test"
+    assert result.route.id == route_id
+    assert deliveries[0][0] == "ops/inbox/test"
+    assert deliveries[0][1]["test"] is True
+    assert route_row["last_result"] == "Delivered ops/inbox/test (test)"
+    assert route_row["last_error"] is None
+
+
+@pytest.mark.asyncio
 async def test_capture_lane_snapshot_includes_mission_state(tmp_path: Path) -> None:
     database = Database(tmp_path / "ops.db")
     await database.initialize()
@@ -1509,9 +1759,57 @@ def test_dashboard_ops_mesh_crud_round_trip(tmp_path: Path) -> None:
     assert dashboard["ops_mesh"]["skills_registry"]["projects"][0]["project_label"] == (
         "OpenZues Workspace"
     )
-    assert dashboard["ops_mesh"]["skillbooks"][0]["skills"][0]["name"] == "Browser Verify"
+    assert any(
+        skill["name"] == "Browser Verify"
+        for skillbook in dashboard["ops_mesh"]["skillbooks"]
+        for skill in skillbook["skills"]
+    )
     assert dashboard["ops_mesh"]["lane_snapshots"]
     assert dashboard["ops_mesh"]["lane_snapshots"][0]["approvals_pending_count"] == 0
+
+
+def test_notification_route_test_api_updates_route_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    deliveries: list[str] = []
+
+    def fake_post_webhook(
+        self,  # noqa: ANN001
+        route: dict[str, object],
+        event_type: str,
+        event: dict[str, object],
+        secret_token: str | None,
+    ) -> None:
+        del route, event, secret_token
+        deliveries.append(event_type)
+
+    monkeypatch.setattr(OpsMeshService, "_post_webhook", fake_post_webhook)
+
+    with make_client(tmp_path) as client:
+        route_response = client.post(
+            "/api/notification-routes",
+            json={
+                "name": "Ops Webhook",
+                "kind": "webhook",
+                "target": "https://example.invalid/webhook",
+                "events": ["ops/inbox/*"],
+                "enabled": True,
+            },
+        )
+        route_id = route_response.json()["id"]
+        test_response = client.post(f"/api/notification-routes/{route_id}/test")
+        dashboard = client.get("/api/dashboard").json()
+
+    assert route_response.status_code == 200
+    assert test_response.status_code == 200
+    payload = test_response.json()
+    assert payload["ok"] is True
+    assert payload["event_type"] == "ops/inbox/test"
+    assert deliveries == ["ops/inbox/test"]
+    assert dashboard["ops_mesh"]["notification_routes"][0]["last_result"] == (
+        "Delivered ops/inbox/test (test)"
+    )
 
 
 @pytest.mark.asyncio

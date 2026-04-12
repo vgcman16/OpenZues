@@ -10,11 +10,33 @@ from openzues.schemas import (
     DashboardCortexView,
     DashboardDoctrineView,
     DashboardInoculationView,
+    DashboardLearningReviewView,
     InstanceView,
     MissionDraftView,
     MissionView,
     ProjectView,
 )
+from openzues.services.hermes_toolsets import expand_hermes_toolsets, infer_hermes_toolsets
+
+_BASELINE_TOOLSETS = {"safe", "skills", "file", "terminal"}
+_TOOLSET_PRIORITY = {
+    "delegation": 0,
+    "debugging": 1,
+    "browser": 2,
+    "vision": 3,
+    "memory": 4,
+    "session_search": 5,
+    "search": 6,
+    "clarify": 7,
+    "messaging": 8,
+    "cronjob": 9,
+    "todo": 10,
+    "code_execution": 11,
+    "file": 12,
+    "terminal": 13,
+    "skills": 14,
+    "safe": 15,
+}
 
 
 def _parse_timestamp(value: str | None) -> datetime | None:
@@ -63,6 +85,181 @@ def _count_truthy(values: list[bool]) -> bool:
     if not values:
         return False
     return sum(1 for value in values if value) * 2 >= len(values)
+
+
+def _mission_toolsets(mission: MissionView) -> list[str]:
+    inferred = infer_hermes_toolsets(
+        mission.objective,
+        explicit_toolsets=mission.toolsets,
+        project_label=mission.project_label,
+        project_path=mission.cwd,
+        setup_mode="local" if mission.cwd or mission.project_id is not None else "remote",
+        use_builtin_agents=mission.use_builtin_agents,
+        run_verification=mission.run_verification,
+    )
+    return expand_hermes_toolsets(inferred)
+
+
+def _recommended_toolsets(counter: Counter[str]) -> list[str]:
+    if not counter:
+        return []
+    ranked = sorted(
+        counter.items(),
+        key=lambda item: (-item[1], _TOOLSET_PRIORITY.get(item[0], 99), item[0]),
+    )
+    meaningful = [name for name, _count in ranked if name not in _BASELINE_TOOLSETS]
+    if meaningful:
+        return meaningful[:4]
+    return [name for name, _count in ranked[:3]]
+
+
+def build_learning_reviews(
+    missions: list[MissionView],
+    projects: list[ProjectView],
+    *,
+    doctrines: list[DashboardDoctrineView] | None = None,
+) -> list[DashboardLearningReviewView]:
+    projects_by_id = {project.id: project for project in projects}
+    grouped: dict[str, list[MissionView]] = defaultdict(list)
+    scope_meta: dict[str, tuple[int | None, str]] = {}
+    doctrine_by_project = {
+        doctrine.project_id: doctrine
+        for doctrine in doctrines or []
+        if doctrine.project_id is not None
+    }
+
+    for mission in missions:
+        scope = _scope_for_mission(mission, projects_by_id)
+        if scope is None:
+            continue
+        scope_key, project_id, label = scope
+        grouped[scope_key].append(mission)
+        scope_meta[scope_key] = (project_id, label)
+
+    reviews: list[DashboardLearningReviewView] = []
+    level_rank = {"critical": 0, "warn": 1, "ready": 2, "info": 3}
+
+    for scope_key, items in grouped.items():
+        project_id, label = scope_meta[scope_key]
+        doctrine = doctrine_by_project.get(project_id) if project_id is not None else None
+        stable = [
+            mission
+            for mission in items
+            if mission.last_checkpoint and mission.status in {"completed", "paused", "active"}
+        ]
+        risky = [
+            mission
+            for mission in items
+            if mission.status == "failed"
+            or _is_orbiting(mission)
+            or (
+                mission.status == "active"
+                and not mission.last_checkpoint
+                and (mission.command_count >= 6 or mission.total_tokens >= 60000)
+            )
+        ]
+        if not stable and not risky:
+            continue
+
+        stable_toolsets = [_mission_toolsets(mission) for mission in stable]
+        risky_toolsets = [_mission_toolsets(mission) for mission in risky]
+        stable_toolset_counts: Counter[str] = Counter(
+            toolset
+            for toolsets in stable_toolsets
+            for toolset in toolsets
+        )
+        preferred_toolsets = _recommended_toolsets(stable_toolset_counts)
+        risky_missing_toolsets = [
+            toolset
+            for toolset in preferred_toolsets
+            if any(toolset not in toolsets for toolsets in risky_toolsets)
+        ]
+
+        if stable and preferred_toolsets and (len(stable) >= 2 or risky):
+            reviews.append(
+                DashboardLearningReviewView(
+                    id=f"{scope_key}:winning-posture",
+                    level="warn" if risky_missing_toolsets else "ready",
+                    title=f"Promote the winning tool posture for {label}",
+                    summary=(
+                        f"{len(stable)} checkpointed run(s) in {label} repeatedly landed with "
+                        f"{', '.join(preferred_toolsets[:3])} in the tool posture."
+                    ),
+                    recommendation=(
+                        "Carry those toolsets into the next launch so Zues starts from the same "
+                        "successful posture instead of rediscovering it mid-run."
+                    ),
+                    evidence_count=sum(
+                        stable_toolset_counts.get(toolset, 0) for toolset in preferred_toolsets
+                    ),
+                    project_id=project_id,
+                    project_label=label,
+                    mission_id=(risky[0].id if risky else stable[0].id),
+                    recommended_toolsets=preferred_toolsets,
+                )
+            )
+
+        if stable and risky:
+            recommended = ["memory", "session_search", "debugging"]
+            if doctrine is not None and doctrine.use_builtin_agents:
+                recommended.append("delegation")
+            reviews.append(
+                DashboardLearningReviewView(
+                    id=f"{scope_key}:checkpoint-recovery",
+                    level="warn",
+                    title=f"Anchor {label} with checkpoint-first recovery",
+                    summary=(
+                        f"{len(risky)} run(s) drifted, failed, or stretched too long while "
+                        f"{len(stable)} checkpointed run(s) already proved a recoverable path."
+                    ),
+                    recommendation=(
+                        "Open the freshest checkpoint first, search durable recall before "
+                        "changing direction, and keep the next loop short enough to land a new "
+                        "handoff before expanding scope again."
+                    ),
+                    evidence_count=len(stable) + len(risky),
+                    project_id=project_id,
+                    project_label=label,
+                    mission_id=risky[0].id,
+                    recommended_toolsets=recommended,
+                )
+            )
+
+        verified_stable = [mission for mission in stable if mission.run_verification]
+        relaxed_risky = [mission for mission in risky if not mission.run_verification]
+        if verified_stable and relaxed_risky:
+            reviews.append(
+                DashboardLearningReviewView(
+                    id=f"{scope_key}:proof-first",
+                    level="warn",
+                    title=f"Keep {label} on proof-first loops",
+                    summary=(
+                        f"{len(verified_stable)} stable run(s) kept verification on, while "
+                        f"{len(relaxed_risky)} unstable run(s) widened scope without the same "
+                        "proof posture."
+                    ),
+                    recommendation=(
+                        "Leave verification enabled, bias the run toward debugging and repo "
+                        "search, and checkpoint the exact passing proof before moving to the next "
+                        "slice."
+                    ),
+                    evidence_count=len(verified_stable) + len(relaxed_risky),
+                    project_id=project_id,
+                    project_label=label,
+                    mission_id=relaxed_risky[0].id,
+                    recommended_toolsets=["debugging", "search"],
+                )
+            )
+
+    return sorted(
+        reviews,
+        key=lambda review: (
+            level_rank[review.level],
+            review.evidence_count * -1,
+            (review.project_label or "").lower(),
+            review.title.lower(),
+        ),
+    )[:4]
 
 
 def build_doctrines(
@@ -341,13 +538,16 @@ def build_cortex(
 ) -> DashboardCortexView:
     learned_doctrines = doctrines if doctrines is not None else build_doctrines(missions, projects)
     inoculations = build_inoculations(instances, missions, projects)
+    reviews = build_learning_reviews(missions, projects, doctrines=learned_doctrines)
 
-    if learned_doctrines or inoculations:
+    if learned_doctrines or inoculations or reviews:
         headline = "The autonomy cortex is learning"
         summary = (
             f"{len(learned_doctrines)} doctrine pattern(s) and "
             f"{len(inoculations)} preflight inoculation(s) are now shaping future runs."
         )
+        if reviews:
+            summary += f" Hermes review passes surfaced {len(reviews)} reusable lesson(s)."
     else:
         headline = "The autonomy cortex is still forming"
         summary = (
@@ -360,6 +560,7 @@ def build_cortex(
         summary=summary,
         doctrines=learned_doctrines,
         inoculations=inoculations,
+        reviews=reviews,
     )
 
 

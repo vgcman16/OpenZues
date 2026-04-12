@@ -179,6 +179,22 @@ class FakeTurnClient:
         return {"data": [{"id": "thread_retry", "status": {"type": "idle"}}]}
 
 
+class FakeMcpStatusClient:
+    def __init__(self, payload: list[dict[str, object]]) -> None:
+        self.payload = payload
+        self.calls: list[tuple[str, dict | None]] = []
+
+    async def call(
+        self,
+        method: str,
+        params: dict | None = None,
+        timeout: float = 30.0,
+    ) -> dict[str, list[dict[str, object]]]:
+        self.calls.append((method, params))
+        assert method == "mcpServerStatus/list"
+        return {"data": self.payload}
+
+
 @pytest.mark.asyncio
 async def test_interrupt_turn_uses_latest_active_turn_from_events(tmp_path) -> None:
     database = Database(tmp_path / "manager.db")
@@ -344,3 +360,59 @@ async def test_start_turn_retries_after_thread_not_found(tmp_path) -> None:
     assert client.turn_attempts == 2
     assert client.thread_list_calls >= 1
     assert runtime.threads == [{"id": "thread_retry", "status": {"type": "idle"}}]
+
+
+@pytest.mark.asyncio
+async def test_list_mcp_server_status_summarizes_tool_catalogs(tmp_path) -> None:
+    database = Database(tmp_path / "manager.db")
+    await database.initialize()
+    manager = RuntimeManager(database, BroadcastHub())
+    client = FakeMcpStatusClient(
+        [
+            {
+                "name": "MemPalace MCP Server",
+                "source": "mempalace",
+                "status": "ready",
+                "authStatus": "ready",
+                "tools": {
+                    "mempalace_status": {},
+                    "mempalace_search": {},
+                    "mempalace_diary_write": {},
+                },
+                "resources": [{"name": "Memory Journal"}],
+                "resourceTemplates": [{"uri": "mempalace://entries/{id}"}],
+            }
+        ]
+    )
+    runtime = InstanceRuntime(
+        instance_id=1,
+        name="Local Codex Desktop",
+        transport="desktop",
+        command=None,
+        args=None,
+        websocket_url=None,
+        cwd="C:/workspace",
+        auto_connect=False,
+        client=client,  # type: ignore[arg-type]
+        connected=True,
+    )
+    manager.instances[1] = runtime
+
+    payload = await manager.list_mcp_server_status(1)
+
+    assert payload == [
+        {
+            "name": "MemPalace MCP Server",
+            "source": "mempalace",
+            "status": "ready",
+            "authStatus": "ready",
+            "tools": [
+                "mempalace_status",
+                "mempalace_search",
+                "mempalace_diary_write",
+            ],
+            "resources": ["Memory Journal"],
+            "resourceTemplates": ["mempalace://entries/{id}"],
+        }
+    ]
+    assert runtime.mcp_server_status == payload

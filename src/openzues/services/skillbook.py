@@ -5,6 +5,12 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from openzues.schemas import SkillPinView
+from openzues.services.ecc_catalog import resolve_ecc_skill_matches
+from openzues.services.hermes_skills import (
+    is_local_skill_source_available,
+    resolve_hermes_skill_matches,
+)
+from openzues.services.hermes_toolsets import expand_hermes_toolsets
 
 _BUILTIN_SOURCE_ROOT = "builtin:openzues-claw-parity"
 _REASONING_RANK = {"low": 1, "medium": 2, "high": 3, "xhigh": 4}
@@ -136,12 +142,15 @@ _CONTROL_PLANE_CONTRACT_GUARD_SKILL = _BuiltinSkillSpec(
     slug="control-plane-contract-guard",
     name="Control Plane Contract Guard",
     prompt_hint=(
-        "Treat setup/onboarding/gateway work as a contract seam: keep database, schemas, "
-        "services, API routes, CLI flows, and dashboard payloads aligned. Before trusting a "
-        "checkpoint, rerun the focused pack: `.\\\\.venv\\\\Scripts\\\\python.exe -m pytest "
-        "tests/test_app.py tests/test_database.py tests/test_manager.py "
+        "Treat setup/onboarding/gateway/schema/dashboard work as a contract seam: keep "
+        "database, schemas, services, API routes, CLI flows, payload builders, constructors, "
+        "serializers, and shared test fixtures aligned in the same turn. Before trusting a "
+        "checkpoint, rerun the focused contract pack: `.\\\\.venv\\\\Scripts\\\\python.exe -m "
+        "pytest tests/test_app.py tests/test_database.py tests/test_manager.py "
         "tests/test_ops_mesh.py -q`, `node --check src/openzues/web/static/app.js`, and "
-        "`.\\\\.venv\\\\Scripts\\\\python.exe -m compileall src/openzues`."
+        "`.\\\\.venv\\\\Scripts\\\\python.exe -m compileall src/openzues`. If the seam changed "
+        "dashboard or schema contracts, include a broader app/dashboard pass before calling it "
+        "done."
     ),
     source=f"{_BUILTIN_SOURCE_ROOT}/control-plane-contract-guard",
     triggers=(
@@ -153,6 +162,17 @@ _CONTROL_PLANE_CONTRACT_GUARD_SKILL = _BuiltinSkillSpec(
         "remote access",
         "launch profile",
         "default lane",
+        "schema",
+        "pydantic",
+        "dashboard",
+        "payload",
+        "contract",
+        "doctor",
+        "endpoint",
+        "api",
+        "cli",
+        "fixture",
+        "constructor",
     ),
     reasoning_effort="high",
 )
@@ -246,6 +266,7 @@ def resolve_skill_profile(
     project_label: str | None = None,
     project_path: str | None = None,
     additional_context: str | None = None,
+    toolsets: Iterable[str] = (),
 ) -> SkillProfile:
     all_pins = list(explicit_pins)
     enabled_pins = [pin for pin in all_pins if pin.enabled]
@@ -294,6 +315,41 @@ def resolve_skill_profile(
         if spec.max_turns_floor is not None:
             max_turns_floor = max(max_turns_floor or 0, spec.max_turns_floor)
 
+    for hermes_skill in resolve_hermes_skill_matches(
+        objective,
+        project_label=project_label,
+        project_path=project_path,
+        additional_context=additional_context,
+        active_toolsets=expand_hermes_toolsets(toolsets),
+    ):
+        if _skill_identity(hermes_skill.name, hermes_skill.source) in blocked_identities:
+            continue
+        instructions.append(
+            SkillInstruction(
+                name=hermes_skill.name,
+                prompt_hint=hermes_skill.prompt_hint,
+                source=hermes_skill.source,
+                auto_attached=True,
+            )
+        )
+
+    for ecc_skill in resolve_ecc_skill_matches(
+        objective,
+        project_label=project_label,
+        project_path=project_path,
+        additional_context=additional_context,
+    ):
+        if _skill_identity(ecc_skill.name, ecc_skill.source) in blocked_identities:
+            continue
+        instructions.append(
+            SkillInstruction(
+                name=ecc_skill.name,
+                prompt_hint=ecc_skill.prompt_hint,
+                source=ecc_skill.source,
+                auto_attached=True,
+            )
+        )
+
     return SkillProfile(
         skills=tuple(instructions),
         reasoning_effort=reasoning_effort,
@@ -309,6 +365,7 @@ def materialize_skillbook_pins(
     project_label: str | None = None,
     project_path: str | None = None,
     additional_context: str | None = None,
+    toolsets: Iterable[str] = (),
 ) -> list[SkillPinView]:
     pins = list(explicit_pins)
     enabled_identities = {
@@ -322,6 +379,7 @@ def materialize_skillbook_pins(
         project_label=project_label,
         project_path=project_path,
         additional_context=additional_context,
+        toolsets=toolsets,
     )
     auto_pins: list[SkillPinView] = []
     now = datetime.now(UTC)
@@ -359,6 +417,11 @@ def build_prompt_skill_lines(skills: Iterable[SkillInstruction]) -> list[str]:
         if skill.source and not skill.source.startswith("builtin:"):
             line += f" Source: {skill.source}."
         lines.append(line)
+    if any(is_local_skill_source_available(skill.source) for skill in skill_list):
+        lines.append(
+            "- When a skill includes a Source path, open that SKILL.md before you execute the "
+            "related workflow so you inherit its procedure instead of guessing."
+        )
     lines.append(
         "- Apply the skillbook directly when choosing the next step instead of waiting for a "
         "new operator instruction."

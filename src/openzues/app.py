@@ -5,7 +5,7 @@ import os
 import re
 import sys
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from ipaddress import ip_address
 from pathlib import Path
 from typing import Any, Literal
@@ -26,6 +26,7 @@ from openzues.schemas import (
     DashboardBriefView,
     DashboardContinuityPacketView,
     DashboardControlChatView,
+    DashboardCortexView,
     DashboardDoctrineView,
     DashboardDreamView,
     DashboardEconomyView,
@@ -33,12 +34,23 @@ from openzues.schemas import (
     DashboardLaunchpadView,
     DashboardOpportunityView,
     DashboardRadarView,
+    DashboardRecallView,
     DashboardSignalView,
     DashboardView,
     DiagnosticsView,
+    DockerExecutorArmRequest,
+    DockerExecutorPreflightRequest,
     EventView,
     GatewayBootstrapUpdate,
     GatewayBootstrapView,
+    GatewayCapabilityView,
+    GatewayMemoryProofRun,
+    HermesDoctorView,
+    HermesExecutorArmResultView,
+    HermesExecutorPreflightView,
+    HermesRuntimeProfileUpdate,
+    HermesRuntimeProfileView,
+    HermesUpdateView,
     InstanceCreate,
     InstanceView,
     IntegrationCreate,
@@ -49,6 +61,7 @@ from openzues.schemas import (
     MissionReflexRun,
     MissionView,
     NotificationRouteCreate,
+    NotificationRouteTestResultView,
     NotificationRouteView,
     OnboardingBootstrapCreate,
     OnboardingBootstrapResultView,
@@ -58,7 +71,10 @@ from openzues.schemas import (
     PlaybookRun,
     PlaybookRunResult,
     PlaybookView,
+    ProjectAgentHarnessView,
     ProjectCreate,
+    ProjectHarnessOperationCreate,
+    ProjectHarnessOperationView,
     ProjectView,
     RemoteMissionCreate,
     RemoteRequestView,
@@ -81,6 +97,7 @@ from openzues.schemas import (
     TurnCreate,
     VaultSecretCreate,
     VaultSecretView,
+    WorkspaceShellArmRequest,
 )
 from openzues.services.access import AccessService, AuthenticatedOperator, build_access_posture
 from openzues.services.codex_desktop import CodexDesktopService
@@ -94,11 +111,21 @@ from openzues.services.cortex import (
     tune_draft_with_doctrine,
 )
 from openzues.services.dreams import build_dream_deck
+from openzues.services.ecc_catalog import configure_ecc_catalog
 from openzues.services.economy import build_economy
 from openzues.services.environment import EnvironmentService
 from openzues.services.followups import mission_followup_kind, mission_matches_payload
 from openzues.services.gateway_bootstrap import GatewayBootstrapService
+from openzues.services.gateway_capability import GatewayCapabilityService
 from openzues.services.github import GitHubService
+from openzues.services.hermes_platform import HermesPlatformService
+from openzues.services.hermes_runtime_profile import (
+    DEFAULT_HERMES_EXECUTOR,
+    DEFAULT_HERMES_MEMORY_PROVIDER,
+    build_runtime_profile_fields,
+    load_saved_runtime_preferences,
+)
+from openzues.services.hermes_skills import configure_hermes_skill_catalog
 from openzues.services.hub import BroadcastHub
 from openzues.services.interference import build_interference
 from openzues.services.launch_routing import LaunchRoutingService
@@ -108,6 +135,7 @@ from openzues.services.onboarding import OnboardingService
 from openzues.services.ops_mesh import OpsMeshService, build_ops_mesh
 from openzues.services.playbooks import PlaybookService, summarize_playbook_result
 from openzues.services.projects import ProjectService
+from openzues.services.recall import RecallService
 from openzues.services.reflexes import build_reflex_deck
 from openzues.services.remote_ops import RemoteOpsService
 from openzues.services.run_pressure import has_checkpoint_pressure
@@ -118,6 +146,8 @@ from openzues.services.vault import VaultService
 from openzues.settings import Settings, settings
 
 configure_logging()
+
+CHECKPOINT_HARDENER_COOLDOWN = timedelta(minutes=30)
 
 PLUGIN_DUPLICATE_SERVER_RE = re.compile(
     r"skipping duplicate plugin MCP server name.*?plugin\s*=\s*\"(?P<plugin>[^\"]+)\""
@@ -175,18 +205,45 @@ def _pick_launch_instance(
     missions: list[MissionView],
     *,
     prefer_idle: bool = True,
+    allowed_instance_ids: set[int] | None = None,
 ) -> InstanceView | None:
     live_instance_ids = {
         mission.instance_id for mission in missions if mission.status in {"active", "blocked"}
     }
     if prefer_idle:
         for instance in instances:
-            if instance.connected and instance.id not in live_instance_ids:
+            if (
+                instance.connected
+                and instance.id not in live_instance_ids
+                and (allowed_instance_ids is None or instance.id in allowed_instance_ids)
+            ):
                 return instance
     for instance in instances:
-        if instance.connected:
+        if instance.connected and (
+            allowed_instance_ids is None or instance.id in allowed_instance_ids
+        ):
             return instance
+    if allowed_instance_ids is not None:
+        return None
     return instances[0] if instances else None
+
+
+def _gateway_planning_action(gateway_capability: GatewayCapabilityView) -> str:
+    if gateway_capability.approval_posture.approval_count:
+        return "Resolve pending approvals before launching more autonomous work."
+    if gateway_capability.inventory.tracked_gap_count:
+        return "Repair the tracked integration gaps before trusting the next launch."
+    route = gateway_capability.launch_policy.launch_route
+    if route is not None and route.status == "repair":
+        return "Repair the saved launch route before trusting the next remote-first handoff."
+    if (
+        gateway_capability.connected_lane_health.total_count
+        and not gateway_capability.connected_lane_health.ready_count
+    ):
+        return "Reconnect or clear a lane so at least one gateway lane is launch-ready."
+    if gateway_capability.warnings:
+        return gateway_capability.warnings[0]
+    return "Inspect Gateway Doctor before launching the next mission."
 
 
 def _is_project_dirty(project: ProjectView) -> bool:
@@ -255,6 +312,8 @@ def build_radar(
     instances: list[InstanceView],
     missions: list[MissionView],
     projects: list[ProjectView],
+    *,
+    gateway_capability: GatewayCapabilityView | None = None,
 ) -> DashboardRadarView:
     signals: list[DashboardSignalView] = []
     ready_handoffs: list[MissionView] = []
@@ -311,6 +370,28 @@ def build_radar(
                 "Codex a stable build target."
             ),
             action="Add a local project path in the workspace section.",
+        )
+
+    if gateway_capability is not None and (
+        gateway_capability.level == "critical"
+        or gateway_capability.inventory.tracked_gap_count
+        or gateway_capability.approval_posture.approval_count
+        or (
+            gateway_capability.launch_policy.launch_route is not None
+            and gateway_capability.launch_policy.launch_route.status == "repair"
+        )
+        or (
+            gateway_capability.connected_lane_health.total_count > 0
+            and gateway_capability.connected_lane_health.ready_count == 0
+        )
+    ):
+        add_signal(
+            "gateway/capability",
+            lane="reliability",
+            level="critical" if gateway_capability.level == "critical" else "warn",
+            title=gateway_capability.headline,
+            detail=gateway_capability.summary,
+            action=_gateway_planning_action(gateway_capability),
         )
 
     for mission in missions:
@@ -623,9 +704,16 @@ def build_launchpad(
     projects: list[ProjectView],
     *,
     doctrines: list[DashboardDoctrineView] | None = None,
+    gateway_capability: GatewayCapabilityView | None = None,
+    preferred_memory_provider: str = DEFAULT_HERMES_MEMORY_PROVIDER,
+    preferred_executor: str = DEFAULT_HERMES_EXECUTOR,
 ) -> DashboardLaunchpadView:
     opportunities: list[DashboardOpportunityView] = []
     project_doctrine_index = doctrine_index(doctrines or build_doctrines(missions, projects))
+    runtime_profile_fields = build_runtime_profile_fields(
+        preferred_memory_provider=preferred_memory_provider,
+        preferred_executor=preferred_executor,
+    )
     live_project_ids = {
         mission.project_id
         for mission in missions
@@ -640,6 +728,22 @@ def build_launchpad(
             for mission in missions
         )
 
+    def latest_completed_equivalent_followup(
+        draft: MissionDraftView,
+        *,
+        kind: Literal["checkpoint_hardener", "recovery_run"],
+    ) -> MissionView | None:
+        completed = [
+            mission
+            for mission in missions
+            if mission.status == "completed"
+            and mission_followup_kind(mission) == kind
+            and mission_matches_payload(mission, draft)
+        ]
+        if not completed:
+            return None
+        return max(completed, key=lambda mission: mission.updated_at)
+
     def add_opportunity(
         opportunity_id: str,
         *,
@@ -650,6 +754,7 @@ def build_launchpad(
             "checkpoint_hardener",
             "recovery_run",
             "shadow_scout",
+            "gateway_repair",
         ],
         impact: Literal["high", "medium", "low"],
         title: str,
@@ -687,8 +792,95 @@ def build_launchpad(
             return draft
         return tune_draft_with_doctrine(draft, doctrine)
 
-    idle_instance = _pick_launch_instance(instances, missions, prefer_idle=True)
-    connected_instance = _pick_launch_instance(instances, missions, prefer_idle=False)
+    ready_launch_instance_ids = (
+        {
+            lane.instance_id
+            for lane in gateway_capability.connected_lane_health.lanes
+            if lane.connected and lane.level == "ready"
+        }
+        if gateway_capability is not None
+        else None
+    )
+    connected_launch_instance_ids = (
+        {
+            lane.instance_id
+            for lane in gateway_capability.connected_lane_health.lanes
+            if lane.connected
+        }
+        if gateway_capability is not None
+        else None
+    )
+    idle_instance = _pick_launch_instance(
+        instances,
+        missions,
+        prefer_idle=True,
+        allowed_instance_ids=ready_launch_instance_ids,
+    )
+    connected_instance = _pick_launch_instance(
+        instances,
+        missions,
+        prefer_idle=False,
+        allowed_instance_ids=ready_launch_instance_ids,
+    )
+    repair_instance = _pick_launch_instance(
+        instances,
+        missions,
+        prefer_idle=True,
+        allowed_instance_ids=connected_launch_instance_ids,
+    )
+
+    if (
+        gateway_capability is not None
+        and repair_instance is not None
+        and (
+            gateway_capability.level == "critical"
+            or gateway_capability.inventory.tracked_gap_count
+            or gateway_capability.approval_posture.approval_count
+            or (
+                gateway_capability.launch_policy.launch_route is not None
+                and gateway_capability.launch_policy.launch_route.status == "repair"
+            )
+            or (
+                gateway_capability.connected_lane_health.total_count > 0
+                and gateway_capability.connected_lane_health.ready_count == 0
+            )
+        )
+    ):
+        add_opportunity(
+            "gateway-repair",
+            kind="gateway_repair",
+            impact="high" if gateway_capability.level == "critical" else "medium",
+            title="Stabilize gateway posture",
+            summary=(
+                "Use the shared gateway doctor surface to repair launch blockers before "
+                "starting another autonomous slice."
+            ),
+            why_now=gateway_capability.summary,
+            draft=MissionDraftView(
+                name="Stabilize Gateway Posture",
+                objective=(
+                    "Continue from the current gateway capability / doctor summary. Reuse the "
+                    "existing runtime, diagnostics, Ops Mesh inventory, and saved gateway "
+                    "bootstrap state to repair the highest-risk gateway blocker without "
+                    "broadening scope. Verify the fix and leave a durable checkpoint."
+                ),
+                instance_id=repair_instance.id,
+                project_id=None,
+                cwd=repair_instance.cwd,
+                thread_id=None,
+                model="gpt-5.4-mini",
+                reasoning_effort=None,
+                collaboration_mode=None,
+                max_turns=3,
+                use_builtin_agents=True,
+                run_verification=True,
+                auto_commit=False,
+                pause_on_approval=True,
+                start_immediately=True,
+                **runtime_profile_fields,
+            ),
+            action_label="Load gateway repair",
+        )
 
     if connected_instance is not None and not projects:
         add_opportunity(
@@ -721,6 +913,7 @@ def build_launchpad(
                 auto_commit=False,
                 pause_on_approval=True,
                 start_immediately=True,
+                **runtime_profile_fields,
             ),
             action_label="Load scout",
         )
@@ -786,10 +979,47 @@ def build_launchpad(
                         auto_commit=False,
                         pause_on_approval=mission.pause_on_approval,
                         start_immediately=True,
+                        **runtime_profile_fields,
                     ),
                 ),
                 action_label="Recover run",
             )
+            continue
+
+        hardener_draft = tune_project_draft(
+            mission.project_id,
+            MissionDraftView(
+                name=f"Harden {mission.project_label or mission.name}",
+                objective=(
+                    f"Continue from the latest checkpoint in the mission '{mission.name}'. "
+                    "First read the existing handoff in the thread, verify what is already "
+                    "true, close the biggest gaps, and leave a stronger checkpoint with "
+                    "validation."
+                ),
+                instance_id=target_instance.id,
+                project_id=mission.project_id,
+                cwd=mission.cwd,
+                thread_id=mission.thread_id,
+                model=mission.model,
+                reasoning_effort=mission.reasoning_effort,
+                collaboration_mode=mission.collaboration_mode,
+                max_turns=3,
+                use_builtin_agents=mission.use_builtin_agents,
+                run_verification=True,
+                auto_commit=True,
+                pause_on_approval=mission.pause_on_approval,
+                start_immediately=True,
+                **runtime_profile_fields,
+            ),
+        )
+        prior_hardener = latest_completed_equivalent_followup(
+            hardener_draft,
+            kind="checkpoint_hardener",
+        )
+        if (
+            prior_hardener is not None
+            and datetime.now(UTC) - prior_hardener.updated_at <= CHECKPOINT_HARDENER_COOLDOWN
+        ):
             continue
 
         add_opportunity(
@@ -798,39 +1028,24 @@ def build_launchpad(
             impact="high",
             title=f"Harden {mission.project_label or mission.name}",
             summary=(
-                "Turn the latest checkpoint into a cleaner, verified milestone "
-                "instead of vague progress."
+                "Run another optional tightening pass from the latest checkpoint."
+                if prior_hardener is not None
+                else (
+                    "Turn the latest checkpoint into a cleaner, verified milestone "
+                    "instead of vague progress."
+                )
             ),
             why_now=(
-                "A handoff already exists, so the shortest path to durable progress is to verify, "
-                "tighten, and lock in that checkpoint."
+                "A prior hardening pass already landed. Reopen this only if you want another "
+                "verification-focused tightening pass."
+                if prior_hardener is not None
+                else (
+                    "A handoff already exists, so the shortest path to durable progress is to "
+                    "verify, tighten, and lock in that checkpoint."
+                )
             ),
-            draft=tune_project_draft(
-                mission.project_id,
-                MissionDraftView(
-                    name=f"Harden {mission.project_label or mission.name}",
-                    objective=(
-                        f"Continue from the latest checkpoint in the mission '{mission.name}'. "
-                        "First read the existing handoff in the thread, verify what is already "
-                        "true, close the biggest gaps, and leave a stronger checkpoint with "
-                        "validation."
-                    ),
-                    instance_id=target_instance.id,
-                    project_id=mission.project_id,
-                    cwd=mission.cwd,
-                    thread_id=mission.thread_id,
-                    model=mission.model,
-                    reasoning_effort=mission.reasoning_effort,
-                    collaboration_mode=mission.collaboration_mode,
-                    max_turns=3,
-                    use_builtin_agents=mission.use_builtin_agents,
-                    run_verification=True,
-                    auto_commit=True,
-                    pause_on_approval=mission.pause_on_approval,
-                    start_immediately=True,
-                ),
-            ),
-            action_label="Load hardener",
+            draft=hardener_draft,
+            action_label="Load another hardener" if prior_hardener is not None else "Load hardener",
         )
 
     if idle_instance is not None:
@@ -873,6 +1088,7 @@ def build_launchpad(
                             auto_commit=False,
                             pause_on_approval=True,
                             start_immediately=True,
+                            **runtime_profile_fields,
                         ),
                     ),
                     action_label="Load sweep",
@@ -913,6 +1129,7 @@ def build_launchpad(
                             auto_commit=True,
                             pause_on_approval=True,
                             start_immediately=True,
+                            **runtime_profile_fields,
                         ),
                     ),
                     action_label="Load ship run",
@@ -961,6 +1178,7 @@ def build_launchpad(
                     auto_commit=False,
                     pause_on_approval=True,
                     start_immediately=True,
+                    **runtime_profile_fields,
                 ),
             ),
             action_label="Load shadow scout",
@@ -973,17 +1191,33 @@ def build_launchpad(
     )[:4]
 
     if opportunities:
-        headline = "Ghost launches are ready"
-        summary = (
-            "These mission drafts are synthesized from live capacity, repo state, and recent "
-            "checkpoints."
-        )
+        if (
+            gateway_capability is not None
+            and gateway_capability.level in {"critical", "warn"}
+            and gateway_capability.connected_lane_health.ready_count == 0
+        ):
+            headline = "Gateway posture needs repair before broad launches"
+            summary = gateway_capability.summary
+        else:
+            headline = "Ghost launches are ready"
+            summary = (
+                "These mission drafts are synthesized from live capacity, repo state, and recent "
+                "checkpoints."
+            )
     else:
-        headline = "No ghost launches yet"
-        summary = (
-            "Connect a Codex lane or register a project and OpenZues will start proposing mission "
-            "drafts here."
-        )
+        if (
+            gateway_capability is not None
+            and gateway_capability.connected_lane_health.total_count > 0
+            and gateway_capability.connected_lane_health.ready_count == 0
+        ):
+            headline = "Gateway posture needs repair before new launches"
+            summary = gateway_capability.summary
+        else:
+            headline = "No ghost launches yet"
+            summary = (
+                "Connect a Codex lane or register a project and OpenZues will start "
+                "proposing mission drafts here."
+            )
 
     return DashboardLaunchpadView(
         headline=headline,
@@ -1006,12 +1240,15 @@ def create_app(
     ops_mesh_service: OpsMeshService | None = None,
     vault_service: VaultService | None = None,
     access_service: AccessService | None = None,
+    gateway_capability_service: GatewayCapabilityService | None = None,
     gateway_bootstrap_service: GatewayBootstrapService | None = None,
     remote_ops_service: RemoteOpsService | None = None,
     control_chat_service: ControlChatService | None = None,
     control_plane_lease: ControlPlaneLease | None = None,
 ) -> FastAPI:
     active_settings = app_settings or settings
+    configure_hermes_skill_catalog(active_settings.hermes_source_path)
+    configure_ecc_catalog(active_settings.ecc_source_path)
     active_database = database or Database(active_settings.effective_db_path)
     active_hub = hub or BroadcastHub()
     active_desktop_service = desktop_service or CodexDesktopService(
@@ -1022,6 +1259,8 @@ def create_app(
         active_database,
         active_hub,
         desktop_service=active_desktop_service,
+        default_stdio_command=active_settings.default_codex_command,
+        default_stdio_args=active_settings.default_codex_args,
     )
     active_project_service = project_service or ProjectService(GitHubService())
     active_playbook_service = playbook_service or PlaybookService()
@@ -1113,6 +1352,31 @@ def create_app(
         active_ops_mesh_service,
         active_hub,
     )
+    active_gateway_capability_service = (
+        gateway_capability_service
+        or GatewayCapabilityService(
+            active_database,
+            active_manager,
+            active_mission_service,
+            active_access_service,
+            active_remote_ops_service,
+            active_ops_mesh_service,
+            active_gateway_bootstrap_service,
+            active_environment_service,
+        )
+    )
+    active_recall_service = RecallService(active_mission_service, active_database)
+    active_hermes_platform_service = HermesPlatformService(
+        active_database,
+        active_manager,
+        active_mission_service,
+        active_project_service,
+        active_gateway_bootstrap_service,
+        active_settings,
+        runtime_updates=active_runtime_update_service,
+        hub=active_hub,
+        poll_interval_seconds=active_settings.hermes_learning_poll_interval_seconds,
+    )
     active_control_chat_service = control_chat_service or ControlChatService(
         active_database,
         active_mission_service,
@@ -1153,16 +1417,16 @@ def create_app(
                 enabled=active_settings.attention_queue_enabled,
                 poll_interval_seconds=active_settings.attention_queue_poll_interval_seconds,
             )
+            await active_hermes_platform_service.start()
             await active_runtime_update_service.start()
         yield
         if is_control_plane_owner:
             await active_runtime_update_service.close()
+            await active_hermes_platform_service.close()
             await active_control_chat_service.close_attention_queue()
             await active_ops_mesh_service.close()
             await active_mission_service.close()
-        for runtime in active_manager.instances.values():
-            if runtime.client is not None:
-                await runtime.client.close()
+        await active_manager.close()
         active_control_plane_lease.release()
 
     fastapi_app = FastAPI(title="OpenZues", lifespan=lifespan)
@@ -1182,6 +1446,9 @@ def create_app(
     fastapi_app.state.mission_service = active_mission_service
     fastapi_app.state.control_chat_service = active_control_chat_service
     fastapi_app.state.onboarding_service = active_onboarding_service
+    fastapi_app.state.gateway_capability_service = active_gateway_capability_service
+    fastapi_app.state.recall_service = active_recall_service
+    fastapi_app.state.hermes_platform_service = active_hermes_platform_service
     fastapi_app.state.gateway_bootstrap_service = active_gateway_bootstrap_service
     fastapi_app.state.setup_service = active_setup_service
     fastapi_app.state.control_plane_role = "leader"
@@ -1338,14 +1605,38 @@ def create_app(
         instances = await active_manager.list_views()
         missions = await active_mission_service.list_views()
         doctrines = build_doctrines(missions, projects)
+        gateway_capability = await active_gateway_capability_service.get_view()
+        preferred_memory_provider, preferred_executor = await load_saved_runtime_preferences(
+            active_database
+        )
         economy = build_economy(missions, projects, task_blueprints, remote_requests)
-        interference = build_interference(missions, projects, task_blueprints, remote_requests)
+        interference = build_interference(
+            missions,
+            projects,
+            task_blueprints,
+            remote_requests,
+            gateway_capability=gateway_capability,
+        )
         dashboard_view = DashboardView(
             brief=build_brief(instances, missions, projects),
             control_chat=empty_control_chat_view(),
             attention_queue=empty_attention_queue_view(),
-            launchpad=build_launchpad(instances, missions, projects, doctrines=doctrines),
-            radar=build_radar(instances, missions, projects),
+            launchpad=build_launchpad(
+                instances,
+                missions,
+                projects,
+                doctrines=doctrines,
+                gateway_capability=gateway_capability,
+                preferred_memory_provider=preferred_memory_provider,
+                preferred_executor=preferred_executor,
+            ),
+            radar=build_radar(
+                instances,
+                missions,
+                projects,
+                gateway_capability=gateway_capability,
+            ),
+            gateway_capability=gateway_capability,
             gateway_bootstrap=await active_gateway_bootstrap_service.get_view(),
             ops_mesh=build_ops_mesh(
                 instances,
@@ -1362,6 +1653,8 @@ def create_app(
                 teams=teams,
                 operators=operators,
                 remote_requests=remote_requests,
+                preferred_memory_provider=preferred_memory_provider,
+                preferred_executor=preferred_executor,
             ),
             economy=economy,
             interference=interference,
@@ -1371,11 +1664,14 @@ def create_app(
                 projects,
                 doctrines=doctrines,
             ),
+            recall=await active_recall_service.search(limit=6),
             dream_deck=build_dream_deck(
                 instances,
                 missions,
                 projects,
                 doctrines=doctrines,
+                preferred_memory_provider=preferred_memory_provider,
+                preferred_executor=preferred_executor,
             ),
             cortex=build_cortex(instances, missions, projects, doctrines=doctrines),
             reflex_deck=build_reflex_deck(instances, missions, projects, doctrines=doctrines),
@@ -1596,15 +1892,144 @@ def create_app(
         instances = await active_manager.list_views()
         missions = await active_mission_service.list_views()
         doctrines = build_doctrines(missions, projects)
-        deck = build_dream_deck(instances, missions, projects, doctrines=doctrines)
+        preferred_memory_provider, preferred_executor = await load_saved_runtime_preferences(
+            active_database
+        )
+        deck = build_dream_deck(
+            instances,
+            missions,
+            projects,
+            doctrines=doctrines,
+            preferred_memory_provider=preferred_memory_provider,
+            preferred_executor=preferred_executor,
+        )
         dream = next((item for item in deck.dreams if item.project_id == project_id), None)
         if dream is None:
             raise HTTPException(status_code=404, detail="Dream candidate not available yet.")
         return dream
 
+    @fastapi_app.get(
+        "/api/projects/{project_id}/harness",
+        response_model=ProjectAgentHarnessView,
+    )
+    async def project_harness(project_id: int) -> ProjectAgentHarnessView:
+        row = await active_database.get_project(project_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail="Project not found.")
+        harness = active_project_service.inspect_harness(row)
+        if harness is None:
+            raise HTTPException(status_code=404, detail="Project harness not available.")
+        return ProjectAgentHarnessView.model_validate(harness)
+
+    @fastapi_app.post(
+        "/api/projects/{project_id}/harness/actions",
+        response_model=ProjectHarnessOperationView,
+    )
+    async def project_harness_action(
+        project_id: int,
+        payload: ProjectHarnessOperationCreate,
+    ) -> ProjectHarnessOperationView:
+        row = await active_database.get_project(project_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail="Project not found.")
+        try:
+            result = active_project_service.run_harness_operation(
+                row,
+                payload.mode,
+                profile=payload.profile,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return ProjectHarnessOperationView.model_validate(result)
+
     @fastapi_app.get("/api/diagnostics")
     async def diagnostics() -> DiagnosticsView:
         return active_environment_service.collect()
+
+    @fastapi_app.get("/api/recall")
+    async def recall(
+        query: str | None = None,
+        project_id: int | None = None,
+        limit: int = 6,
+    ) -> DashboardRecallView:
+        return await active_recall_service.search(
+            query=query,
+            project_id=project_id,
+            limit=limit,
+        )
+
+    @fastapi_app.get("/api/cortex")
+    async def cortex() -> DashboardCortexView:
+        project_rows = await active_database.list_projects()
+        projects = [
+            ProjectView.model_validate(active_project_service.inspect(row)) for row in project_rows
+        ]
+        instances = await active_manager.list_views()
+        missions = await active_mission_service.list_views()
+        doctrines = build_doctrines(missions, projects)
+        return build_cortex(instances, missions, projects, doctrines=doctrines)
+
+    @fastapi_app.get("/api/hermes/profile")
+    async def hermes_profile() -> HermesRuntimeProfileView:
+        return await active_hermes_platform_service.get_runtime_profile()
+
+    @fastapi_app.put("/api/hermes/profile")
+    async def update_hermes_profile(
+        payload: HermesRuntimeProfileUpdate,
+    ) -> HermesRuntimeProfileView:
+        try:
+            return await active_hermes_platform_service.update_runtime_profile(payload)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @fastapi_app.get("/api/hermes/doctor")
+    async def hermes_doctor() -> HermesDoctorView:
+        return await active_hermes_platform_service.get_doctor_view()
+
+    @fastapi_app.post("/api/hermes/executors/workspace-shell/arm")
+    async def arm_workspace_shell(
+        request: Request,
+        payload: WorkspaceShellArmRequest,
+    ) -> HermesExecutorArmResultView:
+        await require_management_access(request, "team.manage")
+        try:
+            return await active_hermes_platform_service.arm_workspace_shell(
+                cwd=payload.cwd,
+                auto_connect=payload.auto_connect,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @fastapi_app.post("/api/hermes/executors/docker/arm")
+    async def arm_docker_backend(
+        request: Request,
+        payload: DockerExecutorArmRequest,
+    ) -> HermesExecutorArmResultView:
+        await require_management_access(request, "team.manage")
+        try:
+            return await active_hermes_platform_service.arm_docker_backend(
+                cwd=payload.cwd,
+                image=payload.image,
+                auto_connect=payload.auto_connect,
+                mount_workspace=payload.mount_workspace,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @fastapi_app.post("/api/hermes/executors/docker/preflight")
+    async def preflight_docker_backend(
+        request: Request,
+        payload: DockerExecutorPreflightRequest,
+    ) -> HermesExecutorPreflightView:
+        await require_management_access(request, "team.manage")
+        return await active_hermes_platform_service.preflight_docker_backend(
+            cwd=payload.cwd,
+            image=payload.image,
+        )
+
+    @fastapi_app.get("/api/runtime/update")
+    async def runtime_update() -> HermesUpdateView:
+        return await active_hermes_platform_service.get_update_view()
 
     @fastapi_app.post("/api/instances")
     async def create_instance(payload: InstanceCreate) -> dict:
@@ -1757,6 +2182,23 @@ def create_app(
     async def get_gateway_bootstrap() -> GatewayBootstrapView:
         return await active_gateway_bootstrap_service.get_view()
 
+    @fastapi_app.get("/api/gateway/capability", response_model=GatewayCapabilityView)
+    async def get_gateway_capability() -> GatewayCapabilityView:
+        return await active_gateway_capability_service.get_view()
+
+    @fastapi_app.post("/api/gateway/memory/prove", response_model=MissionView)
+    async def run_gateway_memory_proof(
+        request: Request,
+        payload: GatewayMemoryProofRun,
+    ) -> MissionView:
+        await require_management_access(request, "team.manage")
+        try:
+            return await active_gateway_capability_service.launch_memory_proof(
+                instance_id=payload.instance_id
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     @fastapi_app.put("/api/gateway/bootstrap")
     async def update_gateway_bootstrap(
         request: Request,
@@ -1876,6 +2318,13 @@ def create_app(
     async def delete_notification_route(route_id: int) -> dict[str, bool]:
         await active_ops_mesh_service.delete_notification_route(route_id)
         return {"ok": True}
+
+    @fastapi_app.post("/api/notification-routes/{route_id}/test")
+    async def test_notification_route(route_id: int) -> NotificationRouteTestResultView:
+        try:
+            return await active_ops_mesh_service.test_notification_route(route_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     @fastapi_app.post("/api/integrations")
     async def create_integration(payload: IntegrationCreate) -> IntegrationView:

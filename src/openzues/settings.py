@@ -7,6 +7,20 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+def _default_hermes_source_path() -> Path | None:
+    candidate = Path(__file__).resolve().parents[2].with_name("hermes-agent-main")
+    if candidate.exists():
+        return candidate
+    return None
+
+
+def _default_ecc_source_path() -> Path | None:
+    candidate = Path(__file__).resolve().parents[2].with_name("everything-claude-code-main")
+    if candidate.exists():
+        return candidate
+    return None
+
+
 class Settings(BaseSettings):
     app_name: str = "OpenZues"
     host: str = "127.0.0.1"
@@ -28,6 +42,9 @@ class Settings(BaseSettings):
     websocket_ping_interval_seconds: int = 20
     auto_self_update_enabled: bool = True
     auto_self_update_poll_interval_seconds: int = 20
+    hermes_learning_poll_interval_seconds: int = 300
+    hermes_source_path: Path | None = Field(default_factory=_default_hermes_source_path)
+    ecc_source_path: Path | None = Field(default_factory=_default_ecc_source_path)
     model_config = SettingsConfigDict(env_prefix="OPENZUES_", env_file=".env", extra="ignore")
 
     @property

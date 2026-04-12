@@ -209,6 +209,11 @@
                     ></textarea>
                     <input name="model" type="text" placeholder="Model (gpt-5.4)" />
                     <input
+                      name="toolsets"
+                      type="text"
+                      placeholder="Hermes toolsets, e.g. safe,skills,terminal,browser"
+                    />
+                    <input
                       name="max_turns"
                       type="number"
                       min="1"
@@ -564,6 +569,7 @@
                   <span id="intelligence-dream-count" class="pill">0 dreams</span>
                   <span id="intelligence-doctrine-count" class="pill">0 doctrines</span>
                   <span id="intelligence-inoculation-count" class="pill">0 inoculations</span>
+                  <span id="intelligence-review-count" class="pill">0 reviews</span>
                   <span id="intelligence-reflex-count" class="pill">0 reflexes</span>
                 </div>
               </summary>
@@ -579,6 +585,28 @@
                   </div>
 
                   <div id="continuity-packets" class="continuity-grid"></div>
+                </section>
+
+                <section class="subsection-panel continuity-section">
+                  <div class="section-header">
+                    <div>
+                      <p class="eyebrow">Recall Deck</p>
+                      <h2 id="recall-headline">Searching durable mission memory...</h2>
+                    </div>
+                    <p id="recall-summary" class="panel-lede"></p>
+                  </div>
+
+                  <form id="recall-form" class="row">
+                    <input
+                      id="recall-query"
+                      name="query"
+                      type="text"
+                      placeholder="Search prior missions, checkpoints, or memory proofs"
+                    />
+                    <button type="submit">Search Recall</button>
+                  </form>
+
+                  <div id="recall-results" class="continuity-grid"></div>
                 </section>
 
                 <section class="subsection-panel dream-section">
@@ -617,6 +645,14 @@
                         <h3>Hardening moves before the next long run</h3>
                       </div>
                       <div id="cortex-inoculations" class="cortex-list"></div>
+                    </div>
+
+                    <div class="cortex-column stack">
+                      <div class="cortex-subhead">
+                        <p class="eyebrow">Hermes Reviews</p>
+                        <h3>Reusable lessons mined from durable run history</h3>
+                      </div>
+                      <div id="cortex-reviews" class="cortex-list"></div>
                     </div>
                   </div>
                 </section>
@@ -677,6 +713,7 @@
                   </div>
 
                   <div id="onboarding-checklist" class="bootstrap-checklist"></div>
+                  <div id="gateway-capability-summary" class="stack"></div>
                   <div id="gateway-bootstrap-profile" class="stack"></div>
 
                   <form id="onboarding-form" class="stack bootstrap-form">
@@ -729,6 +766,10 @@
                       <label class="checkbox">
                         <input name="issue_api_key" type="checkbox" checked />
                         Issue remote API key
+                      </label>
+                      <label class="checkbox">
+                        <input name="use_mempalace" type="checkbox" />
+                        Track MemPalace memory
                       </label>
                       <label class="checkbox">
                         <input name="enabled" type="checkbox" checked />
@@ -811,6 +852,11 @@
                         min="1"
                         placeholder="Max turns"
                         value="4"
+                      />
+                      <input
+                        name="toolsets"
+                        type="text"
+                        placeholder="Hermes toolsets (optional)"
                       />
                     </div>
 
@@ -1023,6 +1069,11 @@
                         min="60"
                         placeholder="Reflex cooldown seconds (900)"
                       />
+                      <input
+                        name="toolsets"
+                        type="text"
+                        placeholder="Hermes toolsets, e.g. hermes-cli,browser,debugging"
+                      />
                     </div>
 
                     <div class="toggle-row">
@@ -1150,6 +1201,60 @@
               </summary>
               <div class="shell-body">
                 <div id="diagnostics" class="stack diagnostic-rail"></div>
+
+                <section class="subsection-panel stack">
+                  <div class="section-header">
+                    <div>
+                      <p class="eyebrow">Hermes Doctor</p>
+                      <h2 id="hermes-doctor-headline">Reading Hermes parity posture...</h2>
+                    </div>
+                    <div class="pill-row">
+                      <span id="hermes-doctor-level" class="pill">checking</span>
+                      <span id="hermes-doctor-promotion-count" class="pill">0 promotions</span>
+                      <span id="hermes-doctor-memory-count" class="pill">0 memory</span>
+                      <span id="hermes-doctor-delivery-count" class="pill">0 delivery</span>
+                    </div>
+                  </div>
+                  <p id="hermes-doctor-summary" class="panel-lede">
+                    The Hermes import spine will surface here once the doctor finishes mapping providers,
+                    executors, delivery seams, and learning promotions.
+                  </p>
+                  <div id="hermes-doctor-profile" class="stack library-list"></div>
+                  <div id="hermes-profile-result" class="action-text"></div>
+                  <div class="ops-grid">
+                    <section class="stack">
+                      <div class="cortex-subhead">
+                        <p class="eyebrow">Learning Promotions</p>
+                        <h3>What Zues is now promoting into saved defaults</h3>
+                      </div>
+                      <div id="hermes-doctor-promotions" class="stack library-list"></div>
+                    </section>
+                    <section class="stack">
+                      <div class="cortex-subhead">
+                        <p class="eyebrow">Memory Providers</p>
+                        <h3>Recall, MemPalace, and Hermes provider inventory</h3>
+                      </div>
+                      <div id="hermes-doctor-memory" class="stack library-list"></div>
+                    </section>
+                  </div>
+                  <div class="ops-grid">
+                    <section class="stack">
+                      <div class="cortex-subhead">
+                        <p class="eyebrow">Executors</p>
+                        <h3>Backend profiles Zeus can grow into next</h3>
+                      </div>
+                      <div id="hermes-doctor-executors" class="stack library-list"></div>
+                    </section>
+                    <section class="stack">
+                      <div class="cortex-subhead">
+                        <p class="eyebrow">Surfaces</p>
+                        <h3>Plugins, channels, ACP, and terminal extras</h3>
+                      </div>
+                      <div id="hermes-doctor-surfaces" class="stack library-list"></div>
+                    </section>
+                  </div>
+                  <div id="hermes-doctor-updates" class="stack library-list"></div>
+                </section>
               </div>
             </details>
           </aside>

@@ -41,6 +41,7 @@ from openzues.schemas import (
     MissionReflexRun,
     MissionView,
     NotificationRouteCreate,
+    NotificationRouteTestResultView,
     NotificationRouteView,
     OperatorView,
     PlaybookRun,
@@ -58,9 +59,32 @@ from openzues.schemas import (
     VaultSecretView,
 )
 from openzues.services.continuity import build_continuity_packet
+from openzues.services.ecc_catalog import build_ecc_workspace_lines
+from openzues.services.hermes_runtime_profile import (
+    DEFAULT_HERMES_EXECUTOR,
+    DEFAULT_HERMES_MEMORY_PROVIDER,
+    build_executor_profile_lines,
+    build_memory_provider_lines,
+    build_runtime_profile_summary,
+    executor_label,
+    load_saved_runtime_preferences,
+    memory_provider_label,
+)
+from openzues.services.hermes_skills import is_local_skill_source_available
+from openzues.services.hermes_toolsets import (
+    build_hermes_tool_policy,
+    build_hermes_tool_policy_lines,
+    infer_hermes_toolsets,
+)
 from openzues.services.hub import BroadcastHub
 from openzues.services.launch_routing import LaunchRoutingService
 from openzues.services.manager import RuntimeManager
+from openzues.services.memory_protocol import (
+    MEMPALACE_WRITEBACK_ACTION,
+    build_mempalace_protocol_lines,
+    has_mempalace_integration,
+    is_mempalace_integration,
+)
 from openzues.services.missions import MissionService
 from openzues.services.playbooks import PlaybookService, summarize_playbook_result
 from openzues.services.reflexes import build_reflex_deck
@@ -179,8 +203,65 @@ def _matches_event(pattern: str, event_type: str) -> bool:
     return event_type == pattern
 
 
+def _sample_event_type_for_route(
+    events: list[str] | None,
+    *,
+    explicit_event_type: str | None = None,
+) -> str:
+    explicit = str(explicit_event_type or "").strip()
+    if explicit:
+        return explicit
+
+    for raw_pattern in events or []:
+        pattern = str(raw_pattern or "").strip()
+        if not pattern:
+            continue
+        if pattern.endswith("*"):
+            prefix = pattern[:-1].rstrip("/")
+            return f"{prefix}/test" if prefix else "ops/inbox/test"
+        return pattern
+    return "ops/inbox/test"
+
+
 def _serialize_task(row: dict[str, Any]) -> TaskBlueprintView:
     return TaskBlueprintView.model_validate(row)
+
+
+def _resolve_task_toolsets(
+    task: TaskBlueprintView,
+    *,
+    project_label: str | None = None,
+    project_path: str | None = None,
+) -> list[str]:
+    return infer_hermes_toolsets(
+        task.objective_template,
+        explicit_toolsets=task.toolsets,
+        project_label=project_label,
+        project_path=project_path or task.cwd,
+        setup_mode="local",
+        use_builtin_agents=task.use_builtin_agents,
+        run_verification=task.run_verification,
+        cadence_minutes=task.cadence_minutes,
+    )
+
+
+def _attach_task_tool_policy(
+    task: TaskBlueprintView,
+    *,
+    project_label: str | None = None,
+    project_path: str | None = None,
+) -> TaskBlueprintView:
+    toolsets = _resolve_task_toolsets(
+        task,
+        project_label=project_label,
+        project_path=project_path,
+    )
+    return task.model_copy(
+        update={
+            "toolsets": toolsets,
+            "tool_policy": build_hermes_tool_policy(toolsets, setup_mode="local"),
+        }
+    )
 
 
 def _serialize_route(
@@ -517,6 +598,11 @@ def _integration_recommended_action(
     if relevant_instances and not any(instance.connected for instance in relevant_instances):
         return "Reconnect a relevant lane or fail work over before depending on this capability."
     if relevant_instances and lane_match_count == 0:
+        if is_mempalace_integration(integration):
+            return (
+                "Install MemPalace on the lane host, expose `python -m mempalace.mcp_server`, "
+                "and reconnect the lane before relying on project memory."
+            )
         return (
             "Install or enable the matching plugin, app, or MCP server on a relevant lane before "
             "launching work that depends on it."
@@ -1306,6 +1392,12 @@ def _build_task_objective(
     *,
     skill_pins: list[SkillPinView],
     integrations: list[IntegrationView],
+    toolsets: list[str],
+    preferred_memory_provider: str = DEFAULT_HERMES_MEMORY_PROVIDER,
+    preferred_executor: str = DEFAULT_HERMES_EXECUTOR,
+    instance_name: str | None = None,
+    instance_cwd: str | None = None,
+    project_path: str | None = None,
 ) -> str:
     sections = [task.objective_template]
     if task.run_until_complete:
@@ -1341,6 +1433,40 @@ def _build_task_objective(
                 ],
             ]
         )
+        if any(
+            skill.enabled and is_local_skill_source_available(skill.source)
+            for skill in skill_pins
+        ):
+            sections.append(
+                "- If a skill includes a Source path, open that SKILL.md before running the "
+                "workflow so the procedure stays grounded."
+            )
+    tool_policy_lines = build_hermes_tool_policy_lines(
+        build_hermes_tool_policy(toolsets, setup_mode="local")
+    )
+    if tool_policy_lines:
+        sections.extend(["", *tool_policy_lines])
+    executor_lines = build_executor_profile_lines(
+        preferred_executor,
+        instance_name=instance_name,
+        cwd=instance_cwd or project_path or task.cwd,
+    )
+    memory_provider_lines = build_memory_provider_lines(
+        preferred_memory_provider,
+        integrations=integrations,
+        toolsets=toolsets,
+    )
+    sections.extend(
+        [
+            "",
+            build_runtime_profile_summary(
+                preferred_memory_provider=preferred_memory_provider,
+                preferred_executor=preferred_executor,
+            ),
+            *executor_lines,
+            *memory_provider_lines,
+        ]
+    )
     if integrations:
         sections.extend(
             [
@@ -1366,6 +1492,14 @@ def _build_task_objective(
                 "of inventing access.",
             ]
         )
+    memory_protocol_lines = build_mempalace_protocol_lines(
+        integration for integration in integrations if integration.enabled
+    )
+    if memory_protocol_lines:
+        sections.extend(["", *memory_protocol_lines])
+    ecc_workspace_lines = build_ecc_workspace_lines(project_path or task.cwd)
+    if ecc_workspace_lines:
+        sections.extend(["", *ecc_workspace_lines])
     return "\n".join(sections)
 
 
@@ -1390,6 +1524,20 @@ def _project_skillbook_pins(
         explicit_pins=explicit_pins,
         project_label=project.label,
         project_path=project.path,
+        toolsets=sorted(
+            {
+                *{
+                    toolset
+                    for mission in missions
+                    for toolset in mission.toolsets
+                },
+                *{
+                    toolset
+                    for task in task_blueprints
+                    for toolset in task.toolsets
+                },
+            }
+        ),
     )
 
 
@@ -1401,6 +1549,8 @@ def _build_task_views(
     task_blueprints: list[TaskBlueprintView],
     skill_pins: list[SkillPinView],
     integrations: list[IntegrationView],
+    preferred_memory_provider: str = DEFAULT_HERMES_MEMORY_PROVIDER,
+    preferred_executor: str = DEFAULT_HERMES_EXECUTOR,
 ) -> list[DashboardTaskView]:
     project_by_id = {project.id: project for project in projects}
     instance_by_id = {instance.id: instance for instance in instances}
@@ -1427,12 +1577,18 @@ def _build_task_views(
         latest_mission = related_missions[0] if related_missions else None
         project = project_by_id.get(task.project_id) if task.project_id is not None else None
         instance = instance_by_id.get(task.instance_id) if task.instance_id is not None else None
+        task = _attach_task_tool_policy(
+            task,
+            project_label=project.label if project is not None else None,
+            project_path=project.path if project is not None else None,
+        )
         scoped_skills = materialize_skillbook_pins(
             task.project_id or 0,
             task.objective_template,
             explicit_pins=skills_by_project.get(task.project_id or -1, []),
             project_label=project.label if project is not None else None,
             project_path=project.path if project is not None else None,
+            toolsets=task.toolsets,
         )
         scoped_integrations = [
             *integrations_by_project.get(None, []),
@@ -1451,6 +1607,12 @@ def _build_task_views(
                 task,
                 skill_pins=scoped_skills,
                 integrations=scoped_integrations,
+                toolsets=task.toolsets,
+                preferred_memory_provider=preferred_memory_provider,
+                preferred_executor=preferred_executor,
+                instance_name=instance.name if instance is not None else None,
+                instance_cwd=task.cwd or (project.path if project is not None else None),
+                project_path=project.path if project is not None else task.cwd,
             ),
             instance_id=instance_id,
             project_id=task.project_id,
@@ -1470,7 +1632,19 @@ def _build_task_views(
             auto_recover_limit=task.auto_recover_limit,
             reflex_cooldown_seconds=task.reflex_cooldown_seconds,
             allow_failover=task.allow_failover,
+            toolsets=task.toolsets,
             start_immediately=True,
+            tool_policy=task.tool_policy,
+            preferred_memory_provider=preferred_memory_provider,
+            preferred_memory_provider_label=memory_provider_label(
+                preferred_memory_provider
+            ),
+            preferred_executor=preferred_executor,
+            preferred_executor_label=executor_label(preferred_executor),
+            runtime_profile_summary=build_runtime_profile_summary(
+                preferred_memory_provider=preferred_memory_provider,
+                preferred_executor=preferred_executor,
+            ),
         )
         tasks.append(
             DashboardTaskView(
@@ -1511,6 +1685,7 @@ def _build_task_inbox_items(
     tasks: list[DashboardTaskView],
     playbooks: list[PlaybookView],
     projects: list[ProjectView],
+    integrations: list[IntegrationView],
 ) -> list[DashboardTaskInboxItemView]:
     items: list[DashboardTaskInboxItemView] = []
     instance_by_id = {instance.id: instance for instance in instances}
@@ -1662,6 +1837,10 @@ def _build_task_inbox_items(
             continue
 
         if mission.status in {"paused", "completed"} and mission.last_checkpoint:
+            uses_mempalace = has_mempalace_integration(
+                integrations,
+                project_id=mission.project_id,
+            )
             add_item(
                 item_id=f"mission:{mission.id}:handoff",
                 kind="checkpoint_ready",
@@ -1669,11 +1848,19 @@ def _build_task_inbox_items(
                 urgency="ready",
                 lane_label=lane_label,
                 project_label=mission.project_label,
-                title=f"Handoff ready from {mission.name}",
+                title=(
+                    f"Handoff and memory writeback ready from {mission.name}"
+                    if uses_mempalace
+                    else f"Handoff ready from {mission.name}"
+                ),
                 summary=_summarize_text(mission.last_checkpoint),
                 recommended_action=_mission_action(
                     mission,
-                    "Review the checkpoint and resume only when the next slice is clear.",
+                    (
+                        MEMPALACE_WRITEBACK_ACTION
+                        if uses_mempalace
+                        else "Review the checkpoint and resume only when the next slice is clear."
+                    ),
                 ),
                 jump_label="View mission",
                 mission_id=mission.id,
@@ -1877,6 +2064,8 @@ def build_ops_mesh(
     teams: list[TeamView] | None = None,
     operators: list[OperatorView] | None = None,
     remote_requests: list[RemoteRequestView] | None = None,
+    preferred_memory_provider: str = DEFAULT_HERMES_MEMORY_PROVIDER,
+    preferred_executor: str = DEFAULT_HERMES_EXECUTOR,
 ) -> DashboardOpsMeshView:
     skills_by_project: dict[int, list[SkillPinView]] = {}
     missions_by_project: dict[int, list[MissionView]] = {}
@@ -1897,6 +2086,8 @@ def build_ops_mesh(
         task_blueprints=task_blueprints,
         skill_pins=skill_pins,
         integrations=integrations,
+        preferred_memory_provider=preferred_memory_provider,
+        preferred_executor=preferred_executor,
     )
     inbox_items = _build_task_inbox_items(
         instances=instances,
@@ -1904,6 +2095,7 @@ def build_ops_mesh(
         tasks=tasks,
         playbooks=playbooks,
         projects=projects,
+        integrations=integrations,
     )
 
     attention = sum(task.status == "attention" for task in tasks)
@@ -2058,7 +2250,21 @@ class OpsMeshService:
             self._task = None
 
     async def list_task_blueprint_views(self) -> list[TaskBlueprintView]:
-        return [_serialize_task(row) for row in await self.database.list_task_blueprints()]
+        projects = {
+            int(project["id"]): project for project in await self.database.list_projects()
+        }
+        tasks: list[TaskBlueprintView] = []
+        for row in await self.database.list_task_blueprints():
+            task = _serialize_task(row)
+            project = projects.get(task.project_id) if task.project_id is not None else None
+            tasks.append(
+                _attach_task_tool_policy(
+                    task,
+                    project_label=str(project["label"]) if project is not None else None,
+                    project_path=str(project["path"]) if project is not None else None,
+                )
+            )
+        return tasks
 
     async def list_vault_secret_views(self) -> list[VaultSecretView]:
         return await self.vault.list_secret_views()
@@ -2153,6 +2359,22 @@ class OpsMeshService:
         ]
 
     async def create_task_blueprint(self, payload: TaskBlueprintCreate) -> TaskBlueprintView:
+        project = (
+            await self.database.get_project(payload.project_id)
+            if payload.project_id is not None
+            else None
+        )
+        resolved_toolsets = infer_hermes_toolsets(
+            payload.objective_template,
+            explicit_toolsets=payload.toolsets,
+            project_label=str(project["label"]) if project is not None else None,
+            project_path=(str(project["path"]) if project is not None else payload.cwd),
+            setup_mode="local",
+            use_builtin_agents=payload.use_builtin_agents,
+            run_verification=payload.run_verification,
+            cadence_minutes=payload.cadence_minutes,
+        )
+        payload = payload.model_copy(update={"toolsets": resolved_toolsets})
         task_id = await self.database.create_task_blueprint(
             name=payload.name,
             summary=payload.summary,
@@ -2173,7 +2395,11 @@ class OpsMeshService:
         )
         row = await self.database.get_task_blueprint(task_id)
         assert row is not None
-        return _serialize_task(row)
+        return _attach_task_tool_policy(
+            _serialize_task(row),
+            project_label=str(project["label"]) if project is not None else None,
+            project_path=str(project["path"]) if project is not None else None,
+        )
 
     async def delete_task_blueprint(self, task_id: int) -> None:
         await self.database.delete_task_blueprint(task_id)
@@ -2215,6 +2441,97 @@ class OpsMeshService:
 
     async def delete_notification_route(self, route_id: int) -> None:
         await self.database.delete_notification_route(route_id)
+
+    async def test_notification_route(
+        self,
+        route_id: int,
+        *,
+        event_type: str | None = None,
+    ) -> NotificationRouteTestResultView:
+        await self._migrate_legacy_secret_refs()
+        route = next(
+            (
+                row
+                for row in await self.database.list_notification_routes()
+                if int(row["id"]) == route_id
+            ),
+            None,
+        )
+        if route is None:
+            raise ValueError(f"Unknown notification route {route_id}")
+
+        selected_event_type = _sample_event_type_for_route(
+            route.get("events"),
+            explicit_event_type=event_type,
+        )
+        delivered_at = utcnow()
+        payload = {
+            "type": selected_event_type,
+            "createdAt": delivered_at,
+            "test": True,
+            "routeId": route_id,
+            "routeName": str(route.get("name") or f"Route {route_id}"),
+            "summary": "OpenZues test delivery ping.",
+            "target": str(route.get("target") or ""),
+        }
+        secret_id = route.get("vault_secret_id")
+        secret_token = (
+            await self.vault.get_secret_value(int(secret_id))
+            if secret_id is not None
+            else (str(route.get("secret_token")) if route.get("secret_token") else None)
+        )
+
+        ok = True
+        error: str | None = None
+        try:
+            await asyncio.to_thread(
+                self._post_webhook,
+                route,
+                selected_event_type,
+                payload,
+                secret_token,
+            )
+            last_result = f"Delivered {selected_event_type} (test)"
+            summary = (
+                f"Delivered a test ping for `{selected_event_type}` to "
+                f"`{route.get('name') or f'Route {route_id}'}`."
+            )
+            await self.database.update_notification_route(
+                route_id,
+                last_delivery_at=delivered_at,
+                last_result=last_result,
+                last_error=None,
+            )
+        except Exception as exc:
+            ok = False
+            error = str(exc)[:240]
+            last_result = f"Failed {selected_event_type} (test)"
+            summary = (
+                f"Test delivery for `{selected_event_type}` failed on "
+                f"`{route.get('name') or f'Route {route_id}'}`."
+            )
+            await self.database.update_notification_route(
+                route_id,
+                last_delivery_at=delivered_at,
+                last_result=last_result,
+                last_error=error,
+            )
+
+        refreshed_route = next(
+            route_view
+            for route_view in await self.list_notification_route_views()
+            if route_view.id == route_id
+        )
+        return NotificationRouteTestResultView(
+            ok=ok,
+            route_id=route_id,
+            route_name=refreshed_route.name,
+            target=refreshed_route.target,
+            event_type=selected_event_type,
+            summary=summary,
+            error=error,
+            route=refreshed_route,
+        )
 
     async def create_integration(self, payload: IntegrationCreate) -> IntegrationView:
         await self._migrate_legacy_secret_refs()
@@ -2662,6 +2979,11 @@ class OpsMeshService:
             int(project["id"]): project for project in await self.database.list_projects()
         }
         project = projects.get(task.project_id) if task.project_id is not None else None
+        task = _attach_task_tool_policy(
+            task,
+            project_label=str(project["label"]) if project is not None else None,
+            project_path=str(project["path"]) if project is not None else None,
+        )
         skill_pins = [
             skill
             for skill in await self.list_skill_pin_views()
@@ -2673,13 +2995,37 @@ class OpsMeshService:
             if integration.enabled
             and integration.project_id in {None, task.project_id}
         ]
+        skill_pins = materialize_skillbook_pins(
+            task.project_id or 0,
+            task.objective_template,
+            explicit_pins=skill_pins,
+            project_label=str(project["label"]) if project is not None else None,
+            project_path=str(project["path"]) if project is not None else None,
+            toolsets=task.toolsets,
+        )
+        preferred_memory_provider, preferred_executor = await load_saved_runtime_preferences(
+            self.database
+        )
         session_key = None
         instance_id: int | None
+        resolved_instance_name: str | None = None
+        resolved_instance_cwd: str | None = None
         if self.launch_routing is not None:
             launch_route = await self.launch_routing.describe(task=task)
             session_key = launch_route.session_key
             if launch_route.resolved_instance is not None:
                 instance_id = launch_route.resolved_instance.id
+                resolved_instance_name = launch_route.resolved_instance.label
+                selected_instance = next(
+                    (
+                        item
+                        for item in await self.manager.list_views()
+                        if item.id == instance_id
+                    ),
+                    None,
+                )
+                if selected_instance is not None:
+                    resolved_instance_cwd = selected_instance.cwd
             else:
                 raise ValueError("No instance is available for this task blueprint.")
         else:
@@ -2690,6 +3036,10 @@ class OpsMeshService:
                 instance_id = connected or (instances[0].id if instances else None)
             if instance_id is None:
                 raise ValueError("No instance is available for this task blueprint.")
+            selected_instance = next((item for item in instances if item.id == instance_id), None)
+            if selected_instance is not None:
+                resolved_instance_name = selected_instance.name
+                resolved_instance_cwd = selected_instance.cwd
 
         return MissionDraftView(
             name=task.name,
@@ -2697,6 +3047,13 @@ class OpsMeshService:
                 task,
                 skill_pins=skill_pins,
                 integrations=integrations,
+                toolsets=task.toolsets,
+                preferred_memory_provider=preferred_memory_provider,
+                preferred_executor=preferred_executor,
+                instance_name=resolved_instance_name,
+                instance_cwd=task.cwd
+                or (str(project["path"]) if project is not None else resolved_instance_cwd),
+                project_path=str(project["path"]) if project is not None else task.cwd,
             ),
             instance_id=instance_id,
             project_id=task.project_id,
@@ -2717,7 +3074,19 @@ class OpsMeshService:
             auto_recover_limit=task.auto_recover_limit,
             reflex_cooldown_seconds=task.reflex_cooldown_seconds,
             allow_failover=task.allow_failover,
+            toolsets=task.toolsets,
             start_immediately=True,
+            tool_policy=task.tool_policy,
+            preferred_memory_provider=preferred_memory_provider,
+            preferred_memory_provider_label=memory_provider_label(
+                preferred_memory_provider
+            ),
+            preferred_executor=preferred_executor,
+            preferred_executor_label=executor_label(preferred_executor),
+            runtime_profile_summary=build_runtime_profile_summary(
+                preferred_memory_provider=preferred_memory_provider,
+                preferred_executor=preferred_executor,
+            ),
         )
 
     async def build_task_draft(self, task_id: int) -> MissionDraftView:
@@ -2826,6 +3195,7 @@ class OpsMeshService:
             tasks=task_views,
             playbooks=current_playbooks,
             projects=[],
+            integrations=await self.list_integration_views(),
         )
         missions_by_id = {mission.id: mission for mission in current_missions}
         active_signatures: dict[str, str] = {}

@@ -76,6 +76,7 @@ async def test_database_round_trip(tmp_path) -> None:
         auto_recover_limit=2,
         reflex_cooldown_seconds=900,
         allow_failover=True,
+        toolsets=["safe", "skills", "terminal"],
     )
     await database.append_mission_checkpoint(
         mission_id=mission_id,
@@ -121,6 +122,7 @@ async def test_database_round_trip(tmp_path) -> None:
             "auto_recover_limit": 2,
             "reflex_cooldown_seconds": 900,
             "allow_failover": True,
+            "toolsets": ["safe", "skills", "terminal"],
             "run_until_complete": False,
             "continuation_cooldown_minutes": 10,
         },
@@ -148,6 +150,7 @@ async def test_database_round_trip(tmp_path) -> None:
         auto_recover_limit=2,
         reflex_cooldown_seconds=900,
         allow_failover=True,
+        toolsets=["hermes-cli", "browser"],
     )
     await database.upsert_setup_wizard_session(
         {
@@ -199,6 +202,7 @@ async def test_database_round_trip(tmp_path) -> None:
     assert missions[0]["name"] == "Nightly builder"
     assert missions[0]["session_key"] == "launch:mode:saved_lane:task:1:project:1:operator:1:lane:1"
     assert missions[0]["allow_failover"] == 1
+    assert missions[0]["toolsets"] == ["safe", "skills", "terminal"]
     assert checkpoints[0]["summary"] == "Verified the first milestone."
     assert remote_request_id == remote_requests[0]["id"]
     assert remote_requests[0]["payload"]["name"] == "Nightly builder"
@@ -213,6 +217,7 @@ async def test_database_round_trip(tmp_path) -> None:
     assert gateway_bootstrap["task_blueprint_id"] == task_id
     assert gateway_bootstrap["last_route_instance_id"] == instance_id
     assert gateway_bootstrap["model"] == "gpt-5.4"
+    assert gateway_bootstrap["toolsets"] == ["hermes-cli", "browser"]
     assert wizard_session is not None
     assert wizard_session["session"]["mode"] == "remote"
     assert wizard_session["session"]["flow"] == "advanced"

@@ -180,6 +180,28 @@ def _looks_like_recovery_request(text: str) -> bool:
     return _contains_any(text, RECOVERY_PHRASES)
 
 
+def _gateway_needs_repair(dashboard: DashboardView) -> bool:
+    gateway = dashboard.gateway_capability
+    launch_route = gateway.launch_policy.launch_route
+    return (
+        gateway.level == "critical"
+        or gateway.inventory.tracked_gap_count > 0
+        or gateway.approval_posture.approval_count > 0
+        or (launch_route is not None and launch_route.status == "repair")
+        or (
+            gateway.connected_lane_health.total_count > 0
+            and gateway.connected_lane_health.ready_count == 0
+        )
+    )
+
+
+def _gateway_repair_reason(dashboard: DashboardView) -> str:
+    gateway = dashboard.gateway_capability
+    if gateway.warnings:
+        return gateway.warnings[0]
+    return gateway.summary
+
+
 def _mission_phase_label(mission: MissionView) -> str:
     if mission.phase == "executing":
         return "executing"
@@ -278,6 +300,7 @@ def _create_prompt_mission(prompt: str, dashboard: DashboardView) -> MissionCrea
         auto_recover_limit=2,
         reflex_cooldown_seconds=900,
         allow_failover=True,
+        toolsets=[],
         start_immediately=True,
     )
 
@@ -303,6 +326,10 @@ def _find_opportunity(
         if match is not None:
             return match
     return opportunities[0] if opportunities else None
+
+
+def _find_gateway_repair_opportunity(dashboard: DashboardView) -> DashboardOpportunityView | None:
+    return _find_opportunity(dashboard, preferred_kinds=("gateway_repair",))
 
 
 def _find_mission(dashboard: DashboardView, mission_id: int | None) -> MissionView | None:
@@ -397,6 +424,13 @@ def _find_signal_opportunity(
     )
 
 
+def _find_gateway_signal(dashboard: DashboardView) -> DashboardSignalView | None:
+    return next(
+        (signal for signal in dashboard.radar.signals if signal.id == "gateway/capability"),
+        None,
+    )
+
+
 def _matches_mission_payload(mission: MissionView, payload: MissionCreate) -> bool:
     return mission.status in {"active", "blocked", "paused"} and mission_matches_payload(
         mission,
@@ -452,6 +486,7 @@ def _build_recovery_payload(mission: MissionView) -> MissionCreate:
         auto_recover_limit=2,
         reflex_cooldown_seconds=900,
         allow_failover=True,
+        toolsets=mission.toolsets,
         start_immediately=True,
     )
 
@@ -482,6 +517,7 @@ def _build_hardener_payload(mission: MissionView) -> MissionCreate:
         auto_recover_limit=2,
         reflex_cooldown_seconds=900,
         allow_failover=True,
+        toolsets=mission.toolsets,
         start_immediately=True,
     )
 
@@ -525,6 +561,9 @@ class ApprovalAutopilotDecision:
 
 def plan_control_chat(prompt: str, dashboard: DashboardView) -> ControlChatPlan:
     normalized = _normalize_prompt(prompt)
+    gateway_needs_repair = _gateway_needs_repair(dashboard)
+    gateway_repair = _find_gateway_repair_opportunity(dashboard)
+    gateway_reason = _gateway_repair_reason(dashboard)
     active_in_progress = [
         mission
         for mission in _sort_missions(dashboard.missions)
@@ -549,12 +588,17 @@ def plan_control_chat(prompt: str, dashboard: DashboardView) -> ControlChatPlan:
             if mission.status in {"paused", "completed", "failed"} and mission.last_checkpoint
         )
         connected_lanes = sum(1 for instance in dashboard.instances if instance.connected)
+        gateway_note = ""
+        if gateway_needs_repair:
+            gateway_note = f" Gateway Doctor says: {dashboard.gateway_capability.summary}"
+            if gateway_repair is not None:
+                gateway_note += f" `{gateway_repair.title}` is the bounded repair move."
         return ControlChatPlan(
             action_kind="observe",
             reply=(
                 f"{len(active_in_progress)} mission(s) are actively running, "
                 f"{len(blocked)} are blocked, {ready_handoffs} have checkpoint handoffs ready, "
-                f"and {connected_lanes} Codex lane(s) are connected."
+                f"and {connected_lanes} Codex lane(s) are connected.{gateway_note}"
             ),
         )
 
@@ -597,6 +641,30 @@ def plan_control_chat(prompt: str, dashboard: DashboardView) -> ControlChatPlan:
                     f"`{approval_block.name}` is blocked on an approval gate, so I did not force "
                     "it "
                     "forward. Resolve the approval and then tell me to continue again."
+                ),
+            )
+
+        if gateway_needs_repair:
+            if gateway_repair is not None:
+                return ControlChatPlan(
+                    action_kind="launch_opportunity",
+                    opportunity_id=gateway_repair.id,
+                    target_label=gateway_repair.title,
+                    mission_payload=MissionCreate.model_validate(
+                        gateway_repair.mission_draft.model_dump()
+                    ),
+                    reply=(
+                        f"I launched `{gateway_repair.title}` because Gateway Doctor says "
+                        f"{gateway_reason.rstrip('.')} and that needs repair before another "
+                        "recovery, hardening pass, or fresh launch."
+                    ),
+                )
+            return ControlChatPlan(
+                action_kind="observe",
+                reply=(
+                    f"I held the next launch because Gateway Doctor says "
+                    f"{gateway_reason.rstrip('.')}. Repair the gateway posture before asking "
+                    "me to continue again."
                 ),
             )
 
@@ -735,6 +803,7 @@ def plan_control_chat(prompt: str, dashboard: DashboardView) -> ControlChatPlan:
 
 
 def plan_attention_queue(dashboard: DashboardView) -> AttentionQueuePlan | None:
+    gateway_needs_repair = _gateway_needs_repair(dashboard)
     active_in_progress = any(
         mission.status == "active" and mission.in_progress for mission in dashboard.missions
     )
@@ -815,6 +884,42 @@ def plan_attention_queue(dashboard: DashboardView) -> AttentionQueuePlan | None:
 
     if active_in_progress:
         return None
+
+    gateway_signal = _find_gateway_signal(dashboard)
+    if gateway_needs_repair and gateway_signal is not None:
+        gateway_repair = _find_gateway_repair_opportunity(dashboard)
+        if gateway_repair is not None:
+            return AttentionQueuePlan(
+                signal_id=gateway_signal.id,
+                signal_fingerprint=_find_signal_mission_fingerprint(gateway_signal, dashboard),
+                signal_level=gateway_signal.level,
+                action_kind="launch_opportunity",
+                status="executed",
+                opportunity_id=gateway_repair.id,
+                target_label=gateway_repair.title,
+                mission_payload=MissionCreate.model_validate(
+                    gateway_repair.mission_draft.model_dump()
+                ),
+                reply=(
+                    f"I launched `{gateway_repair.title}` from the attention queue because "
+                    f"Gateway Doctor says {_gateway_repair_reason(dashboard).rstrip('.')} and "
+                    "the queue should repair the gateway posture before auto-launching more "
+                    "follow-through work."
+                ),
+            )
+        return AttentionQueuePlan(
+            signal_id=gateway_signal.id,
+            signal_fingerprint=_find_signal_mission_fingerprint(gateway_signal, dashboard),
+            signal_level=gateway_signal.level,
+            action_kind="observe",
+            status="escalated",
+            target_label=gateway_signal.title,
+            reply=(
+                f"I held the attention queue because Gateway Doctor says "
+                f"{_gateway_repair_reason(dashboard).rstrip('.')}. There is no bounded gateway "
+                "repair draft attached yet."
+            ),
+        )
 
     for signal in actionable_signals:
         if signal.mission_id is not None and signal.id.endswith("-failed"):
@@ -1058,6 +1163,7 @@ class ControlChatService:
             for row in await self.database.list_control_chat_messages(limit=limit)
         ]
         attention_queue = getattr(dashboard, "attention_queue", None)
+        gateway_needs_repair = _gateway_needs_repair(dashboard)
         active_running = sum(
             1
             for mission in dashboard.missions
@@ -1070,9 +1176,21 @@ class ControlChatService:
                 "Type the outcome you want and Zues will wait, nudge, recover, or harden based on "
                 "the current mission state."
             )
+            if gateway_needs_repair:
+                summary = (
+                    f"{summary} Gateway Doctor still warns: "
+                    f"{dashboard.gateway_capability.summary}"
+                )
             placeholder = (
                 "Try: keep going, status, recover the failed run, or harden the finished one"
             )
+        elif gateway_needs_repair:
+            headline = "Chat is steering from Gateway Doctor"
+            summary = (
+                f"{dashboard.gateway_capability.summary} Chat will prefer the bounded gateway "
+                "repair move before broader launches."
+            )
+            placeholder = "Try: continue, status, or repair the gateway posture"
         elif attention_queue is not None and attention_queue.enabled:
             headline = "Chat steers while the attention queue keeps momentum alive"
             summary = (
@@ -1118,10 +1236,17 @@ class ControlChatService:
             AttentionQueueActionView.model_validate(row)
             for row in await self.database.list_attention_queue_actions(limit=limit)
         ]
+        gateway_needs_repair = _gateway_needs_repair(dashboard)
         critical = sum(signal.level == "critical" for signal in dashboard.radar.signals)
         if not enabled:
             headline = "Attention queue is manual"
             summary = "Autonomous follow-through is disabled, so Zues will only suggest actions."
+        elif gateway_needs_repair:
+            headline = "Attention queue is holding for gateway repair"
+            summary = (
+                f"{dashboard.gateway_capability.summary} The queue will prefer the bounded "
+                "gateway repair move before auto-launching more recoveries or hardeners."
+            )
         elif critical:
             headline = "Attention queue is autonomous"
             summary = (
