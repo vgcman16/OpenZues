@@ -4,6 +4,21 @@ OpenZues is a local-first Codex control plane built for operators who want more 
 It speaks the official Codex App Server JSON-RPC protocol, keeps a live event timeline, surfaces approvals,
 tracks local projects, and folds GitHub context into the same dashboard.
 
+## Project status
+
+OpenZues is an open-source alpha.
+
+It is already useful for serious local operator workflows, especially on Windows with Codex Desktop, but it
+is still evolving quickly. The core control-plane experience is real today; the broader ecosystem surface is
+not complete yet.
+
+What that means in practice:
+
+- the strongest path today is local-first mission control, approvals, checkpoints, playbooks, routing, and operator oversight
+- Windows and Codex Desktop bridging are first-class; other environments are improving but less battle-tested
+- APIs, automation posture, and dashboard surfaces may still change quickly between releases
+- this is not yet full OpenClaw or Hermes end-to-end parity across channels, nodes, voice, browser runtime, or companion apps
+
 ## Why it exists
 
 OpenZues is optimized to beat "assistant wrapper" products on operator UX:
@@ -91,6 +106,25 @@ Or connect to a WebSocket endpoint when you have one available.
 - `pytest`
 - `ruff check .`
 - `mypy src`
+
+## What Is Still Missing
+
+These are the biggest gaps before OpenZues can claim broader control-plane parity:
+
+- multi-channel inbox and channel runtime surfaces
+- richer browser, canvas, and node runtime layers
+- voice wake and talk-mode experiences
+- companion app family and packaging breadth
+- more polished onboarding and operator docs for new contributors
+
+If you open an issue or PR around one of those seams, that is helpful and on-strategy.
+
+## Open Source Conventions
+
+- License: [MIT](LICENSE)
+- Contribution guide: [CONTRIBUTING.md](CONTRIBUTING.md)
+- Security policy: [SECURITY.md](SECURITY.md)
+- Community expectations: [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
 
 ## Architecture
 

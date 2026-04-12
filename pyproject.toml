@@ -12,6 +12,13 @@ license = { text = "MIT" }
 authors = [
   { name = "OpenZues" }
 ]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.12",
+  "Framework :: FastAPI",
+]
 dependencies = [
   "aiosqlite>=0.21.0",
   "cryptography>=45.0.0",
@@ -34,6 +41,11 @@ dev = [
   "pytest-asyncio>=1.2.0",
   "ruff>=0.14.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/vgcman16/OpenZues"
+Repository = "https://github.com/vgcman16/OpenZues"
+Issues = "https://github.com/vgcman16/OpenZues/issues"
 
 [project.scripts]
 openzues = "openzues.cli:app"

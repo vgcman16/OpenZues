@@ -3,6 +3,11 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+.vscode/
+.idea/
 dist/
 build/
 *.pyc
@@ -11,6 +16,12 @@ build/
 *.db
 *.sqlite3
 *.log
+.DS_Store
+Thumbs.db
 .env
 .openzues/
 .forumforge/
+.tmp-*
+openzues-browser-check.png
+openzues-hermes-learning.png
+recovered_*.py
