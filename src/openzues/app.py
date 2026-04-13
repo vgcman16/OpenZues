@@ -62,6 +62,7 @@ from openzues.schemas import (
     MissionDraftView,
     MissionReflexRun,
     MissionView,
+    OutboundDeliveryReplayBatchView,
     NotificationRouteCreate,
     NotificationRouteTestResultView,
     NotificationRouteView,
@@ -1619,6 +1620,7 @@ def create_app(
         vault_secrets = await active_ops_mesh_service.list_vault_secret_views()
         integrations = await active_ops_mesh_service.list_integration_views()
         notification_routes = await active_ops_mesh_service.list_notification_route_views()
+        outbound_deliveries = await active_ops_mesh_service.list_outbound_delivery_views()
         skill_pins = await active_ops_mesh_service.list_skill_pin_views()
         lane_snapshots = await active_ops_mesh_service.list_lane_snapshot_views()
         teams = await active_access_service.list_team_views()
@@ -1673,6 +1675,7 @@ def create_app(
                 integrations,
                 notification_routes,
                 lane_snapshots,
+                outbound_deliveries=outbound_deliveries,
                 access_posture=access_posture,
                 teams=teams,
                 operators=operators,
@@ -2383,6 +2386,10 @@ def create_app(
             return await active_ops_mesh_service.test_notification_route(route_id)
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @fastapi_app.post("/api/notification-routes/replay")
+    async def replay_notification_routes(limit: int = 25) -> OutboundDeliveryReplayBatchView:
+        return await active_ops_mesh_service.replay_outbound_deliveries(limit=limit)
 
     @fastapi_app.post("/api/integrations")
     async def create_integration(payload: IntegrationCreate) -> IntegrationView:

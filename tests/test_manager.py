@@ -307,6 +307,23 @@ class FakeRefreshClient:
         raise AssertionError(f"Unexpected method {method}")
 
 
+class FakeTimeoutBackoffClient:
+    def __init__(self, method: str) -> None:
+        self.method = method
+        self.calls: list[str] = []
+
+    async def call(
+        self,
+        method: str,
+        params: dict | None = None,
+        timeout: float = 30.0,
+    ) -> dict[str, object]:
+        del params, timeout
+        self.calls.append(method)
+        assert method == self.method
+        raise TimeoutError()
+
+
 @pytest.mark.asyncio
 async def test_interrupt_turn_uses_latest_active_turn_from_events(tmp_path) -> None:
     database = Database(tmp_path / "manager.db")
@@ -678,3 +695,63 @@ async def test_refresh_instance_keeps_cached_catalogs_when_optional_reads_timeou
     assert refreshed.loaded_thread_ids == ["thread_live"]
     assert "app/list" in client.calls
     assert "plugin/list" in client.calls
+
+
+@pytest.mark.asyncio
+async def test_safe_refresh_call_backs_off_after_timeout(tmp_path) -> None:
+    database = Database(tmp_path / "manager.db")
+    await database.initialize()
+    manager = RuntimeManager(database, BroadcastHub())
+    client = FakeTimeoutBackoffClient("thread/list")
+    runtime = InstanceRuntime(
+        instance_id=1,
+        name="Local Codex Desktop",
+        transport="desktop",
+        command=None,
+        args=None,
+        websocket_url=None,
+        cwd="C:/workspace",
+        auto_connect=False,
+        client=client,  # type: ignore[arg-type]
+        connected=True,
+    )
+    manager.instances[1] = runtime
+
+    first = await manager._safe_refresh_call(runtime, "thread/list", {"limit": 30})
+    second = await manager._safe_refresh_call(runtime, "thread/list", {"limit": 30})
+
+    assert first is None
+    assert second is None
+    assert client.calls == ["thread/list"]
+    assert "thread/list" in runtime.refresh_backoff_until
+
+
+@pytest.mark.asyncio
+async def test_list_mcp_server_status_backs_off_after_timeout(tmp_path) -> None:
+    database = Database(tmp_path / "manager.db")
+    await database.initialize()
+    manager = RuntimeManager(database, BroadcastHub())
+    client = FakeTimeoutBackoffClient("mcpServerStatus/list")
+    cached_status = [{"name": "Cached MCP", "status": "ready"}]
+    runtime = InstanceRuntime(
+        instance_id=1,
+        name="Local Codex Desktop",
+        transport="desktop",
+        command=None,
+        args=None,
+        websocket_url=None,
+        cwd="C:/workspace",
+        auto_connect=False,
+        client=client,  # type: ignore[arg-type]
+        connected=True,
+        mcp_server_status=cached_status,
+    )
+    manager.instances[1] = runtime
+
+    first = await manager.list_mcp_server_status(1, refresh=True)
+    second = await manager.list_mcp_server_status(1, refresh=True)
+
+    assert first == cached_status
+    assert second == cached_status
+    assert client.calls == ["mcpServerStatus/list"]
+    assert "mcpServerStatus/list" in runtime.refresh_backoff_until

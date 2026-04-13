@@ -55,6 +55,7 @@ from openzues.services.recall import RecallService
 from openzues.services.remote_ops import RemoteOpsService
 from openzues.services.runtime_updates import RuntimeUpdateService
 from openzues.services.setup import SetupService
+from openzues.services.swarm import SWARM_COLLABORATION_MODE
 from openzues.services.vault import VaultService
 from openzues.settings import Settings, settings
 
@@ -673,6 +674,108 @@ def _emit_route_test(payload: dict[str, object], *, json_output: bool) -> None:
     error = str(payload.get("error") or "").strip()
     if error:
         typer.echo(f"error: {error}")
+
+
+def _emit_routes(payload: list[dict[str, object]], *, json_output: bool) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+    if not payload:
+        typer.echo("No notification routes saved.")
+        return
+    for route in payload:
+        route_id = route.get("id")
+        name = str(route.get("name") or "").strip() or f"Route {route_id}"
+        kind = str(route.get("kind") or "").strip() or "webhook"
+        target = str(route.get("target") or "").strip()
+        enabled = bool(route.get("enabled"))
+        events = route.get("events")
+        conversation_target = route.get("conversation_target")
+        last_result = str(route.get("last_result") or "").strip()
+        typer.echo(f"[{route_id}] {name} ({kind})")
+        typer.echo(f"  enabled: {enabled}")
+        if target:
+            typer.echo(f"  target: {target}")
+        if isinstance(events, list) and events:
+            rendered_events = ", ".join(
+                str(event) for event in events if str(event).strip()
+            )
+            typer.echo("  events: " + rendered_events)
+        if isinstance(conversation_target, dict):
+            summary = str(conversation_target.get("summary") or "").strip()
+            if summary:
+                typer.echo(f"  conversation target: {summary}")
+        if last_result:
+            typer.echo(f"  last result: {last_result}")
+
+
+def _emit_outbound_deliveries(payload: list[dict[str, object]], *, json_output: bool) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+    if not payload:
+        typer.echo("No outbound deliveries recorded.")
+        return
+    for delivery in payload:
+        delivery_id = delivery.get("id")
+        state = str(delivery.get("delivery_state") or "").strip() or "pending"
+        event_type = str(delivery.get("event_type") or "").strip()
+        route_name = str(delivery.get("route_name") or "").strip()
+        summary = str(delivery.get("message_summary") or "").strip()
+        session_key = str(delivery.get("session_key") or "").strip()
+        conversation_target = delivery.get("conversation_target")
+        typer.echo(f"[{delivery_id}] {state} {event_type}".strip())
+        if route_name:
+            typer.echo(f"  route: {route_name}")
+        if summary:
+            typer.echo(f"  summary: {summary}")
+        if session_key:
+            typer.echo(f"  session: {session_key}")
+        if isinstance(conversation_target, dict):
+            target_summary = str(conversation_target.get("summary") or "").strip()
+            if target_summary:
+                typer.echo(f"  conversation target: {target_summary}")
+        last_error = str(delivery.get("last_error") or "").strip()
+        if last_error:
+            typer.echo(f"  error: {last_error}")
+
+
+def _emit_outbound_delivery_replay(payload: dict[str, object], *, json_output: bool) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+    summary = str(payload.get("summary") or "").strip()
+    if summary:
+        typer.echo(summary)
+    typer.echo(f"ok: {bool(payload.get('ok'))}")
+    typer.echo(
+        "counts: "
+        + ", ".join(
+            [
+                f"attempted={int(payload.get('attempted_count') or 0)}",
+                f"replayed={int(payload.get('replayed_count') or 0)}",
+                f"failed={int(payload.get('failed_count') or 0)}",
+                f"deferred={int(payload.get('deferred_count') or 0)}",
+                f"maxed={int(payload.get('skipped_max_retries_count') or 0)}",
+            ]
+        )
+    )
+    deliveries = payload.get("deliveries")
+    if not isinstance(deliveries, list):
+        return
+    for item in deliveries:
+        if not isinstance(item, dict):
+            continue
+        status = "ok" if bool(item.get("ok")) else "error"
+        route_name = str(item.get("route_name") or "").strip()
+        event_type = str(item.get("event_type") or "").strip()
+        typer.echo(f"[{status}] {event_type} -> {route_name}".strip())
+        detail = str(item.get("summary") or "").strip()
+        if detail:
+            typer.echo(f"  summary: {detail}")
+        error = str(item.get("error") or "").strip()
+        if error:
+            typer.echo(f"  error: {error}")
 
 
 def _first_text_line(value: object, *, limit: int = 220) -> str:
@@ -1846,6 +1949,21 @@ def _build_bootstrap_payload(
     )
 
 
+def _apply_swarm_launch_override(
+    payload: MissionCreate,
+    *,
+    swarm_enabled: bool,
+) -> MissionCreate:
+    if not swarm_enabled:
+        return payload
+    return payload.model_copy(
+        update={
+            "swarm_enabled": True,
+            "collaboration_mode": SWARM_COLLABORATION_MODE,
+        }
+    )
+
+
 @app.command()
 def serve(
     host: str = typer.Option(settings.host, help="Host to bind."),
@@ -2159,6 +2277,11 @@ def launch_command(
         ...,
         help="Launchpad opportunity id from `openzues status --json` or the human status summary.",
     ),
+    swarm_enabled: bool = typer.Option(
+        False,
+        "--swarm",
+        help="Launch the selected draft through the native swarm constitution pipeline.",
+    ),
     plan_only: bool = typer.Option(
         False,
         "--plan",
@@ -2186,11 +2309,19 @@ def launch_command(
             )
 
         mission_payload = MissionCreate.model_validate(opportunity.mission_draft.model_dump())
+        mission_payload = _apply_swarm_launch_override(
+            mission_payload,
+            swarm_enabled=swarm_enabled,
+        )
         reason = str(opportunity.why_now or opportunity.summary or "").strip()
         if not reason:
             reason = "it is the strongest ready launchpad move right now."
         elif reason[-1] not in ".!?":
             reason = f"{reason}."
+        if swarm_enabled:
+            reason = (
+                f"{reason} The run will use the structured nine-role swarm constitution."
+            )
 
         if plan_only:
             return {
@@ -2206,6 +2337,7 @@ def launch_command(
                 "summary": opportunity.summary,
                 "why_now": opportunity.why_now,
                 "action_label": opportunity.action_label,
+                "swarm_enabled": mission_payload.swarm_enabled,
                 "mission_payload": mission_payload.model_dump(mode="json"),
             }
 
@@ -2221,6 +2353,7 @@ def launch_command(
             "summary": opportunity.summary,
             "why_now": opportunity.why_now,
             "action_label": opportunity.action_label,
+            "swarm_enabled": mission_payload.swarm_enabled,
         }
 
     try:
@@ -2324,6 +2457,61 @@ def routes_test_command(
 
     payload = _run(_run_with_services(_action))
     _emit_route_test(payload, json_output=json_output)
+
+
+@routes_app.command("list")
+def routes_list_command(
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit saved notification routes as JSON.",
+    ),
+) -> None:
+    async def _action(services: CliServices) -> list[dict[str, object]]:
+        return [
+            route.model_dump(mode="json")
+            for route in await services.ops_mesh.list_notification_route_views()
+        ]
+
+    payload = _run(_run_with_services(_action))
+    _emit_routes(payload, json_output=json_output)
+
+
+@routes_app.command("deliveries")
+def routes_deliveries_command(
+    limit: int = typer.Option(25, min=1, max=200, help="Maximum deliveries to return."),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit saved outbound deliveries as JSON.",
+    ),
+) -> None:
+    async def _action(services: CliServices) -> list[dict[str, object]]:
+        return [
+            delivery.model_dump(mode="json")
+            for delivery in await services.ops_mesh.list_outbound_delivery_views(limit=limit)
+        ]
+
+    payload = _run(_run_with_services(_action))
+    _emit_outbound_deliveries(payload, json_output=json_output)
+
+
+@routes_app.command("replay")
+def routes_replay_command(
+    limit: int = typer.Option(25, min=1, max=200, help="Maximum saved deliveries to inspect."),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit the replay summary as JSON.",
+    ),
+) -> None:
+    async def _action(services: CliServices) -> dict[str, object]:
+        return (
+            await services.ops_mesh.replay_outbound_deliveries(limit=limit)
+        ).model_dump(mode="json")
+
+    payload = _run(_run_with_services(_action))
+    _emit_outbound_delivery_replay(payload, json_output=json_output)
 
 
 @hermes_app.command("arm-shell")

@@ -430,6 +430,101 @@ def test_status_json_reuses_gateway_contract_and_surfaces_queue_plan(tmp_path, m
     assert cli_gateway == api_payload
 
 
+def test_routes_list_json_surfaces_saved_notification_routes(tmp_path, monkeypatch) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch)
+
+    settings = Settings(data_dir=data_dir, db_path=data_dir / "openzues.db")
+    api_app = create_app(settings)
+    with TestClient(api_app, client=("testclient", 50000)) as client:
+        response = client.post(
+            "/api/notification-routes",
+            json={
+                "name": "Deploy Room",
+                "kind": "webhook",
+                "target": "https://example.invalid/deploy-room",
+                "events": ["mission/completed"],
+                "conversation_target": {
+                    "channel": "slack",
+                    "account_id": "workspace-bot",
+                    "peer_kind": "channel",
+                    "peer_id": "deploy-room",
+                },
+                "enabled": True,
+            },
+        )
+
+    assert response.status_code == 200, response.text
+
+    result = runner.invoke(app, ["routes", "list", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert len(payload) == 1
+    assert payload[0]["name"] == "Deploy Room"
+    assert payload[0]["events"] == ["mission/completed"]
+    assert payload[0]["conversation_target"]["channel"] == "slack"
+    assert payload[0]["conversation_target"]["peer_id"] == "deploy-room"
+
+
+def test_routes_deliveries_json_surfaces_saved_outbound_deliveries(tmp_path, monkeypatch) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch)
+
+    def fake_post_webhook(
+        self,  # noqa: ANN001
+        route: dict[str, object],
+        event_type: str,
+        event: dict[str, object],
+        secret_token: str | None,
+    ) -> None:
+        del self, route, event_type, event, secret_token
+
+    monkeypatch.setattr(
+        "openzues.services.ops_mesh.OpsMeshService._post_webhook",
+        fake_post_webhook,
+    )
+
+    settings = Settings(data_dir=data_dir, db_path=data_dir / "openzues.db")
+    api_app = create_app(settings)
+    with TestClient(api_app, client=("testclient", 50000)) as client:
+        route_response = client.post(
+            "/api/notification-routes",
+            json={
+                "name": "Deploy Room",
+                "kind": "webhook",
+                "target": "https://example.invalid/deploy-room",
+                "events": ["ops/inbox/*"],
+                "conversation_target": {
+                    "channel": "slack",
+                    "account_id": "workspace-bot",
+                    "peer_kind": "channel",
+                    "peer_id": "deploy-room",
+                },
+                "enabled": True,
+            },
+        )
+        assert route_response.status_code == 200, route_response.text
+        route_id = route_response.json()["id"]
+        test_response = client.post(f"/api/notification-routes/{route_id}/test")
+
+    assert test_response.status_code == 200, test_response.text
+
+    result = runner.invoke(app, ["routes", "deliveries", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert len(payload) == 1
+    assert payload[0]["route_name"] == "Deploy Room"
+    assert payload[0]["delivery_state"] == "delivered"
+    assert payload[0]["event_type"] == "ops/inbox/test"
+    assert payload[0]["conversation_target"]["channel"] == "slack"
+    assert payload[0]["conversation_target"]["peer_id"] == "deploy-room"
+    assert payload[0]["route_scope"]["route_match"] == "test"
+    assert payload[0]["event_payload"]["routeConversationTarget"]["peer_id"] == "deploy-room"
+    assert payload[0]["event_payload"]["summary"] == "OpenZues test delivery ping."
+
+
 def test_watch_json_defaults_to_saved_launch_handoff_task(monkeypatch) -> None:
     def fake_watch_api_json(
         base_url: str,
@@ -1037,6 +1132,113 @@ def test_launch_execute_creates_selected_launchpad_mission(monkeypatch) -> None:
     assert payload["mission_id"] is not None
     assert payload["target_label"] == "Stabilize Gateway Posture"
     assert "I launched `Stabilize gateway posture`" in payload["reply"]
+
+
+def test_launch_plan_can_force_swarm_constitution(monkeypatch) -> None:
+    draft = MissionDraftView(
+        name="Stabilize Gateway Posture",
+        objective="Repair the gateway posture before the next launch.",
+        instance_id=3,
+        project_id=None,
+        cwd="C:\\repo",
+        model="gpt-5.4-mini",
+        max_turns=3,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        toolsets=[],
+        start_immediately=True,
+    )
+    opportunity = SimpleNamespace(
+        id="gateway-repair",
+        title="Stabilize gateway posture",
+        summary="Repair the gateway before launching more work.",
+        why_now="Gateway Doctor says the saved launch posture needs repair.",
+        action_label="Load gateway repair",
+        mission_draft=draft,
+    )
+
+    async def fake_dashboard(_services):
+        return SimpleNamespace(launchpad=SimpleNamespace(opportunities=[opportunity]))
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace())
+
+    monkeypatch.setattr("openzues.cli._build_operator_dashboard", fake_dashboard)
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["launch", "gateway-repair", "--swarm", "--plan", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["mode"] == "plan"
+    assert payload["swarm_enabled"] is True
+    assert payload["mission_payload"]["swarm_enabled"] is True
+    assert payload["mission_payload"]["collaboration_mode"] == "swarm_constitution"
+    assert "swarm constitution" in payload["reply"].lower()
+
+
+def test_launch_execute_can_force_swarm_constitution(monkeypatch) -> None:
+    draft = MissionDraftView(
+        name="Stabilize Gateway Posture",
+        objective="Repair the gateway posture before the next launch.",
+        instance_id=3,
+        project_id=None,
+        cwd="C:\\repo",
+        model="gpt-5.4-mini",
+        max_turns=3,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        toolsets=[],
+        start_immediately=True,
+    )
+    opportunity = SimpleNamespace(
+        id="gateway-repair",
+        title="Stabilize gateway posture",
+        summary="Repair the gateway before launching more work.",
+        why_now="Gateway Doctor says the saved launch posture needs repair.",
+        action_label="Load gateway repair",
+        mission_draft=draft,
+    )
+
+    async def fake_dashboard(_services):
+        return SimpleNamespace(launchpad=SimpleNamespace(opportunities=[opportunity]))
+
+    class FakeMissionService:
+        async def create(self, payload):
+            assert payload.name == "Stabilize Gateway Posture"
+            assert payload.swarm_enabled is True
+            assert payload.collaboration_mode == "swarm_constitution"
+            return SimpleNamespace(id=44, name=payload.name)
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(mission_service=FakeMissionService()))
+
+    monkeypatch.setattr("openzues.cli._build_operator_dashboard", fake_dashboard)
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["launch", "gateway-repair", "--swarm", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["mode"] == "executed"
+    assert payload["executed"] is True
+    assert payload["swarm_enabled"] is True
+    assert payload["mission_id"] is not None
+    assert "swarm constitution" in payload["reply"].lower()
 
 
 def test_launch_rejects_unknown_launchpad_opportunity_id(monkeypatch) -> None:

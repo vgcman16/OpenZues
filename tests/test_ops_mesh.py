@@ -1755,6 +1755,145 @@ async def test_test_notification_route_delivers_webhook_ping(
 
 
 @pytest.mark.asyncio
+async def test_test_notification_route_records_outbound_delivery(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    route_id = await database.create_notification_route(
+        name="Deploy Hook",
+        kind="webhook",
+        target="https://example.invalid/deploy",
+        events=["ops/inbox/*"],
+        conversation_target={
+            "channel": "slack",
+            "account_id": "workspace-bot",
+            "peer_kind": "channel",
+            "peer_id": "deploy-room",
+        },
+        enabled=True,
+        secret_header_name=None,
+        secret_token=None,
+        vault_secret_id=None,
+    )
+
+    def fake_post_webhook(
+        self,  # noqa: ANN001
+        route: dict[str, object],
+        event_type: str,
+        event: dict[str, object],
+        secret_token: str | None,
+    ) -> None:
+        del self, route, event_type, event, secret_token
+
+    monkeypatch.setattr(OpsMeshService, "_post_webhook", fake_post_webhook)
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),
+        FakeMissionService([]),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.test_notification_route(route_id)
+    deliveries = await service.list_outbound_delivery_views()
+
+    assert result.delivery is not None
+    assert len(deliveries) == 1
+    assert deliveries[0].id == result.delivery.id
+    assert deliveries[0].delivery_state == "delivered"
+    assert deliveries[0].test_delivery is True
+    assert deliveries[0].route_scope.route_match == "test"
+    assert deliveries[0].message_summary == "OpenZues test delivery ping."
+    assert deliveries[0].conversation_target is not None
+    assert deliveries[0].event_payload is not None
+    assert deliveries[0].event_payload["summary"] == "OpenZues test delivery ping."
+    assert deliveries[0].event_payload["routeConversationTarget"]["peer_id"] == "deploy-room"
+    assert "slack" in deliveries[0].conversation_target.summary
+    assert "workspace-bot" in deliveries[0].conversation_target.summary
+    assert "deploy-room" in deliveries[0].conversation_target.summary
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_records_outbound_delivery_for_matching_event(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Deploy Room",
+        kind="webhook",
+        target="https://example.invalid/deploy",
+        events=["mission/*"],
+        conversation_target={
+            "channel": "slack",
+            "account_id": "workspace-bot",
+            "peer_kind": "channel",
+            "peer_id": "deploy-room",
+        },
+        enabled=True,
+        secret_header_name=None,
+        secret_token=None,
+        vault_secret_id=None,
+    )
+    deliveries: list[tuple[str, dict[str, object]]] = []
+
+    def fake_post_webhook(
+        self,  # noqa: ANN001
+        route: dict[str, object],
+        event_type: str,
+        event: dict[str, object],
+        secret_token: str | None,
+    ) -> None:
+        del self, route, secret_token
+        deliveries.append((event_type, event))
+
+    monkeypatch.setattr(OpsMeshService, "_post_webhook", fake_post_webhook)
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),
+        FakeMissionService([]),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    await service._deliver_notifications(
+        "mission/updated",
+        {
+            "summary": "Mission resumed on the routed channel.",
+            "sessionKey": "route-session-1",
+            "conversationTarget": {
+                "channel": "slack",
+                "account_id": "workspace-bot",
+                "peer_kind": "channel",
+                "peer_id": "deploy-room",
+            },
+        },
+    )
+    outbound_deliveries = await service.list_outbound_delivery_views()
+
+    assert len(deliveries) == 1
+    assert deliveries[0][0] == "mission/updated"
+    assert deliveries[0][1]["routeMatch"] == "peer"
+    assert outbound_deliveries[0].session_key == "route-session-1"
+    assert outbound_deliveries[0].delivery_state == "delivered"
+    assert outbound_deliveries[0].route_scope.route_match == "peer"
+    assert outbound_deliveries[0].conversation_target is not None
+    assert outbound_deliveries[0].conversation_target.peer_id == "deploy-room"
+    assert outbound_deliveries[0].event_payload is not None
+    assert outbound_deliveries[0].event_payload["routeMatch"] == "peer"
+    assert outbound_deliveries[0].event_payload["summary"] == "Mission resumed on the routed channel."
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_filters_notification_routes_by_conversation_target(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -2151,8 +2290,18 @@ def test_notification_route_test_api_updates_route_state(
     assert "slack" in route_summary
     assert "workspace-bot" in route_summary
     assert "deploy-room" in route_summary
+    assert payload["delivery"]["delivery_state"] == "delivered"
+    assert payload["delivery"]["route_scope"]["route_match"] == "test"
+    assert payload["delivery"]["conversation_target"]["peer_id"] == "deploy-room"
+    assert payload["delivery"]["event_payload"]["routeConversationTarget"]["peer_id"] == "deploy-room"
     assert dashboard["ops_mesh"]["notification_routes"][0]["last_result"] == (
         "Delivered ops/inbox/test (test)"
+    )
+    assert dashboard["ops_mesh"]["outbound_deliveries"][0]["delivery_state"] == "delivered"
+    assert dashboard["ops_mesh"]["outbound_deliveries"][0]["route_scope"]["route_match"] == "test"
+    assert (
+        dashboard["ops_mesh"]["outbound_deliveries"][0]["event_payload"]["summary"]
+        == "OpenZues test delivery ping."
     )
 
 

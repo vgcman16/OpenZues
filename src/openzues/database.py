@@ -235,6 +235,27 @@ class Database:
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS outbound_deliveries (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    route_id INTEGER,
+                    route_name TEXT NOT NULL,
+                    route_kind TEXT NOT NULL,
+                    route_target TEXT NOT NULL,
+                    event_type TEXT NOT NULL,
+                    session_key TEXT,
+                    conversation_target_json TEXT,
+                    route_scope_json TEXT NOT NULL,
+                    event_payload_json TEXT,
+                    message_summary TEXT NOT NULL,
+                    test_delivery INTEGER NOT NULL DEFAULT 0,
+                    delivery_state TEXT NOT NULL,
+                    attempt_count INTEGER NOT NULL DEFAULT 0,
+                    last_attempt_at TEXT,
+                    delivered_at TEXT,
+                    last_error TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
                 CREATE TABLE IF NOT EXISTS integrations (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     name TEXT NOT NULL,
@@ -295,6 +316,7 @@ class Database:
                     auto_recover_limit INTEGER NOT NULL DEFAULT 2,
                     reflex_cooldown_seconds INTEGER NOT NULL DEFAULT 900,
                     allow_failover INTEGER NOT NULL DEFAULT 1,
+                    swarm_state_json TEXT,
                     toolsets_json TEXT NOT NULL DEFAULT '[]',
                     in_progress INTEGER NOT NULL DEFAULT 0,
                     phase TEXT,
@@ -387,6 +409,7 @@ class Database:
             await self._ensure_column(
                 db, "missions", "allow_failover", "INTEGER NOT NULL DEFAULT 1"
             )
+            await self._ensure_column(db, "missions", "swarm_state_json", "TEXT")
             await self._ensure_column(db, "missions", "last_reflex_kind", "TEXT")
             await self._ensure_column(db, "missions", "last_reflex_at", "TEXT")
             await self._ensure_column(db, "missions", "task_blueprint_id", "INTEGER")
@@ -418,6 +441,7 @@ class Database:
             )
             await self._ensure_column(db, "notification_routes", "vault_secret_id", "INTEGER")
             await self._ensure_column(db, "notification_routes", "conversation_target_json", "TEXT")
+            await self._ensure_column(db, "outbound_deliveries", "event_payload_json", "TEXT")
             await self._ensure_column(db, "integrations", "vault_secret_id", "INTEGER")
             await self._ensure_column(db, "missions", "session_key", "TEXT")
             await self._ensure_column(db, "missions", "conversation_target_json", "TEXT")
@@ -438,6 +462,24 @@ class Database:
                 """
                 CREATE INDEX IF NOT EXISTS idx_notification_routes_vault_secret
                 ON notification_routes(vault_secret_id)
+                """
+            )
+            await db.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_outbound_deliveries_created
+                ON outbound_deliveries(id DESC)
+                """
+            )
+            await db.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_outbound_deliveries_route
+                ON outbound_deliveries(route_id, id DESC)
+                """
+            )
+            await db.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_outbound_deliveries_session
+                ON outbound_deliveries(session_key, id DESC)
                 """
             )
             await db.execute(
@@ -1235,6 +1277,154 @@ class Database:
             await db.execute("DELETE FROM notification_routes WHERE id = ?", (route_id,))
             await db.commit()
 
+    async def list_outbound_deliveries(
+        self,
+        *,
+        limit: int = 25,
+        states: list[str] | None = None,
+        newest_first: bool = True,
+    ) -> list[dict[str, Any]]:
+        where = ""
+        params: list[Any] = []
+        if states:
+            placeholders = ", ".join("?" for _ in states)
+            where = f"WHERE delivery_state IN ({placeholders})"
+            params.extend(states)
+        order = "DESC" if newest_first else "ASC"
+        params.append(limit)
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            rows = await db.execute_fetchall(
+                f"SELECT * FROM outbound_deliveries {where} ORDER BY id {order} LIMIT ?",
+                params,
+            )
+            output: list[dict[str, Any]] = []
+            for row in rows:
+                item = dict(row)
+                item["conversation_target"] = self._decode_json_object(
+                    item.pop("conversation_target_json", None)
+                )
+                item["route_scope"] = self._decode_json_object(item.pop("route_scope_json", None))
+                item["event_payload"] = self._decode_json_object(
+                    item.pop("event_payload_json", None)
+                )
+                output.append(item)
+            return output
+
+    async def get_outbound_delivery(self, delivery_id: int) -> dict[str, Any] | None:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT * FROM outbound_deliveries WHERE id = ?",
+                (delivery_id,),
+            )
+            row = await cursor.fetchone()
+            if row is None:
+                return None
+            item = dict(row)
+            item["conversation_target"] = self._decode_json_object(
+                item.pop("conversation_target_json", None)
+            )
+            item["route_scope"] = self._decode_json_object(item.pop("route_scope_json", None))
+            item["event_payload"] = self._decode_json_object(item.pop("event_payload_json", None))
+            return item
+
+    async def create_outbound_delivery(
+        self,
+        *,
+        route_id: int | None,
+        route_name: str,
+        route_kind: str,
+        route_target: str,
+        event_type: str,
+        session_key: str | None,
+        conversation_target: dict[str, Any] | None,
+        route_scope: dict[str, Any],
+        event_payload: dict[str, Any] | None,
+        message_summary: str,
+        test_delivery: bool,
+        delivery_state: str,
+        attempt_count: int,
+        last_attempt_at: str | None = None,
+        delivered_at: str | None = None,
+        last_error: str | None = None,
+    ) -> int:
+        now = utcnow()
+        async with aiosqlite.connect(self.path) as db:
+            cursor = await db.execute(
+                """
+                INSERT INTO outbound_deliveries (
+                    route_id,
+                    route_name,
+                    route_kind,
+                    route_target,
+                    event_type,
+                    session_key,
+                    conversation_target_json,
+                    route_scope_json,
+                    event_payload_json,
+                    message_summary,
+                    test_delivery,
+                    delivery_state,
+                    attempt_count,
+                    last_attempt_at,
+                    delivered_at,
+                    last_error,
+                    created_at,
+                    updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    route_id,
+                    route_name,
+                    route_kind,
+                    route_target,
+                    event_type,
+                    session_key,
+                    json.dumps(conversation_target) if conversation_target is not None else None,
+                    json.dumps(route_scope),
+                    json.dumps(event_payload) if event_payload is not None else None,
+                    message_summary,
+                    int(test_delivery),
+                    delivery_state,
+                    attempt_count,
+                    last_attempt_at,
+                    delivered_at,
+                    last_error,
+                    now,
+                    now,
+                ),
+            )
+            await db.commit()
+            assert cursor.lastrowid is not None
+            return int(cursor.lastrowid)
+
+    async def update_outbound_delivery(self, delivery_id: int, **fields: Any) -> None:
+        if "conversation_target" in fields:
+            conversation_target = fields.pop("conversation_target")
+            fields["conversation_target_json"] = (
+                json.dumps(conversation_target) if conversation_target is not None else None
+            )
+        if "route_scope" in fields:
+            fields["route_scope_json"] = json.dumps(fields.pop("route_scope"))
+        if "event_payload" in fields:
+            event_payload = fields.pop("event_payload")
+            fields["event_payload_json"] = (
+                json.dumps(event_payload) if event_payload is not None else None
+            )
+        if not fields:
+            return
+        fields["updated_at"] = utcnow()
+        assignments = ", ".join(f"{key} = ?" for key in fields)
+        values = list(fields.values()) + [delivery_id]
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute(
+                f"UPDATE outbound_deliveries SET {assignments} WHERE id = ?",
+                values,
+            )
+            await db.commit()
+
     async def list_integrations(self) -> list[dict[str, Any]]:
         async with aiosqlite.connect(self.path) as db:
             db.row_factory = aiosqlite.Row
@@ -1438,6 +1628,7 @@ class Database:
         auto_recover_limit: int,
         reflex_cooldown_seconds: int,
         allow_failover: bool = True,
+        swarm: dict[str, Any] | None = None,
         toolsets: list[str] | None = None,
         task_blueprint_id: int | None = None,
     ) -> int:
@@ -1469,12 +1660,13 @@ class Database:
                     auto_recover_limit,
                     reflex_cooldown_seconds,
                     allow_failover,
+                    swarm_state_json,
                     toolsets_json,
                     created_at,
                     updated_at
                 )
                 VALUES (
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                 )
                 """,
                 (
@@ -1501,6 +1693,7 @@ class Database:
                     auto_recover_limit,
                     reflex_cooldown_seconds,
                     int(allow_failover),
+                    json.dumps(swarm) if swarm is not None else None,
                     json.dumps(toolsets or []),
                     now,
                     now,
@@ -1517,6 +1710,7 @@ class Database:
             output: list[dict[str, Any]] = []
             for row in rows:
                 item = dict(row)
+                item["swarm"] = self._decode_json_object(item.pop("swarm_state_json", None))
                 item["toolsets"] = self._decode_json_list(item.pop("toolsets_json", "[]"))
                 item["conversation_target"] = self._decode_json_object(
                     item.pop("conversation_target_json", None)
@@ -1532,6 +1726,7 @@ class Database:
             if row is None:
                 return None
             item = dict(row)
+            item["swarm"] = self._decode_json_object(item.pop("swarm_state_json", None))
             item["toolsets"] = self._decode_json_list(item.pop("toolsets_json", "[]"))
             item["conversation_target"] = self._decode_json_object(
                 item.pop("conversation_target_json", None)
@@ -1607,6 +1802,7 @@ class Database:
             if row is None:
                 return None
             item = dict(row)
+            item["swarm"] = self._decode_json_object(item.pop("swarm_state_json", None))
             item["toolsets"] = self._decode_json_list(item.pop("toolsets_json", "[]"))
             item["conversation_target"] = self._decode_json_object(
                 item.pop("conversation_target_json", None)
@@ -1655,6 +1851,7 @@ class Database:
             if row is None:
                 return None
             item = dict(row)
+            item["swarm"] = self._decode_json_object(item.pop("swarm_state_json", None))
             item["toolsets"] = self._decode_json_list(item.pop("toolsets_json", "[]"))
             item["conversation_target"] = self._decode_json_object(
                 item.pop("conversation_target_json", None)
@@ -1662,6 +1859,9 @@ class Database:
             return item
 
     async def update_mission(self, mission_id: int, **fields: Any) -> None:
+        if "swarm" in fields:
+            swarm = fields.pop("swarm")
+            fields["swarm_state_json"] = json.dumps(swarm) if swarm is not None else None
         if "toolsets" in fields:
             fields["toolsets_json"] = json.dumps(fields.pop("toolsets"))
         if "conversation_target" in fields:

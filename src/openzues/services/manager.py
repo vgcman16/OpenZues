@@ -21,6 +21,7 @@ LOG_LINE_PREVIEW_LIMIT = 360
 ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 LOG_TIMESTAMP_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z\s+")
 START_TURN_TIMEOUT_CONFIRM_SECONDS = 12.0
+REFRESH_TIMEOUT_BACKOFF_SECONDS = 30.0
 
 
 def _pick_fields(item: dict[str, Any], keys: tuple[str, ...]) -> dict[str, Any]:
@@ -207,6 +208,7 @@ class InstanceRuntime:
     loaded_thread_ids: list[str] = field(default_factory=list)
     unresolved_requests: list[dict[str, Any]] = field(default_factory=list)
     last_event_at: str | None = None
+    refresh_backoff_until: dict[str, float] = field(default_factory=dict)
 
     def view(self) -> InstanceView:
         return InstanceView(
@@ -348,7 +350,31 @@ class RuntimeManager:
             return [dict(item) for item in runtime.mcp_server_status]
         if runtime.mcp_server_status and not refresh:
             return [dict(item) for item in runtime.mcp_server_status]
-        raw_status = (await client.call("mcpServerStatus/list", {"limit": limit})).get("data", [])
+        if refresh and self._refresh_call_in_backoff(runtime, "mcpServerStatus/list"):
+            return [dict(item) for item in runtime.mcp_server_status]
+        try:
+            raw_status = (
+                await client.call("mcpServerStatus/list", {"limit": limit})
+            ).get("data", [])
+        except TimeoutError:
+            self._mark_refresh_backoff(runtime, "mcpServerStatus/list")
+            logger.warning(
+                "Instance refresh kept cached data for %s on instance %s after timeout; "
+                "backing off for %.0fs",
+                "mcpServerStatus/list",
+                runtime.instance_id,
+                REFRESH_TIMEOUT_BACKOFF_SECONDS,
+            )
+            return [dict(item) for item in runtime.mcp_server_status]
+        except Exception:
+            logger.warning(
+                "Instance refresh kept cached data for %s on instance %s",
+                "mcpServerStatus/list",
+                runtime.instance_id,
+                exc_info=True,
+            )
+            return [dict(item) for item in runtime.mcp_server_status]
+        self._clear_refresh_backoff(runtime, "mcpServerStatus/list")
         runtime.mcp_server_status = [
             _summarize_mcp_server_status(item) for item in raw_status if isinstance(item, dict)
         ]
@@ -605,10 +631,22 @@ class RuntimeManager:
         client = runtime.client
         if client is None:
             return None
+        if self._refresh_call_in_backoff(runtime, method):
+            return None
         try:
-            return await client.call(method, params)
+            response = await client.call(method, params)
         except asyncio.CancelledError:
             raise
+        except TimeoutError:
+            self._mark_refresh_backoff(runtime, method)
+            logger.warning(
+                "Instance refresh kept cached data for %s on instance %s after timeout; "
+                "backing off for %.0fs",
+                method,
+                runtime.instance_id,
+                REFRESH_TIMEOUT_BACKOFF_SECONDS,
+            )
+            return None
         except Exception:
             logger.warning(
                 "Instance refresh kept cached data for %s on instance %s",
@@ -617,6 +655,26 @@ class RuntimeManager:
                 exc_info=True,
             )
             return None
+        self._clear_refresh_backoff(runtime, method)
+        return response
+
+    def _refresh_call_in_backoff(self, runtime: InstanceRuntime, method: str) -> bool:
+        retry_at = runtime.refresh_backoff_until.get(method)
+        if retry_at is None:
+            return False
+        return retry_at > asyncio.get_running_loop().time()
+
+    def _mark_refresh_backoff(
+        self,
+        runtime: InstanceRuntime,
+        method: str,
+        *,
+        seconds: float = REFRESH_TIMEOUT_BACKOFF_SECONDS,
+    ) -> None:
+        runtime.refresh_backoff_until[method] = asyncio.get_running_loop().time() + seconds
+
+    def _clear_refresh_backoff(self, runtime: InstanceRuntime, method: str) -> None:
+        runtime.refresh_backoff_until.pop(method, None)
 
     async def _refresh_instance_safely(self, instance_id: int) -> InstanceRuntime:
         runtime = await self.get(instance_id)
