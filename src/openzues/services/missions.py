@@ -82,9 +82,14 @@ RESTART_SAFE_SNAPSHOT_KIND = "restart_safe"
 REPORTING_ORBIT_MIN_SECONDS = 2 * 60
 REPORTING_ORBIT_MIN_COMMENTARY_DELTAS = 12
 REPORTING_ORBIT_EVENT_LIMIT = 120
+EXECUTING_STALL_EVENT_LIMIT = 240
 PARITY_REPORTING_ORBIT_MIN_SECONDS = 45
 PARITY_REPORTING_ORBIT_MIN_COMMENTARY_DELTAS = 6
 INSPECTION_EXECUTION_STALL_SECONDS = 2 * 60
+LONG_RUNNING_INSPECTION_EXECUTION_SECONDS = 3 * 60
+LONG_RUNNING_INSPECTION_OUTPUT_DELTA_MIN = 6
+RECOVERED_PARITY_LEDGER_REPEAT_SECONDS = 30
+RECOVERED_PARITY_LEDGER_REPEAT_OUTPUT_DELTA_MIN = 3
 UNTRACKED_IN_PROGRESS_STALL_SECONDS = 2 * 60
 RECOVERY_TRACE_EVENT_LIMIT = 80
 RECOVERY_TRACE_LINE_LIMIT = 8
@@ -214,6 +219,7 @@ OPENCLAW_PARITY_BASELINE_TOOLSETS = (
     "memory",
     "session_search",
 )
+RECOVERY_REBIND_KINDS = {"execution_rebind", "thread_rebind", "orbit_rebind"}
 
 
 def _parse_timestamp(value: str | None) -> datetime | None:
@@ -393,6 +399,12 @@ def _execution_stall_threshold_seconds(command: str | None) -> int:
     return STALE_TURN_SECONDS
 
 
+def _command_is_full_parity_ledger_read(command: str | None) -> bool:
+    rendered = str(command or "").strip().lower().replace("/", "\\")
+    ledger = OPENCLAW_PARITY_CHECKPOINT_LEDGER.lower().replace("/", "\\")
+    return "get-content" in rendered and ledger in rendered
+
+
 def _append_tool_evidence(
     observed: defaultdict[str, list[str]],
     *,
@@ -554,6 +566,11 @@ def _parity_recovery_rule_lines() -> list[str]:
             "concrete seam instead of narrating the recovery plan."
         ),
         "- Read only the checkpoint and the 1-3 source/target files needed to lock the next seam.",
+        (
+            "- Do not rerun `Get-Content` on the full parity ledger after a recovery packet "
+            "already names the anchor. Use the anchor directly, or at most a tight line-scoped "
+            "read if one specific section is still unclear."
+        ),
         (
             "- Do not rerun the global inventory or reread Hermes/ECC skillbooks unless the "
             "chosen seam directly depends on them."
@@ -1327,6 +1344,273 @@ def _thread_event_command(event: dict[str, Any]) -> str | None:
     return command or None
 
 
+def _thread_event_command_item_id(event: dict[str, Any]) -> str | None:
+    method = _thread_event_method(event)
+    payload = _thread_event_payload(event)
+    if method == "item/commandExecution/outputDelta":
+        item_id = str(payload.get("itemId") or "").strip()
+        return item_id or None
+    if method not in {"item/started", "item/completed"}:
+        return None
+    item = payload.get("item")
+    if not isinstance(item, dict):
+        return None
+    if str(item.get("type") or "") != "commandExecution":
+        return None
+    item_id = str(item.get("id") or "").strip()
+    return item_id or None
+
+
+def _thread_event_matches_command_completion(
+    event: dict[str, Any],
+    *,
+    item_id: str | None,
+    command: str,
+) -> bool:
+    if _thread_event_method(event) != "item/completed":
+        return False
+    completed_item_id = _thread_event_command_item_id(event)
+    if item_id is not None and completed_item_id is not None:
+        return completed_item_id == item_id
+    return _thread_event_command(event) == command
+
+
+def _thread_event_belongs_to_command_window(
+    event: dict[str, Any],
+    *,
+    item_id: str | None,
+    command: str,
+) -> bool:
+    method = _thread_event_method(event)
+    if method == "item/commandExecution/outputDelta":
+        event_item_id = _thread_event_command_item_id(event)
+        if item_id is not None and event_item_id is not None:
+            return event_item_id == item_id
+        return False
+    if method not in {"item/started", "item/completed"}:
+        return False
+    payload = _thread_event_payload(event)
+    item = payload.get("item")
+    if not isinstance(item, dict):
+        return False
+    if str(item.get("type") or "") != "commandExecution":
+        return False
+    event_item_id = _thread_event_command_item_id(event)
+    if item_id is not None and event_item_id is not None:
+        return event_item_id == item_id
+    return _thread_event_command(event) == command
+
+
+def _thread_event_supersedes_command_window(
+    event: dict[str, Any],
+    *,
+    latest_event_at: datetime,
+    item_id: str | None,
+    command: str,
+) -> bool:
+    created_at = _thread_event_created_at(event)
+    if created_at is None or created_at <= latest_event_at:
+        return False
+    method = _thread_event_method(event)
+    if method == "turn/completed":
+        return True
+    if method not in {"item/started", "item/completed"}:
+        return False
+    if _thread_event_belongs_to_command_window(event, item_id=item_id, command=command):
+        return False
+    payload = _thread_event_payload(event)
+    item = payload.get("item")
+    return isinstance(item, dict)
+
+
+def _active_command_from_events(
+    events: list[dict[str, Any]],
+    *,
+    turn_id: str | None,
+) -> str | None:
+    scoped_events = (
+        [event for event in events if _thread_event_turn_id(event) == turn_id]
+        if turn_id is not None
+        else events
+    )
+    active: dict[str, dict[str, Any]] = {}
+    sequence = 0
+    for event in scoped_events:
+        method = _thread_event_method(event)
+        created_at = _thread_event_created_at(event)
+        if method == "item/started":
+            command = _thread_event_command(event)
+            if not command:
+                continue
+            item_id = _thread_event_command_item_id(event)
+            sequence += 1
+            key = item_id or f"{command}#{sequence}"
+            active[key] = {
+                "command": command,
+                "item_id": item_id,
+                "last_event_at": created_at,
+                "sequence": sequence,
+            }
+            continue
+        if method == "item/commandExecution/outputDelta":
+            item_id = _thread_event_command_item_id(event)
+            if item_id is None:
+                continue
+            for entry in active.values():
+                if entry.get("item_id") == item_id:
+                    entry["last_event_at"] = created_at
+                    break
+            continue
+        if method != "item/completed":
+            continue
+        completed_item_id = _thread_event_command_item_id(event)
+        completed_command = _thread_event_command(event)
+        remove_key = None
+        for key, entry in active.items():
+            if completed_item_id and entry.get("item_id") == completed_item_id:
+                remove_key = key
+                break
+            if (
+                completed_item_id is None
+                and completed_command
+                and entry["command"] == completed_command
+            ):
+                remove_key = key
+                break
+        if remove_key is not None:
+            active.pop(remove_key, None)
+    if not active:
+        return None
+    selected = max(
+        active.values(),
+        key=lambda entry: (
+            entry.get("last_event_at") or datetime.min.replace(tzinfo=UTC),
+            int(entry.get("sequence") or 0),
+        ),
+    )
+    return str(selected["command"])
+
+
+def _open_command_execution_window(
+    events: list[dict[str, Any]],
+    *,
+    command: str,
+) -> dict[str, Any] | None:
+    for start_index in range(len(events) - 1, -1, -1):
+        event = events[start_index]
+        if _thread_event_method(event) != "item/started":
+            continue
+        if _thread_event_command(event) != command:
+            continue
+        started_at = _thread_event_created_at(event)
+        if started_at is None:
+            return None
+        item_id = _thread_event_command_item_id(event)
+        tail_events = events[start_index + 1 :]
+        if any(
+            _thread_event_matches_command_completion(
+                candidate,
+                item_id=item_id,
+                command=command,
+            )
+            for candidate in tail_events
+        ):
+            continue
+        relevant_events = [
+            event,
+            *[
+                candidate
+                for candidate in tail_events
+                if _thread_event_belongs_to_command_window(
+                    candidate,
+                    item_id=item_id,
+                    command=command,
+                )
+            ],
+        ]
+        event_times = [
+            created_at
+            for created_at in (
+                _thread_event_created_at(candidate) for candidate in relevant_events
+            )
+            if created_at is not None
+        ]
+        latest_event_at = max(event_times, default=started_at)
+        if any(
+            _thread_event_supersedes_command_window(
+                candidate,
+                latest_event_at=latest_event_at,
+                item_id=item_id,
+                command=command,
+            )
+            for candidate in tail_events
+        ):
+            return None
+        output_delta_count = sum(
+            1
+            for candidate in relevant_events
+            if _thread_event_method(candidate) == "item/commandExecution/outputDelta"
+        )
+        return {
+            "started_at": started_at,
+            "latest_event_at": latest_event_at,
+            "elapsed_seconds": max(0, int((latest_event_at - started_at).total_seconds())),
+            "output_delta_count": output_delta_count,
+            "elapsed_lower_bound": False,
+        }
+    output_events = [
+        event
+        for event in events
+        if _thread_event_method(event) == "item/commandExecution/outputDelta"
+    ]
+    if not output_events:
+        return None
+    latest_item_id = _thread_event_command_item_id(output_events[-1])
+    if any(
+        _thread_event_matches_command_completion(
+            candidate,
+            item_id=latest_item_id,
+            command=command,
+        )
+        for candidate in events
+    ):
+        return None
+    relevant_output_events = [
+        event
+        for event in output_events
+        if latest_item_id is None or _thread_event_command_item_id(event) == latest_item_id
+    ]
+    output_times = [
+        created_at
+        for created_at in (
+            _thread_event_created_at(candidate) for candidate in relevant_output_events
+        )
+        if created_at is not None
+    ]
+    if not output_times:
+        return None
+    earliest_output_at = min(output_times)
+    latest_output_at = max(output_times)
+    if any(
+        _thread_event_supersedes_command_window(
+            candidate,
+            latest_event_at=latest_output_at,
+            item_id=latest_item_id,
+            command=command,
+        )
+        for candidate in events
+    ):
+        return None
+    return {
+        "started_at": earliest_output_at,
+        "latest_event_at": latest_output_at,
+        "elapsed_seconds": max(0, int((latest_output_at - earliest_output_at).total_seconds())),
+        "output_delta_count": len(relevant_output_events),
+        "elapsed_lower_bound": True,
+    }
+    return None
+
+
 def _commentary_text_from_events(
     events: list[dict[str, Any]],
     *,
@@ -1933,6 +2217,25 @@ class MissionService:
                         summary=summary,
                     )
 
+        if method in {
+            "item/started",
+            "item/completed",
+            "item/commandExecution/outputDelta",
+        } and str(updates.get("phase") or "") not in {"completed", "failed", "paused"}:
+            events = await self.database.list_thread_events(
+                instance_id=instance_id,
+                thread_id=thread_id,
+                limit=EXECUTING_STALL_EVENT_LIMIT,
+            )
+            active_command = _active_command_from_events(
+                events,
+                turn_id=extract_turn_id(params) or str(mission.get("last_turn_id") or "") or None,
+            )
+            if active_command is not None:
+                updates["phase"] = "executing"
+                updates["current_command"] = active_command
+                updates["in_progress"] = 1
+
         merged_mission = {**mission, **updates}
         await self.database.update_mission(mission_id, **updates)
         turn_payload = params.get("turn") if isinstance(params.get("turn"), dict) else {}
@@ -2302,12 +2605,79 @@ class MissionService:
         if last_activity_seconds is None:
             return None
         threshold_seconds = _execution_stall_threshold_seconds(current_command)
+        inspection_only = _command_is_inspection_only(current_command)
         if last_activity_seconds < threshold_seconds:
-            return None
+            if not inspection_only:
+                return None
+            thread_id = str(mission.get("thread_id") or "").strip()
+            if not thread_id:
+                return None
+            current_turn_id = str(mission.get("last_turn_id") or "").strip() or None
+            events = await self.database.list_thread_events(
+                instance_id=int(mission["instance_id"]),
+                thread_id=thread_id,
+                limit=EXECUTING_STALL_EVENT_LIMIT,
+            )
+            if current_turn_id is not None:
+                events = [
+                    event for event in events if _thread_event_turn_id(event) == current_turn_id
+                ]
+            if not events:
+                return None
+            open_window = _open_command_execution_window(events, command=current_command)
+            if open_window is None:
+                return None
+            if _command_is_full_parity_ledger_read(current_command):
+                recent_checkpoints = await self.database.list_mission_checkpoints(
+                    int(mission["id"]),
+                    limit=8,
+                )
+                repeated_after_recovery = any(
+                    str(checkpoint.get("kind") or "") in RECOVERY_REBIND_KINDS
+                    for checkpoint in recent_checkpoints
+                )
+                if (
+                    repeated_after_recovery
+                    and int(open_window["elapsed_seconds"])
+                    >= RECOVERED_PARITY_LEDGER_REPEAT_SECONDS
+                    and int(open_window["output_delta_count"])
+                    >= RECOVERED_PARITY_LEDGER_REPEAT_OUTPUT_DELTA_MIN
+                ):
+                    return {
+                        "mode": "repeated_parity_ledger_read",
+                        "elapsed_seconds": int(open_window["elapsed_seconds"]),
+                        "elapsed_lower_bound": bool(open_window["elapsed_lower_bound"]),
+                        "output_delta_count": int(open_window["output_delta_count"]),
+                        "command": current_command,
+                        "inspection_only": True,
+                        "threshold_seconds": RECOVERED_PARITY_LEDGER_REPEAT_SECONDS,
+                        "thread_untracked": thread_untracked,
+                    }
+            if (
+                int(open_window["elapsed_seconds"])
+                < LONG_RUNNING_INSPECTION_EXECUTION_SECONDS
+            ):
+                return None
+            if (
+                int(open_window["output_delta_count"])
+                < LONG_RUNNING_INSPECTION_OUTPUT_DELTA_MIN
+            ):
+                return None
+            return {
+                "mode": "long_running_inspection",
+                "elapsed_seconds": int(open_window["elapsed_seconds"]),
+                "elapsed_lower_bound": bool(open_window["elapsed_lower_bound"]),
+                "output_delta_count": int(open_window["output_delta_count"]),
+                "command": current_command,
+                "inspection_only": True,
+                "threshold_seconds": LONG_RUNNING_INSPECTION_EXECUTION_SECONDS,
+                "thread_untracked": thread_untracked,
+            }
         return {
+            "mode": "quiet",
             "quiet_seconds": last_activity_seconds,
             "command": current_command,
-            "inspection_only": _command_is_inspection_only(current_command),
+            "inspection_only": inspection_only,
             "threshold_seconds": threshold_seconds,
             "thread_untracked": thread_untracked,
         }
@@ -2486,22 +2856,75 @@ class MissionService:
             f"Recovery thread: {recovery_thread_id}",
             "",
             "Recovery trigger:",
-            (
-                "- The prior thread stayed marked active for about "
-                f"{int(stall_signal['quiet_seconds'])} seconds after the last live event while "
-                "holding this command open:"
-            ),
-            f"  {command}",
-            "- Mission control treated that as a stalled execution instead of healthy progress.",
-            (
-                "- Reconstruct context from the persisted packets below before you decide whether "
-                "any part of the old command needs to be rerun."
-            ),
-            (
-                "- Take one bounded high-leverage next step, verify one concrete claim, and end "
-                "this turn with a durable checkpoint."
-            ),
         ]
+        if str(stall_signal.get("mode") or "") == "repeated_parity_ledger_read":
+            duration_label = (
+                "at least"
+                if bool(stall_signal.get("elapsed_lower_bound"))
+                else "about"
+            )
+            instructions.extend(
+                [
+                    (
+                        "- The fresh recovery lane immediately reopened the full parity ledger "
+                        f"for {duration_label} {int(stall_signal['elapsed_seconds'])} seconds "
+                        f"and streamed {int(stall_signal['output_delta_count'])} output updates:"
+                    ),
+                    f"  {command}",
+                    (
+                        "- Mission control treated that as recovery drift. Do not rerun the full "
+                        "ledger read again on this recovery path."
+                    ),
+                ]
+            )
+        elif str(stall_signal.get("mode") or "") == "long_running_inspection":
+            duration_label = (
+                "at least"
+                if bool(stall_signal.get("elapsed_lower_bound"))
+                else "about"
+            )
+            instructions.extend(
+                [
+                    (
+                        "- The prior thread kept this inspection command open for "
+                        f"{duration_label} "
+                        f"{int(stall_signal['elapsed_seconds'])} seconds while still streaming "
+                        f"{int(stall_signal['output_delta_count'])} output updates:"
+                    ),
+                    f"  {command}",
+                    (
+                        "- Mission control treated that as inspection orbit disguised as "
+                        "execution, not as healthy forward progress."
+                    ),
+                ]
+            )
+        else:
+            instructions.extend(
+                [
+                    (
+                        "- The prior thread stayed marked active for about "
+                        f"{int(stall_signal['quiet_seconds'])} seconds after the last live event "
+                        "while holding this command open:"
+                    ),
+                    f"  {command}",
+                    (
+                        "- Mission control treated that as a stalled execution instead of "
+                        "healthy progress."
+                    ),
+                ]
+            )
+        instructions.extend(
+            [
+                (
+                    "- Reconstruct context from the persisted packets below before you decide "
+                    "whether any part of the old command needs to be rerun."
+                ),
+                (
+                    "- Take one bounded high-leverage next step, verify one concrete claim, and "
+                    "end this turn with a durable checkpoint."
+                ),
+            ]
+        )
         if bool(stall_signal.get("inspection_only")):
             instructions.append(
                 "- The stalled command was read-only inspection. Do not keep rereading the same "
@@ -2875,8 +3298,36 @@ class MissionService:
             kind="execution_rebind",
             summary=(
                 "Mission rebound from a stalled command on thread "
-                f"{source_thread_id} to fresh thread {recovery_thread_id} after about "
-                f"{int(stall_signal['quiet_seconds'])} seconds without fresh live events."
+                f"{source_thread_id} to fresh thread {recovery_thread_id} after "
+                + (
+                    (
+                        (
+                            (
+                                "at least "
+                                if bool(stall_signal.get("elapsed_lower_bound"))
+                                else "about "
+                            )
+                            + f"{int(stall_signal['elapsed_seconds'])} seconds of repeated "
+                            "full parity-ledger output."
+                        )
+                        if str(stall_signal.get("mode") or "") == "repeated_parity_ledger_read"
+                        else (
+                            (
+                                "at least "
+                                if bool(stall_signal.get("elapsed_lower_bound"))
+                                else "about "
+                            )
+                            + f"{int(stall_signal['elapsed_seconds'])} seconds of open-ended "
+                            "inspection output."
+                        )
+                    )
+                    if str(stall_signal.get("mode") or "")
+                    in {"long_running_inspection", "repeated_parity_ledger_read"}
+                    else (
+                        f"about {int(stall_signal['quiet_seconds'])} seconds without fresh live "
+                        "events."
+                    )
+                )
             ),
         )
         await self._publish_snapshot(

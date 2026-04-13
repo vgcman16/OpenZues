@@ -2958,6 +2958,646 @@ async def test_reconcile_rebinds_stalled_executing_thread(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_reconcile_rebinds_long_running_inspection_execution(tmp_path) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    manager = FakeManager()
+    manager.instances[7].connected = True
+    manager.instances[7].threads = [
+        {"id": "thread_exec_inspection", "status": {"type": "active"}}
+    ]
+    service = MissionService(database, manager, BroadcastHub(), poll_interval_seconds=3600)
+
+    mission_id = await database.create_mission(
+        name="Long-running inspection parity mission",
+        objective="Resume the next bounded OpenClaw parity seam instead of replaying the ledger.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread_exec_inspection",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=True,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+    )
+    await database.update_mission(
+        mission_id,
+        in_progress=1,
+        phase="executing",
+        command_count=21,
+        turns_completed=3,
+        total_tokens=355000,
+        last_turn_id="turn_exec_inspection",
+        current_command=(
+            'powershell.exe -Command "Get-Content docs/openclaw-parity-checkpoint-2026-04-10.md"'
+        ),
+        last_commentary="I am still reviewing the parity ledger before choosing the next seam.",
+        last_activity_at=(datetime.now(UTC) - timedelta(seconds=10)).isoformat(),
+    )
+    await database.append_event(
+        instance_id=7,
+        thread_id="thread_exec_inspection",
+        method="turn/started",
+        payload={
+            "threadId": "thread_exec_inspection",
+            "turnId": "turn_exec_inspection",
+        },
+    )
+    await database.append_event(
+        instance_id=7,
+        thread_id="thread_exec_inspection",
+        method="item/started",
+        payload={
+            "threadId": "thread_exec_inspection",
+            "turnId": "turn_exec_inspection",
+            "item": {
+                "type": "commandExecution",
+                "id": "call_exec_inspection",
+                "command": (
+                    'powershell.exe -Command "Get-Content '
+                    'docs/openclaw-parity-checkpoint-2026-04-10.md"'
+                ),
+            },
+        },
+    )
+    for index in range(8):
+        await database.append_event(
+            instance_id=7,
+            thread_id="thread_exec_inspection",
+            method="item/commandExecution/outputDelta",
+            payload={
+                "threadId": "thread_exec_inspection",
+                "turnId": "turn_exec_inspection",
+                "itemId": "call_exec_inspection",
+                "delta": f"Parity ledger line {index + 1}",
+            },
+        )
+
+    started_at = datetime.now(UTC) - timedelta(minutes=5)
+    with sqlite3.connect(database.path) as connection:
+        event_ids = [
+            row[0]
+            for row in connection.execute("SELECT id FROM events ORDER BY id ASC").fetchall()
+        ]
+        for offset, event_id in enumerate(event_ids):
+            created_at = started_at + timedelta(seconds=offset * 35)
+            connection.execute(
+                "UPDATE events SET created_at = ? WHERE id = ?",
+                (created_at.isoformat(), event_id),
+            )
+        connection.commit()
+
+    await service._reconcile_mission(mission_id)
+    mission = await database.get_mission(mission_id)
+    checkpoints = await database.list_mission_checkpoints(mission_id)
+
+    assert mission is not None
+    assert mission["thread_id"] == "thread_auto_7"
+    assert mission["status"] == "active"
+    assert mission["phase"] == "thinking"
+    assert mission["in_progress"] == 1
+    assert manager.interrupt_calls[0]["thread_id"] == "thread_exec_inspection"
+    assert manager.thread_calls[0]["instance_id"] == 7
+    assert manager.turn_calls[0]["thread_id"] == "thread_auto_7"
+    assert "stalled-execution recovery" in manager.turn_calls[0]["text"]
+    assert "inspection orbit disguised as execution" in manager.turn_calls[0]["text"]
+    assert checkpoints[0]["kind"] == "execution_rebind"
+    assert "open-ended inspection output" in checkpoints[0]["summary"]
+
+
+@pytest.mark.asyncio
+async def test_detect_executing_stall_from_output_only_window(tmp_path) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    service = MissionService(database, None, BroadcastHub(), poll_interval_seconds=3600)
+
+    mission_id = await database.create_mission(
+        name="Output-only inspection parity mission",
+        objective="Catch parity-ledger inspection loops even after the start event falls out.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread_exec_output_only",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=True,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+    )
+    await database.update_mission(
+        mission_id,
+        in_progress=1,
+        phase="executing",
+        command_count=24,
+        turns_completed=3,
+        total_tokens=389000,
+        last_turn_id="turn_exec_output_only",
+        current_command=(
+            'powershell.exe -Command "Get-Content docs/openclaw-parity-checkpoint-2026-04-10.md"'
+        ),
+        last_activity_at=(datetime.now(UTC) - timedelta(seconds=30)).isoformat(),
+    )
+    await database.append_event(
+        instance_id=7,
+        thread_id="thread_exec_output_only",
+        method="item/started",
+        payload={
+            "threadId": "thread_exec_output_only",
+            "turnId": "turn_exec_output_only",
+            "item": {
+                "type": "commandExecution",
+                "id": "call_exec_output_only",
+                "command": (
+                    'powershell.exe -Command "Get-Content '
+                    'docs/openclaw-parity-checkpoint-2026-04-10.md"'
+                ),
+            },
+        },
+    )
+    for index in range(260):
+        await database.append_event(
+            instance_id=7,
+            thread_id="thread_exec_output_only",
+            method="item/commandExecution/outputDelta",
+            payload={
+                "threadId": "thread_exec_output_only",
+                "turnId": "turn_exec_output_only",
+                "itemId": "call_exec_output_only",
+                "delta": f"Parity ledger line {index + 1}",
+            },
+        )
+
+    started_at = datetime.now(UTC) - timedelta(minutes=9)
+    with sqlite3.connect(database.path) as connection:
+        event_ids = [
+            row[0]
+            for row in connection.execute("SELECT id FROM events ORDER BY id ASC").fetchall()
+        ]
+        for offset, event_id in enumerate(event_ids):
+            created_at = started_at + timedelta(seconds=2 * offset)
+            connection.execute(
+                "UPDATE events SET created_at = ? WHERE id = ?",
+                (created_at.isoformat(), event_id),
+            )
+        connection.commit()
+
+    mission = await database.get_mission(mission_id)
+    assert mission is not None
+    signal = await service._detect_executing_stall(
+        mission,
+        thread_status="notLoaded",
+        last_activity_seconds=30,
+    )
+
+    assert signal is not None
+    assert signal["mode"] == "long_running_inspection"
+    assert signal["elapsed_lower_bound"] is True
+    assert signal["output_delta_count"] >= 200
+    assert signal["elapsed_seconds"] >= 180
+
+
+@pytest.mark.asyncio
+async def test_detect_executing_stall_cuts_repeated_parity_ledger_read_after_recovery(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    service = MissionService(database, None, BroadcastHub(), poll_interval_seconds=3600)
+
+    mission_id = await database.create_mission(
+        name="Recovered parity ledger replay mission",
+        objective="Do not reread the full parity ledger after recovery already named the seam.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread_exec_repeated_ledger",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=True,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+    )
+    await database.update_mission(
+        mission_id,
+        in_progress=1,
+        phase="executing",
+        command_count=22,
+        turns_completed=3,
+        total_tokens=401000,
+        last_turn_id="turn_exec_repeated_ledger",
+        current_command=(
+            'powershell.exe -Command "Get-Content docs/openclaw-parity-checkpoint-2026-04-10.md"'
+        ),
+        last_activity_at=(datetime.now(UTC) - timedelta(seconds=10)).isoformat(),
+    )
+    await database.append_mission_checkpoint(
+        mission_id=mission_id,
+        thread_id="thread_before_recovery",
+        turn_id="turn_before_recovery",
+        kind="execution_rebind",
+        summary="Mission rebound from a prior stalled parity-ledger read.",
+    )
+    for offset in range(3):
+        await database.append_mission_checkpoint(
+            mission_id=mission_id,
+            thread_id="thread_after_recovery",
+            turn_id=f"turn_after_recovery_{offset}",
+            kind="restart_safe",
+            summary=f"Restart-safe packet {offset + 1} after the recovery rebind.",
+        )
+    await database.append_event(
+        instance_id=7,
+        thread_id="thread_exec_repeated_ledger",
+        method="item/started",
+        payload={
+            "threadId": "thread_exec_repeated_ledger",
+            "turnId": "turn_exec_repeated_ledger",
+            "item": {
+                "type": "commandExecution",
+                "id": "call_exec_repeated_ledger",
+                "command": (
+                    'powershell.exe -Command "Get-Content '
+                    'docs/openclaw-parity-checkpoint-2026-04-10.md"'
+                ),
+            },
+        },
+    )
+    for index in range(4):
+        await database.append_event(
+            instance_id=7,
+            thread_id="thread_exec_repeated_ledger",
+            method="item/commandExecution/outputDelta",
+            payload={
+                "threadId": "thread_exec_repeated_ledger",
+                "turnId": "turn_exec_repeated_ledger",
+                "itemId": "call_exec_repeated_ledger",
+                "delta": f"Parity ledger line {index + 1}",
+            },
+        )
+
+    started_at = datetime.now(UTC) - timedelta(seconds=50)
+    with sqlite3.connect(database.path) as connection:
+        event_ids = [
+            row[0]
+            for row in connection.execute("SELECT id FROM events ORDER BY id ASC").fetchall()
+        ]
+        for offset, event_id in enumerate(event_ids):
+            created_at = started_at + timedelta(seconds=15 * offset)
+            connection.execute(
+                "UPDATE events SET created_at = ? WHERE id = ?",
+                (created_at.isoformat(), event_id),
+            )
+        connection.commit()
+
+    mission = await database.get_mission(mission_id)
+    assert mission is not None
+    signal = await service._detect_executing_stall(
+        mission,
+        thread_status="active",
+        last_activity_seconds=10,
+    )
+
+    assert signal is not None
+    assert signal["mode"] == "repeated_parity_ledger_read"
+    assert signal["output_delta_count"] == 4
+    assert signal["elapsed_seconds"] >= 30
+
+
+@pytest.mark.asyncio
+async def test_detect_executing_stall_ignores_stale_parity_window_after_later_command(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    service = MissionService(database, None, BroadcastHub(), poll_interval_seconds=3600)
+
+    ledger_command = (
+        'powershell.exe -Command "Get-Content docs/openclaw-parity-checkpoint-2026-04-10.md"'
+    )
+    pytest_command = (
+        'powershell.exe -Command ".venv\\Scripts\\python.exe -m pytest tests/test_missions.py '
+        '-q -k repeated_parity_ledger_read"'
+    )
+
+    mission_id = await database.create_mission(
+        name="Recovered parity ledger replay mission",
+        objective="Ignore stale parity ledger windows once the lane has already moved on.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread_exec_stale_ledger",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=True,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+    )
+    await database.update_mission(
+        mission_id,
+        in_progress=1,
+        phase="executing",
+        command_count=22,
+        turns_completed=3,
+        total_tokens=401000,
+        last_turn_id="turn_exec_stale_ledger",
+        current_command=ledger_command,
+        last_activity_at=(datetime.now(UTC) - timedelta(seconds=10)).isoformat(),
+    )
+    await database.append_mission_checkpoint(
+        mission_id=mission_id,
+        thread_id="thread_before_recovery",
+        turn_id="turn_before_recovery",
+        kind="execution_rebind",
+        summary="Mission rebound from a prior stalled parity-ledger read.",
+    )
+    await database.append_event(
+        instance_id=7,
+        thread_id="thread_exec_stale_ledger",
+        method="item/started",
+        payload={
+            "threadId": "thread_exec_stale_ledger",
+            "turnId": "turn_exec_stale_ledger",
+            "item": {
+                "type": "commandExecution",
+                "id": "call_exec_repeated_ledger",
+                "command": ledger_command,
+            },
+        },
+    )
+    for index in range(4):
+        await database.append_event(
+            instance_id=7,
+            thread_id="thread_exec_stale_ledger",
+            method="item/commandExecution/outputDelta",
+            payload={
+                "threadId": "thread_exec_stale_ledger",
+                "turnId": "turn_exec_stale_ledger",
+                "itemId": "call_exec_repeated_ledger",
+                "delta": f"Parity ledger line {index + 1}",
+            },
+        )
+    await database.append_event(
+        instance_id=7,
+        thread_id="thread_exec_stale_ledger",
+        method="item/started",
+        payload={
+            "threadId": "thread_exec_stale_ledger",
+            "turnId": "turn_exec_stale_ledger",
+            "item": {
+                "type": "commandExecution",
+                "id": "call_exec_pytest",
+                "command": pytest_command,
+            },
+        },
+    )
+    await database.append_event(
+        instance_id=7,
+        thread_id="thread_exec_stale_ledger",
+        method="item/commandExecution/outputDelta",
+        payload={
+            "threadId": "thread_exec_stale_ledger",
+            "turnId": "turn_exec_stale_ledger",
+            "itemId": "call_exec_pytest",
+            "delta": "1 passed in 0.50s",
+        },
+    )
+    await database.append_event(
+        instance_id=7,
+        thread_id="thread_exec_stale_ledger",
+        method="item/completed",
+        payload={
+            "threadId": "thread_exec_stale_ledger",
+            "turnId": "turn_exec_stale_ledger",
+            "item": {
+                "type": "commandExecution",
+                "id": "call_exec_pytest",
+                "command": pytest_command,
+            },
+        },
+    )
+    await database.append_event(
+        instance_id=7,
+        thread_id="thread_exec_stale_ledger",
+        method="item/started",
+        payload={
+            "threadId": "thread_exec_stale_ledger",
+            "turnId": "turn_exec_stale_ledger",
+            "item": {
+                "type": "reasoning",
+                "id": "reasoning_after_pytest",
+            },
+        },
+    )
+    await database.append_event(
+        instance_id=7,
+        thread_id="thread_exec_stale_ledger",
+        method="item/started",
+        payload={
+            "threadId": "thread_exec_stale_ledger",
+            "turnId": "turn_exec_stale_ledger",
+            "item": {
+                "type": "agentMessage",
+                "id": "commentary_after_pytest",
+                "phase": "commentary",
+            },
+        },
+    )
+
+    started_at = datetime.now(UTC) - timedelta(seconds=55)
+    with sqlite3.connect(database.path) as connection:
+        event_ids = [
+            row[0]
+            for row in connection.execute("SELECT id FROM events ORDER BY id ASC").fetchall()
+        ]
+        for offset, event_id in enumerate(event_ids):
+            created_at = started_at + timedelta(seconds=5 * offset)
+            connection.execute(
+                "UPDATE events SET created_at = ? WHERE id = ?",
+                (created_at.isoformat(), event_id),
+            )
+        connection.commit()
+
+    mission = await database.get_mission(mission_id)
+    assert mission is not None
+    signal = await service._detect_executing_stall(
+        mission,
+        thread_status="active",
+        last_activity_seconds=10,
+    )
+
+    assert signal is None
+
+
+@pytest.mark.asyncio
+async def test_handle_event_tracks_active_command_from_overlapping_runtime_events(tmp_path) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    service = MissionService(database, None, BroadcastHub(), poll_interval_seconds=3600)
+
+    mission_id = await database.create_mission(
+        name="Concurrent command parity mission",
+        objective="Track the command that is actually emitting output.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread_overlap",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=True,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+    )
+    await database.update_mission(
+        mission_id,
+        in_progress=1,
+        phase="thinking",
+        last_turn_id="turn_overlap",
+    )
+
+    recall_command = (
+        'powershell.exe -Command "Get-Content -Path src/openzues/services/recall.py '
+        '-TotalCount 220"'
+    )
+    ledger_command = (
+        'powershell.exe -Command "Get-Content -Path '
+        "docs/openclaw-parity-checkpoint-2026-04-10.md | Select-String -Pattern "
+        '\'[restart_safe]\' -Context 2,3"'
+    )
+
+    first_start = {
+        "method": "item/started",
+        "threadId": "thread_overlap",
+        "params": {
+            "threadId": "thread_overlap",
+            "turnId": "turn_overlap",
+            "item": {
+                "type": "commandExecution",
+                "id": "call_first",
+                "command": recall_command,
+            },
+        },
+    }
+    await database.append_event(
+        instance_id=7,
+        thread_id="thread_overlap",
+        method=first_start["method"],
+        payload=first_start["params"],
+    )
+    await service.handle_event(7, first_start)
+
+    second_start = {
+        "method": "item/started",
+        "threadId": "thread_overlap",
+        "params": {
+            "threadId": "thread_overlap",
+            "turnId": "turn_overlap",
+            "item": {
+                "type": "commandExecution",
+                "id": "call_second",
+                "command": ledger_command,
+            },
+        },
+    }
+    await database.append_event(
+        instance_id=7,
+        thread_id="thread_overlap",
+        method=second_start["method"],
+        payload=second_start["params"],
+    )
+    await service.handle_event(7, second_start)
+
+    first_output = {
+        "method": "item/commandExecution/outputDelta",
+        "threadId": "thread_overlap",
+        "params": {
+            "threadId": "thread_overlap",
+            "turnId": "turn_overlap",
+            "itemId": "call_first",
+            "delta": "from openzues.services.missions import MissionService",
+        },
+    }
+    await database.append_event(
+        instance_id=7,
+        thread_id="thread_overlap",
+        method=first_output["method"],
+        payload=first_output["params"],
+    )
+    await service.handle_event(7, first_output)
+
+    mission = await database.get_mission(mission_id)
+    assert mission is not None
+    assert mission["phase"] == "executing"
+    assert mission["current_command"] == recall_command
+
+    first_complete = {
+        "method": "item/completed",
+        "threadId": "thread_overlap",
+        "params": {
+            "threadId": "thread_overlap",
+            "turnId": "turn_overlap",
+            "item": {
+                "type": "commandExecution",
+                "id": "call_first",
+                "command": recall_command,
+            },
+        },
+    }
+    await database.append_event(
+        instance_id=7,
+        thread_id="thread_overlap",
+        method=first_complete["method"],
+        payload=first_complete["params"],
+    )
+    await service.handle_event(7, first_complete)
+
+    mission = await database.get_mission(mission_id)
+    assert mission is not None
+    assert mission["phase"] == "executing"
+    assert mission["current_command"] == ledger_command
+
+
+@pytest.mark.asyncio
 async def test_reconcile_rebinds_not_loaded_executing_thread(tmp_path) -> None:
     database = Database(tmp_path / "missions.db")
     await database.initialize()
