@@ -3870,6 +3870,53 @@ def test_gateway_capability_uses_cached_mcp_status_when_live_refresh_times_out(
     assert dashboard["gateway_capability"]["inventory"]["memory_status"] == "ready"
 
 
+def test_dashboard_reuses_cached_gateway_capability_when_refresh_turns_slow(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    cache_settings = Settings(
+        data_dir=tmp_path / "cache-data",
+        db_path=tmp_path / "cache-data" / "openzues-test.db",
+        hermes_source_path=None,
+        ecc_source_path=None,
+    )
+    monkeypatch.setattr("openzues.app.settings", cache_settings)
+    clock = {"now": 0.0}
+    monkeypatch.setattr("openzues.app.perf_counter", lambda: clock["now"])
+    app = create_app()
+    cached_gateway = make_gateway_capability_view(headline="Cached gateway posture is available")
+    refresh_calls = {"count": 0}
+
+    async def fake_get_view() -> GatewayCapabilityView:
+        refresh_calls["count"] += 1
+        if refresh_calls["count"] == 1:
+            return cached_gateway
+        await asyncio.sleep(1.0)
+        return cached_gateway.model_copy(
+            update={"headline": "Slow refresh should not replace the cached posture"}
+        )
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        monkeypatch.setattr(client.app.state.gateway_capability_service, "get_view", fake_get_view)
+
+        initial_dashboard = client.get("/api/dashboard")
+        assert initial_dashboard.status_code == 200
+        assert (
+            initial_dashboard.json()["gateway_capability"]["headline"]
+            == "Cached gateway posture is available"
+        )
+
+        clock["now"] = 5.0
+        refreshed_dashboard = client.get("/api/dashboard")
+
+    assert refreshed_dashboard.status_code == 200
+    assert refresh_calls["count"] == 2
+    assert (
+        refreshed_dashboard.json()["gateway_capability"]["headline"]
+        == "Cached gateway posture is available"
+    )
+
+
 def test_mutating_api_failure_invalidates_operator_surface_caches(
     tmp_path,
     monkeypatch,
@@ -5338,6 +5385,128 @@ def test_attention_queue_view_cites_gateway_posture_when_repair_is_needed(tmp_pa
 
     assert view.headline == "Attention queue is holding for gateway repair"
     assert "Connected lanes need repair before launch." in view.summary
+
+
+def test_control_chat_view_hides_stale_failure_and_quiet_messages_for_active_target(
+    tmp_path,
+) -> None:
+    active = make_mission_view(
+        mission_id=40,
+        name="OpenClaw Total Parity Program",
+        status="active",
+        phase="reporting",
+        in_progress=True,
+    )
+    dashboard = make_dashboard_view(missions=[active])
+
+    with make_client(tmp_path) as client:
+        database = client.app.state.database
+        asyncio.run(
+            database.append_control_chat_message(
+                role="assistant",
+                content=(
+                    "`OpenClaw Total Parity Program` failed, but there is no safe recovery "
+                    "draft yet. I held the queue instead of retrying blindly."
+                ),
+                action_kind="observe",
+                mission_id=35,
+                target_label="OpenClaw Total Parity Program",
+            )
+        )
+        asyncio.run(
+            database.append_control_chat_message(
+                role="assistant",
+                content=(
+                    "I nudged `OpenClaw Total Parity Program` into another cycle because the "
+                    "lane went quiet without closing the loop."
+                ),
+                action_kind="run_mission",
+                mission_id=40,
+                target_label="OpenClaw Total Parity Program",
+            )
+        )
+        asyncio.run(
+            database.append_control_chat_message(
+                role="assistant",
+                content="OpenClaw parity is active and still landing the next checkpoint.",
+                action_kind="wait",
+                mission_id=40,
+                target_label="OpenClaw Total Parity Program",
+            )
+        )
+
+        view = asyncio.run(client.app.state.control_chat_service.build_view(dashboard))
+
+    assert [message.content for message in view.messages] == [
+        "OpenClaw parity is active and still landing the next checkpoint."
+    ]
+
+
+def test_attention_queue_view_hides_stale_failure_and_quiet_actions_for_active_target(
+    tmp_path,
+) -> None:
+    active = make_mission_view(
+        mission_id=40,
+        name="OpenClaw Total Parity Program",
+        status="active",
+        phase="reporting",
+        in_progress=True,
+    )
+    dashboard = make_dashboard_view(missions=[active])
+
+    with make_client(tmp_path) as client:
+        database = client.app.state.database
+        asyncio.run(
+            database.append_attention_queue_action(
+                signal_id="mission-40-failed",
+                signal_fingerprint="mission-40-failed|failed",
+                signal_level="critical",
+                action_kind="observe",
+                status="escalated",
+                mission_id=35,
+                target_label="OpenClaw Total Parity Program",
+                summary=(
+                    "`OpenClaw Total Parity Program` failed, but there is no safe recovery "
+                    "draft yet. I held the queue instead of retrying blindly."
+                ),
+            )
+        )
+        asyncio.run(
+            database.append_attention_queue_action(
+                signal_id="mission-40-quiet",
+                signal_fingerprint="mission-40-quiet|active",
+                signal_level="warn",
+                action_kind="run_mission",
+                status="executed",
+                mission_id=40,
+                target_label="OpenClaw Total Parity Program",
+                summary=(
+                    "I nudged `OpenClaw Total Parity Program` into another cycle because the "
+                    "lane went quiet without closing the loop."
+                ),
+            )
+        )
+        asyncio.run(
+            database.append_attention_queue_action(
+                signal_id="gateway/capability",
+                signal_fingerprint="gateway/capability|warn",
+                signal_level="warn",
+                action_kind="observe",
+                status="observed",
+                mission_id=None,
+                target_label="Gateway capability",
+                summary="Gateway Doctor still has one bounded repair left.",
+            )
+        )
+
+        view = asyncio.run(
+            client.app.state.control_chat_service.build_attention_queue_view(
+                dashboard,
+                enabled=True,
+            )
+        )
+
+    assert [action.signal_id for action in view.actions] == ["gateway/capability"]
 
 
 def test_attention_queue_reuses_existing_hardener_instead_of_launching_duplicate() -> None:

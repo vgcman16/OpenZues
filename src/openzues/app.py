@@ -62,7 +62,6 @@ from openzues.schemas import (
     MissionDraftView,
     MissionReflexRun,
     MissionView,
-    OutboundDeliveryReplayBatchView,
     NotificationRouteCreate,
     NotificationRouteTestResultView,
     NotificationRouteView,
@@ -70,6 +69,7 @@ from openzues.schemas import (
     OnboardingBootstrapResultView,
     OperatorCreate,
     OperatorCredentialView,
+    OutboundDeliveryReplayBatchView,
     PlaybookCreate,
     PlaybookRun,
     PlaybookRunResult,
@@ -1556,6 +1556,7 @@ def create_app(
     cache_operator_surfaces = app_settings is None
     dashboard_cache_ttl_seconds = 1.5 if cache_operator_surfaces else 0.0
     gateway_cache_ttl_seconds = 1.5 if cache_operator_surfaces else 0.0
+    gateway_cache_refresh_timeout_seconds = 0.35 if cache_operator_surfaces else 0.0
     dashboard_cache: DashboardView | None = None
     dashboard_cache_at = 0.0
     dashboard_cache_lock = asyncio.Lock()
@@ -1605,7 +1606,18 @@ def create_app(
             now = perf_counter()
             if gateway_cache is not None and (now - gateway_cache_at) <= gateway_cache_ttl_seconds:
                 return gateway_cache
-            gateway_cache = await active_gateway_capability_service.get_view()
+            if gateway_cache is not None:
+                try:
+                    gateway_cache = await asyncio.wait_for(
+                        active_gateway_capability_service.get_view(),
+                        timeout=gateway_cache_refresh_timeout_seconds,
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except (TimeoutError, Exception):
+                    return gateway_cache
+            else:
+                gateway_cache = await active_gateway_capability_service.get_view()
             gateway_cache_at = perf_counter()
             return gateway_cache
 
