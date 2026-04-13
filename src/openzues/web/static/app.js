@@ -8,9 +8,15 @@ const state = {
   projectHarnessProfiles: {},
   socket: null,
   refreshTimer: null,
+  refreshInFlight: false,
+  refreshQueued: false,
+  lastSocketRefreshAt: 0,
   radarReserveExpanded: false,
   lastBootstrapResult: null,
 };
+const SWARM_COLLABORATION_MODE = "swarm_constitution";
+const SOCKET_REFRESH_DEBOUNCE_MS = 250;
+const SOCKET_REFRESH_INTERVAL_MS = 1500;
 
 const heroStatsEl = document.querySelector("#hero-stats");
 const briefHeadlineEl = document.querySelector("#brief-headline");
@@ -81,6 +87,8 @@ const remoteRequestsEl = document.querySelector("#remote-requests");
 const vaultSecretsEl = document.querySelector("#vault-secrets");
 const integrationsListEl = document.querySelector("#integrations-list");
 const notificationRoutesEl = document.querySelector("#notification-routes");
+const outboundDeliveriesEl = document.querySelector("#outbound-deliveries");
+const replayOutboundDeliveriesButtonEl = document.querySelector("#replay-outbound-deliveries");
 const laneSnapshotsEl = document.querySelector("#lane-snapshots");
 const continuityHeadlineEl = document.querySelector("#continuity-headline");
 const continuitySummaryEl = document.querySelector("#continuity-summary");
@@ -187,6 +195,7 @@ const missionFormEl = document.querySelector("#mission-form");
 const missionAdvancedEl = document.querySelector("#mission-advanced");
 const missionInstanceSelectEl = document.querySelector("#mission-instance-select");
 const missionProjectSelectEl = document.querySelector("#mission-project-select");
+const missionSwarmToggleEl = missionFormEl?.querySelector('input[name="swarm_enabled"]');
 const transportSelectEl = document.querySelector("#transport-select");
 const DISCLOSURE_SHELL_IDS = [
   "backstage-shell",
@@ -199,6 +208,20 @@ const DISCLOSURE_SHELL_IDS = [
 
 const MISSION_PRESETS = [
   {
+    id: "swarm",
+    name: "Swarm Constitution",
+    description: "Route one mission through the native nine-role build pipeline.",
+    objective:
+      "Run this mission through the native swarm constitution. Keep each stage structured, move cleanly from product to architecture, testing, implementation, security, refactor, and integration, and stop only when the final integration report is complete or a real conflict needs operator judgment.",
+    model: "gpt-5.4",
+    maxTurns: "9",
+    useBuiltinAgents: true,
+    runVerification: true,
+    autoCommit: false,
+    pauseOnApproval: true,
+    swarmEnabled: true,
+  },
+  {
     id: "ship",
     name: "Ship Feature",
     description: "Build, verify, and keep going until a visible feature milestone lands.",
@@ -210,6 +233,7 @@ const MISSION_PRESETS = [
     runVerification: true,
     autoCommit: true,
     pauseOnApproval: true,
+    swarmEnabled: false,
   },
   {
     id: "rescue",
@@ -223,6 +247,7 @@ const MISSION_PRESETS = [
     runVerification: true,
     autoCommit: false,
     pauseOnApproval: true,
+    swarmEnabled: false,
   },
   {
     id: "map",
@@ -236,6 +261,7 @@ const MISSION_PRESETS = [
     runVerification: false,
     autoCommit: false,
     pauseOnApproval: true,
+    swarmEnabled: false,
   },
   {
     id: "polish",
@@ -249,6 +275,7 @@ const MISSION_PRESETS = [
     runVerification: true,
     autoCommit: true,
     pauseOnApproval: true,
+    swarmEnabled: false,
   },
 ];
 
@@ -653,12 +680,35 @@ async function loadRecall(query = "") {
 }
 
 function scheduleRefresh() {
-  clearTimeout(state.refreshTimer);
-  state.refreshTimer = setTimeout(() => {
-    Promise.all([loadDashboard(), loadSetup()]).catch((error) =>
-      showToast(normalizeError(error), true),
-    );
-  }, 250);
+  if (state.refreshInFlight) {
+    state.refreshQueued = true;
+    return;
+  }
+  if (state.refreshTimer) {
+    return;
+  }
+  const now = Date.now();
+  const elapsed = now - state.lastSocketRefreshAt;
+  const delay =
+    state.lastSocketRefreshAt === 0 || elapsed >= SOCKET_REFRESH_INTERVAL_MS
+      ? SOCKET_REFRESH_DEBOUNCE_MS
+      : SOCKET_REFRESH_INTERVAL_MS - elapsed;
+  state.refreshTimer = setTimeout(runScheduledRefresh, delay);
+}
+
+function runScheduledRefresh() {
+  state.refreshTimer = null;
+  state.refreshInFlight = true;
+  state.lastSocketRefreshAt = Date.now();
+  Promise.all([loadDashboard(), loadSetup()])
+    .catch((error) => showToast(normalizeError(error), true))
+    .finally(() => {
+      state.refreshInFlight = false;
+      if (state.refreshQueued) {
+        state.refreshQueued = false;
+        scheduleRefresh();
+      }
+    });
 }
 
 function renderHero() {
@@ -770,6 +820,7 @@ function renderLaunchpad() {
           <div class="signal-meta">
             ${pill(opportunity.impact, opportunity.impact === "high" ? "ok" : opportunity.impact === "medium" ? "warn" : "")}
             ${pill(opportunity.kind)}
+            ${isSwarmMissionDraft(opportunity.mission_draft) ? pill("swarm", "ok") : ""}
           </div>
           <h4>${escapeHtml(opportunity.title)}</h4>
           <p>${escapeHtml(opportunity.summary)}</p>
@@ -789,6 +840,14 @@ function renderLaunchpad() {
               data-opportunity-id="${opportunity.id}"
             >
               Launch now
+            </button>
+            <button
+              type="button"
+              class="ghost"
+              data-action="launch-opportunity-swarm"
+              data-opportunity-id="${opportunity.id}"
+            >
+              Launch as swarm
             </button>
           </div>
         </article>
@@ -2288,6 +2347,9 @@ function renderOpsMesh() {
     }
     integrationsListEl.innerHTML = "";
     notificationRoutesEl.innerHTML = "";
+    if (outboundDeliveriesEl) {
+      outboundDeliveriesEl.innerHTML = "";
+    }
     laneSnapshotsEl.innerHTML = "";
     syncVaultSecretOptions(null);
     return;
@@ -3098,6 +3160,86 @@ function renderOpsMesh() {
         </article>
       `;
 
+  if (outboundDeliveriesEl) {
+    outboundDeliveriesEl.innerHTML = outboundDeliveries.length
+      ? outboundDeliveries
+          .map(
+            (delivery) => `
+              <article class="library-card">
+                <div class="row">
+                  <strong>${escapeHtml(delivery.message_summary)}</strong>
+                  <div class="pill-row">
+                    ${pill(delivery.event_type)}
+                    ${pill(
+                      delivery.delivery_state,
+                      delivery.delivery_state === "delivered"
+                        ? "ok"
+                        : delivery.delivery_state === "failed"
+                          ? "bad"
+                          : "warn",
+                    )}
+                    ${delivery.test_delivery ? pill("test") : ""}
+                  </div>
+                </div>
+                <div class="small-muted">${escapeHtml(delivery.route_name)} • ${escapeHtml(delivery.route_target)}</div>
+                ${
+                  delivery.conversation_target?.summary
+                    ? `<div class="small-muted">Conversation: ${escapeHtml(delivery.conversation_target.summary)}</div>`
+                    : ""
+                }
+                ${
+                  delivery.session_key
+                    ? `<div class="rail-code">${escapeHtml(clipText(delivery.session_key, 42))}</div>`
+                    : ""
+                }
+                <div class="pill-row">
+                  ${pill(`attempts ${delivery.attempt_count || 0}`)}
+                  ${
+                    delivery.max_retries_reached
+                      ? pill("max retries", "bad")
+                      : delivery.replay_ready &&
+                          delivery.delivery_state !== "pending" &&
+                          delivery.delivery_state !== "delivered"
+                        ? pill("replay ready", "warn")
+                        : delivery.next_retry_at
+                          ? pill(
+                              `retry ${formatRelativeTimestamp(delivery.next_retry_at)}`,
+                              "warn",
+                            )
+                          : ""
+                  }
+                  ${
+                    delivery.route_scope?.route_match
+                      ? pill(`match ${delivery.route_scope.route_match}`)
+                      : ""
+                  }
+                  ${
+                    delivery.delivered_at
+                      ? pill(`delivered ${formatRelativeTimestamp(delivery.delivered_at)}`, "ok")
+                      : delivery.last_attempt_at
+                        ? pill(`last try ${formatRelativeTimestamp(delivery.last_attempt_at)}`)
+                        : ""
+                  }
+                </div>
+                ${
+                  delivery.last_error
+                    ? `<div class="mission-alert">${escapeHtml(delivery.last_error)}</div>`
+                    : ""
+                }
+              </article>
+            `,
+          )
+          .join("")
+      : `
+          <article class="library-card empty-state">
+            <strong>No outbound deliveries recorded yet.</strong>
+            <p class="small-muted">
+              Test a route or let the ops mesh emit a notification to persist the first routed outbox record.
+            </p>
+          </article>
+        `;
+  }
+
   laneSnapshotsEl.innerHTML = opsMesh.lane_snapshots.length
     ? opsMesh.lane_snapshots
         .map(
@@ -3621,6 +3763,23 @@ function renderPresets() {
   ).join("");
 }
 
+function isSwarmMissionDraft(draft) {
+  return Boolean(
+    draft?.swarm_enabled || draft?.collaboration_mode === SWARM_COLLABORATION_MODE,
+  );
+}
+
+function buildSwarmMissionPayload(payload, forceSwarm = false) {
+  if (!forceSwarm && !isSwarmMissionDraft(payload)) {
+    return payload;
+  }
+  return {
+    ...payload,
+    swarm_enabled: true,
+    collaboration_mode: SWARM_COLLABORATION_MODE,
+  };
+}
+
 function applyMissionPreset(presetId) {
   const preset = MISSION_PRESETS.find((item) => item.id === presetId);
   if (!preset) {
@@ -3641,6 +3800,9 @@ function applyMissionPreset(presetId) {
   missionFormEl.querySelector('input[name="auto_recover_limit"]').value = 2;
   missionFormEl.querySelector('input[name="reflex_cooldown_seconds"]').value = 900;
   missionFormEl.querySelector('input[name="start_immediately"]').checked = true;
+  if (missionSwarmToggleEl) {
+    missionSwarmToggleEl.checked = !!preset.swarmEnabled;
+  }
   missionAdvancedEl.open = true;
   showToast(`Loaded preset: ${preset.name}`);
 }
@@ -3659,6 +3821,9 @@ function resetMissionForm() {
   missionFormEl.querySelector('input[name="auto_recover_limit"]').value = 2;
   missionFormEl.querySelector('input[name="reflex_cooldown_seconds"]').value = 900;
   missionFormEl.querySelector('input[name="start_immediately"]').checked = true;
+  if (missionSwarmToggleEl) {
+    missionSwarmToggleEl.checked = false;
+  }
   missionAdvancedEl.open = false;
 }
 
@@ -3691,6 +3856,9 @@ function applyMissionDraft(draft) {
   missionFormEl.querySelector('input[name="auto_recover"]').checked = !!draft.auto_recover;
   missionFormEl.querySelector('input[name="allow_failover"]').checked = draft.allow_failover !== false;
   missionFormEl.querySelector('input[name="start_immediately"]').checked = !!draft.start_immediately;
+  if (missionSwarmToggleEl) {
+    missionSwarmToggleEl.checked = isSwarmMissionDraft(draft);
+  }
   if (draft.instance_id != null) {
     missionInstanceSelectEl.value = String(draft.instance_id);
   }
@@ -4198,6 +4366,7 @@ function renderShellChrome() {
   const inboxItems = opsMesh?.task_inbox?.items ?? [];
   const remoteRequests = opsMesh?.remote_requests ?? [];
   const routes = opsMesh?.notification_routes ?? [];
+  const outboundDeliveries = opsMesh?.outbound_deliveries ?? [];
   const meshIntegrations = opsMesh?.integrations ?? [];
   const authPosture = opsMesh?.auth_posture;
   const accessPosture = opsMesh?.access_posture;
@@ -4450,6 +4619,8 @@ function renderMissions() {
           <div class="mission-kicker">
             ${pill(mission.status, toneForMissionStatus(mission.status))}
             ${mission.phase ? pill(mission.phase) : ""}
+            ${mission.swarm_enabled ? pill("swarm", "ok") : ""}
+            ${mission.swarm?.active_role ? pill(`role ${String(mission.swarm.active_role).replaceAll("_", " ")}`) : ""}
             ${mission.in_progress ? pill("turn running", "ok") : pill("idle")}
             ${
               liveTelemetry.streaming
@@ -4627,6 +4798,8 @@ function renderMissions() {
               <article class="mini-stat">
                 <span class="mini-stat-label">Agent stack</span>
                 <div class="mission-pills">
+                  ${mission.swarm_enabled ? pill("swarm constitution", "ok") : ""}
+                  ${mission.swarm?.status ? pill(`swarm ${mission.swarm.status}`) : ""}
                   ${
                     delegationBrief.enabled
                       ? pill((delegationBrief.mode || "adaptive").replaceAll("_", " "), "ok")
@@ -4650,6 +4823,11 @@ function renderMissions() {
                 ${
                   delegationBrief.rationale
                     ? `<div class="small-muted">${escapeHtml(delegationBrief.rationale)}</div>`
+                    : ""
+                }
+                ${
+                  mission.swarm?.last_output_summary
+                    ? `<div class="small-muted">${escapeHtml(mission.swarm.last_output_summary)}</div>`
                     : ""
                 }
                 <div class="checkpoint-list">${delegationRoles}</div>
@@ -5516,8 +5694,9 @@ instanceFormEl.addEventListener("submit", async (event) => {
 missionFormEl.addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = new FormData(event.currentTarget);
+  const swarmEnabled = form.get("swarm_enabled") === "on";
   try {
-    await submitJson("/api/missions", {
+    await submitJson("/api/missions", buildSwarmMissionPayload({
       name: form.get("name"),
       objective: form.get("objective"),
       instance_id: Number(form.get("instance_id")),
@@ -5544,12 +5723,13 @@ missionFormEl.addEventListener("submit", async (event) => {
       reflex_cooldown_seconds: form.get("reflex_cooldown_seconds")
         ? Number(form.get("reflex_cooldown_seconds"))
         : 900,
+      swarm_enabled: swarmEnabled,
       start_immediately: form.get("start_immediately") === "on",
       toolsets: parseCsvList(form.get("toolsets") || ""),
       conversation_target: buildConversationTargetPayload(form),
-    });
+    }, swarmEnabled));
     resetMissionForm();
-    showToast("Mission launched.");
+    showToast(swarmEnabled ? "Swarm mission launched." : "Mission launched.");
   } catch (error) {
     showToast(normalizeError(error), true);
   }
@@ -6036,8 +6216,23 @@ document.addEventListener("click", async (event) => {
       if (!opportunity) {
         throw new Error("That launch draft is no longer available.");
       }
-      await submitJson("/api/missions", opportunity.mission_draft);
+      await submitJson(
+        "/api/missions",
+        buildSwarmMissionPayload(opportunity.mission_draft),
+      );
       showToast(`Launched: ${opportunity.title}`);
+      resetMissionForm();
+    }
+    if (target.dataset.action === "launch-opportunity-swarm") {
+      const opportunity = getOpportunityById(target.dataset.opportunityId);
+      if (!opportunity) {
+        throw new Error("That launch draft is no longer available.");
+      }
+      await submitJson(
+        "/api/missions",
+        buildSwarmMissionPayload(opportunity.mission_draft, true),
+      );
+      showToast(`Swarm launched: ${opportunity.title}`);
       resetMissionForm();
     }
     if (target.dataset.action === "launch-dream") {
@@ -6045,7 +6240,7 @@ document.addEventListener("click", async (event) => {
       if (!dream) {
         throw new Error("That dream pass is no longer available.");
       }
-      await submitJson("/api/missions", dream.mission_draft);
+      await submitJson("/api/missions", buildSwarmMissionPayload(dream.mission_draft));
       showToast(`Dream launched for ${dream.project_label}.`);
       resetMissionForm();
     }
@@ -6131,6 +6326,14 @@ document.addEventListener("click", async (event) => {
       const result = await submitJson(`/api/notification-routes/${target.dataset.routeId}/test`, {});
       await loadDashboard();
       showToast(result.summary || "Notification route tested.", !result.ok);
+    }
+    if (
+      target.dataset.action === "replay-outbound-deliveries" ||
+      target === replayOutboundDeliveriesButtonEl
+    ) {
+      const result = await submitJson("/api/notification-routes/replay", {});
+      await loadDashboard();
+      showToast(result.summary || "Outbound deliveries replayed.", !result.ok);
     }
     if (target.dataset.action === "run-playbook") {
       const playbookId = target.dataset.playbookId;

@@ -576,6 +576,24 @@
                         </form>
 
                         <div id="notification-routes" class="stack library-list"></div>
+
+                        <div class="section-header">
+                        <div>
+                          <p class="eyebrow">Outbound Outbox</p>
+                          <h2>Recent routed delivery attempts</h2>
+                        </div>
+                        <div class="section-header-actions">
+                          <p class="panel-lede">
+                            The latest route deliveries stay visible here with session and
+                            conversation targeting context.
+                          </p>
+                          <button id="replay-outbound-deliveries" type="button">
+                            Replay Ready Deliveries
+                          </button>
+                        </div>
+                      </div>
+
+                        <div id="outbound-deliveries" class="stack library-list"></div>
                       </section>
                     </section>
 
@@ -1162,6 +1180,10 @@
 
                     <div class="toggle-row">
                       <label class="checkbox">
+                        <input name="swarm_enabled" type="checkbox" />
+                        Run as swarm
+                      </label>
+                      <label class="checkbox">
                         <input name="use_builtin_agents" type="checkbox" checked />
                         Use built-in agents
                       </label>
@@ -1194,6 +1216,10 @@
                         Start now
                       </label>
                     </div>
+                    <p class="small-muted">
+                      Swarm runs use the structured nine-role constitution: conductor, product,
+                      architecture, test, backend, frontend, security, refactor, and integration.
+                    </p>
                   </div>
                 </details>
 

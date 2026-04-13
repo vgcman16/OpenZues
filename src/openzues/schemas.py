@@ -100,6 +100,247 @@ ControlChatActionKind = Literal[
     "unavailable",
 ]
 AttentionQueueActionStatus = Literal["executed", "escalated", "observed"]
+SwarmRole = Literal[
+    "conductor",
+    "product_manager",
+    "architect",
+    "test_engineer",
+    "backend_engineer",
+    "frontend_engineer",
+    "security_auditor",
+    "refactorer",
+    "integration_tester",
+]
+SwarmStageStatus = Literal[
+    "pending",
+    "ready",
+    "running",
+    "completed",
+    "blocked",
+    "conflicted",
+]
+SwarmPayloadKind = Literal[
+    "mission_brief",
+    "role_directive",
+    "product_spec",
+    "architecture_plan",
+    "test_strategy",
+    "backend_plan",
+    "frontend_plan",
+    "security_review",
+    "refactor_plan",
+    "integration_report",
+    "conflict_report",
+    "final_handoff",
+]
+SwarmIsolationScope = Literal[
+    "global_coordination",
+    "product_scope_only",
+    "system_design_only",
+    "quality_strategy_only",
+    "backend_surface_only",
+    "frontend_surface_only",
+    "security_posture_only",
+    "refactor_surface_only",
+    "integration_surface_only",
+]
+SwarmConflictReason = Literal[
+    "ownership_overlap",
+    "contract_mismatch",
+    "verification_mismatch",
+    "security_blocker",
+    "integration_break",
+]
+
+
+class SwarmAcceptanceCriterionView(BaseModel):
+    id: str
+    summary: str
+    owner: SwarmRole | None = None
+
+
+class SwarmDecisionView(BaseModel):
+    id: str
+    summary: str
+    rationale: str | None = None
+    owner: SwarmRole | None = None
+
+
+class SwarmRiskView(BaseModel):
+    id: str
+    summary: str
+    severity: SignalLevel = "warn"
+    mitigation: str | None = None
+    owner: SwarmRole | None = None
+
+
+class SwarmArtifactReferenceView(BaseModel):
+    kind: Literal["file", "test", "api", "ui", "schema", "checkpoint", "note"]
+    label: str
+    path: str | None = None
+    summary: str | None = None
+
+
+class SwarmDirectiveView(BaseModel):
+    objective: str
+    required_outputs: list[SwarmPayloadKind] = Field(default_factory=list)
+    owned_surfaces: list[str] = Field(default_factory=list)
+    blocked_surfaces: list[str] = Field(default_factory=list)
+    guardrails: list[str] = Field(default_factory=list)
+    exit_criteria: list[str] = Field(default_factory=list)
+
+
+class SwarmProductSpecView(BaseModel):
+    problem: str
+    user_outcomes: list[str] = Field(default_factory=list)
+    scope_in: list[str] = Field(default_factory=list)
+    scope_out: list[str] = Field(default_factory=list)
+    acceptance_criteria: list[SwarmAcceptanceCriterionView] = Field(default_factory=list)
+    open_questions: list[str] = Field(default_factory=list)
+    constraints: list[str] = Field(default_factory=list)
+
+
+class SwarmArchitecturePlanView(BaseModel):
+    headline: str
+    system_shape: list[str] = Field(default_factory=list)
+    dependencies: list[str] = Field(default_factory=list)
+    contracts: list[str] = Field(default_factory=list)
+    decisions: list[SwarmDecisionView] = Field(default_factory=list)
+    risks: list[SwarmRiskView] = Field(default_factory=list)
+    file_targets: list[SwarmArtifactReferenceView] = Field(default_factory=list)
+
+
+class SwarmTestStrategyView(BaseModel):
+    headline: str
+    unit_checks: list[str] = Field(default_factory=list)
+    integration_checks: list[str] = Field(default_factory=list)
+    regression_guards: list[str] = Field(default_factory=list)
+    fixtures: list[str] = Field(default_factory=list)
+
+
+class SwarmImplementationPlanView(BaseModel):
+    headline: str
+    role: SwarmRole
+    tasks: list[str] = Field(default_factory=list)
+    file_targets: list[SwarmArtifactReferenceView] = Field(default_factory=list)
+    tests_to_touch: list[str] = Field(default_factory=list)
+    contracts_to_honor: list[str] = Field(default_factory=list)
+    risks: list[SwarmRiskView] = Field(default_factory=list)
+
+
+class SwarmSecurityReviewView(BaseModel):
+    headline: str
+    findings: list[SwarmRiskView] = Field(default_factory=list)
+    required_repairs: list[str] = Field(default_factory=list)
+    approval_gates: list[str] = Field(default_factory=list)
+
+
+class SwarmRefactorPlanView(BaseModel):
+    headline: str
+    cleanup_targets: list[SwarmArtifactReferenceView] = Field(default_factory=list)
+    invariants: list[str] = Field(default_factory=list)
+    followups: list[str] = Field(default_factory=list)
+
+
+class SwarmIntegrationReportView(BaseModel):
+    headline: str
+    verified_checks: list[str] = Field(default_factory=list)
+    failing_checks: list[str] = Field(default_factory=list)
+    blockers: list[str] = Field(default_factory=list)
+    recommended_action: str | None = None
+
+
+class SwarmConflictView(BaseModel):
+    reason: SwarmConflictReason
+    summary: str
+    roles: list[SwarmRole] = Field(default_factory=list)
+    recommended_reflex: ReflexKind = "scope_realign"
+
+
+class SwarmWorkingSetView(BaseModel):
+    product_spec: SwarmProductSpecView | None = None
+    architecture_plan: SwarmArchitecturePlanView | None = None
+    test_strategy: SwarmTestStrategyView | None = None
+    backend_plan: SwarmImplementationPlanView | None = None
+    frontend_plan: SwarmImplementationPlanView | None = None
+    security_review: SwarmSecurityReviewView | None = None
+    refactor_plan: SwarmRefactorPlanView | None = None
+    integration_report: SwarmIntegrationReportView | None = None
+    decisions: list[SwarmDecisionView] = Field(default_factory=list)
+    risks: list[SwarmRiskView] = Field(default_factory=list)
+    artifacts: list[SwarmArtifactReferenceView] = Field(default_factory=list)
+    conflicts: list[SwarmConflictView] = Field(default_factory=list)
+
+
+class SwarmRoleDefinitionView(BaseModel):
+    role: SwarmRole
+    label: str
+    system_prompt: str
+    isolation_scope: SwarmIsolationScope
+    consumes: list[SwarmPayloadKind] = Field(default_factory=list)
+    produces: list[SwarmPayloadKind] = Field(default_factory=list)
+
+
+class SwarmStageDefinitionView(BaseModel):
+    order: int = Field(ge=0)
+    role: SwarmRole
+    consumes: list[SwarmPayloadKind] = Field(default_factory=list)
+    produces: list[SwarmPayloadKind] = Field(default_factory=list)
+    next_role: SwarmRole | None = None
+
+
+class SwarmConstitutionView(BaseModel):
+    version: str = "swarm.constitution.v1"
+    routing_mode: Literal["json_bus"] = "json_bus"
+    no_free_chat: bool = True
+    pause_on_conflict: bool = True
+    conflict_policy: str = (
+        "Pause the swarm and raise a reflex-visible conflict packet when two role outputs "
+        "disagree on the same owned surface."
+    )
+    stages: list[SwarmStageDefinitionView] = Field(default_factory=list)
+    roles: list[SwarmRoleDefinitionView] = Field(default_factory=list)
+
+
+class SwarmEnvelopeView(BaseModel):
+    schema_version: str = "swarm.payload.v1"
+    mission_id: int | None = None
+    run_id: str
+    stage_index: int = Field(default=0, ge=0)
+    from_role: SwarmRole
+    to_role: SwarmRole
+    kind: SwarmPayloadKind
+    summary: str
+    directive: SwarmDirectiveView | None = None
+    working_set: SwarmWorkingSetView = Field(default_factory=SwarmWorkingSetView)
+    notes: list[str] = Field(default_factory=list)
+    blockers: list[str] = Field(default_factory=list)
+    created_at: datetime | None = None
+
+
+class MissionSwarmConflictView(BaseModel):
+    reason: SwarmConflictReason
+    summary: str
+    roles: list[SwarmRole] = Field(default_factory=list)
+    prompt: str
+    detected_at: str | None = None
+    recommended_reflex: ReflexKind = "scope_realign"
+
+
+class MissionSwarmRuntimeView(BaseModel):
+    enabled: bool = True
+    constitution_version: str = "swarm.constitution.v1"
+    run_id: str | None = None
+    status: Literal["ready", "running", "completed", "blocked", "conflicted"] = "ready"
+    stage_index: int = Field(default=1, ge=0)
+    active_role: SwarmRole | None = None
+    completed_roles: list[SwarmRole] = Field(default_factory=list)
+    pending_roles: list[SwarmRole] = Field(default_factory=list)
+    last_payload_kind: SwarmPayloadKind | None = None
+    last_output_summary: str | None = None
+    active_envelope: SwarmEnvelopeView | None = None
+    working_set: SwarmWorkingSetView = Field(default_factory=SwarmWorkingSetView)
+    conflict: MissionSwarmConflictView | None = None
 
 
 class InstanceCreate(BaseModel):
@@ -842,6 +1083,64 @@ class NotificationRouteTestResultView(BaseModel):
     summary: str
     error: str | None = None
     route: NotificationRouteView
+    delivery: OutboundDeliveryView | None = None
+
+
+class OutboundDeliveryReplayResultView(BaseModel):
+    ok: bool
+    delivery_id: int
+    route_id: int
+    route_name: str
+    target: str
+    event_type: str
+    summary: str
+    error: str | None = None
+    route: NotificationRouteView
+    delivery: OutboundDeliveryView | None = None
+
+
+class OutboundDeliveryReplayBatchView(BaseModel):
+    ok: bool = True
+    summary: str
+    attempted_count: int = 0
+    replayed_count: int = 0
+    failed_count: int = 0
+    deferred_count: int = 0
+    skipped_max_retries_count: int = 0
+    deliveries: list[OutboundDeliveryReplayResultView] = Field(default_factory=list)
+
+
+class OutboundRouteScopeView(BaseModel):
+    route_id: int | None = None
+    route_name: str
+    route_kind: str
+    route_target: str
+    route_match: str | None = None
+
+
+class OutboundDeliveryView(BaseModel):
+    id: int
+    route_id: int | None = None
+    route_name: str
+    route_kind: str
+    route_target: str
+    event_type: str
+    session_key: str | None = None
+    conversation_target: ConversationTargetView | None = None
+    route_scope: OutboundRouteScopeView
+    event_payload: dict[str, Any] | None = None
+    message_summary: str
+    test_delivery: bool = False
+    delivery_state: Literal["pending", "delivered", "failed"]
+    attempt_count: int = 0
+    last_attempt_at: datetime | None = None
+    replay_ready: bool = False
+    next_retry_at: datetime | None = None
+    max_retries_reached: bool = False
+    delivered_at: datetime | None = None
+    last_error: str | None = None
+    created_at: datetime
+    updated_at: datetime
 
 
 class IntegrationCreate(BaseModel):
@@ -1318,6 +1617,7 @@ class MissionCreate(BaseModel):
     auto_recover_limit: int = Field(default=2, ge=0)
     reflex_cooldown_seconds: int = Field(default=900, ge=60)
     allow_failover: bool = True
+    swarm_enabled: bool = False
     toolsets: list[str] = Field(default_factory=list)
     start_immediately: bool = True
 
@@ -1425,6 +1725,8 @@ class MissionView(BaseModel):
     auto_recover_limit: int = 2
     reflex_cooldown_seconds: int = 900
     allow_failover: bool = True
+    swarm_enabled: bool = False
+    swarm: MissionSwarmRuntimeView | None = None
     toolsets: list[str] = Field(default_factory=list)
     tool_policy: HermesToolPolicyView | None = None
     preferred_memory_provider: str | None = None
@@ -1839,6 +2141,7 @@ class DashboardOpsMeshView(BaseModel):
     vault_secrets: list[VaultSecretView] = Field(default_factory=list)
     integrations: list[IntegrationView] = Field(default_factory=list)
     notification_routes: list[NotificationRouteView] = Field(default_factory=list)
+    outbound_deliveries: list[OutboundDeliveryView] = Field(default_factory=list)
     lane_snapshots: list[LaneSnapshotView] = Field(default_factory=list)
 
 

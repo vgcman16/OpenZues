@@ -27,6 +27,8 @@ from openzues.schemas import (
     GatewayCapabilityView,
     InstanceView,
     MissionLiveTelemetryView,
+    MissionSwarmConflictView,
+    MissionSwarmRuntimeView,
     MissionView,
     OperatorView,
     ProjectView,
@@ -648,6 +650,7 @@ def make_mission_view(
     last_reflex_at: str | None = None,
     cwd: str = "C:/workspace",
     thread_id: str | None = None,
+    swarm: MissionSwarmRuntimeView | None = None,
     toolsets: list[str] | None = None,
     updated_at: datetime | None = None,
 ) -> MissionView:
@@ -675,6 +678,8 @@ def make_mission_view(
         auto_recover=auto_recover,
         auto_recover_limit=auto_recover_limit,
         reflex_cooldown_seconds=reflex_cooldown_seconds,
+        swarm_enabled=swarm is not None,
+        swarm=swarm,
         toolsets=toolsets or [],
         in_progress=in_progress,
         phase=phase,
@@ -6200,6 +6205,70 @@ def test_mission_creation_appears_on_dashboard(tmp_path) -> None:
     assert dashboard["brief"]["focus_mission_id"] == created["id"]
 
 
+def test_mission_creation_can_enable_swarm_from_api(tmp_path) -> None:
+    with make_client(tmp_path) as client:
+        instance_response = client.post(
+            "/api/instances",
+            json={
+                "name": "Local Codex Desktop",
+                "transport": "desktop",
+                "cwd": str(tmp_path),
+                "auto_connect": False,
+            },
+        )
+        instance_id = instance_response.json()["id"]
+        mission_response = client.post(
+            "/api/missions",
+            json={
+                "name": "Ship with swarm",
+                "objective": "Run the native swarm constitution from product through integration.",
+                "instance_id": instance_id,
+                "project_id": None,
+                "cwd": str(tmp_path),
+                "thread_id": None,
+                "model": "gpt-5.4",
+                "reasoning_effort": None,
+                "collaboration_mode": None,
+                "max_turns": 9,
+                "use_builtin_agents": True,
+                "run_verification": True,
+                "auto_commit": False,
+                "pause_on_approval": True,
+                "allow_auto_reflexes": True,
+                "auto_recover": True,
+                "auto_recover_limit": 2,
+                "reflex_cooldown_seconds": 900,
+                "allow_failover": True,
+                "swarm_enabled": True,
+                "start_immediately": False,
+            },
+        )
+        dashboard_response = client.get("/api/dashboard")
+
+    assert mission_response.status_code == 200
+    created = mission_response.json()
+    assert created["swarm_enabled"] is True
+    assert created["collaboration_mode"] == "swarm_constitution"
+    assert created["swarm"]["status"] == "ready"
+    assert created["swarm"]["active_role"] == "product_manager"
+    dashboard = dashboard_response.json()
+    assert dashboard["missions"][0]["swarm_enabled"] is True
+    assert dashboard["missions"][0]["swarm"]["active_role"] == "product_manager"
+
+
+def test_dashboard_index_includes_swarm_launch_controls(tmp_path) -> None:
+    with make_client(tmp_path) as client:
+        response = client.get("/")
+        script_response = client.get("/static/app.js")
+
+    assert response.status_code == 200
+    assert script_response.status_code == 200
+    assert 'name="swarm_enabled"' in response.text
+    assert "Run as swarm" in response.text
+    assert "Launch as swarm" in script_response.text
+    assert 'launch-opportunity-swarm' in script_response.text
+
+
 def test_mission_continuity_endpoint_returns_relay_packet(tmp_path) -> None:
     with make_client(tmp_path) as client:
         instance_response = client.post(
@@ -7348,6 +7417,53 @@ def test_build_reflex_deck_offers_resume_reflex_for_paused_checkpoint() -> None:
     reflex_deck = build_reflex_deck([make_instance_view()], [mission], [project])
 
     assert any(reflex.kind == "resume_handoff" for reflex in reflex_deck.reflexes)
+
+
+def test_build_reflex_deck_surfaces_swarm_conflict_resolution() -> None:
+    mission = make_mission_view(
+        mission_id=71,
+        name="Swarm conflict",
+        status="blocked",
+        phase="swarm_conflict",
+        project_id=9,
+        project_label="OpenZues",
+        last_error=(
+            "Swarm conflict: Backend and frontend ownership overlap on "
+            "`src/openzues/app.py`."
+        ),
+        swarm=MissionSwarmRuntimeView(
+            run_id="swarm-run-71",
+            status="conflicted",
+            stage_index=5,
+            active_role="frontend_engineer",
+            completed_roles=[
+                "product_manager",
+                "architect",
+                "test_engineer",
+                "backend_engineer",
+            ],
+            pending_roles=[
+                "frontend_engineer",
+                "security_auditor",
+                "refactorer",
+                "integration_tester",
+            ],
+            conflict=MissionSwarmConflictView(
+                reason="ownership_overlap",
+                summary="Backend and frontend ownership overlap on `src/openzues/app.py`.",
+                roles=["backend_engineer", "frontend_engineer"],
+                prompt="Reconcile the shared app seam and re-emit a structured JSON payload.",
+            ),
+        ),
+    )
+    project = make_project_view(project_id=9, label="OpenZues")
+
+    reflex_deck = build_reflex_deck([make_instance_view()], [mission], [project])
+
+    reflex = next(reflex for reflex in reflex_deck.reflexes if reflex.mission_id == 71)
+    assert reflex.kind == "scope_realign"
+    assert "swarm conflict" in reflex.title.lower()
+    assert "structured json payload" in reflex.prompt.lower()
 
 
 def test_build_dream_deck_surfaces_ready_project_memory_pass() -> None:

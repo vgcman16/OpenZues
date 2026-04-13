@@ -3,6 +3,7 @@ from __future__ import annotations
 import shutil
 from collections.abc import Iterable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, TypedDict
 
 from openzues.database import Database
@@ -65,6 +66,18 @@ def executor_label(value: str | None) -> str:
     if not key:
         return _EXECUTOR_LABELS[DEFAULT_HERMES_EXECUTOR]
     return _EXECUTOR_LABELS.get(key, _titleize_slug(key))
+
+
+def openzues_recall_entrypoint(cwd: str | None = None) -> str:
+    workspace = Path(str(cwd or "").strip()) if str(cwd or "").strip() else None
+    if workspace is not None:
+        windows_venv = workspace / ".venv" / "Scripts" / "python.exe"
+        if windows_venv.exists():
+            return r".\.venv\Scripts\python.exe -m openzues.cli recall --json"
+        posix_venv = workspace / ".venv" / "bin" / "python"
+        if posix_venv.exists():
+            return "./.venv/bin/python -m openzues.cli recall --json"
+    return "python -m openzues.cli recall --json"
 
 
 def _executor_key(value: str | None) -> str:
@@ -333,17 +346,24 @@ def build_memory_provider_lines(
     *,
     integrations: Iterable[Any] = (),
     toolsets: Iterable[str] = (),
+    cwd: str | None = None,
 ) -> list[str]:
     provider_key = str(preferred_memory_provider or DEFAULT_HERMES_MEMORY_PROVIDER).strip().lower()
     toolset_set = {
         str(toolset or "").strip().lower() for toolset in toolsets if str(toolset or "").strip()
     }
     if provider_key == "openzues_recall":
+        recall_entrypoint = openzues_recall_entrypoint(cwd)
         return [
             "Preferred memory provider: OpenZues Recall.",
             (
                 "- Search saved missions, checkpoints, and continuity packets before "
                 "re-deriving prior decisions or repeating uncertainty."
+            ),
+            (
+                f"- Use `{recall_entrypoint}` or `/api/recall` as the "
+                "concrete session-search entrypoint on this workspace before reopening "
+                "large ledgers by hand."
             ),
         ]
 

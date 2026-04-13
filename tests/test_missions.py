@@ -10,7 +10,16 @@ from typing import Any
 import pytest
 
 from openzues.database import Database
-from openzues.schemas import MissionCreate, MissionReflexRun
+from openzues.schemas import (
+    MissionCreate,
+    MissionReflexRun,
+    SwarmArtifactReferenceView,
+    SwarmEnvelopeView,
+    SwarmImplementationPlanView,
+    SwarmIntegrationReportView,
+    SwarmProductSpecView,
+    SwarmWorkingSetView,
+)
 from openzues.services.ecc_catalog import configure_ecc_catalog
 from openzues.services.followups import mission_row_matches_payload
 from openzues.services.hermes_skills import configure_hermes_skill_catalog
@@ -18,7 +27,10 @@ from openzues.services.hub import BroadcastHub
 from openzues.services.missions import (
     OPENCLAW_PARITY_CHECKPOINT_LEDGER,
     MissionService,
+    _execution_stall_threshold_seconds,
+    _uses_fast_parity_reporting_orbit_cutoff,
 )
+from openzues.services.swarm import build_initial_swarm_runtime
 
 
 @pytest.fixture(autouse=True)
@@ -259,6 +271,35 @@ async def test_run_now_creates_thread_and_turn(tmp_path) -> None:
     assert stored["in_progress"] == 1
     assert "safe" in stored["toolsets"]
     assert "terminal" in stored["toolsets"]
+
+
+@pytest.mark.asyncio
+async def test_run_now_uses_swarm_product_manager_prompt(tmp_path) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    manager = FakeManager()
+    service = MissionService(database, manager, BroadcastHub(), poll_interval_seconds=3600)
+
+    mission = await service.create(
+        MissionCreate(
+            name="Swarm shipper",
+            objective="Build the native swarm mission flow.",
+            instance_id=7,
+            cwd="C:/workspace",
+            swarm_enabled=True,
+            start_immediately=False,
+        )
+    )
+
+    await service.run_now(mission.id)
+    stored = await database.get_mission(mission.id)
+
+    assert stored is not None
+    assert stored["swarm"] is not None
+    assert stored["swarm"]["active_role"] == "product_manager"
+    assert "delegation" not in stored["toolsets"]
+    assert "Product Manager inside the OpenZues Swarm Constitution" in manager.turn_calls[0]["text"]
+    assert "Return one raw JSON object only." in manager.turn_calls[0]["text"]
 
 
 @pytest.mark.asyncio
@@ -822,6 +863,292 @@ async def test_final_answer_event_creates_checkpoint(tmp_path) -> None:
     assert mission["status"] == "completed"
     assert mission["phase"] == "completed"
     assert mission["in_progress"] == 0
+
+
+@pytest.mark.asyncio
+async def test_swarm_final_answer_advances_to_architect(tmp_path) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    manager = FakeManager()
+    service = MissionService(database, manager, BroadcastHub(), poll_interval_seconds=3600)
+
+    mission = await service.create(
+        MissionCreate(
+            name="Swarm advancement",
+            objective="Advance the structured swarm bus.",
+            instance_id=7,
+            cwd="C:/workspace",
+            swarm_enabled=True,
+            start_immediately=False,
+        )
+    )
+    await service.run_now(mission.id)
+    stored = await database.get_mission(mission.id)
+    assert stored is not None
+
+    payload = SwarmEnvelopeView(
+        mission_id=mission.id,
+        run_id=stored["swarm"]["run_id"],
+        stage_index=1,
+        from_role="product_manager",
+        to_role="conductor",
+        kind="product_spec",
+        summary="Product framing is complete.",
+        working_set=SwarmWorkingSetView(
+            product_spec=SwarmProductSpecView(
+                problem="Advance the structured swarm bus.",
+                user_outcomes=[
+                    "The conductor should route PM output to the Architect.",
+                ],
+                scope_in=["Structured bus handoffs"],
+                scope_out=["Free chat"],
+            )
+        ),
+    ).model_dump_json()
+
+    await service.handle_event(
+        7,
+        {
+            "method": "item/completed",
+            "threadId": stored["thread_id"],
+            "params": {
+                "threadId": stored["thread_id"],
+                "turnId": "turn_pm",
+                "item": {
+                    "type": "agentMessage",
+                    "phase": "final_answer",
+                    "text": payload,
+                },
+            },
+        },
+    )
+
+    mission_row = await database.get_mission(mission.id)
+    checkpoints = await database.list_mission_checkpoints(mission.id)
+
+    assert mission_row is not None
+    assert mission_row["status"] == "active"
+    assert mission_row["phase"] == "ready"
+    assert mission_row["swarm"]["active_role"] == "architect"
+    assert mission_row["swarm"]["stage_index"] == 2
+    assert checkpoints[0]["kind"] == "swarm_payload"
+
+    await service.run_now(mission.id)
+    assert "Architect inside the OpenZues Swarm Constitution" in manager.turn_calls[-1]["text"]
+
+
+@pytest.mark.asyncio
+async def test_swarm_integration_payload_completes_mission(tmp_path) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    manager = FakeManager()
+    service = MissionService(database, manager, BroadcastHub(), poll_interval_seconds=3600)
+
+    mission_id = await database.create_mission(
+        name="Swarm finish",
+        objective="Finish the native swarm mission.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread_swarm_finish",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode="swarm_constitution",
+        max_turns=None,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=True,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+    )
+    swarm_runtime = build_initial_swarm_runtime(
+        objective="Finish the native swarm mission.",
+        mission_id=mission_id,
+    ).model_copy(
+        update={
+            "stage_index": 8,
+            "active_role": "integration_tester",
+            "completed_roles": [
+                "product_manager",
+                "architect",
+                "test_engineer",
+                "backend_engineer",
+                "frontend_engineer",
+                "security_auditor",
+                "refactorer",
+            ],
+            "pending_roles": ["integration_tester"],
+        }
+    )
+    await database.update_mission(mission_id, swarm=swarm_runtime.model_dump(mode="json"))
+
+    payload = SwarmEnvelopeView(
+        mission_id=mission_id,
+        run_id=swarm_runtime.run_id or "swarm-finish",
+        stage_index=8,
+        from_role="integration_tester",
+        to_role="conductor",
+        kind="integration_report",
+        summary="Integration verification is green.",
+        working_set=SwarmWorkingSetView(
+            product_spec=SwarmProductSpecView(problem="Finish the native swarm mission."),
+            integration_report=SwarmIntegrationReportView(
+                headline="Integration verification is green.",
+                verified_checks=["pytest tests/test_swarm.py -q"],
+                failing_checks=[],
+                blockers=[],
+                recommended_action="Complete the mission.",
+            ),
+        ),
+    ).model_dump_json()
+
+    await service.handle_event(
+        7,
+        {
+            "method": "item/completed",
+            "threadId": "thread_swarm_finish",
+            "params": {
+                "threadId": "thread_swarm_finish",
+                "turnId": "turn_swarm_finish",
+                "item": {
+                    "type": "agentMessage",
+                    "phase": "final_answer",
+                    "text": payload,
+                },
+            },
+        },
+    )
+
+    mission = await database.get_mission(mission_id)
+    checkpoints = await database.list_mission_checkpoints(mission_id)
+
+    assert mission is not None
+    assert mission["status"] == "completed"
+    assert mission["phase"] == "completed"
+    assert mission["last_checkpoint"].startswith("Swarm pipeline completed.")
+    assert checkpoints[0]["kind"] == "swarm_final"
+
+
+@pytest.mark.asyncio
+async def test_swarm_conflict_blocks_mission(tmp_path) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    manager = FakeManager()
+    service = MissionService(database, manager, BroadcastHub(), poll_interval_seconds=3600)
+
+    mission_id = await database.create_mission(
+        name="Swarm conflict",
+        objective="Catch backend and frontend overlap.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread_swarm_conflict",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode="swarm_constitution",
+        max_turns=None,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=True,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+    )
+    swarm_runtime = build_initial_swarm_runtime(
+        objective="Catch backend and frontend overlap.",
+        mission_id=mission_id,
+    ).model_copy(
+        update={
+            "stage_index": 5,
+            "active_role": "frontend_engineer",
+            "completed_roles": [
+                "product_manager",
+                "architect",
+                "test_engineer",
+                "backend_engineer",
+            ],
+            "pending_roles": [
+                "frontend_engineer",
+                "security_auditor",
+                "refactorer",
+                "integration_tester",
+            ],
+            "working_set": SwarmWorkingSetView(
+                product_spec=SwarmProductSpecView(problem="Catch backend and frontend overlap."),
+                backend_plan=SwarmImplementationPlanView(
+                    headline="Backend touched the dashboard bridge.",
+                    role="backend_engineer",
+                    file_targets=[
+                        SwarmArtifactReferenceView(
+                            kind="file",
+                            label="Shared app seam",
+                            path="src/openzues/app.py",
+                        )
+                    ],
+                ),
+            ),
+        }
+    )
+    await database.update_mission(mission_id, swarm=swarm_runtime.model_dump(mode="json"))
+
+    payload = SwarmEnvelopeView(
+        mission_id=mission_id,
+        run_id=swarm_runtime.run_id or "swarm-conflict",
+        stage_index=5,
+        from_role="frontend_engineer",
+        to_role="conductor",
+        kind="frontend_plan",
+        summary="Frontend wants the same shared app seam.",
+        working_set=SwarmWorkingSetView(
+            product_spec=SwarmProductSpecView(problem="Catch backend and frontend overlap."),
+            backend_plan=swarm_runtime.working_set.backend_plan,
+            frontend_plan=SwarmImplementationPlanView(
+                headline="Frontend also touched the shared app seam.",
+                role="frontend_engineer",
+                file_targets=[
+                    SwarmArtifactReferenceView(
+                        kind="file",
+                        label="Shared app seam",
+                        path="src/openzues/app.py",
+                    )
+                ],
+            ),
+        ),
+    ).model_dump_json()
+
+    await service.handle_event(
+        7,
+        {
+            "method": "item/completed",
+            "threadId": "thread_swarm_conflict",
+            "params": {
+                "threadId": "thread_swarm_conflict",
+                "turnId": "turn_swarm_conflict",
+                "item": {
+                    "type": "agentMessage",
+                    "phase": "final_answer",
+                    "text": payload,
+                },
+            },
+        },
+    )
+
+    mission = await database.get_mission(mission_id)
+    checkpoints = await database.list_mission_checkpoints(mission_id)
+
+    assert mission is not None
+    assert mission["status"] == "blocked"
+    assert mission["phase"] == "swarm_conflict"
+    assert mission["last_error"].startswith("Swarm conflict:")
+    assert mission["swarm"]["conflict"]["summary"].startswith("Backend and frontend")
+    assert checkpoints[0]["kind"] == "swarm_conflict"
 
 
 @pytest.mark.asyncio
@@ -1844,6 +2171,12 @@ async def test_build_turn_prompt_emits_parity_tool_evidence_contract(tmp_path) -
         in prompt
     )
     assert "OpenClaw parity execution discipline:" in prompt
+    assert "restart_safe" in prompt
+    assert "continuity_auto" in prompt
+    assert "Do not search the ledger for raw control-plane packet kinds" in prompt
+    assert "Do not widen a ledger probe into a keyword cloud" in prompt
+    assert ".openzues" in prompt
+    assert ".codex" in prompt
 
 
 @pytest.mark.asyncio
@@ -1866,6 +2199,8 @@ async def test_build_turn_prompt_compacts_parity_objective_and_skips_auto_local_
     await database.initialize()
     project_root = tmp_path / "workspace"
     project_root.mkdir()
+    (project_root / ".venv" / "Scripts").mkdir(parents=True)
+    (project_root / ".venv" / "Scripts" / "python.exe").write_text("", encoding="utf-8")
     await database.create_project(path=str(project_root), label="OpenZues Workspace")
     await database.create_skill_pin(
         project_id=1,
@@ -1927,6 +2262,7 @@ async def test_build_turn_prompt_compacts_parity_objective_and_skips_auto_local_
     prompt = await service._build_turn_prompt(mission)
 
     assert "docs/openclaw-parity-checkpoint-2026-04-10.md" in prompt
+    assert r".\.venv\Scripts\python.exe -m openzues.cli recall --json" in prompt
     assert "First inventory the OpenClaw surface area" not in prompt
     assert "Project skillbook:" not in prompt
     assert str(skill_path) not in prompt
@@ -2421,6 +2757,84 @@ async def test_reconcile_uses_auto_reflex_for_orbiting_mission(tmp_path) -> None
     assert manager.turn_calls[0]["thread_id"] == "thread_auto_reflex"
     assert "Stop broadening the task." in manager.turn_calls[0]["text"]
     assert checkpoints[0]["kind"] == "reflex_auto"
+
+
+@pytest.mark.asyncio
+async def test_reconcile_uses_auto_reflex_for_in_progress_reporting_orbit(tmp_path) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    manager = FakeManager()
+    manager.instances[7].connected = True
+    manager.instances[7].threads = [{"id": "thread_reporting_orbit", "status": {"type": "idle"}}]
+    service = MissionService(database, manager, BroadcastHub(), poll_interval_seconds=3600)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / ".venv" / "Scripts").mkdir(parents=True)
+    (workspace / ".venv" / "Scripts" / "python.exe").write_text("", encoding="utf-8")
+
+    mission_id = await database.create_mission(
+        name="OpenClaw Total Parity Program",
+        objective="Keep iterating until OpenClaw parity is complete.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread_reporting_orbit",
+        cwd=str(workspace),
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=True,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+    )
+    await database.update_mission(
+        mission_id,
+        in_progress=1,
+        phase="reporting",
+        command_count=12,
+        turns_completed=1,
+        current_command=None,
+        last_checkpoint=None,
+    )
+
+    await service._reconcile_mission(mission_id)
+    mission = await database.get_mission(mission_id)
+    checkpoints = await database.list_mission_checkpoints(mission_id)
+
+    assert mission is not None
+    assert mission["last_reflex_kind"] == "checkpoint_now"
+    assert manager.turn_calls[0]["thread_id"] == "thread_reporting_orbit"
+    assert (
+        r".\.venv\Scripts\python.exe -m openzues.cli recall --json"
+        in manager.turn_calls[0]["text"]
+    )
+    assert "Do not guess alternate Recall executable names" in manager.turn_calls[0]["text"]
+    assert "If Recall succeeds, do not summarize it in commentary." in manager.turn_calls[0]["text"]
+    assert checkpoints[0]["kind"] == "reflex_auto"
+
+
+def test_parity_fast_reporting_orbit_cutoff_triggers_after_recall_anchor() -> None:
+    mission = {
+        "objective": "Keep iterating until OpenClaw parity is complete.",
+        "current_command": None,
+    }
+
+    assert _uses_fast_parity_reporting_orbit_cutoff(
+        mission,
+        commentary_text="Recall is available and I'm narrowing that to the exact seam.",
+        anchor_command=r".\.venv\Scripts\python.exe -m openzues.cli recall --json",
+    )
+
+
+def test_execution_stall_threshold_is_tighter_for_inspection_commands() -> None:
+    assert _execution_stall_threshold_seconds("git status --short") == 60
+    assert _execution_stall_threshold_seconds('powershell.exe -Command "pytest -q"') == 8 * 60
 
 
 @pytest.mark.asyncio
@@ -2970,7 +3384,10 @@ async def test_reconcile_rebinds_long_running_inspection_execution(tmp_path) -> 
 
     mission_id = await database.create_mission(
         name="Long-running inspection parity mission",
-        objective="Resume the next bounded OpenClaw parity seam instead of replaying the ledger.",
+        objective=(
+            "Use the verified OpenClaw parity checkpoint in "
+            "`docs/openclaw-parity-checkpoint-2026-04-10.md` and land the next bounded seam."
+        ),
         status="active",
         instance_id=7,
         project_id=None,
@@ -3070,6 +3487,12 @@ async def test_reconcile_rebinds_long_running_inspection_execution(tmp_path) -> 
     assert manager.turn_calls[0]["thread_id"] == "thread_auto_7"
     assert "stalled-execution recovery" in manager.turn_calls[0]["text"]
     assert "inspection orbit disguised as execution" in manager.turn_calls[0]["text"]
+    assert "emitted item must be a tool call or the checkpoint itself" in manager.turn_calls[0][
+        "text"
+    ]
+    assert "stalled parity lane already spent its explanation budget" in manager.turn_calls[0][
+        "text"
+    ]
     assert checkpoints[0]["kind"] == "execution_rebind"
     assert "open-ended inspection output" in checkpoints[0]["summary"]
 
@@ -3286,6 +3709,342 @@ async def test_detect_executing_stall_cuts_repeated_parity_ledger_read_after_rec
     assert signal["mode"] == "repeated_parity_ledger_read"
     assert signal["output_delta_count"] == 4
     assert signal["elapsed_seconds"] >= 30
+
+
+@pytest.mark.asyncio
+async def test_detect_executing_stall_cuts_repeated_parity_select_string_after_recovery(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    service = MissionService(database, None, BroadcastHub(), poll_interval_seconds=3600)
+
+    mission_id = await database.create_mission(
+        name="Recovered parity ledger sweep mission",
+        objective="Do not keep sweeping the parity ledger after recovery already named the seam.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread_exec_ledger_sweep",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=True,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+    )
+    await database.update_mission(
+        mission_id,
+        in_progress=1,
+        phase="executing",
+        command_count=23,
+        turns_completed=4,
+        total_tokens=402500,
+        last_turn_id="turn_exec_ledger_sweep",
+        current_command=(
+            "powershell.exe -Command "
+            "\"$path='docs/openclaw-parity-checkpoint-2026-04-10.md'; "
+            "Select-String -Path $path -Pattern 'Next best slice|Operator handoff' -Context 2,4\""
+        ),
+        last_activity_at=(datetime.now(UTC) - timedelta(seconds=10)).isoformat(),
+    )
+    await database.append_mission_checkpoint(
+        mission_id=mission_id,
+        thread_id="thread_before_recovery",
+        turn_id="turn_before_recovery",
+        kind="execution_rebind",
+        summary="Mission rebound from a prior stalled parity-ledger inspection.",
+    )
+    await database.append_event(
+        instance_id=7,
+        thread_id="thread_exec_ledger_sweep",
+        method="item/started",
+        payload={
+            "threadId": "thread_exec_ledger_sweep",
+            "turnId": "turn_exec_ledger_sweep",
+            "item": {
+                "type": "commandExecution",
+                "id": "call_exec_ledger_sweep",
+                "command": (
+                    "powershell.exe -Command "
+                    "\"$path='docs/openclaw-parity-checkpoint-2026-04-10.md'; "
+                    "Select-String -Path $path -Pattern 'Next best slice|Operator handoff' "
+                    "-Context 2,4\""
+                ),
+            },
+        },
+    )
+    for index in range(4):
+        await database.append_event(
+            instance_id=7,
+            thread_id="thread_exec_ledger_sweep",
+            method="item/commandExecution/outputDelta",
+            payload={
+                "threadId": "thread_exec_ledger_sweep",
+                "turnId": "turn_exec_ledger_sweep",
+                "itemId": "call_exec_ledger_sweep",
+                "delta": f"Parity ledger sweep line {index + 1}",
+            },
+        )
+
+    started_at = datetime.now(UTC) - timedelta(seconds=55)
+    with sqlite3.connect(database.path) as connection:
+        event_ids = [
+            row[0]
+            for row in connection.execute("SELECT id FROM events ORDER BY id ASC").fetchall()
+        ]
+        for offset, event_id in enumerate(event_ids):
+            created_at = started_at + timedelta(seconds=15 * offset)
+            connection.execute(
+                "UPDATE events SET created_at = ? WHERE id = ?",
+                (created_at.isoformat(), event_id),
+            )
+        connection.commit()
+
+    mission = await database.get_mission(mission_id)
+    assert mission is not None
+    signal = await service._detect_executing_stall(
+        mission,
+        thread_status="active",
+        last_activity_seconds=10,
+    )
+
+    assert signal is not None
+    assert signal["mode"] == "repeated_parity_ledger_read"
+    assert signal["output_delta_count"] == 4
+    assert signal["elapsed_seconds"] >= 30
+
+
+@pytest.mark.asyncio
+async def test_detect_executing_stall_cuts_parity_ledger_keyword_sweep_after_recovery(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    service = MissionService(database, None, BroadcastHub(), poll_interval_seconds=3600)
+
+    mission_id = await database.create_mission(
+        name="Recovered parity ledger keyword sweep mission",
+        objective="Do not widen parity recovery into a generic ledger keyword sweep.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread_exec_keyword_sweep",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=True,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+    )
+    await database.update_mission(
+        mission_id,
+        in_progress=1,
+        phase="executing",
+        command_count=26,
+        turns_completed=4,
+        total_tokens=410200,
+        last_turn_id="turn_exec_keyword_sweep",
+        current_command=(
+            "powershell.exe -Command "
+            "\"Select-String -Path 'docs/openclaw-parity-checkpoint-2026-04-10.md' "
+            "-Pattern 'continuity_auto|remaining|Next|OpenClaw|parity|resume|seam' "
+            "-Context 1,2\""
+        ),
+        last_activity_at=(datetime.now(UTC) - timedelta(seconds=10)).isoformat(),
+    )
+    await database.append_mission_checkpoint(
+        mission_id=mission_id,
+        thread_id="thread_before_recovery",
+        turn_id="turn_before_recovery",
+        kind="orbit_rebind",
+        summary=(
+            "Mission rebound from commentary orbit and should not reopen generic "
+            "ledger sweeps."
+        ),
+    )
+    await database.append_event(
+        instance_id=7,
+        thread_id="thread_exec_keyword_sweep",
+        method="item/started",
+        payload={
+            "threadId": "thread_exec_keyword_sweep",
+            "turnId": "turn_exec_keyword_sweep",
+            "item": {
+                "type": "commandExecution",
+                "id": "call_exec_keyword_sweep",
+                "command": (
+                    "powershell.exe -Command "
+                    "\"Select-String -Path 'docs/openclaw-parity-checkpoint-2026-04-10.md' "
+                    "-Pattern 'continuity_auto|remaining|Next|OpenClaw|parity|resume|seam' "
+                    "-Context 1,2\""
+                ),
+            },
+        },
+    )
+    for index in range(4):
+        await database.append_event(
+            instance_id=7,
+            thread_id="thread_exec_keyword_sweep",
+            method="item/commandExecution/outputDelta",
+            payload={
+                "threadId": "thread_exec_keyword_sweep",
+                "turnId": "turn_exec_keyword_sweep",
+                "itemId": "call_exec_keyword_sweep",
+                "delta": f"Keyword sweep line {index + 1}",
+            },
+        )
+
+    started_at = datetime.now(UTC) - timedelta(seconds=35)
+    with sqlite3.connect(database.path) as connection:
+        event_ids = [
+            row[0]
+            for row in connection.execute("SELECT id FROM events ORDER BY id ASC").fetchall()
+        ]
+        for offset, event_id in enumerate(event_ids):
+            created_at = started_at + timedelta(seconds=8 * offset)
+            connection.execute(
+                "UPDATE events SET created_at = ? WHERE id = ?",
+                (created_at.isoformat(), event_id),
+            )
+        connection.commit()
+
+    mission = await database.get_mission(mission_id)
+    assert mission is not None
+    signal = await service._detect_executing_stall(
+        mission,
+        thread_status="active",
+        last_activity_seconds=10,
+    )
+
+    assert signal is not None
+    assert signal["mode"] == "parity_ledger_keyword_sweep"
+    assert signal["output_delta_count"] == 4
+    assert signal["elapsed_seconds"] >= 20
+
+
+@pytest.mark.asyncio
+async def test_detect_executing_stall_cuts_parity_context_sweep_after_recovery(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    service = MissionService(database, None, BroadcastHub(), poll_interval_seconds=3600)
+
+    mission_id = await database.create_mission(
+        name="Recovered parity context sweep mission",
+        objective="Do not rediscover parity context by sweeping session artifacts after recovery.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread_exec_context_sweep",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=True,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+    )
+    await database.update_mission(
+        mission_id,
+        in_progress=1,
+        phase="executing",
+        command_count=24,
+        turns_completed=4,
+        total_tokens=403100,
+        last_turn_id="turn_exec_context_sweep",
+        current_command=(
+            "powershell.exe -Command "
+            "\"Get-ChildItem -Force -Name .,.openzues,.zues,docs,.codex,logs,artifacts,"
+            "sessions,session,mission-control 2>$null\""
+        ),
+        last_activity_at=(datetime.now(UTC) - timedelta(seconds=10)).isoformat(),
+    )
+    await database.append_mission_checkpoint(
+        mission_id=mission_id,
+        thread_id="thread_before_recovery",
+        turn_id="turn_before_recovery",
+        kind="thread_rebind",
+        summary="Mission rebound from a stale recovery thread.",
+    )
+    await database.append_event(
+        instance_id=7,
+        thread_id="thread_exec_context_sweep",
+        method="item/started",
+        payload={
+            "threadId": "thread_exec_context_sweep",
+            "turnId": "turn_exec_context_sweep",
+            "item": {
+                "type": "commandExecution",
+                "id": "call_exec_context_sweep",
+                "command": (
+                    "powershell.exe -Command "
+                    "\"Get-ChildItem -Force -Name .,.openzues,.zues,docs,.codex,logs,"
+                    "artifacts,sessions,session,mission-control 2>$null\""
+                ),
+            },
+        },
+    )
+    for index in range(6):
+        await database.append_event(
+            instance_id=7,
+            thread_id="thread_exec_context_sweep",
+            method="item/commandExecution/outputDelta",
+            payload={
+                "threadId": "thread_exec_context_sweep",
+                "turnId": "turn_exec_context_sweep",
+                "itemId": "call_exec_context_sweep",
+                "delta": f"Recovery context artifact {index + 1}",
+            },
+        )
+
+    started_at = datetime.now(UTC) - timedelta(seconds=40)
+    with sqlite3.connect(database.path) as connection:
+        event_ids = [
+            row[0]
+            for row in connection.execute("SELECT id FROM events ORDER BY id ASC").fetchall()
+        ]
+        for offset, event_id in enumerate(event_ids):
+            created_at = started_at + timedelta(seconds=5 * offset)
+            connection.execute(
+                "UPDATE events SET created_at = ? WHERE id = ?",
+                (created_at.isoformat(), event_id),
+            )
+        connection.commit()
+
+    mission = await database.get_mission(mission_id)
+    assert mission is not None
+    signal = await service._detect_executing_stall(
+        mission,
+        thread_status="active",
+        last_activity_seconds=10,
+    )
+
+    assert signal is not None
+    assert signal["mode"] == "parity_context_sweep"
+    assert signal["output_delta_count"] == 6
+    assert signal["elapsed_seconds"] >= 25
 
 
 @pytest.mark.asyncio
@@ -4147,6 +4906,9 @@ async def test_stale_thread_recovery_prompt_is_compact_for_openclaw_parity(tmp_p
     assert f"Treat `{OPENCLAW_PARITY_CHECKPOINT_LEDGER}` as the recovery ledger." in prompt
     assert "Give at most two short commentary sentences before the first tool call." in prompt
     assert "emitted item must be a tool call or the checkpoint itself" in prompt
+    assert "If Recall returns a usable anchor, do not summarize it in commentary." in prompt
+    assert "If Recall succeeds, do not paraphrase the recovered context in commentary." in prompt
+    assert "The next emitted item after Recall must be a bounded tool call" in prompt
     assert "does not count as session search" in prompt
     assert "list_mcp_resources" in prompt
     assert "do not satisfy the first-tool-call recovery rule" in prompt
@@ -4590,3 +5352,111 @@ async def test_recent_reflex_cooldown_prevents_immediate_repeat(tmp_path) -> Non
     assert manager.turn_calls[0]["text"].startswith(
         "You are running inside an OpenZues autonomous mission."
     )
+
+
+@pytest.mark.asyncio
+async def test_handle_event_clears_superseded_orphan_command(tmp_path) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    manager = FakeManager()
+    service = MissionService(database, manager, BroadcastHub(), poll_interval_seconds=3600)
+
+    mission_id = await database.create_mission(
+        name="OpenClaw Total Parity Program",
+        objective="Keep iterating until OpenClaw parity is complete.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread_exec",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+    )
+    await database.update_mission(
+        mission_id,
+        in_progress=1,
+        phase="executing",
+        last_turn_id="turn_exec",
+        current_command="Select-String -Path docs/openclaw-parity-checkpoint-2026-04-10.md",
+    )
+
+    async def emit(method: str, payload: dict[str, Any]) -> None:
+        await database.append_event(
+            instance_id=7,
+            thread_id="thread_exec",
+            method=method,
+            payload=payload,
+        )
+        await service.handle_event(
+            7,
+            {
+                "threadId": "thread_exec",
+                "method": method,
+                "params": payload,
+            },
+        )
+
+    await emit(
+        "item/started",
+        {
+            "threadId": "thread_exec",
+            "turnId": "turn_exec",
+            "item": {
+                "type": "commandExecution",
+                "id": "call_old",
+                "command": "Select-String -Path docs/openclaw-parity-checkpoint-2026-04-10.md",
+                "status": "inProgress",
+            },
+        },
+    )
+    await emit(
+        "item/started",
+        {
+            "threadId": "thread_exec",
+            "turnId": "turn_exec",
+            "item": {
+                "type": "commandExecution",
+                "id": "call_new",
+                "command": "git status --short",
+                "status": "inProgress",
+            },
+        },
+    )
+    await emit(
+        "item/completed",
+        {
+            "threadId": "thread_exec",
+            "turnId": "turn_exec",
+            "item": {
+                "type": "commandExecution",
+                "id": "call_new",
+                "command": "git status --short",
+                "status": "completed",
+            },
+        },
+    )
+    await emit(
+        "item/commandExecution/outputDelta",
+        {
+            "threadId": "thread_exec",
+            "turnId": "turn_exec",
+            "itemId": "call_old",
+            "delta": "\r\n",
+        },
+    )
+
+    mission = await database.get_mission(mission_id)
+
+    assert mission is not None
+    assert mission["current_command"] is None
+    assert mission["phase"] == "thinking"

@@ -45,6 +45,9 @@ from openzues.schemas import (
     NotificationRouteTestResultView,
     NotificationRouteView,
     OperatorView,
+    OutboundDeliveryReplayBatchView,
+    OutboundDeliveryReplayResultView,
+    OutboundDeliveryView,
     PlaybookRun,
     PlaybookView,
     ProjectView,
@@ -110,6 +113,15 @@ OPENCLAW_PARITY_BASELINE_TOOLSETS = (
     "delegation",
     "memory",
     "session_search",
+)
+OUTBOUND_DELIVERY_MAX_RETRIES = 5
+OUTBOUND_DELIVERY_BACKOFF_SECONDS = (5, 25, 120, 600)
+OUTBOUND_DELIVERY_PERMANENT_ERROR_PATTERNS = (
+    re.compile(r"chat not found", re.IGNORECASE),
+    re.compile(r"user not found", re.IGNORECASE),
+    re.compile(r"recipient is not a valid", re.IGNORECASE),
+    re.compile(r"outbound not configured for channel", re.IGNORECASE),
+    re.compile(r"user .* not in room", re.IGNORECASE),
 )
 
 
@@ -286,6 +298,14 @@ def _sample_event_type_for_route(
     return "ops/inbox/test"
 
 
+def _summarize_outbound_event(event_type: str, event: dict[str, Any]) -> str:
+    for key in ("summary", "message", "title", "headline"):
+        value = str(event.get(key) or "").strip()
+        if value:
+            return value[:240]
+    return f"Outbound delivery for {event_type}"[:240]
+
+
 def _serialize_task(row: dict[str, Any]) -> TaskBlueprintView:
     return TaskBlueprintView.model_validate(row)
 
@@ -346,6 +366,68 @@ def _serialize_route(
             "secret_preview": secret_preview,
         }
     )
+
+
+def _serialize_outbound_delivery(row: dict[str, Any]) -> OutboundDeliveryView:
+    replay_ready, next_retry_at, max_retries_reached = _outbound_delivery_replay_state(row)
+    return OutboundDeliveryView.model_validate(
+        {
+            **row,
+            "replay_ready": replay_ready,
+            "next_retry_at": next_retry_at,
+            "max_retries_reached": max_retries_reached,
+        }
+    )
+
+
+def _outbound_delivery_backoff_seconds(attempt_count: int) -> int:
+    if attempt_count < 0:
+        return 0
+    if not OUTBOUND_DELIVERY_BACKOFF_SECONDS:
+        return 0
+    return OUTBOUND_DELIVERY_BACKOFF_SECONDS[
+        min(attempt_count, len(OUTBOUND_DELIVERY_BACKOFF_SECONDS) - 1)
+    ]
+
+
+def _next_outbound_retry_at(row: dict[str, Any]) -> datetime | None:
+    state = str(row.get("delivery_state") or "").strip().lower()
+    if state == "delivered":
+        return None
+    attempt_count = max(0, int(row.get("attempt_count") or 0))
+    if attempt_count >= OUTBOUND_DELIVERY_MAX_RETRIES:
+        return None
+    last_attempt_at = _parse_timestamp(str(row.get("last_attempt_at") or ""))
+    if attempt_count == 0 and last_attempt_at is None:
+        return None
+    baseline = last_attempt_at or _parse_timestamp(str(row.get("created_at") or ""))
+    if baseline is None:
+        return None
+    return baseline + timedelta(seconds=_outbound_delivery_backoff_seconds(attempt_count))
+
+
+def _outbound_delivery_replay_state(
+    row: dict[str, Any],
+    *,
+    now: datetime | None = None,
+) -> tuple[bool, datetime | None, bool]:
+    state = str(row.get("delivery_state") or "").strip().lower()
+    if state == "delivered":
+        return False, None, False
+    attempt_count = max(0, int(row.get("attempt_count") or 0))
+    if attempt_count >= OUTBOUND_DELIVERY_MAX_RETRIES:
+        return False, None, True
+    retry_at = _next_outbound_retry_at(row)
+    if retry_at is None:
+        return True, None, False
+    active_now = now or datetime.now(UTC)
+    if retry_at <= active_now:
+        return True, None, False
+    return False, retry_at, False
+
+
+def _is_permanent_outbound_delivery_error(message: str) -> bool:
+    return any(pattern.search(message) for pattern in OUTBOUND_DELIVERY_PERMANENT_ERROR_PATTERNS)
 
 
 def _normalize_conversation_target(
@@ -1594,6 +1676,7 @@ def _build_task_objective(
         preferred_memory_provider,
         integrations=integrations,
         toolsets=toolsets,
+        cwd=instance_cwd or project_path or task.cwd,
     )
     sections.extend(
         [
@@ -2189,6 +2272,7 @@ def build_ops_mesh(
     notification_routes: list[NotificationRouteView],
     lane_snapshots: list[LaneSnapshotView],
     *,
+    outbound_deliveries: list[OutboundDeliveryView] | None = None,
     access_posture: DashboardAccessPostureView | None = None,
     teams: list[TeamView] | None = None,
     operators: list[OperatorView] | None = None,
@@ -2337,6 +2421,7 @@ def build_ops_mesh(
         vault_secrets=vault_secrets,
         integrations=integrations,
         notification_routes=notification_routes,
+        outbound_deliveries=outbound_deliveries or [],
         lane_snapshots=sorted(
             lane_snapshots,
             key=lambda snapshot: snapshot.created_at,
@@ -2424,6 +2509,249 @@ class OpsMeshService:
                 )
             )
         return routes
+
+    async def list_outbound_delivery_views(
+        self,
+        *,
+        limit: int = 25,
+        states: list[str] | None = None,
+        newest_first: bool = True,
+    ) -> list[OutboundDeliveryView]:
+        rows = await self.database.list_outbound_deliveries(
+            limit=limit,
+            states=states,
+            newest_first=newest_first,
+        )
+        return [_serialize_outbound_delivery(row) for row in rows]
+
+    async def _get_notification_route_row(self, route_id: int) -> dict[str, Any] | None:
+        for row in await self.database.list_notification_routes():
+            if int(row["id"]) == route_id:
+                return row
+        return None
+
+    async def _serialize_notification_route_row(self, row: dict[str, Any]) -> NotificationRouteView:
+        secret_id = row.get("vault_secret_id")
+        secret = await self.vault.get_secret_view(int(secret_id)) if secret_id is not None else None
+        has_secret = bool(secret) or bool(row.get("secret_token"))
+        secret_preview = (
+            secret.secret_preview
+            if secret is not None
+            else mask_secret(str(row.get("secret_token") or ""))[1]
+        )
+        return _serialize_route(
+            row,
+            vault_secret_label=secret.label if secret is not None else None,
+            secret_preview=secret_preview,
+            has_secret=has_secret,
+        )
+
+    async def _deliver_saved_outbound_delivery_row(
+        self,
+        delivery_row: dict[str, Any],
+        route: dict[str, Any],
+        *,
+        result_suffix: str = "",
+    ) -> tuple[bool, str | None]:
+        delivery_id = int(delivery_row["id"])
+        route_id = int(route["id"])
+        event_type = str(delivery_row.get("event_type") or "")
+        event_payload = dict(delivery_row.get("event_payload") or {})
+        attempt_started_at = utcnow()
+        existing_attempts = max(0, int(delivery_row.get("attempt_count") or 0))
+        await self.database.update_outbound_delivery(
+            delivery_id,
+            last_attempt_at=attempt_started_at,
+        )
+        try:
+            secret_id = route.get("vault_secret_id")
+            secret_token = (
+                await self.vault.get_secret_value(int(secret_id))
+                if secret_id is not None
+                else (str(route.get("secret_token")) if route.get("secret_token") else None)
+            )
+            await asyncio.to_thread(
+                self._post_webhook,
+                route,
+                event_type,
+                event_payload,
+                secret_token,
+            )
+        except Exception as exc:
+            error = str(exc)[:240]
+            attempt_count = existing_attempts + 1
+            if _is_permanent_outbound_delivery_error(error):
+                attempt_count = max(attempt_count, OUTBOUND_DELIVERY_MAX_RETRIES)
+            await self.database.update_notification_route(
+                route_id,
+                last_delivery_at=utcnow(),
+                last_result=f"Failed {event_type}{result_suffix}",
+                last_error=error,
+            )
+            await self.database.update_outbound_delivery(
+                delivery_id,
+                delivery_state="failed",
+                attempt_count=attempt_count,
+                last_attempt_at=attempt_started_at,
+                delivered_at=None,
+                last_error=error,
+            )
+            return False, error
+        await self.database.update_notification_route(
+            route_id,
+            last_delivery_at=utcnow(),
+            last_result=f"Delivered {event_type}{result_suffix}",
+            last_error=None,
+        )
+        await self.database.update_outbound_delivery(
+            delivery_id,
+            delivery_state="delivered",
+            attempt_count=existing_attempts + 1,
+            last_attempt_at=attempt_started_at,
+            delivered_at=utcnow(),
+            last_error=None,
+        )
+        return True, None
+
+    async def replay_outbound_deliveries(
+        self,
+        *,
+        limit: int = 25,
+    ) -> OutboundDeliveryReplayBatchView:
+        rows = await self.database.list_outbound_deliveries(
+            limit=limit,
+            states=["pending", "failed"],
+            newest_first=False,
+        )
+        attempted = 0
+        replayed = 0
+        failed = 0
+        deferred = 0
+        skipped_max_retries = 0
+        results: list[OutboundDeliveryReplayResultView] = []
+        for row in rows:
+            delivery_view = _serialize_outbound_delivery(row)
+            if delivery_view.max_retries_reached:
+                skipped_max_retries += 1
+                continue
+            if not delivery_view.replay_ready:
+                deferred += 1
+                continue
+            attempted += 1
+            route_id = row.get("route_id")
+            route_row = (
+                await self._get_notification_route_row(int(route_id))
+                if route_id is not None
+                else None
+            )
+            if route_row is None or not bool(route_row.get("enabled")):
+                error = (
+                    f"Notification route {route_id} is unavailable for replay."
+                    if route_id is not None
+                    else "Saved delivery is missing its notification route."
+                )
+                await self.database.update_outbound_delivery(
+                    int(row["id"]),
+                    delivery_state="failed",
+                    attempt_count=max(
+                        max(0, int(row.get("attempt_count") or 0)),
+                        OUTBOUND_DELIVERY_MAX_RETRIES,
+                    ),
+                    last_error=error,
+                )
+                refreshed_row = await self.database.get_outbound_delivery(int(row["id"]))
+                route_view = (
+                    await self._serialize_notification_route_row(route_row)
+                    if route_row is not None
+                    else NotificationRouteView.model_validate(
+                        {
+                            "id": int(route_id or 0),
+                            "name": str(row.get("route_name") or f"Route {route_id or 0}"),
+                            "kind": str(row.get("route_kind") or "webhook"),
+                            "target": str(row.get("route_target") or ""),
+                            "events": [],
+                            "conversation_target": row.get("conversation_target"),
+                            "enabled": False,
+                            "secret_header_name": None,
+                            "vault_secret_id": None,
+                            "vault_secret_label": None,
+                            "has_secret": False,
+                            "secret_preview": None,
+                            "last_delivery_at": None,
+                            "last_result": None,
+                            "last_error": error,
+                            "created_at": utcnow(),
+                            "updated_at": utcnow(),
+                        }
+                    )
+                )
+                failed += 1
+                results.append(
+                    OutboundDeliveryReplayResultView(
+                        ok=False,
+                        delivery_id=int(row["id"]),
+                        route_id=int(route_id or 0),
+                        route_name=str(row.get("route_name") or route_view.name),
+                        target=str(row.get("route_target") or route_view.target),
+                        event_type=str(row.get("event_type") or ""),
+                        summary=error,
+                        error=error,
+                        route=route_view,
+                        delivery=(
+                            _serialize_outbound_delivery(refreshed_row)
+                            if refreshed_row is not None
+                            else None
+                        ),
+                    )
+                )
+                continue
+            ok, error = await self._deliver_saved_outbound_delivery_row(
+                row,
+                route_row,
+                result_suffix=" (replay)",
+            )
+            refreshed_row = await self.database.get_outbound_delivery(int(row["id"]))
+            route_view = await self._serialize_notification_route_row(route_row)
+            if ok:
+                replayed += 1
+                summary = f"Replayed {row.get('event_type') or 'event'} for `{route_view.name}`."
+            else:
+                failed += 1
+                summary = (
+                    f"Replay failed for {row.get('event_type') or 'event'} on `{route_view.name}`."
+                )
+            results.append(
+                OutboundDeliveryReplayResultView(
+                    ok=ok,
+                    delivery_id=int(row["id"]),
+                    route_id=route_view.id,
+                    route_name=route_view.name,
+                    target=route_view.target,
+                    event_type=str(row.get("event_type") or ""),
+                    summary=summary,
+                    error=error,
+                    route=route_view,
+                    delivery=(
+                        _serialize_outbound_delivery(refreshed_row)
+                        if refreshed_row is not None
+                        else None
+                    ),
+                )
+            )
+        summary = (
+            f"Replayed {replayed} delivery(s); {failed} failed, {deferred} deferred by backoff, "
+            f"and {skipped_max_retries} hit max retries."
+        )
+        return OutboundDeliveryReplayBatchView(
+            ok=failed == 0,
+            summary=summary,
+            attempted_count=attempted,
+            replayed_count=replayed,
+            failed_count=failed,
+            deferred_count=deferred,
+            skipped_max_retries_count=skipped_max_retries,
+            deliveries=results,
+        )
 
     async def list_integration_views(self) -> list[IntegrationView]:
         await self._migrate_legacy_secret_refs()
@@ -2590,6 +2918,18 @@ class OpsMeshService:
     async def delete_notification_route(self, route_id: int) -> None:
         await self.database.delete_notification_route(route_id)
 
+    async def _resolve_event_session_key(self, event: dict[str, Any]) -> str | None:
+        explicit = str(event.get("sessionKey") or "").strip()
+        if explicit:
+            return explicit
+        mission_id = event.get("missionId")
+        if isinstance(mission_id, int):
+            mission = await self.database.get_mission(mission_id)
+            value = str(mission.get("session_key") or "").strip() if mission is not None else ""
+            if value:
+                return value
+        return None
+
     async def test_notification_route(
         self,
         route_id: int,
@@ -2614,6 +2954,13 @@ class OpsMeshService:
         )
         delivered_at = utcnow()
         route_conversation_target = _normalize_conversation_target(route.get("conversation_target"))
+        route_scope = {
+            "route_id": route_id,
+            "route_name": str(route.get("name") or f"Route {route_id}"),
+            "route_kind": str(route.get("kind") or "webhook"),
+            "route_target": str(route.get("target") or ""),
+            "route_match": "test",
+        }
         payload = {
             "type": selected_event_type,
             "createdAt": delivered_at,
@@ -2626,47 +2973,38 @@ class OpsMeshService:
         if route_conversation_target is not None:
             payload["conversationTarget"] = route_conversation_target
             payload["routeConversationTarget"] = route_conversation_target
-        secret_id = route.get("vault_secret_id")
-        secret_token = (
-            await self.vault.get_secret_value(int(secret_id))
-            if secret_id is not None
-            else (str(route.get("secret_token")) if route.get("secret_token") else None)
+        delivery_id = await self.database.create_outbound_delivery(
+            route_id=route_id,
+            route_name=route_scope["route_name"],
+            route_kind=route_scope["route_kind"],
+            route_target=route_scope["route_target"],
+            event_type=selected_event_type,
+            session_key=None,
+            conversation_target=route_conversation_target,
+            route_scope=route_scope,
+            event_payload=payload,
+            message_summary=_summarize_outbound_event(selected_event_type, payload),
+            test_delivery=True,
+            delivery_state="pending",
+            attempt_count=0,
         )
 
-        ok = True
-        error: str | None = None
-        try:
-            await asyncio.to_thread(
-                self._post_webhook,
-                route,
-                selected_event_type,
-                payload,
-                secret_token,
-            )
-            last_result = f"Delivered {selected_event_type} (test)"
+        delivery_row = await self.database.get_outbound_delivery(delivery_id)
+        assert delivery_row is not None
+        ok, error = await self._deliver_saved_outbound_delivery_row(
+            delivery_row,
+            route,
+            result_suffix=" (test)",
+        )
+        if ok:
             summary = (
                 f"Delivered a test ping for `{selected_event_type}` to "
                 f"`{route.get('name') or f'Route {route_id}'}`."
             )
-            await self.database.update_notification_route(
-                route_id,
-                last_delivery_at=delivered_at,
-                last_result=last_result,
-                last_error=None,
-            )
-        except Exception as exc:
-            ok = False
-            error = str(exc)[:240]
-            last_result = f"Failed {selected_event_type} (test)"
+        else:
             summary = (
                 f"Test delivery for `{selected_event_type}` failed on "
                 f"`{route.get('name') or f'Route {route_id}'}`."
-            )
-            await self.database.update_notification_route(
-                route_id,
-                last_delivery_at=delivered_at,
-                last_result=last_result,
-                last_error=error,
             )
 
         refreshed_route = next(
@@ -2674,6 +3012,7 @@ class OpsMeshService:
             for route_view in await self.list_notification_route_views()
             if route_view.id == route_id
         )
+        delivery_row = await self.database.get_outbound_delivery(delivery_id)
         return NotificationRouteTestResultView(
             ok=ok,
             route_id=route_id,
@@ -2683,6 +3022,11 @@ class OpsMeshService:
             summary=summary,
             error=error,
             route=refreshed_route,
+            delivery=(
+                _serialize_outbound_delivery(delivery_row)
+                if delivery_row is not None
+                else None
+            ),
         )
 
     async def create_integration(self, payload: IntegrationCreate) -> IntegrationView:
@@ -3286,6 +3630,7 @@ class OpsMeshService:
         await self._migrate_legacy_secret_refs()
         routes = await self.database.list_notification_routes()
         event_conversation_target = await self._resolve_event_conversation_target(event)
+        event_session_key = await self._resolve_event_session_key(event)
         for route in routes:
             if not bool(route.get("enabled")):
                 continue
@@ -3307,40 +3652,39 @@ class OpsMeshService:
             )
             if route_conversation_target is not None and route_match is None:
                 continue
-            try:
-                secret_id = route.get("vault_secret_id")
-                secret_token = (
-                    await self.vault.get_secret_value(int(secret_id))
-                    if secret_id is not None
-                    else (str(route.get("secret_token")) if route.get("secret_token") else None)
-                )
-                event_payload = dict(event)
-                if event_conversation_target is not None:
-                    event_payload["conversationTarget"] = event_conversation_target
-                if route_conversation_target is not None:
-                    event_payload["routeConversationTarget"] = route_conversation_target
-                if route_match is not None:
-                    event_payload["routeMatch"] = route_match
-                await asyncio.to_thread(
-                    self._post_webhook,
-                    route,
-                    event_type,
-                    event_payload,
-                    secret_token,
-                )
-                await self.database.update_notification_route(
-                    int(route["id"]),
-                    last_delivery_at=utcnow(),
-                    last_result=f"Delivered {event_type}",
-                    last_error=None,
-                )
-            except Exception as exc:
-                await self.database.update_notification_route(
-                    int(route["id"]),
-                    last_delivery_at=utcnow(),
-                    last_result=f"Failed {event_type}",
-                    last_error=str(exc)[:240],
-                )
+            route_id = int(route["id"])
+            route_scope = {
+                "route_id": route_id,
+                "route_name": str(route.get("name") or f"Route {route_id}"),
+                "route_kind": str(route.get("kind") or "webhook"),
+                "route_target": str(route.get("target") or ""),
+                "route_match": route_match,
+            }
+            event_payload = dict(event)
+            if event_conversation_target is not None:
+                event_payload["conversationTarget"] = event_conversation_target
+            if route_conversation_target is not None:
+                event_payload["routeConversationTarget"] = route_conversation_target
+            if route_match is not None:
+                event_payload["routeMatch"] = route_match
+            delivery_id = await self.database.create_outbound_delivery(
+                route_id=route_id,
+                route_name=route_scope["route_name"],
+                route_kind=route_scope["route_kind"],
+                route_target=route_scope["route_target"],
+                event_type=event_type,
+                session_key=event_session_key,
+                conversation_target=event_conversation_target or route_conversation_target,
+                route_scope=route_scope,
+                event_payload=event_payload,
+                message_summary=_summarize_outbound_event(event_type, event_payload),
+                test_delivery=bool(event.get("test")),
+                delivery_state="pending",
+                attempt_count=0,
+            )
+            delivery_row = await self.database.get_outbound_delivery(delivery_id)
+            assert delivery_row is not None
+            await self._deliver_saved_outbound_delivery_row(delivery_row, route)
 
     async def _resolve_event_conversation_target(
         self, event: dict[str, Any]

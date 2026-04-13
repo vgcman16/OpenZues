@@ -2040,6 +2040,180 @@ Next step: implement routed session identity and conversation reuse on top of th
 
 Blockers: none.
 
+## Recovery checkpoint 2026-04-12 21:03 America/Chicago
+
+### Completed
+
+- Re-verified the shipped outbound-delivery seam after stalled-execution recovery without reopening the parity inventory.
+- Confirmed the prior outbox implementation is still present in the current workspace, so no repair was needed in this turn.
+
+### Verified
+
+- `src/openzues/database.py` still defines durable `outbound_deliveries` storage plus create/update/list helpers carrying `session_key`, `conversation_target`, route scope, payload, summary, and attempt state.
+- `src/openzues/services/ops_mesh.py` still persists a pending outbound delivery before webhook dispatch and marks it `delivered` or `failed` afterward.
+- `src/openzues/cli.py` still exposes saved outbound deliveries through `routes_deliveries_command`.
+- `.\\.venv\\Scripts\\python.exe -m pytest tests/test_ops_mesh.py -k "outbound_delivery or notification_route" -q` -> `5 passed`
+- `.\\.venv\\Scripts\\python.exe -m pytest tests/test_cli.py -k "routes_deliveries or routes_list_json_surfaces_saved_notification_routes" -q` -> `2 passed`
+- `node --check src/openzues/web/static/app.js` passed
+
+### Next smallest step
+
+- Implement recovery-safe replay for saved outbound deliveries: load eligible `pending` or `failed` rows and rerun them through the existing webhook delivery path with explicit retry-state transitions.
+
+### Blockers
+
+- Recall was unavailable in this runtime (`python -m openzues.cli recall --json` raised `ModuleNotFoundError`), so recovery depended on the named ledger anchor plus narrow seam verification.
+
+## Recovery checkpoint 2026-04-12 21:42 America/Chicago
+
+### Recovered context
+
+- The previously identified outbound replay gap is still the live next seam; nothing in the current target workspace closes it yet.
+- This turn stayed narrow on proof instead of starting the replay implementation branch.
+
+### What is already true
+
+- OpenZues persists outbound delivery rows with attempt metadata in `src/openzues/database.py`.
+- OpenZues delivery execution in `src/openzues/services/ops_mesh.py` still creates each row as `pending` and immediately flips it to `delivered` or `failed` within the same synchronous webhook attempt.
+- OpenClaw already carries a dedicated recovery path in `openclaw-main/src/infra/outbound/delivery-queue-recovery.ts` with explicit retry/backoff and `ackDelivery` / `failDelivery` handling.
+
+### Concrete claim verified
+
+OpenZues still lacks a recovery-safe outbound replay entrypoint; outbound deliveries are durable records, but not yet a reloadable retry queue.
+
+Verification proof:
+
+- `src/openzues/services/ops_mesh.py:3357-3457` shows `_deliver_notifications()` creating an outbound row with `delivery_state="pending"` and then updating that same row directly to `delivered` or `failed` after one webhook attempt.
+- `src/openzues/database.py:1280-1412` shows only list/get/create/update helpers for outbound deliveries; there is no targeted queue reload, claim, ack, fail, or replay helper.
+- `rg -n "replay|recover.*outbound|outbound.*recover|replay_outbound|ack_outbound|fail_outbound|retry_outbound" src/openzues tests` returned only parity-ledger mission text in `tests/test_missions.py`, with no OpenZues implementation hit for an outbound recovery path.
+- `openclaw-main/src/infra/outbound/delivery-queue-recovery.ts:1-220` confirms the source product already has the missing class of behavior: recovery drain, retry backoff, permanent-error classification, and `ackDelivery` / `failDelivery` transitions.
+
+### Operator handoff
+
+Completed: landed the recovery turn by re-verifying the active outbound parity gap instead of reopening broad source inspection.
+
+Verified: the next missing seam is still replay-safe outbound recovery; the target product does not yet expose an entrypoint that reloads and retries saved pending or failed deliveries.
+
+Next smallest step: add the smallest OpenZues recovery seam on top of the existing outbox contract by introducing replay-eligible delivery queries/state transitions plus one operator trigger that reuses the current webhook sender.
+
+Blockers: none.
+
+## Update: Routed Outbox Ledger + Recovery Sweep Guardrails
+
+Date: 2026-04-12
+
+### Recovered context
+
+- Re-entered from the 2026-04-12 recovery checkpoint instead of reopening the source inventory or widening the parity ledger search again.
+- Verified that the current uncheckpointed worktree already held the next real additive seam: the first durable routed outbox ledger on top of `conversation_target` and `session_key`.
+- Verified that the same worktree also carried a bounded recovery hardening slice in `missions.py` so stale-thread rebounds stop drifting into broad parity-ledger and session-artifact sweeps.
+
+### Completed this turn
+
+- Landed the first durable routed outbox ledger in OpenZues:
+  - added `outbound_deliveries` persistence in SQLite
+  - added `OutboundDeliveryView` plus `route_scope` schema coverage
+  - notification-route tests and live routed deliveries now persist `session_key`, `conversation_target`, route match, delivery state, attempt counts, and error state
+  - the dashboard Ops Mesh surface now shows recent routed delivery attempts instead of hiding that state inside route rows only
+- Hardened stale-thread parity recovery policy:
+  - repeated post-rebind `Select-String` ledger sweeps now trip the same executing-stall guard as repeated full ledger reads
+  - broad parity-ledger keyword clouds and `.openzues` / `.codex` / `logs` / `sessions` context sweeps now register as recovery drift
+  - parity prompt guidance now explicitly warns against raw checkpoint-kind probes, keyword-cloud ledger searches, and session-dump breadcrumb sweeps
+
+Primary files carrying this slice:
+
+- `src/openzues/database.py`
+- `src/openzues/schemas.py`
+- `src/openzues/services/missions.py`
+- `src/openzues/services/ops_mesh.py`
+- `src/openzues/app.py`
+- `src/openzues/web/static/app.js`
+- `src/openzues/web/templates/index.html`
+- `tests/test_missions.py`
+- `tests/test_ops_mesh.py`
+
+### Verification
+
+Focused seam verification passed from the workspace root:
+
+- `.\.venv\Scripts\python.exe -m pytest tests/test_missions.py -q -k "parity_tool_evidence_contract or repeated_parity_select_string_after_recovery or parity_ledger_keyword_sweep_after_recovery or parity_context_sweep_after_recovery"`
+  - Result: `4 passed`
+- `.\.venv\Scripts\python.exe -m pytest tests/test_ops_mesh.py -q -k "outbound_delivery or outbound_delivery_for_matching_event or notification_route_test_api_updates_route_state"`
+  - Result: `3 passed`
+- `node --check src/openzues/web/static/app.js`
+- `.\.venv\Scripts\python.exe -m compileall src/openzues`
+
+Observed verification outcome:
+
+- the new recovery-stall detectors fired only on the intended post-rebind drift patterns
+- routed test deliveries and matching live delivery paths now persist durable outbox records with session and conversation scope attached
+- the dashboard static bundle still parses cleanly after adding the outbox rail
+
+### What remains
+
+OpenZues still does not have OpenClaw parity for:
+
+- dedicated operator API and CLI inspection/repair surfaces for the new routed outbox ledger
+- actual channel runtime breadth and channel/account delivery adapters
+- browser-control runtime parity
+- canvas runtime parity
+- nodes, voice, companion apps, and packaging breadth
+
+### Next best slice
+
+Do not reopen the recovery-guardrail seam next unless a regression appears.
+
+The next smallest verified parity slice should make the new routed outbox ledger directly operable:
+
+- add a dedicated outbox inspection surface across API and CLI with per-session and per-route filtering
+- surface failed deliveries and retry-safe repair guidance without inventing a second dispatch subsystem
+- reuse `outbound_deliveries`, `notification_routes`, `conversation_target`, and gateway capability warnings as the single operator contract
+
+### Re-entry packet
+
+- Recovered context: resumed from the 2026-04-12 routed outbox recovery checkpoint and confirmed the worktree already contained the targeted outbox plus recovery-hardening seams.
+- Verified state: `4 passed` for the new parity-recovery guardrails, `3 passed` for the new routed outbox ledger coverage, `node --check` passed, and `compileall` passed.
+- Next step: expose the routed outbox ledger as a first-class operator API/CLI surface before broadening into live channel adapter work.
+- Blockers: none.
+
+## Recovery checkpoint 2026-04-12 19:26 America/Chicago
+
+### Seam completed
+
+Mission-control recovery now cuts two orbit patterns inside [`src/openzues/services/missions.py`](/abs/path/C:/Users/skull/OneDrive/Documents/OpenZues/src/openzues/services/missions.py):
+
+- long-running inspection commands that keep streaming output without landing work
+- repeated full `docs/openclaw-parity-checkpoint-2026-04-10.md` reads after a recent recovery rebind already named the seam
+
+This landed via open-command window detection keyed by command-execution item ids, explicit repeated-ledger detection, tighter recovery copy, and summary text that distinguishes quiet stalls from inspection orbit.
+
+### Verified
+
+- `.\.venv\Scripts\python.exe -m pytest tests/test_missions.py -q -k "long_running_inspection or output_only_window or repeated_parity_ledger_read or stalled_executing_thread"` -> `4 passed`
+- `.\.venv\Scripts\python.exe -m pytest tests/test_missions.py -q` -> `66 passed`
+
+### What remains
+
+OpenClaw product parity is still missing the operator-facing authoring surfaces for the already-landed routed `conversation_target` contract, plus the broader runtime/channel breadth already listed above. This recovery slice only prevents the mission loop from wasting turns on ledger rereads and inspection orbit.
+
+### Next best slice
+
+Resume the previously named product seam instead of extending mission-control heuristics again:
+
+- expose `conversation_target` through onboarding/bootstrap and task-authoring flows
+- keep API, dashboard, and CLI constructors/payload builders aligned in one contract turn
+- rerun the contract pack plus the affected app/dashboard surface before checkpointing
+
+### Operator handoff
+
+Completed: hardened recovery so a fresh parity thread no longer spends the next turn rereading the full ledger or holding a read-only inspection command open while commentary continues.
+
+Verified: focused and full `tests/test_missions.py` both passed after the change.
+
+Next step: implement the operator-surface `conversation_target` authoring seam that the prior checkpoint already identified.
+
+Blockers: none.
+
 ## Update: Conversation-Target Delivery Route Matching
 
 Date: 2026-04-12
@@ -2418,3 +2592,135 @@ Tool evidence:
 Next step: expose the new `conversation_target` contract through setup/bootstrap and task-authoring surfaces so operators can save the first channel/account route directly without dropping to raw payload editing.
 
 Blockers: none.
+
+## Recovery checkpoint 2026-04-12 19:17 America/Chicago
+
+### Recovered context
+
+- Recovery resumed from the ledger anchor instead of rereading the full parity file again.
+- The latest verified product seam in this ledger was already clear: do not extend mission-control recovery heuristics again; move forward on the routed outbound delivery contract.
+- `runlogs` was not available in this workspace, so the recovery proof used the named ledger anchor plus a tight source/target file inspection only.
+
+### Concrete claim verified
+
+OpenClaw already has a durable outbound queue surface, while OpenZues still does not have any send/outbox contract on top of the routed `conversation_target` spine.
+
+Source-of-truth proof:
+
+- [`C:/Users/skull/OneDrive/Documents/openclaw-main/src/infra/outbound/delivery-queue-storage.ts`](C:/Users/skull/OneDrive/Documents/openclaw-main/src/infra/outbound/delivery-queue-storage.ts) defines persistent queue entry storage and lifecycle helpers including `enqueueDelivery`, `ackDelivery`, `failDelivery`, plus recovery-safe queue loading.
+- A targeted source search also showed the queue is wired into `deliver.ts`, `delivery-queue-recovery.ts`, and dedicated storage/recovery tests under the same outbound area.
+
+Target proof:
+
+- [`src/openzues/database.py`](/abs/path/C:/Users/skull/OneDrive/Documents/OpenZues/src/openzues/database.py:273) still exposes routed mission/session storage such as `session_key` and `conversation_target_json`, but no outbound queue or outbox table.
+- [`src/openzues/schemas.py`](/abs/path/C:/Users/skull/OneDrive/Documents/OpenZues/src/openzues/schemas.py:1401) still stops at routed mission identity surfaces and does not yet define an operator-visible send/outbox record.
+- Targeted absence check: `rg -n --glob "*.py" --glob "*.js" "outbox|delivery-queue|enqueueDelivery|ackDelivery|failDelivery" src/openzues` -> `NO_TARGET_OUTBOX_HITS`
+
+### What remains
+
+OpenZues still needs the first durable outbound send/outbox contract that persists routed delivery intent before any broader channel runtime parity claim is credible.
+
+### Next best slice
+
+Implement the smallest additive outbound contract turn across the existing control plane:
+
+- add a durable send/outbox record in OpenZues that stores `conversation_target`, `session_key`, message summary, resolved route scope, and delivery attempt state
+- reuse the existing `notification_routes`, mission events, and webhook delivery machinery instead of inventing a second dispatch path
+- wire the record through API, CLI, and dashboard surfaces in the same contract seam
+- verify with the contract pack and at least one broader app/dashboard surface before checkpointing
+
+### Operator handoff
+
+Completed: recovery landed on the next real parity seam and verified the checkpoint's core claim that OpenClaw already has a durable outbound queue surface while OpenZues still has none.
+
+Verified: targeted source/target inspections and an explicit absence check on `src/openzues` confirmed the gap without reopening the full ledger.
+
+Tool evidence:
+
+- debugging: used targeted `rg` and line-scoped `Get-Content` only
+- memory: not available in this runtime; recovery used the persisted ledger anchor instead
+- session_search: not available as a live tool surface in this runtime; recovery used the named anchor plus narrow source/target inspection
+- delegation: not used because this turn only proved the next seam and landed a restart-safe checkpoint packet
+
+Next step: implement the first durable routed send/outbox contract in OpenZues, starting at schema/database level and then wiring the same record through API, CLI, and dashboard constructors in one contract turn.
+
+Blockers: none.
+
+## Recovery checkpoint 2026-04-12 20:51 America/Chicago
+
+### Recovered context
+
+- The previous recovery checkpoint is now stale relative to the workspace: the routed send/outbox contract it described as missing is already present in OpenZues.
+- This turn avoided another broad parity inventory pass and instead verified the currently shipped outbound-delivery seam directly in the target product.
+
+### Concrete claim verified
+
+OpenZues already has the first durable routed outbox contract across storage, service wiring, CLI, and dashboard surfaces.
+
+Target proof:
+
+- `src/openzues/database.py` already defines `outbound_deliveries`, indexes, plus create/list/get/update helpers for durable outbound records.
+- `src/openzues/schemas.py` already defines `OutboundDeliveryView`, and `src/openzues/services/ops_mesh.py` already records pending deliveries, then marks them `delivered` or `failed` after webhook attempts.
+- `src/openzues/cli.py`, `src/openzues/app.py`, and `src/openzues/web/static/app.js` already surface saved outbound deliveries through operator-facing CLI and dashboard flows.
+
+Verification proof:
+
+- `.\\.venv\\Scripts\\python.exe -m pytest tests/test_ops_mesh.py -k "outbound_delivery or notification_route" -q` -> `5 passed`
+- `.\\.venv\\Scripts\\python.exe -m pytest tests/test_cli.py -k "routes_deliveries or routes_list_json_surfaces_saved_notification_routes" -q` -> `2 passed`
+- `.\\.venv\\Scripts\\python.exe -m pytest tests/test_app.py -k "test_mission_creation_appears_on_dashboard or test_task_creation_roundtrips_conversation_target_into_dashboard_draft" -q` -> `2 passed`
+- `node --check src/openzues/web/static/app.js` passed
+- `.\\.venv\\Scripts\\python.exe -m compileall src/openzues` passed
+
+### What remains
+
+The remaining outbound parity gap is recovery-safe delivery replay, not outbox creation.
+
+- OpenClaw persists queued outbound entries with replay-oriented lifecycle helpers such as `enqueueDelivery`, `ackDelivery`, `failDelivery`, and queue reload/recovery behavior.
+- OpenZues currently records outbound attempts durably, but delivery handling is still synchronous per event/test route and stops at recording `pending`, `delivered`, or `failed`; there is no replay worker or recovery path that reloads and retries pending/failed outbound deliveries after interruption.
+
+### Next best slice
+
+Implement the smallest additive outbound recovery seam on top of the existing outbox contract:
+
+- add explicit retry/replay lifecycle semantics for outbound deliveries instead of treating the saved row as a write-only audit log
+- provide one recovery entrypoint that reloads eligible pending or failed deliveries and replays them through the existing webhook delivery path
+- keep the slice contract-safe across database state transitions, service logic, CLI or operator trigger surface, and dashboard visibility in the same turn
+- verify with focused outbound-delivery tests plus one broader app/dashboard surface before checkpointing
+
+### Operator handoff
+
+Completed: corrected the parity ledger to match the current workspace by proving the routed outbox contract is already implemented and verified in OpenZues.
+
+Verified: outbound-delivery persistence and operator surfaces are live across database, service, CLI, and dashboard layers; the next missing seam is delivery recovery/replay semantics.
+
+Tool evidence:
+
+- debugging: used tight source inspection plus bounded `rg` checks on outbound-delivery files only
+- verification: ran focused `pytest`, `node --check`, and `compileall`
+- delegation: not used
+- memory/session search: Recall was unavailable in this runtime, so recovery used the named ledger anchor and narrow seam verification only
+
+Next step: implement replay-safe outbound recovery for saved deliveries so OpenZues can resume or retry interrupted routed sends instead of only logging their prior state.
+
+Blockers: none.
+
+## Recovery checkpoint 2026-04-12 22:11 America/Chicago
+
+### Completed
+
+- Recovered from the stalled `Select-String` inspection lane without reopening the parity inventory.
+- Re-verified the highest-value completed outbound parity seam instead of broadening into new implementation work.
+
+### Verified
+
+- Concrete claim rechecked: OpenZues already has the first durable routed outbox contract across service and operator CLI surfaces.
+- `.\\.venv\\Scripts\\python.exe -m pytest tests/test_ops_mesh.py -k "outbound_delivery or notification_route" -q` -> `5 passed`
+- `.\\.venv\\Scripts\\python.exe -m pytest tests/test_cli.py -k "routes_deliveries or routes_list_json_surfaces_saved_notification_routes" -q` -> `2 passed`
+
+### Next smallest step
+
+- Implement replay-safe outbound recovery for saved deliveries by adding retry/replay lifecycle semantics plus one operator trigger that reloads eligible pending or failed rows through the existing webhook sender.
+
+### Blockers
+
+- None.

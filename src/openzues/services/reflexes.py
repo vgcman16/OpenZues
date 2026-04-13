@@ -114,6 +114,23 @@ def build_reflex_deck(
         doctrine_hint = _doctrine_hint(doctrine)
         scope = build_scope_assessment(mission, checkpoints=mission.checkpoints)
 
+        if (
+            mission.swarm is not None
+            and mission.status == "blocked"
+            and mission.swarm.conflict is not None
+        ):
+            add_reflex(
+                mission,
+                reflex_id=f"{mission.id}:swarm-conflict",
+                kind=mission.swarm.conflict.recommended_reflex,
+                level="critical",
+                title=f"Resolve swarm conflict in {mission.name}",
+                summary=mission.swarm.conflict.summary,
+                prompt=mission.swarm.conflict.prompt,
+                action_label="Resolve conflict",
+            )
+            continue
+
         if mission.status == "active" and scope.drift_level in {"drifting", "critical"}:
             add_reflex(
                 mission,
