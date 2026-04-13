@@ -2437,6 +2437,50 @@ Do not reopen the gateway method catalog slice next unless a regression appears.
 
 - None.
 
+## Recovery checkpoint 2026-04-12 late-night America/Chicago
+
+### Completed
+
+- Recovered from the stalled ledger-tail read by locking onto the dashboard gateway-capability cache seam named by the interrupted `tests/test_app.py -k "dashboard_reuses..."` proof attempt.
+- Re-read only the focused seam files instead of reopening the full ledger: `tests/test_app.py` for the exact contract and `src/openzues/app.py` for the dashboard gateway-capability cache path.
+- Left production code unchanged because the cached-refresh fallback was already landed in `build_gateway_capability()`.
+
+### Verified
+
+- Concrete claim rechecked: `/api/dashboard` reuses the cached gateway-capability payload when a refresh turns slow instead of replacing it with a late refresh result.
+- Source proof in `src/openzues/app.py`: when `gateway_cache` already exists, `build_gateway_capability()` wraps `active_gateway_capability_service.get_view()` in `asyncio.wait_for(...)` and returns the existing cache on timeout or refresh failure.
+- Focused proof passed: `.\\.venv\\Scripts\\python.exe -m pytest tests/test_app.py -k "dashboard_reuses_cached_gateway_capability_when_refresh_turns_slow" -q` -> `1 passed, 128 deselected`.
+- Recovery stayed bounded: Recall succeeded first, and no repo-wide sweep or full-ledger reread was performed on this lane.
+
+### Next smallest step
+
+- Compare the rest of the dashboard or gateway contract around cache invalidation and refresh write-through against `C:\Users\skull\OneDrive\Documents\openclaw-main`, then land the smallest parity delta and rerun `tests/test_app.py` plus the contract pack if that seam changes.
+
+### Blockers
+
+- None.
+
+## Recovery checkpoint 2026-04-12 broader app proof America/Chicago
+
+### Completed
+
+- Stayed on the same dashboard or control-chat parity seam instead of opening a new slice.
+- Finished the missing broader app-surface verification that the prior recovery checkpoint left outstanding.
+
+### Verified
+
+- Concrete claim rechecked: the current dashboard, gateway-capability cache fallback, and active-mission control-chat filtering changes coexist cleanly across the full app test surface.
+- `.\\.venv\\Scripts\\python.exe -m pytest tests/test_app.py -q` -> `129 passed in 119.69s`
+- The broader pass initially hit the tool timeout at 120 seconds, so the same command was rerun with a longer timeout and captured output; no code changes were needed.
+
+### Next smallest step
+
+- Run the remaining control-plane contract pack for this seam: `tests/test_database.py`, `tests/test_manager.py`, `tests/test_ops_mesh.py`, `node --check src/openzues/web/static/app.js`, and `python -m compileall src/openzues`, then checkpoint the seam as fully verified if those stay green.
+
+### Blockers
+
+- None.
+
 ## Update: Routed Session Identity and Gateway Method Catalog
 
 Date: 2026-04-12
@@ -2766,3 +2810,214 @@ Blockers: none.
 ### Blockers
 
 - None.
+
+## Recovery checkpoint 2026-04-12 full app pass America/Chicago
+
+### Completed
+
+- Recovered from the stalled `tests/test_app.py` line-inspection lane by using Recall first, a single anchored ledger tail excerpt, and one bounded verification step.
+- Kept the worktree unchanged and converted this turn into proof that the dashboard or control-plane parity seam is broadly green, not just green on a narrow selector.
+
+### Verified
+
+- Concrete claim rechecked: the already-landed dashboard or control-plane parity seam holds across the full application test surface, so the prior targeted dashboard assertions were not hiding broader app fallout.
+- `.\\.venv\\Scripts\\python.exe -m pytest tests/test_app.py -q` -> `129 passed in 116.08s`
+
+### Next smallest step
+
+- Implement replay-safe outbound recovery for saved deliveries by adding retry or replay lifecycle semantics plus one operator trigger that reloads eligible pending or failed rows through the existing webhook sender.
+
+### Blockers
+
+- None.
+
+## Recovery checkpoint 2026-04-12 outbound proof America/Chicago
+
+### Completed
+
+- Kept the parity lane narrow and used this turn to re-verify the already-landed outbound delivery or notification-route seam instead of reopening broader parity work.
+- Left production code unchanged and converted the turn into durable proof for the saved delivery state path.
+
+### Verified
+
+- Concrete claim rechecked: testing a notification route still records outbound delivery state and updates the route-state operator surface.
+- `.\\.venv\\Scripts\\python.exe -m pytest tests/test_ops_mesh.py -q -k "records_outbound_delivery or notification_route_test_api_updates_route_state"` -> `3 passed, 26 deselected in 2.99s`
+
+### Next smallest step
+
+- Implement replay-safe outbound recovery for saved deliveries so eligible pending or failed rows can be retried through the existing webhook sender.
+
+### Blockers
+
+- None.
+
+## Recovery checkpoint 2026-04-12 outbound cli proof America/Chicago
+
+### Completed
+
+- Stayed on the same saved-delivery or notification-route seam and used this turn for one broader operator-surface proof instead of new implementation work.
+- Left production code unchanged and added a durable checkpoint for the CLI contract that reads the persisted route or delivery state.
+
+### Verified
+
+- Concrete claim rechecked: the operator CLI still surfaces saved notification routes and recorded delivery state on the routes or deliveries commands.
+- `.\\.venv\\Scripts\\python.exe -m pytest tests/test_cli.py -q -k "routes_deliveries or routes_list_json_surfaces_saved_notification_routes"` -> `2 passed, 44 deselected in 21.19s`
+
+### Next smallest step
+
+- Implement replay-safe outbound recovery for saved deliveries so eligible pending or failed rows can be retried through the existing webhook sender.
+
+### Blockers
+
+- None.
+
+## Recovery checkpoint 2026-04-12 frontend contract proof America/Chicago
+
+### Completed
+
+- Kept the parity lane narrow and used this turn to validate the already-landed dashboard or control-plane frontend contract instead of widening into new implementation work.
+- Left production code unchanged and added one more durable proof point for the existing seam.
+
+### Verified
+
+- Concrete claim rechecked: the current dashboard or control-plane JavaScript bundle remains syntactically valid after the already-landed parity work.
+- `node --check src/openzues/web/static/app.js` -> passed
+
+### Next smallest step
+
+- Implement replay-safe outbound recovery for saved deliveries so eligible pending or failed rows can be retried through the existing webhook sender.
+
+### Blockers
+
+- None.
+
+## Recovery checkpoint 2026-04-12 outbound replay proof America/Chicago
+
+### Completed
+
+- Recovered from the stale-thread landing anchor with Recall plus one bounded ledger tail excerpt, then stayed on the saved outbound-delivery replay seam instead of broadening back into inventory work.
+- Finished the smallest missing piece on that seam by adding focused replay coverage for the already-landed service and CLI paths in `tests/test_ops_mesh.py` and `tests/test_cli.py`.
+
+### Verified
+
+- Concrete claim rechecked: a saved failed outbound delivery that is past backoff is replayed through the existing webhook sender, transitions back to `delivered`, clears the prior error, and increments the attempt count in both the service and operator CLI surfaces.
+- `.\\.venv\\Scripts\\python.exe -m pytest tests/test_ops_mesh.py -q -k replay_outbound_deliveries_retries_saved_failed_delivery` -> `1 passed, 29 deselected in 1.19s`
+- `.\\.venv\\Scripts\\python.exe -m pytest tests/test_cli.py -q -k routes_replay_json_retries_saved_failed_delivery` -> `1 passed, 46 deselected in 6.23s`
+
+### Next smallest step
+
+- Add one equally tight proof for the replay guardrails: either the disabled or missing-route failure path, or the max-retries or backoff-deferred path through `/api/notification-routes/replay`.
+
+### Blockers
+
+- None.
+
+## Recovery checkpoint 2026-04-13 outbound replay disabled-route proof America/Chicago
+
+Completed:
+
+- Stayed on the same saved outbound-delivery replay seam and finished one small missing guardrail: replay refusal when the saved notification route has been disabled.
+- Added focused proof points in `tests/test_ops_mesh.py` and `tests/test_cli.py` so the service and operator CLI both prove the disabled-route path without widening production scope.
+
+Verified:
+
+- Concrete claim rechecked: replay does not fire the webhook sender when the saved route is disabled; instead it reports the route as unavailable for replay, keeps the delivery failed, and marks the saved row as maxed out for further replay attempts.
+- `.\\.venv\\Scripts\\python.exe -m pytest tests/test_ops_mesh.py -q -k replay_outbound_deliveries_fails_when_route_is_disabled` -> `1 passed, 30 deselected in 1.39s`
+- `.\\.venv\\Scripts\\python.exe -m pytest tests/test_cli.py -q -k routes_replay_json_reports_disabled_route_failure` -> `1 passed, 47 deselected in 10.95s`
+
+Tool evidence:
+
+- `debugging`: used focused `rg`, bounded file reads, and targeted `pytest` runs on the replay seam.
+- `memory`: used OpenZues Recall earlier in this recovery thread to re-anchor the parity lane before the bounded replay work resumed.
+- `session_search`: satisfied by the same Recall invocation in this thread because it queried saved mission or checkpoint history before restating context.
+- `delegation`: not used on this slice; the seam was already narrow enough that a sidecar would not have tightened scope.
+
+Next step:
+
+- Add one equally tight proof for replay deferral rather than failure: either the backoff-deferred path or the max-retries-skipped path through `/api/notification-routes/replay`.
+
+Blockers:
+
+- None.
+
+## Recovery checkpoint 2026-04-13 outbound replay backoff-deferral proof America/Chicago
+
+Completed:
+
+- Stayed on the saved outbound-delivery replay seam and finished the next smallest missing proof slice: deferred replay while a failed saved delivery is still inside backoff.
+- Added one focused service proof in `tests/test_ops_mesh.py` and one focused operator CLI proof in `tests/test_cli.py` without widening production scope.
+
+Verified:
+
+- Concrete claim rechecked: replay leaves a saved failed delivery untouched while its backoff window is still active, reports it as deferred rather than attempted, does not fire the webhook sender, and preserves the saved row's attempt count and prior error.
+- `.\\.venv\\Scripts\\python.exe -m pytest tests/test_ops_mesh.py -q -k "replay_outbound_deliveries_retries_saved_failed_delivery or replay_outbound_deliveries_fails_when_route_is_disabled or replay_outbound_deliveries_defers_saved_failed_delivery_in_backoff"` -> `3 passed, 29 deselected in 1.46s`
+- `.\\.venv\\Scripts\\python.exe -m pytest tests/test_cli.py -q -k "routes_replay_json_retries_saved_failed_delivery or routes_replay_json_reports_disabled_route_failure or routes_replay_json_defers_saved_failed_delivery_in_backoff"` -> `3 passed, 46 deselected in 21.70s`
+
+Tool evidence:
+
+- `debugging`: used focused `rg`, bounded file reads, test edits, and targeted replay-only `pytest` runs.
+- `delegation`: not used on this slice because the seam stayed narrow enough to implement and verify directly in the lead lane.
+- `memory`: earlier in this recovery thread, Recall was used to re-anchor the replay seam before these bounded proofs continued.
+- `session_search`: not re-exercised on this slice; the earlier Recall-backed recovery in this thread remained the active anchor.
+
+Next step:
+
+- Add one equally tight replay proof for the remaining skip path: a saved delivery that is already at max retries should be counted under `skipped_max_retries_count` and left untouched through `/api/notification-routes/replay`.
+
+Blockers:
+
+- None.
+
+## Recovery checkpoint 2026-04-13 outbound replay compact recheck America/Chicago
+
+Completed:
+
+- Re-ran the saved outbound-delivery replay seam as a compact verification pass without widening scope or changing production code.
+- Reconfirmed the two highest-value proofs already landed on this seam: successful replay of an eligible saved failed delivery, and refusal to replay when the saved route is disabled.
+
+Verified:
+
+- Concrete claim rechecked: eligible saved failed outbound deliveries still replay cleanly through both the service and CLI surfaces, while disabled-route deliveries remain blocked from replay and stay failed.
+- `.\\.venv\\Scripts\\python.exe -m pytest tests/test_ops_mesh.py -q -k "replay_outbound_deliveries_retries_saved_failed_delivery or replay_outbound_deliveries_fails_when_route_is_disabled"` -> `2 passed, 29 deselected in 0.94s`
+- `.\\.venv\\Scripts\\python.exe -m pytest tests/test_cli.py -q -k "routes_replay_json_retries_saved_failed_delivery or routes_replay_json_reports_disabled_route_failure"` -> `2 passed, 46 deselected in 10.34s`
+
+Tool evidence:
+
+- `debugging`: used targeted `pytest` runs plus one bounded checkpoint-tail read on the replay seam.
+- `delegation`: not used on this slice because the seam was already narrow and verification-only.
+- `memory`: not re-exercised in this compact recheck turn.
+- `session_search`: not re-exercised in this compact recheck turn.
+
+Next step:
+
+- Add one equally tight deferred-replay proof through `/api/notification-routes/replay`: either a backoff-deferred saved delivery or a max-retries-skipped saved delivery.
+
+Blockers:
+
+- None.
+
+<!-- OPENZUES_PARITY_MISSION:40 -->
+
+## Update: OpenClaw Total Parity Program
+
+Date: 2026-04-13
+
+### Operator handoff
+
+Completed: stayed on the saved outbound-delivery replay seam and finished one small missing guardrail, proving replay refusal when the saved notification route is disabled. I added focused tests in [tests/test_ops_mesh.py](/C:/Users/skull/OneDrive/Documents/OpenZues/tests/test_ops_mesh.py:1998) and [tests/test_cli.py](/C:/Users/skull/OneDrive/Documents/OpenZues/tests/test_cli.py:629), then appended the checkpoint at [docs/openclaw-parity-checkpoint-2026-04-10.md](/C:/Users/skull/OneDrive/Documents/OpenZues/docs/openclaw-parity-checkpoint-2026-04-10.md:2912).
+
+Verified: `.\\.venv\\Scripts\\python.exe -m pytest tests/test_ops_mesh.py -q -k replay_outbound_deliveries_fails_when_route_is_disabled` passed with `1 passed, 30 deselected in 1.39s`, and `.\\.venv\\Scripts\\python.exe -m pytest tests/test_cli.py -q -k routes_replay_json_reports_disabled_route_failure` passed with `1 passed, 47 deselected in 10.95s`. The claim now covered is that replay does not call the webhook sender for a disabled saved route, reports the route as unavailable for replay, leaves the delivery failed, and marks it maxed out.
+
+Tool evidence: `debugging` was used through focused `rg`, bounded file reads, and targeted `pytest`; `memory` and `session_search` were exercised earlier in this recovery thread through OpenZues Recall; `delegation` was not used because this slice was already narrow.
+
+Next step: add one equally tight proof for replay deferral rather than failure, either the backoff-deferred path or the max-retries-skipped path through `/api/notification-routes/replay`.
+
+Blockers: none.
+
+### Observed tool evidence
+
+- Thread evidence covered 1 of 4 declared toolsets: debugging. Explicit proof is still missing for delegation, memory, session_search.
+- debugging: observed (Command: "C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command 'rg -n "Notification route .* unavailable for replay|deferred by backoff|max retries|replay_outbound_deliveries|routes_replay" tests/t...)
+- delegation: unproven
+- memory: unproven
+- session_search: unproven

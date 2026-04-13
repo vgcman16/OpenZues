@@ -1894,6 +1894,313 @@ async def test_ops_mesh_service_records_outbound_delivery_for_matching_event(
 
 
 @pytest.mark.asyncio
+async def test_replay_outbound_deliveries_retries_saved_failed_delivery(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    route_id = await database.create_notification_route(
+        name="Deploy Room",
+        kind="webhook",
+        target="https://example.invalid/deploy",
+        events=["mission/*"],
+        conversation_target={
+            "channel": "slack",
+            "account_id": "workspace-bot",
+            "peer_kind": "channel",
+            "peer_id": "deploy-room",
+        },
+        enabled=True,
+        secret_header_name=None,
+        secret_token=None,
+        vault_secret_id=None,
+    )
+    delivery_id = await database.create_outbound_delivery(
+        route_id=route_id,
+        route_name="Deploy Room",
+        route_kind="webhook",
+        route_target="https://example.invalid/deploy",
+        event_type="mission/updated",
+        session_key="route-session-replay",
+        conversation_target={
+            "channel": "slack",
+            "account_id": "workspace-bot",
+            "peer_kind": "channel",
+            "peer_id": "deploy-room",
+        },
+        route_scope={
+            "route_name": "Deploy Room",
+            "route_kind": "webhook",
+            "route_target": "https://example.invalid/deploy",
+            "route_match": "peer",
+            "matched_value": "deploy-room",
+        },
+        event_payload={
+            "summary": "Mission resumed on the routed channel.",
+            "routeConversationTarget": {
+                "channel": "slack",
+                "account_id": "workspace-bot",
+                "peer_kind": "channel",
+                "peer_id": "deploy-room",
+            },
+        },
+        message_summary="Mission resumed on the routed channel.",
+        test_delivery=False,
+        delivery_state="failed",
+        attempt_count=1,
+        last_attempt_at=(datetime.now(UTC) - timedelta(minutes=10)).isoformat(),
+        last_error="temporary upstream timeout",
+    )
+    deliveries: list[tuple[str, dict[str, object]]] = []
+
+    def fake_post_webhook(
+        self,  # noqa: ANN001
+        route: dict[str, object],
+        event_type: str,
+        event: dict[str, object],
+        secret_token: str | None,
+    ) -> None:
+        del self, route, secret_token
+        deliveries.append((event_type, event))
+
+    monkeypatch.setattr(OpsMeshService, "_post_webhook", fake_post_webhook)
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),
+        FakeMissionService([]),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.replay_outbound_deliveries(limit=10)
+    refreshed_delivery = await database.get_outbound_delivery(delivery_id)
+
+    assert result.ok is True
+    assert result.attempted_count == 1
+    assert result.replayed_count == 1
+    assert result.failed_count == 0
+    assert result.deferred_count == 0
+    assert result.skipped_max_retries_count == 0
+    assert len(deliveries) == 1
+    assert deliveries[0][0] == "mission/updated"
+    assert result.deliveries[0].delivery is not None
+    assert result.deliveries[0].delivery.delivery_state == "delivered"
+    assert refreshed_delivery is not None
+    assert refreshed_delivery["delivery_state"] == "delivered"
+    assert refreshed_delivery["attempt_count"] == 2
+    assert refreshed_delivery["last_error"] is None
+
+
+@pytest.mark.asyncio
+async def test_replay_outbound_deliveries_fails_when_route_is_disabled(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    route_id = await database.create_notification_route(
+        name="Deploy Room",
+        kind="webhook",
+        target="https://example.invalid/deploy",
+        events=["mission/*"],
+        conversation_target={
+            "channel": "slack",
+            "account_id": "workspace-bot",
+            "peer_kind": "channel",
+            "peer_id": "deploy-room",
+        },
+        enabled=True,
+        secret_header_name=None,
+        secret_token=None,
+        vault_secret_id=None,
+    )
+    delivery_id = await database.create_outbound_delivery(
+        route_id=route_id,
+        route_name="Deploy Room",
+        route_kind="webhook",
+        route_target="https://example.invalid/deploy",
+        event_type="mission/updated",
+        session_key="route-session-disabled",
+        conversation_target={
+            "channel": "slack",
+            "account_id": "workspace-bot",
+            "peer_kind": "channel",
+            "peer_id": "deploy-room",
+        },
+        route_scope={
+            "route_name": "Deploy Room",
+            "route_kind": "webhook",
+            "route_target": "https://example.invalid/deploy",
+            "route_match": "peer",
+            "matched_value": "deploy-room",
+        },
+        event_payload={
+            "summary": "Mission resumed on the routed channel.",
+            "routeConversationTarget": {
+                "channel": "slack",
+                "account_id": "workspace-bot",
+                "peer_kind": "channel",
+                "peer_id": "deploy-room",
+            },
+        },
+        message_summary="Mission resumed on the routed channel.",
+        test_delivery=False,
+        delivery_state="failed",
+        attempt_count=1,
+        last_attempt_at=(datetime.now(UTC) - timedelta(minutes=10)).isoformat(),
+        last_error="temporary upstream timeout",
+    )
+    await database.update_notification_route(route_id, enabled=False)
+    deliveries: list[tuple[str, dict[str, object]]] = []
+
+    def fake_post_webhook(
+        self,  # noqa: ANN001
+        route: dict[str, object],
+        event_type: str,
+        event: dict[str, object],
+        secret_token: str | None,
+    ) -> None:
+        del self, route, secret_token
+        deliveries.append((event_type, event))
+
+    monkeypatch.setattr(OpsMeshService, "_post_webhook", fake_post_webhook)
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),
+        FakeMissionService([]),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.replay_outbound_deliveries(limit=10)
+    refreshed_delivery = await database.get_outbound_delivery(delivery_id)
+
+    assert result.ok is False
+    assert result.attempted_count == 1
+    assert result.replayed_count == 0
+    assert result.failed_count == 1
+    assert result.deferred_count == 0
+    assert result.skipped_max_retries_count == 0
+    assert deliveries == []
+    assert result.deliveries[0].error is not None
+    assert "unavailable for replay" in result.deliveries[0].error
+    assert result.deliveries[0].delivery is not None
+    assert result.deliveries[0].delivery.max_retries_reached is True
+    assert refreshed_delivery is not None
+    assert refreshed_delivery["delivery_state"] == "failed"
+    assert "unavailable for replay" in str(refreshed_delivery["last_error"])
+    assert int(refreshed_delivery["attempt_count"]) > 1
+
+
+@pytest.mark.asyncio
+async def test_replay_outbound_deliveries_defers_saved_failed_delivery_in_backoff(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    route_id = await database.create_notification_route(
+        name="Deploy Room",
+        kind="webhook",
+        target="https://example.invalid/deploy",
+        events=["mission/*"],
+        conversation_target={
+            "channel": "slack",
+            "account_id": "workspace-bot",
+            "peer_kind": "channel",
+            "peer_id": "deploy-room",
+        },
+        enabled=True,
+        secret_header_name=None,
+        secret_token=None,
+        vault_secret_id=None,
+    )
+    delivery_id = await database.create_outbound_delivery(
+        route_id=route_id,
+        route_name="Deploy Room",
+        route_kind="webhook",
+        route_target="https://example.invalid/deploy",
+        event_type="mission/updated",
+        session_key="route-session-deferred",
+        conversation_target={
+            "channel": "slack",
+            "account_id": "workspace-bot",
+            "peer_kind": "channel",
+            "peer_id": "deploy-room",
+        },
+        route_scope={
+            "route_name": "Deploy Room",
+            "route_kind": "webhook",
+            "route_target": "https://example.invalid/deploy",
+            "route_match": "peer",
+            "matched_value": "deploy-room",
+        },
+        event_payload={
+            "summary": "Mission resumed on the routed channel.",
+            "routeConversationTarget": {
+                "channel": "slack",
+                "account_id": "workspace-bot",
+                "peer_kind": "channel",
+                "peer_id": "deploy-room",
+            },
+        },
+        message_summary="Mission resumed on the routed channel.",
+        test_delivery=False,
+        delivery_state="failed",
+        attempt_count=1,
+        last_attempt_at=(datetime.now(UTC) - timedelta(seconds=1)).isoformat(),
+        last_error="temporary upstream timeout",
+    )
+    deliveries: list[tuple[str, dict[str, object]]] = []
+
+    def fake_post_webhook(
+        self,  # noqa: ANN001
+        route: dict[str, object],
+        event_type: str,
+        event: dict[str, object],
+        secret_token: str | None,
+    ) -> None:
+        del self, route, secret_token
+        deliveries.append((event_type, event))
+
+    monkeypatch.setattr(OpsMeshService, "_post_webhook", fake_post_webhook)
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),
+        FakeMissionService([]),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.replay_outbound_deliveries(limit=10)
+    refreshed_delivery = await database.get_outbound_delivery(delivery_id)
+
+    assert result.ok is True
+    assert result.attempted_count == 0
+    assert result.replayed_count == 0
+    assert result.failed_count == 0
+    assert result.deferred_count == 1
+    assert result.skipped_max_retries_count == 0
+    assert result.deliveries == []
+    assert deliveries == []
+    assert "1 deferred by backoff" in result.summary
+    assert refreshed_delivery is not None
+    assert refreshed_delivery["delivery_state"] == "failed"
+    assert int(refreshed_delivery["attempt_count"]) == 1
+    assert refreshed_delivery["last_error"] == "temporary upstream timeout"
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_filters_notification_routes_by_conversation_target(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -6,7 +6,7 @@ import logging
 import re
 from collections import defaultdict
 from collections.abc import Awaitable, Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
 from openzues.database import Database, utcnow
@@ -1495,6 +1495,41 @@ def _thread_event_is_commentary_delta(event: dict[str, Any]) -> bool:
     return _thread_event_method(event) == "item/agentMessage/delta"
 
 
+def _thread_event_agent_message_item_id(event: dict[str, Any]) -> str | None:
+    method = _thread_event_method(event)
+    payload = _thread_event_payload(event)
+    if method == "item/agentMessage/delta":
+        item_id = str(payload.get("itemId") or "").strip()
+        return item_id or None
+    if method not in {"item/started", "item/completed"}:
+        return None
+    item = payload.get("item")
+    if not isinstance(item, dict):
+        return None
+    if str(item.get("type") or "") != "agentMessage":
+        return None
+    item_id = str(item.get("id") or "").strip()
+    return item_id or None
+
+
+def _agent_message_phases_by_item_id(events: list[dict[str, Any]]) -> dict[str, str]:
+    phases: dict[str, str] = {}
+    for event in events:
+        method = _thread_event_method(event)
+        if method not in {"item/started", "item/completed"}:
+            continue
+        item = _thread_event_payload(event).get("item")
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("type") or "") != "agentMessage":
+            continue
+        item_id = str(item.get("id") or "").strip()
+        phase = str(item.get("phase") or "").strip()
+        if item_id and phase:
+            phases[item_id] = phase
+    return phases
+
+
 def _thread_event_command(event: dict[str, Any]) -> str | None:
     method = _thread_event_method(event)
     if method not in {"item/started", "item/completed"}:
@@ -1817,7 +1852,35 @@ def _commentary_text_from_events(
     return _truncate_text(text, limit=limit)
 
 
-def _thread_event_is_material_progress(event: dict[str, Any]) -> bool:
+def _thread_event_is_final_answer_progress(
+    event: dict[str, Any],
+    *,
+    agent_message_phases: dict[str, str] | None = None,
+) -> bool:
+    method = _thread_event_method(event)
+    payload = _thread_event_payload(event)
+    if method == "item/agentMessage/delta":
+        item_id = _thread_event_agent_message_item_id(event)
+        if not item_id:
+            return False
+        phase = (agent_message_phases or {}).get(item_id, "")
+        return phase == "final_answer"
+    if method in {"item/started", "item/completed"}:
+        item = payload.get("item")
+        if not isinstance(item, dict):
+            return False
+        return (
+            str(item.get("type") or "") == "agentMessage"
+            and str(item.get("phase") or "") == "final_answer"
+        )
+    return False
+
+
+def _thread_event_is_material_progress(
+    event: dict[str, Any],
+    *,
+    agent_message_phases: dict[str, str] | None = None,
+) -> bool:
     method = _thread_event_method(event)
     payload = _thread_event_payload(event)
     if method in {"turn/completed", "item/commandExecution/outputDelta"}:
@@ -1826,15 +1889,25 @@ def _thread_event_is_material_progress(event: dict[str, Any]) -> bool:
         item = payload.get("item")
         if not isinstance(item, dict):
             return False
-        item_type = str(item.get("type") or "")
-        if item_type == "commandExecution":
+        if str(item.get("type") or "") == "commandExecution":
             return True
-        return item_type == "agentMessage" and str(item.get("phase") or "") == "final_answer"
+    if _thread_event_is_final_answer_progress(
+        event,
+        agent_message_phases=agent_message_phases,
+    ):
+        return True
     return False
 
 
-def _thread_event_is_progress_anchor(event: dict[str, Any]) -> bool:
-    if _thread_event_is_material_progress(event):
+def _thread_event_is_progress_anchor(
+    event: dict[str, Any],
+    *,
+    agent_message_phases: dict[str, str] | None = None,
+) -> bool:
+    if _thread_event_is_material_progress(
+        event,
+        agent_message_phases=agent_message_phases,
+    ):
         return True
     return _thread_event_method(event) == "turn/started"
 
@@ -2659,6 +2732,29 @@ class MissionService:
             return True
         return elapsed >= int(mission.get("reflex_cooldown_seconds") or 900)
 
+    async def _in_progress_reflex_ready(
+        self,
+        mission_id: int,
+        mission: dict[str, Any],
+    ) -> bool:
+        if self._reflex_ready(mission):
+            return True
+        if not bool(mission.get("allow_auto_reflexes")):
+            return False
+        if str(mission.get("last_reflex_kind") or "") != "checkpoint_now":
+            return False
+        last_reflex_at = _parse_timestamp(str(mission.get("last_reflex_at") or "") or None)
+        if last_reflex_at is None:
+            return False
+        checkpoints = await self.database.list_mission_checkpoints(mission_id, limit=6)
+        for checkpoint in checkpoints:
+            if str(checkpoint.get("kind") or "") not in RECOVERY_REBIND_KINDS:
+                continue
+            checkpoint_at = _parse_timestamp(str(checkpoint.get("created_at") or "") or None)
+            if checkpoint_at is not None and checkpoint_at > last_reflex_at:
+                return True
+        return False
+
     def _should_auto_yield_for_queue(
         self,
         mission: dict[str, Any],
@@ -2843,6 +2939,16 @@ class MissionService:
         if not events:
             return None
 
+        agent_message_phases = _agent_message_phases_by_item_id(events)
+        if any(
+            _thread_event_is_final_answer_progress(
+                event,
+                agent_message_phases=agent_message_phases,
+            )
+            for event in events
+        ):
+            return None
+
         commentary_deltas = [
             event for event in events if _thread_event_is_commentary_delta(event)
         ]
@@ -2873,7 +2979,10 @@ class MissionService:
 
         anchor_index = None
         for index in range(len(events) - 1, -1, -1):
-            if _thread_event_is_progress_anchor(events[index]):
+            if _thread_event_is_progress_anchor(
+                events[index],
+                agent_message_phases=agent_message_phases,
+            ):
                 anchor_index = index
                 break
         if anchor_index is None:
@@ -2888,7 +2997,13 @@ class MissionService:
         ]
         if len(commentary_after_anchor) < min_commentary_deltas:
             return None
-        if any(_thread_event_is_material_progress(event) for event in tail_events):
+        if any(
+            _thread_event_is_material_progress(
+                event,
+                agent_message_phases=agent_message_phases,
+            )
+            for event in tail_events
+        ):
             return None
 
         anchor_at = _thread_event_created_at(events[anchor_index])
@@ -4130,13 +4245,14 @@ class MissionService:
             prompt="\n".join(prompt_lines),
         )
 
-    def _build_in_progress_governor_reflex(
+    async def _build_in_progress_governor_reflex(
         self,
+        mission_id: int,
         mission: dict[str, Any],
     ) -> MissionReflexRun | None:
         if _mission_swarm_runtime(mission) is not None:
             return None
-        if not self._reflex_ready(mission):
+        if not await self._in_progress_reflex_ready(mission_id, mission):
             return None
         if str(mission.get("status") or "") != "active":
             return None
@@ -4149,9 +4265,41 @@ class MissionService:
         phase = str(mission.get("phase") or "").strip().lower()
         if phase not in {"reporting", "thinking"}:
             return None
+        thread_id = str(mission.get("thread_id") or "").strip()
+        if thread_id and await self._has_recent_final_answer_progress(mission):
+            return None
         if int(mission.get("command_count") or 0) < self._orbit_threshold(mission):
             return None
         return self._build_checkpoint_now_reflex(mission, reporting_orbit=True)
+
+    async def _has_recent_final_answer_progress(self, mission: dict[str, Any]) -> bool:
+        thread_id = str(mission.get("thread_id") or "").strip()
+        if not thread_id:
+            return False
+        events = await self.database.list_thread_events(
+            instance_id=int(mission["instance_id"]),
+            thread_id=thread_id,
+            limit=REPORTING_ORBIT_EVENT_LIMIT,
+        )
+        current_turn_id = str(mission.get("last_turn_id") or "").strip() or None
+        if current_turn_id is not None:
+            events = [
+                event for event in events if _thread_event_turn_id(event) == current_turn_id
+            ]
+        if not events:
+            return False
+        agent_message_phases = _agent_message_phases_by_item_id(events)
+        cutoff = datetime.now(UTC) - timedelta(seconds=45)
+        for event in reversed(events):
+            created_at = _thread_event_created_at(event)
+            if created_at is None or created_at < cutoff:
+                continue
+            if _thread_event_is_final_answer_progress(
+                event,
+                agent_message_phases=agent_message_phases,
+            ):
+                return True
+        return False
 
     def _runtime_supports_model(self, runtime: Any, model: str) -> bool:
         catalog = getattr(runtime, "models", None)
@@ -5147,7 +5295,10 @@ class MissionService:
                 ):
                     return
                 if not force:
-                    in_progress_reflex = self._build_in_progress_governor_reflex(mission)
+                    in_progress_reflex = await self._build_in_progress_governor_reflex(
+                        mission_id,
+                        mission,
+                    )
                     thread_id = str(mission.get("thread_id") or "").strip()
                     if in_progress_reflex is not None and thread_id:
                         await self._start_turn_with_prompt(

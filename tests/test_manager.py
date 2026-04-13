@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock
 
 import pytest
@@ -321,6 +322,24 @@ class FakeTimeoutBackoffClient:
         del params, timeout
         self.calls.append(method)
         assert method == self.method
+        raise TimeoutError()
+
+
+class FakeSlowTimeoutBackoffClient:
+    def __init__(self, method: str) -> None:
+        self.method = method
+        self.calls: list[str] = []
+
+    async def call(
+        self,
+        method: str,
+        params: dict | None = None,
+        timeout: float = 30.0,
+    ) -> dict[str, object]:
+        del params, timeout
+        self.calls.append(method)
+        assert method == self.method
+        await asyncio.sleep(0.01)
         raise TimeoutError()
 
 
@@ -750,6 +769,70 @@ async def test_list_mcp_server_status_backs_off_after_timeout(tmp_path) -> None:
 
     first = await manager.list_mcp_server_status(1, refresh=True)
     second = await manager.list_mcp_server_status(1, refresh=True)
+
+    assert first == cached_status
+    assert second == cached_status
+    assert client.calls == ["mcpServerStatus/list"]
+    assert "mcpServerStatus/list" in runtime.refresh_backoff_until
+
+
+@pytest.mark.asyncio
+async def test_safe_refresh_call_coalesces_concurrent_timeouts(tmp_path) -> None:
+    database = Database(tmp_path / "manager.db")
+    await database.initialize()
+    manager = RuntimeManager(database, BroadcastHub())
+    client = FakeSlowTimeoutBackoffClient("thread/list")
+    runtime = InstanceRuntime(
+        instance_id=1,
+        name="Local Codex Desktop",
+        transport="desktop",
+        command=None,
+        args=None,
+        websocket_url=None,
+        cwd="C:/workspace",
+        auto_connect=False,
+        client=client,  # type: ignore[arg-type]
+        connected=True,
+    )
+    manager.instances[1] = runtime
+
+    first, second = await asyncio.gather(
+        manager._safe_refresh_call(runtime, "thread/list", {"limit": 30}),
+        manager._safe_refresh_call(runtime, "thread/list", {"limit": 30}),
+    )
+
+    assert first is None
+    assert second is None
+    assert client.calls == ["thread/list"]
+    assert "thread/list" in runtime.refresh_backoff_until
+
+
+@pytest.mark.asyncio
+async def test_list_mcp_server_status_coalesces_concurrent_timeouts(tmp_path) -> None:
+    database = Database(tmp_path / "manager.db")
+    await database.initialize()
+    manager = RuntimeManager(database, BroadcastHub())
+    client = FakeSlowTimeoutBackoffClient("mcpServerStatus/list")
+    cached_status = [{"name": "Cached MCP", "status": "ready"}]
+    runtime = InstanceRuntime(
+        instance_id=1,
+        name="Local Codex Desktop",
+        transport="desktop",
+        command=None,
+        args=None,
+        websocket_url=None,
+        cwd="C:/workspace",
+        auto_connect=False,
+        client=client,  # type: ignore[arg-type]
+        connected=True,
+        mcp_server_status=cached_status,
+    )
+    manager.instances[1] = runtime
+
+    first, second = await asyncio.gather(
+        manager.list_mcp_server_status(1, refresh=True),
+        manager.list_mcp_server_status(1, refresh=True),
+    )
 
     assert first == cached_status
     assert second == cached_status

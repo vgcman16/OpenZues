@@ -1,7 +1,7 @@
 import asyncio
 import codecs
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
@@ -523,6 +523,313 @@ def test_routes_deliveries_json_surfaces_saved_outbound_deliveries(tmp_path, mon
     assert payload[0]["route_scope"]["route_match"] == "test"
     assert payload[0]["event_payload"]["routeConversationTarget"]["peer_id"] == "deploy-room"
     assert payload[0]["event_payload"]["summary"] == "OpenZues test delivery ping."
+
+
+def test_routes_replay_json_retries_saved_failed_delivery(tmp_path, monkeypatch) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch)
+    deliveries: list[tuple[str, dict[str, object]]] = []
+
+    def fake_post_webhook(
+        self,  # noqa: ANN001
+        route: dict[str, object],
+        event_type: str,
+        event: dict[str, object],
+        secret_token: str | None,
+    ) -> None:
+        del self, route, secret_token
+        deliveries.append((event_type, event))
+
+    monkeypatch.setattr(
+        "openzues.services.ops_mesh.OpsMeshService._post_webhook",
+        fake_post_webhook,
+    )
+
+    settings = Settings(data_dir=data_dir, db_path=data_dir / "openzues.db")
+    api_app = create_app(settings)
+    with TestClient(api_app, client=("testclient", 50000)) as client:
+        route_response = client.post(
+            "/api/notification-routes",
+            json={
+                "name": "Deploy Room",
+                "kind": "webhook",
+                "target": "https://example.invalid/deploy-room",
+                "events": ["mission/*"],
+                "conversation_target": {
+                    "channel": "slack",
+                    "account_id": "workspace-bot",
+                    "peer_kind": "channel",
+                    "peer_id": "deploy-room",
+                },
+                "enabled": True,
+            },
+        )
+        assert route_response.status_code == 200, route_response.text
+        route_id = route_response.json()["id"]
+
+    database = Database(settings.db_path)
+    delivery_id = asyncio.run(
+        database.create_outbound_delivery(
+            route_id=route_id,
+            route_name="Deploy Room",
+            route_kind="webhook",
+            route_target="https://example.invalid/deploy-room",
+            event_type="mission/updated",
+            session_key="route-session-replay",
+            conversation_target={
+                "channel": "slack",
+                "account_id": "workspace-bot",
+                "peer_kind": "channel",
+                "peer_id": "deploy-room",
+            },
+            route_scope={
+                "route_name": "Deploy Room",
+                "route_kind": "webhook",
+                "route_target": "https://example.invalid/deploy-room",
+                "route_match": "peer",
+                "matched_value": "deploy-room",
+            },
+            event_payload={
+                "summary": "Mission resumed on the routed channel.",
+                "routeConversationTarget": {
+                    "channel": "slack",
+                    "account_id": "workspace-bot",
+                    "peer_kind": "channel",
+                    "peer_id": "deploy-room",
+                },
+            },
+            message_summary="Mission resumed on the routed channel.",
+            test_delivery=False,
+            delivery_state="failed",
+            attempt_count=1,
+            last_attempt_at=(datetime.now(UTC) - timedelta(minutes=10)).isoformat(),
+            last_error="temporary upstream timeout",
+        )
+    )
+
+    result = runner.invoke(app, ["routes", "replay", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is True
+    assert payload["attempted_count"] == 1
+    assert payload["replayed_count"] == 1
+    assert payload["failed_count"] == 0
+    assert payload["deferred_count"] == 0
+    assert payload["skipped_max_retries_count"] == 0
+    assert len(deliveries) == 1
+    assert deliveries[0][0] == "mission/updated"
+    assert payload["deliveries"][0]["delivery_id"] == delivery_id
+    assert payload["deliveries"][0]["delivery"]["delivery_state"] == "delivered"
+    assert payload["deliveries"][0]["delivery"]["attempt_count"] == 2
+    assert payload["deliveries"][0]["delivery"]["last_error"] is None
+
+
+def test_routes_replay_json_reports_disabled_route_failure(tmp_path, monkeypatch) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch)
+    deliveries: list[tuple[str, dict[str, object]]] = []
+
+    def fake_post_webhook(
+        self,  # noqa: ANN001
+        route: dict[str, object],
+        event_type: str,
+        event: dict[str, object],
+        secret_token: str | None,
+    ) -> None:
+        del self, route, secret_token
+        deliveries.append((event_type, event))
+
+    monkeypatch.setattr(
+        "openzues.services.ops_mesh.OpsMeshService._post_webhook",
+        fake_post_webhook,
+    )
+
+    settings = Settings(data_dir=data_dir, db_path=data_dir / "openzues.db")
+    api_app = create_app(settings)
+    with TestClient(api_app, client=("testclient", 50000)) as client:
+        route_response = client.post(
+            "/api/notification-routes",
+            json={
+                "name": "Deploy Room",
+                "kind": "webhook",
+                "target": "https://example.invalid/deploy-room",
+                "events": ["mission/*"],
+                "conversation_target": {
+                    "channel": "slack",
+                    "account_id": "workspace-bot",
+                    "peer_kind": "channel",
+                    "peer_id": "deploy-room",
+                },
+                "enabled": True,
+            },
+        )
+        assert route_response.status_code == 200, route_response.text
+        route_id = route_response.json()["id"]
+
+    database = Database(settings.db_path)
+    delivery_id = asyncio.run(
+        database.create_outbound_delivery(
+            route_id=route_id,
+            route_name="Deploy Room",
+            route_kind="webhook",
+            route_target="https://example.invalid/deploy-room",
+            event_type="mission/updated",
+            session_key="route-session-disabled",
+            conversation_target={
+                "channel": "slack",
+                "account_id": "workspace-bot",
+                "peer_kind": "channel",
+                "peer_id": "deploy-room",
+            },
+            route_scope={
+                "route_name": "Deploy Room",
+                "route_kind": "webhook",
+                "route_target": "https://example.invalid/deploy-room",
+                "route_match": "peer",
+                "matched_value": "deploy-room",
+            },
+            event_payload={
+                "summary": "Mission resumed on the routed channel.",
+                "routeConversationTarget": {
+                    "channel": "slack",
+                    "account_id": "workspace-bot",
+                    "peer_kind": "channel",
+                    "peer_id": "deploy-room",
+                },
+            },
+            message_summary="Mission resumed on the routed channel.",
+            test_delivery=False,
+            delivery_state="failed",
+            attempt_count=1,
+            last_attempt_at=(datetime.now(UTC) - timedelta(minutes=10)).isoformat(),
+            last_error="temporary upstream timeout",
+        )
+    )
+    asyncio.run(database.update_notification_route(route_id, enabled=False))
+
+    result = runner.invoke(app, ["routes", "replay", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is False
+    assert payload["attempted_count"] == 1
+    assert payload["replayed_count"] == 0
+    assert payload["failed_count"] == 1
+    assert payload["deferred_count"] == 0
+    assert payload["skipped_max_retries_count"] == 0
+    assert deliveries == []
+    assert payload["deliveries"][0]["delivery_id"] == delivery_id
+    assert "unavailable for replay" in payload["deliveries"][0]["error"]
+    assert payload["deliveries"][0]["delivery"]["delivery_state"] == "failed"
+    assert payload["deliveries"][0]["delivery"]["max_retries_reached"] is True
+    assert "unavailable for replay" in payload["deliveries"][0]["delivery"]["last_error"]
+
+
+def test_routes_replay_json_defers_saved_failed_delivery_in_backoff(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch)
+    deliveries: list[tuple[str, dict[str, object]]] = []
+
+    def fake_post_webhook(
+        self,  # noqa: ANN001
+        route: dict[str, object],
+        event_type: str,
+        event: dict[str, object],
+        secret_token: str | None,
+    ) -> None:
+        del self, route, secret_token
+        deliveries.append((event_type, event))
+
+    monkeypatch.setattr(
+        "openzues.services.ops_mesh.OpsMeshService._post_webhook",
+        fake_post_webhook,
+    )
+
+    settings = Settings(data_dir=data_dir, db_path=data_dir / "openzues.db")
+    api_app = create_app(settings)
+    with TestClient(api_app, client=("testclient", 50000)) as client:
+        route_response = client.post(
+            "/api/notification-routes",
+            json={
+                "name": "Deploy Room",
+                "kind": "webhook",
+                "target": "https://example.invalid/deploy-room",
+                "events": ["mission/*"],
+                "conversation_target": {
+                    "channel": "slack",
+                    "account_id": "workspace-bot",
+                    "peer_kind": "channel",
+                    "peer_id": "deploy-room",
+                },
+                "enabled": True,
+            },
+        )
+        assert route_response.status_code == 200, route_response.text
+        route_id = route_response.json()["id"]
+
+    database = Database(settings.db_path)
+    delivery_id = asyncio.run(
+        database.create_outbound_delivery(
+            route_id=route_id,
+            route_name="Deploy Room",
+            route_kind="webhook",
+            route_target="https://example.invalid/deploy-room",
+            event_type="mission/updated",
+            session_key="route-session-deferred",
+            conversation_target={
+                "channel": "slack",
+                "account_id": "workspace-bot",
+                "peer_kind": "channel",
+                "peer_id": "deploy-room",
+            },
+            route_scope={
+                "route_name": "Deploy Room",
+                "route_kind": "webhook",
+                "route_target": "https://example.invalid/deploy-room",
+                "route_match": "peer",
+                "matched_value": "deploy-room",
+            },
+            event_payload={
+                "summary": "Mission resumed on the routed channel.",
+                "routeConversationTarget": {
+                    "channel": "slack",
+                    "account_id": "workspace-bot",
+                    "peer_kind": "channel",
+                    "peer_id": "deploy-room",
+                },
+            },
+            message_summary="Mission resumed on the routed channel.",
+            test_delivery=False,
+            delivery_state="failed",
+            attempt_count=1,
+            last_attempt_at=(datetime.now(UTC) - timedelta(seconds=1)).isoformat(),
+            last_error="temporary upstream timeout",
+        )
+    )
+
+    result = runner.invoke(app, ["routes", "replay", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is True
+    assert payload["attempted_count"] == 0
+    assert payload["replayed_count"] == 0
+    assert payload["failed_count"] == 0
+    assert payload["deferred_count"] == 1
+    assert payload["skipped_max_retries_count"] == 0
+    assert payload["deliveries"] == []
+    assert deliveries == []
+    assert "1 deferred by backoff" in payload["summary"]
+
+    refreshed_delivery = asyncio.run(database.get_outbound_delivery(delivery_id))
+    assert refreshed_delivery is not None
+    assert refreshed_delivery["delivery_state"] == "failed"
+    assert int(refreshed_delivery["attempt_count"]) == 1
+    assert refreshed_delivery["last_error"] == "temporary upstream timeout"
 
 
 def test_watch_json_defaults_to_saved_launch_handoff_task(monkeypatch) -> None:

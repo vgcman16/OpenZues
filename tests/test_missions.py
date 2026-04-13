@@ -2819,6 +2819,96 @@ async def test_reconcile_uses_auto_reflex_for_in_progress_reporting_orbit(tmp_pa
     assert checkpoints[0]["kind"] == "reflex_auto"
 
 
+@pytest.mark.asyncio
+async def test_reconcile_does_not_force_landing_while_final_answer_streams(tmp_path) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    manager = FakeManager()
+    manager.instances[7].connected = True
+    manager.instances[7].threads = [{"id": "thread_final_answer", "status": {"type": "active"}}]
+    service = MissionService(database, manager, BroadcastHub(), poll_interval_seconds=3600)
+
+    mission_id = await database.create_mission(
+        name="OpenClaw Total Parity Program",
+        objective="Keep iterating until OpenClaw parity is complete.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread_final_answer",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=True,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+    )
+    await database.update_mission(
+        mission_id,
+        in_progress=1,
+        phase="reporting",
+        command_count=12,
+        turns_completed=1,
+        last_turn_id="turn_final_answer",
+        current_command=None,
+        last_checkpoint=None,
+    )
+    await database.append_event(
+        instance_id=7,
+        thread_id="thread_final_answer",
+        method="turn/started",
+        payload={"threadId": "thread_final_answer", "turnId": "turn_final_answer"},
+    )
+    await database.append_event(
+        instance_id=7,
+        thread_id="thread_final_answer",
+        method="item/started",
+        payload={
+            "item": {
+                "type": "agentMessage",
+                "id": "msg_final_answer",
+                "text": "",
+                "phase": "final_answer",
+            },
+            "threadId": "thread_final_answer",
+            "turnId": "turn_final_answer",
+        },
+    )
+    for delta in (
+        "**Checkpoint**",
+        "\n\nCompleted:",
+        " verified the active seam",
+        " and wrote the checkpoint.",
+    ):
+        await database.append_event(
+            instance_id=7,
+            thread_id="thread_final_answer",
+            method="item/agentMessage/delta",
+            payload={
+                "threadId": "thread_final_answer",
+                "turnId": "turn_final_answer",
+                "itemId": "msg_final_answer",
+                "delta": delta,
+            },
+        )
+
+    await service._reconcile_mission(mission_id)
+    mission = await database.get_mission(mission_id)
+    checkpoints = await database.list_mission_checkpoints(mission_id)
+
+    assert mission is not None
+    assert manager.turn_calls == []
+    assert manager.interrupt_calls == []
+    assert mission["last_reflex_kind"] is None
+    assert all(checkpoint["kind"] != "reflex_auto" for checkpoint in checkpoints)
+
+
 def test_parity_fast_reporting_orbit_cutoff_triggers_after_recall_anchor() -> None:
     mission = {
         "objective": "Keep iterating until OpenClaw parity is complete.",
@@ -5307,6 +5397,69 @@ async def test_reconcile_fails_over_offline_mission_to_idle_instance(tmp_path) -
     assert checkpoints[0]["kind"] == "failover"
     assert "Primary Lane" in checkpoints[0]["summary"]
     assert "Recovery Lane" in checkpoints[0]["summary"]
+
+
+@pytest.mark.asyncio
+async def test_in_progress_checkpoint_reflex_rearms_after_rebind_during_cooldown(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    manager = FakeManager()
+    manager.instances[7].connected = True
+    manager.instances[7].threads = [{"id": "thread_after_rebind", "status": {"type": "active"}}]
+    service = MissionService(database, manager, BroadcastHub(), poll_interval_seconds=3600)
+
+    mission_id = await database.create_mission(
+        name="Recovered parity landing",
+        objective="Resume the parity seam and land the checkpoint after recovery.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread_after_rebind",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort="high",
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+    )
+    await database.update_mission(
+        mission_id,
+        in_progress=1,
+        phase="thinking",
+        command_count=12,
+        turns_completed=1,
+        last_reflex_kind="checkpoint_now",
+        last_reflex_at=(datetime.now(UTC) - timedelta(minutes=2)).isoformat(),
+        last_activity_at=datetime.now(UTC).isoformat(),
+    )
+    await database.append_mission_checkpoint(
+        mission_id=mission_id,
+        thread_id="thread_after_rebind",
+        turn_id=None,
+        kind="execution_rebind",
+        summary="Mission rebound from a stalled parity-ledger read onto a fresh thread.",
+    )
+
+    await service._reconcile_mission(mission_id)
+    mission = await database.get_mission(mission_id)
+    checkpoints = await database.list_mission_checkpoints(mission_id)
+
+    assert mission is not None
+    assert mission["last_reflex_kind"] == "checkpoint_now"
+    assert manager.turn_calls[0]["thread_id"] == "thread_after_rebind"
+    assert "self-healing governor detected an in-progress reporting loop" in manager.turn_calls[0][
+        "text"
+    ]
+    assert checkpoints[0]["kind"] == "reflex_auto"
 
 
 @pytest.mark.asyncio
