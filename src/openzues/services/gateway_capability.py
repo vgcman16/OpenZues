@@ -854,18 +854,44 @@ class GatewayCapabilityService:
         self.environment = environment
 
     async def get_view(self) -> GatewayCapabilityView:
-        gateway = await self.gateway_bootstrap.get_view()
         diagnostics = self.environment.collect()
-        instances = await self.manager.list_views()
-        mcp_server_status_by_instance = await self._load_mcp_server_status_catalog(instances)
-        missions = await self.missions.list_views()
-        teams = await self.access.list_team_views()
-        operators = await self.access.list_operator_views()
-        remote_requests = await self.remote_ops.list_remote_request_views()
+        gateway_task = asyncio.create_task(self.gateway_bootstrap.get_view())
+        instances_task = asyncio.create_task(self.manager.list_views())
+        missions_task = asyncio.create_task(self.missions.list_views())
+        teams_task = asyncio.create_task(self.access.list_team_views())
+        operators_task = asyncio.create_task(self.access.list_operator_views())
+        remote_requests_task = asyncio.create_task(self.remote_ops.list_remote_request_views())
+        integrations_task = asyncio.create_task(self.ops_mesh.list_integration_views())
+        task_blueprints_task = asyncio.create_task(self.ops_mesh.list_task_blueprint_views())
+        projects_task = asyncio.create_task(self.database.list_projects())
+
+        instances = await instances_task
+        mcp_server_status_task = asyncio.create_task(
+            self._load_mcp_server_status_catalog(instances)
+        )
+        (
+            gateway,
+            missions,
+            teams,
+            operators,
+            remote_requests,
+            integrations,
+            task_blueprints,
+            project_rows,
+            mcp_server_status_by_instance,
+        ) = await asyncio.gather(
+            gateway_task,
+            missions_task,
+            teams_task,
+            operators_task,
+            remote_requests_task,
+            integrations_task,
+            task_blueprints_task,
+            projects_task,
+            mcp_server_status_task,
+        )
         access_posture = build_access_posture(teams, operators, remote_requests)
-        integrations = await self.ops_mesh.list_integration_views()
-        task_blueprints = await self.ops_mesh.list_task_blueprint_views()
-        projects = [_serialize_project(project) for project in await self.database.list_projects()]
+        projects = [_serialize_project(project) for project in project_rows]
         ops_view = build_ops_mesh(
             instances,
             missions,

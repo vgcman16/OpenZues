@@ -2724,3 +2724,45 @@ Blockers: none.
 ### Blockers
 
 - None.
+
+## Recovery checkpoint 2026-04-12 recovery lane America/Chicago
+
+### Completed
+
+- Recovered from the stalled parity-ledger reread without reopening the full ledger again.
+- Locked onto the active dashboard or control-chat seam already in the worktree and used this turn for bounded proof instead of new breadth.
+
+### Verified
+
+- Concrete claim rechecked: the active OpenClaw parity lane no longer needs to surface stale failed or quiet recovery artifacts while the dashboard can keep serving cached gateway capability posture if a refresh turns slow.
+- `.\\.venv\\Scripts\\python.exe -m pytest tests/test_app.py -k "dashboard_reuses_cached_gateway_capability_when_refresh_turns_slow or control_chat_view_hides_stale_failure_and_quiet_messages_for_active_target or attention_queue_view_hides_stale_failure_and_quiet_actions_for_active_target" -q` -> `3 passed`
+- Recall succeeded first, so recovery stayed anchored to the live parity mission instead of rebuilding context from repo-wide reads.
+
+### Next smallest step
+
+- Run the broader `tests/test_app.py` pass for this dashboard or control-plane seam, then either checkpoint it as landed or repair any fallout before widening scope again.
+
+### Blockers
+
+- None.
+
+## Recovery checkpoint 2026-04-12 late America/Chicago
+
+### Completed
+
+- Forced a landing turn on the already-landed outbox or notification-route seam instead of reopening the parity ledger or widening the search.
+- Left the workspace unchanged and converted this recovery pass into proof of the existing contract.
+
+### Verified
+
+- Concrete claim rechecked: testing a notification route still records outbound delivery state and updates the route-state operator surface.
+- `.\\.venv\\Scripts\\python.exe -m pytest tests/test_ops_mesh.py -q -k "records_outbound_delivery or notification_route_test_api_updates_route_state"` -> `3 passed`
+- Recall succeeded and recovery stayed anchored to the outbox or storage seam without rereading the full ledger.
+
+### Next smallest step
+
+- Implement replay-safe outbound recovery for saved deliveries so interrupted notification sends can be retried from persisted state rather than only inspected after the fact.
+
+### Blockers
+
+- None.

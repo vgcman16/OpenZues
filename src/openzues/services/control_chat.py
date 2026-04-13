@@ -340,6 +340,29 @@ def _find_mission(dashboard: DashboardView, mission_id: int | None) -> MissionVi
     return next((mission for mission in dashboard.missions if mission.id == mission_id), None)
 
 
+def _has_active_mission_for_target_label(
+    dashboard: DashboardView,
+    target_label: str | None,
+) -> bool:
+    normalized_label = str(target_label or "").strip().lower()
+    if not normalized_label:
+        return False
+    return any(
+        mission.status == "active" and mission.name.strip().lower() == normalized_label
+        for mission in dashboard.missions
+    )
+
+
+def _is_stale_failure_or_quiet_summary(value: str | None) -> bool:
+    normalized = str(value or "").strip().lower()
+    if not normalized:
+        return False
+    return (
+        "failed, but there is no safe recovery draft yet" in normalized
+        or "went quiet without closing the loop" in normalized
+    )
+
+
 def _find_queued_followers(dashboard: DashboardView, mission: MissionView) -> list[MissionView]:
     return sorted(
         [
@@ -1208,6 +1231,15 @@ class ControlChatService:
             ControlChatMessageView.model_validate(row)
             for row in await self.database.list_control_chat_messages(limit=limit)
         ]
+        messages = [
+            message
+            for message in messages
+            if not (
+                _has_active_mission_for_target_label(dashboard, message.target_label)
+                and message.action_kind in {"observe", "run_mission"}
+                and _is_stale_failure_or_quiet_summary(message.content)
+            )
+        ]
         attention_queue = getattr(dashboard, "attention_queue", None)
         gateway_needs_repair = _gateway_needs_repair(dashboard)
         active_running = sum(
@@ -1280,6 +1312,18 @@ class ControlChatService:
         actions = [
             AttentionQueueActionView.model_validate(row)
             for row in await self.database.list_attention_queue_actions(limit=limit)
+        ]
+        actions = [
+            action
+            for action in actions
+            if not (
+                _has_active_mission_for_target_label(dashboard, action.target_label)
+                and (
+                    action.signal_id.endswith("-failed")
+                    or action.signal_id.endswith("-quiet")
+                    or _is_stale_failure_or_quiet_summary(action.summary)
+                )
+            )
         ]
         gateway_needs_repair = _gateway_needs_repair(dashboard)
         critical = sum(signal.level == "critical" for signal in dashboard.radar.signals)
