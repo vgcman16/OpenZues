@@ -1,12 +1,15 @@
 import asyncio
 import codecs
 import json
+import re
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 
+import openzues.cli as cli_module
 from openzues.app import create_app
 from openzues.cli import (
     _append_watch_log,
@@ -14,12 +17,14 @@ from openzues.cli import (
     _emit_continue_action,
     _emit_gateway_capability,
     _emit_status,
+    _summarize_browser_snapshot,
     _watch_browser_verify,
     app,
 )
 from openzues.database import Database
 from openzues.schemas import ControlChatMessageView, ControlChatResponse, MissionDraftView
 from openzues.services.control_chat import ControlChatPlan
+from openzues.services.ops_mesh import OUTBOUND_DELIVERY_MAX_RETRIES
 from openzues.settings import Settings
 
 runner = CliRunner()
@@ -726,6 +731,218 @@ def test_routes_replay_json_reports_disabled_route_failure(tmp_path, monkeypatch
     assert "unavailable for replay" in payload["deliveries"][0]["delivery"]["last_error"]
 
 
+def test_routes_replay_json_reports_missing_saved_route_row_failure(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch)
+    deliveries: list[tuple[str, dict[str, object]]] = []
+
+    def fake_post_webhook(
+        self,  # noqa: ANN001
+        route: dict[str, object],
+        event_type: str,
+        event: dict[str, object],
+        secret_token: str | None,
+    ) -> None:
+        del self, route, secret_token
+        deliveries.append((event_type, event))
+
+    monkeypatch.setattr(
+        "openzues.services.ops_mesh.OpsMeshService._post_webhook",
+        fake_post_webhook,
+    )
+
+    settings = Settings(data_dir=data_dir, db_path=data_dir / "openzues.db")
+    api_app = create_app(settings)
+    with TestClient(api_app, client=("testclient", 50000)) as client:
+        route_response = client.post(
+            "/api/notification-routes",
+            json={
+                "name": "Deploy Room",
+                "kind": "webhook",
+                "target": "https://example.invalid/deploy-room",
+                "events": ["mission/*"],
+                "conversation_target": {
+                    "channel": "slack",
+                    "account_id": "workspace-bot",
+                    "peer_kind": "channel",
+                    "peer_id": "deploy-room",
+                },
+                "enabled": True,
+            },
+        )
+        assert route_response.status_code == 200, route_response.text
+        route_id = route_response.json()["id"]
+
+    database = Database(settings.db_path)
+    delivery_id = asyncio.run(
+        database.create_outbound_delivery(
+            route_id=route_id,
+            route_name="Deploy Room",
+            route_kind="webhook",
+            route_target="https://example.invalid/deploy-room",
+            event_type="mission/updated",
+            session_key="route-session-missing-row",
+            conversation_target={
+                "channel": "slack",
+                "account_id": "workspace-bot",
+                "peer_kind": "channel",
+                "peer_id": "deploy-room",
+            },
+            route_scope={
+                "route_name": "Deploy Room",
+                "route_kind": "webhook",
+                "route_target": "https://example.invalid/deploy-room",
+                "route_match": "peer",
+                "matched_value": "deploy-room",
+            },
+            event_payload={
+                "summary": "Mission replay lost its saved route row.",
+                "routeConversationTarget": {
+                    "channel": "slack",
+                    "account_id": "workspace-bot",
+                    "peer_kind": "channel",
+                    "peer_id": "deploy-room",
+                },
+            },
+            message_summary="Mission replay lost its saved route row.",
+            test_delivery=False,
+            delivery_state="failed",
+            attempt_count=1,
+            last_attempt_at=(datetime.now(UTC) - timedelta(days=1)).isoformat(),
+            last_error="temporary upstream timeout",
+        )
+    )
+    asyncio.run(database.delete_notification_route(route_id))
+
+    result = runner.invoke(app, ["routes", "replay", "--json"])
+    expected_error = f"Notification route {route_id} is unavailable for replay."
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is False
+    assert payload["attempted_count"] == 1
+    assert payload["replayed_count"] == 0
+    assert payload["failed_count"] == 1
+    assert payload["deferred_count"] == 0
+    assert payload["skipped_max_retries_count"] == 0
+    assert deliveries == []
+    assert payload["deliveries"][0]["delivery_id"] == delivery_id
+    assert payload["deliveries"][0]["route_id"] == route_id
+    assert payload["deliveries"][0]["error"] == expected_error
+    assert payload["deliveries"][0]["route"]["id"] == route_id
+    assert payload["deliveries"][0]["route"]["name"] == "Deploy Room"
+    assert payload["deliveries"][0]["route"]["enabled"] is False
+    assert payload["deliveries"][0]["delivery"]["delivery_state"] == "failed"
+    assert payload["deliveries"][0]["delivery"]["max_retries_reached"] is True
+    assert payload["deliveries"][0]["delivery"]["last_error"] == expected_error
+
+
+def test_routes_replay_reports_missing_saved_route_row_failure(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch)
+    deliveries: list[tuple[str, dict[str, object]]] = []
+
+    def fake_post_webhook(
+        self,  # noqa: ANN001
+        route: dict[str, object],
+        event_type: str,
+        event: dict[str, object],
+        secret_token: str | None,
+    ) -> None:
+        del self, route, secret_token
+        deliveries.append((event_type, event))
+
+    monkeypatch.setattr(
+        "openzues.services.ops_mesh.OpsMeshService._post_webhook",
+        fake_post_webhook,
+    )
+
+    settings = Settings(data_dir=data_dir, db_path=data_dir / "openzues.db")
+    api_app = create_app(settings)
+    with TestClient(api_app, client=("testclient", 50000)) as client:
+        route_response = client.post(
+            "/api/notification-routes",
+            json={
+                "name": "Deploy Room",
+                "kind": "webhook",
+                "target": "https://example.invalid/deploy-room",
+                "events": ["mission/*"],
+                "conversation_target": {
+                    "channel": "slack",
+                    "account_id": "workspace-bot",
+                    "peer_kind": "channel",
+                    "peer_id": "deploy-room",
+                },
+                "enabled": True,
+            },
+        )
+        assert route_response.status_code == 200, route_response.text
+        route_id = route_response.json()["id"]
+
+    database = Database(settings.db_path)
+    delivery_id = asyncio.run(
+        database.create_outbound_delivery(
+            route_id=route_id,
+            route_name="Deploy Room",
+            route_kind="webhook",
+            route_target="https://example.invalid/deploy-room",
+            event_type="mission/updated",
+            session_key="route-session-missing-row-plain",
+            conversation_target={
+                "channel": "slack",
+                "account_id": "workspace-bot",
+                "peer_kind": "channel",
+                "peer_id": "deploy-room",
+            },
+            route_scope={
+                "route_name": "Deploy Room",
+                "route_kind": "webhook",
+                "route_target": "https://example.invalid/deploy-room",
+                "route_match": "peer",
+                "matched_value": "deploy-room",
+            },
+            event_payload={
+                "summary": "Mission replay lost its saved route row.",
+                "routeConversationTarget": {
+                    "channel": "slack",
+                    "account_id": "workspace-bot",
+                    "peer_kind": "channel",
+                    "peer_id": "deploy-room",
+                },
+            },
+            message_summary="Mission replay lost its saved route row.",
+            test_delivery=False,
+            delivery_state="failed",
+            attempt_count=1,
+            last_attempt_at=(datetime.now(UTC) - timedelta(days=1)).isoformat(),
+            last_error="temporary upstream timeout",
+        )
+    )
+    asyncio.run(database.delete_notification_route(route_id))
+
+    result = runner.invoke(app, ["routes", "replay"])
+    expected_error = f"Notification route {route_id} is unavailable for replay."
+
+    assert result.exit_code == 0, result.stdout
+    assert "ok: False" in result.stdout
+    assert "counts: attempted=1, replayed=0, failed=1, deferred=0, maxed=0" in result.stdout
+    assert "[error] mission/updated -> Deploy Room" in result.stdout
+    assert f"error: {expected_error}" in result.stdout
+    assert deliveries == []
+
+    refreshed_delivery = asyncio.run(database.get_outbound_delivery(delivery_id))
+    assert refreshed_delivery is not None
+    assert refreshed_delivery["delivery_state"] == "failed"
+    assert int(refreshed_delivery["attempt_count"]) == OUTBOUND_DELIVERY_MAX_RETRIES
+    assert refreshed_delivery["last_error"] == expected_error
+
+
 def test_routes_replay_json_defers_saved_failed_delivery_in_backoff(
     tmp_path,
     monkeypatch,
@@ -830,6 +1047,389 @@ def test_routes_replay_json_defers_saved_failed_delivery_in_backoff(
     assert refreshed_delivery["delivery_state"] == "failed"
     assert int(refreshed_delivery["attempt_count"]) == 1
     assert refreshed_delivery["last_error"] == "temporary upstream timeout"
+
+
+def test_routes_replay_json_skips_saved_failed_delivery_at_max_retries(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch)
+    deliveries: list[tuple[str, dict[str, object]]] = []
+
+    def fake_post_webhook(
+        self,  # noqa: ANN001
+        route: dict[str, object],
+        event_type: str,
+        event: dict[str, object],
+        secret_token: str | None,
+    ) -> None:
+        del self, route, secret_token
+        deliveries.append((event_type, event))
+
+    monkeypatch.setattr(
+        "openzues.services.ops_mesh.OpsMeshService._post_webhook",
+        fake_post_webhook,
+    )
+
+    settings = Settings(data_dir=data_dir, db_path=data_dir / "openzues.db")
+    api_app = create_app(settings)
+    with TestClient(api_app, client=("testclient", 50000)) as client:
+        route_response = client.post(
+            "/api/notification-routes",
+            json={
+                "name": "Deploy Room",
+                "kind": "webhook",
+                "target": "https://example.invalid/deploy-room",
+                "events": ["mission/*"],
+                "conversation_target": {
+                    "channel": "slack",
+                    "account_id": "workspace-bot",
+                    "peer_kind": "channel",
+                    "peer_id": "deploy-room",
+                },
+                "enabled": True,
+            },
+        )
+        assert route_response.status_code == 200, route_response.text
+        route_id = route_response.json()["id"]
+
+    database = Database(settings.db_path)
+    delivery_id = asyncio.run(
+        database.create_outbound_delivery(
+            route_id=route_id,
+            route_name="Deploy Room",
+            route_kind="webhook",
+            route_target="https://example.invalid/deploy-room",
+            event_type="mission/updated",
+            session_key="route-session-maxed",
+            conversation_target={
+                "channel": "slack",
+                "account_id": "workspace-bot",
+                "peer_kind": "channel",
+                "peer_id": "deploy-room",
+            },
+            route_scope={
+                "route_name": "Deploy Room",
+                "route_kind": "webhook",
+                "route_target": "https://example.invalid/deploy-room",
+                "route_match": "peer",
+                "matched_value": "deploy-room",
+            },
+            event_payload={
+                "summary": "Mission remained failed after exhausting retries.",
+                "routeConversationTarget": {
+                    "channel": "slack",
+                    "account_id": "workspace-bot",
+                    "peer_kind": "channel",
+                    "peer_id": "deploy-room",
+                },
+            },
+            message_summary="Mission remained failed after exhausting retries.",
+            test_delivery=False,
+            delivery_state="failed",
+            attempt_count=OUTBOUND_DELIVERY_MAX_RETRIES,
+            last_attempt_at=(datetime.now(UTC) - timedelta(days=1)).isoformat(),
+            last_error="delivery retries exhausted",
+        )
+    )
+
+    result = runner.invoke(app, ["routes", "replay", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is True
+    assert payload["attempted_count"] == 0
+    assert payload["replayed_count"] == 0
+    assert payload["failed_count"] == 0
+    assert payload["deferred_count"] == 0
+    assert payload["skipped_max_retries_count"] == 1
+    assert payload["deliveries"] == []
+    assert deliveries == []
+    assert "1 hit max retries" in payload["summary"]
+
+    refreshed_delivery = asyncio.run(database.get_outbound_delivery(delivery_id))
+    assert refreshed_delivery is not None
+    assert refreshed_delivery["delivery_state"] == "failed"
+    assert int(refreshed_delivery["attempt_count"]) == OUTBOUND_DELIVERY_MAX_RETRIES
+    assert refreshed_delivery["last_error"] == "delivery retries exhausted"
+
+
+def test_routes_replay_skips_saved_failed_delivery_at_max_retries(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch)
+    deliveries: list[tuple[str, dict[str, object]]] = []
+
+    def fake_post_webhook(
+        self,  # noqa: ANN001
+        route: dict[str, object],
+        event_type: str,
+        event: dict[str, object],
+        secret_token: str | None,
+    ) -> None:
+        del self, route, secret_token
+        deliveries.append((event_type, event))
+
+    monkeypatch.setattr(
+        "openzues.services.ops_mesh.OpsMeshService._post_webhook",
+        fake_post_webhook,
+    )
+
+    settings = Settings(data_dir=data_dir, db_path=data_dir / "openzues.db")
+    api_app = create_app(settings)
+    with TestClient(api_app, client=("testclient", 50000)) as client:
+        route_response = client.post(
+            "/api/notification-routes",
+            json={
+                "name": "Deploy Room",
+                "kind": "webhook",
+                "target": "https://example.invalid/deploy-room",
+                "events": ["mission/*"],
+                "conversation_target": {
+                    "channel": "slack",
+                    "account_id": "workspace-bot",
+                    "peer_kind": "channel",
+                    "peer_id": "deploy-room",
+                },
+                "enabled": True,
+            },
+        )
+        assert route_response.status_code == 200, route_response.text
+        route_id = route_response.json()["id"]
+
+    database = Database(settings.db_path)
+    delivery_id = asyncio.run(
+        database.create_outbound_delivery(
+            route_id=route_id,
+            route_name="Deploy Room",
+            route_kind="webhook",
+            route_target="https://example.invalid/deploy-room",
+            event_type="mission/updated",
+            session_key="route-session-maxed-plain",
+            conversation_target={
+                "channel": "slack",
+                "account_id": "workspace-bot",
+                "peer_kind": "channel",
+                "peer_id": "deploy-room",
+            },
+            route_scope={
+                "route_name": "Deploy Room",
+                "route_kind": "webhook",
+                "route_target": "https://example.invalid/deploy-room",
+                "route_match": "peer",
+                "matched_value": "deploy-room",
+            },
+            event_payload={
+                "summary": "Mission remained failed after exhausting retries.",
+                "routeConversationTarget": {
+                    "channel": "slack",
+                    "account_id": "workspace-bot",
+                    "peer_kind": "channel",
+                    "peer_id": "deploy-room",
+                },
+            },
+            message_summary="Mission remained failed after exhausting retries.",
+            test_delivery=False,
+            delivery_state="failed",
+            attempt_count=OUTBOUND_DELIVERY_MAX_RETRIES,
+            last_attempt_at=(datetime.now(UTC) - timedelta(days=1)).isoformat(),
+            last_error="delivery retries exhausted",
+        )
+    )
+
+    result = runner.invoke(app, ["routes", "replay"])
+
+    assert result.exit_code == 0, result.stdout
+    assert (
+        "Replayed 0 delivery(s); 0 failed, 0 deferred by backoff, and 1 hit max retries."
+        in result.stdout
+    )
+    assert "ok: True" in result.stdout
+    assert "counts: attempted=0, replayed=0, failed=0, deferred=0, maxed=1" in result.stdout
+    assert "[error]" not in result.stdout
+    assert deliveries == []
+
+    refreshed_delivery = asyncio.run(database.get_outbound_delivery(delivery_id))
+    assert refreshed_delivery is not None
+    assert refreshed_delivery["delivery_state"] == "failed"
+    assert int(refreshed_delivery["attempt_count"]) == OUTBOUND_DELIVERY_MAX_RETRIES
+    assert refreshed_delivery["last_error"] == "delivery retries exhausted"
+
+
+def test_routes_replay_json_reports_missing_route_id_failure(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch)
+    deliveries: list[tuple[str, dict[str, object]]] = []
+
+    def fake_post_webhook(
+        self,  # noqa: ANN001
+        route: dict[str, object],
+        event_type: str,
+        event: dict[str, object],
+        secret_token: str | None,
+    ) -> None:
+        del self, route, secret_token
+        deliveries.append((event_type, event))
+
+    monkeypatch.setattr(
+        "openzues.services.ops_mesh.OpsMeshService._post_webhook",
+        fake_post_webhook,
+    )
+
+    settings = Settings(data_dir=data_dir, db_path=data_dir / "openzues.db")
+    api_app = create_app(settings)
+    with TestClient(api_app, client=("testclient", 50000)):
+        pass
+
+    database = Database(settings.db_path)
+    delivery_id = asyncio.run(
+        database.create_outbound_delivery(
+            route_id=None,
+            route_name="Deploy Room",
+            route_kind="webhook",
+            route_target="https://example.invalid/deploy-room",
+            event_type="mission/updated",
+            session_key="route-session-missing-id",
+            conversation_target={
+                "channel": "slack",
+                "account_id": "workspace-bot",
+                "peer_kind": "channel",
+                "peer_id": "deploy-room",
+            },
+            route_scope={
+                "route_name": "Deploy Room",
+                "route_kind": "webhook",
+                "route_target": "https://example.invalid/deploy-room",
+                "route_match": "peer",
+                "matched_value": "deploy-room",
+            },
+            event_payload={
+                "summary": "Mission replay lost its saved route id.",
+                "routeConversationTarget": {
+                    "channel": "slack",
+                    "account_id": "workspace-bot",
+                    "peer_kind": "channel",
+                    "peer_id": "deploy-room",
+                },
+            },
+            message_summary="Mission replay lost its saved route id.",
+            test_delivery=False,
+            delivery_state="failed",
+            attempt_count=1,
+            last_attempt_at=(datetime.now(UTC) - timedelta(days=1)).isoformat(),
+            last_error="temporary upstream timeout",
+        )
+    )
+
+    result = runner.invoke(app, ["routes", "replay", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is False
+    assert payload["attempted_count"] == 1
+    assert payload["replayed_count"] == 0
+    assert payload["failed_count"] == 1
+    assert payload["deferred_count"] == 0
+    assert payload["skipped_max_retries_count"] == 0
+    assert deliveries == []
+    assert payload["deliveries"][0]["delivery_id"] == delivery_id
+    assert (
+        payload["deliveries"][0]["error"]
+        == "Saved delivery is missing its notification route."
+    )
+
+    refreshed_delivery = asyncio.run(database.get_outbound_delivery(delivery_id))
+    assert refreshed_delivery is not None
+    assert refreshed_delivery["delivery_state"] == "failed"
+    assert int(refreshed_delivery["attempt_count"]) == OUTBOUND_DELIVERY_MAX_RETRIES
+    assert refreshed_delivery["last_error"] == "Saved delivery is missing its notification route."
+
+
+def test_routes_replay_reports_missing_route_id_failure(tmp_path, monkeypatch) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch)
+    deliveries: list[tuple[str, dict[str, object]]] = []
+
+    def fake_post_webhook(
+        self,  # noqa: ANN001
+        route: dict[str, object],
+        event_type: str,
+        event: dict[str, object],
+        secret_token: str | None,
+    ) -> None:
+        del self, route, secret_token
+        deliveries.append((event_type, event))
+
+    monkeypatch.setattr(
+        "openzues.services.ops_mesh.OpsMeshService._post_webhook",
+        fake_post_webhook,
+    )
+
+    settings = Settings(data_dir=data_dir, db_path=data_dir / "openzues.db")
+    api_app = create_app(settings)
+    with TestClient(api_app, client=("testclient", 50000)):
+        pass
+
+    database = Database(settings.db_path)
+    delivery_id = asyncio.run(
+        database.create_outbound_delivery(
+            route_id=None,
+            route_name="Deploy Room",
+            route_kind="webhook",
+            route_target="https://example.invalid/deploy-room",
+            event_type="mission/updated",
+            session_key="route-session-missing-id-plain",
+            conversation_target={
+                "channel": "slack",
+                "account_id": "workspace-bot",
+                "peer_kind": "channel",
+                "peer_id": "deploy-room",
+            },
+            route_scope={
+                "route_name": "Deploy Room",
+                "route_kind": "webhook",
+                "route_target": "https://example.invalid/deploy-room",
+                "route_match": "peer",
+                "matched_value": "deploy-room",
+            },
+            event_payload={
+                "summary": "Mission replay lost its saved route id.",
+                "routeConversationTarget": {
+                    "channel": "slack",
+                    "account_id": "workspace-bot",
+                    "peer_kind": "channel",
+                    "peer_id": "deploy-room",
+                },
+            },
+            message_summary="Mission replay lost its saved route id.",
+            test_delivery=False,
+            delivery_state="failed",
+            attempt_count=1,
+            last_attempt_at=(datetime.now(UTC) - timedelta(days=1)).isoformat(),
+            last_error="temporary upstream timeout",
+        )
+    )
+
+    result = runner.invoke(app, ["routes", "replay"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "ok: False" in result.stdout
+    assert "counts: attempted=1, replayed=0, failed=1, deferred=0, maxed=0" in result.stdout
+    assert "[error] mission/updated -> Deploy Room" in result.stdout
+    assert "error: Saved delivery is missing its notification route." in result.stdout
+    assert deliveries == []
+
+    refreshed_delivery = asyncio.run(database.get_outbound_delivery(delivery_id))
+    assert refreshed_delivery is not None
+    assert refreshed_delivery["delivery_state"] == "failed"
+    assert int(refreshed_delivery["attempt_count"]) == OUTBOUND_DELIVERY_MAX_RETRIES
+    assert refreshed_delivery["last_error"] == "Saved delivery is missing its notification route."
 
 
 def test_watch_json_defaults_to_saved_launch_handoff_task(monkeypatch) -> None:
@@ -985,6 +1585,8 @@ def test_watch_browser_verify_summarizes_browser_state(monkeypatch) -> None:
         del timeout_seconds, allow_failure
         assert session_name == "watch-browser"
         key = tuple(args)
+        if len(key) == 3 and key[:2] == ("--annotate", "screenshot"):
+            return f"Screenshot saved to {key[2]}"
         if key not in outputs:
             raise AssertionError(f"Unexpected browser command: {key}")
         return outputs[key]
@@ -1001,8 +1603,84 @@ def test_watch_browser_verify_summarizes_browser_state(monkeypatch) -> None:
     assert payload["title"] == "OpenZues"
     assert payload["has_content"] is True
     assert payload["overlay_status"] == "OK"
-    assert payload["screenshot_path"] == "C:\\temp\\watch.png"
+    assert payload["screenshot_path"] is not None
+    assert payload["screenshot_path"].endswith(".png")
     assert "OpenZues" in payload["snapshot_summary"]
+
+
+def test_summarize_browser_snapshot_truncates_large_snapshot_output() -> None:
+    huge_snapshot = "\n".join(
+        f'- heading "OpenZues {index}" [level=1, ref=e{index}]'
+        for index in range(5000)
+    )
+
+    summary = _summarize_browser_snapshot(huge_snapshot, limit=4)
+
+    assert 'heading "OpenZues 0"' in summary
+    assert 'heading "OpenZues 3"' in summary
+    assert "[snapshot truncated]" in summary
+    assert len(summary) < 1000
+
+
+def test_watch_browser_verify_uses_screenshot_fallback_when_browser_probes_are_empty(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    screenshot_path = tmp_path / "watch.png"
+    screenshot_path.write_bytes(b"\x89PNG\r\n\x1a\n" + b"x" * 40_000)
+    outputs = {
+        ("errors", "--clear"): "",
+        ("console", "--clear"): "",
+        ("open", "http://watch.test"): "",
+        ("wait", "2000"): "",
+        ("get", "url"): "",
+        ("get", "title"): "",
+        (
+            "eval",
+            "document.body && document.body.innerText.trim().length > 0 ? 'HAS_CONTENT' : 'BLANK'",
+        ): "",
+        (
+            "eval",
+            "document.querySelector('[data-nextjs-dialog], .vite-error-overlay, "
+            "#webpack-dev-server-client-overlay') ? 'ERROR_OVERLAY' : 'OK'",
+        ): "",
+        ("--annotate", "screenshot"): f"Screenshot saved to {screenshot_path}",
+        ("snapshot", "-i"): "",
+        ("errors",): "",
+        ("console",): "",
+    }
+
+    def fake_run_browser_command(
+        args: list[str],
+        *,
+        session_name: str,
+        timeout_seconds: float = 60.0,
+        allow_failure: bool = False,
+    ) -> str:
+        del timeout_seconds, allow_failure
+        assert session_name == "watch-browser"
+        key = tuple(args)
+        if len(key) == 3 and key[:2] == ("--annotate", "screenshot"):
+            Path(key[2]).write_bytes(screenshot_path.read_bytes())
+            return f"Screenshot saved to {key[2]}"
+        if key not in outputs:
+            raise AssertionError(f"Unexpected browser command: {key}")
+        return outputs[key]
+
+    monkeypatch.setattr("openzues.cli._run_browser_command", fake_run_browser_command)
+    monkeypatch.setattr("openzues.cli._watch_http_content_signal", lambda *_args, **_kwargs: True)
+
+    payload = _watch_browser_verify(
+        browser_url="http://watch.test",
+        session_name="watch-browser",
+    )
+
+    assert payload["ok"] is True
+    assert payload["status"] == "ready"
+    assert payload["has_content"] is True
+    assert payload["content_source"] == "screenshot"
+    assert payload["screenshot_signal"] == "rendered"
+    assert payload["screenshot_bytes"] == screenshot_path.stat().st_size
 
 
 def test_watch_json_can_include_browser_verification(monkeypatch) -> None:
@@ -1038,7 +1716,10 @@ def test_watch_json_can_include_browser_verification(monkeypatch) -> None:
         }
 
     monkeypatch.setattr("openzues.cli._watch_api_json", fake_watch_api_json)
-    monkeypatch.setattr("openzues.cli._watch_browser_verify", fake_browser_verify)
+    monkeypatch.setattr(
+        "openzues.cli._watch_browser_verify_guarded",
+        fake_browser_verify,
+    )
 
     result = runner.invoke(
         app,
@@ -1096,7 +1777,10 @@ def test_watch_json_can_write_log_and_copy_browser_artifact(tmp_path, monkeypatc
         }
 
     monkeypatch.setattr("openzues.cli._watch_api_json", fake_watch_api_json)
-    monkeypatch.setattr("openzues.cli._watch_browser_verify", fake_browser_verify)
+    monkeypatch.setattr(
+        "openzues.cli._watch_browser_verify_guarded",
+        fake_browser_verify,
+    )
 
     result = runner.invoke(
         app,
@@ -1135,6 +1819,56 @@ def test_append_watch_log_writes_utf8_bom_once(tmp_path) -> None:
     decoded = raw.decode("utf-8-sig")
     assert "I’m here" in decoded
     assert "Still here" in decoded
+
+
+def test_watch_json_surfaces_browser_timeout_warning(monkeypatch) -> None:
+    def fake_watch_api_json(
+        base_url: str,
+        path: str,
+        *,
+        method: str = "GET",
+        payload=None,
+        **_kwargs,
+    ):
+        assert base_url == "http://watch.test"
+        assert payload is None
+        if method == "GET" and path == "/api/dashboard":
+            return _watch_dashboard_payload(mission_status="active")
+        if method == "GET" and path == "/api/setup/launch":
+            return _watch_handoff_payload()
+        raise AssertionError(f"Unexpected watch request: {method} {path}")
+
+    def fake_browser_verify(*, browser_url: str, session_name: str):
+        assert browser_url == "http://watch.test"
+        assert session_name == "watch-browser"
+        raise RuntimeError("browser verification timed out after 45s.")
+
+    monkeypatch.setattr("openzues.cli._watch_api_json", fake_watch_api_json)
+    monkeypatch.setattr(
+        "openzues.cli._watch_browser_verify_guarded",
+        fake_browser_verify,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "watch",
+            "--url",
+            "http://watch.test",
+            "--browser",
+            "--browser-session",
+            "watch-browser",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["browser_verification"]["ok"] is False
+    assert payload["browser_verification"]["status"] == "warn"
+    assert payload["browser_verification"]["summary"] == (
+        "browser verification timed out after 45s."
+    )
 
 
 def test_append_watch_log_upgrades_existing_utf8_file_without_bom(tmp_path) -> None:
@@ -1184,7 +1918,7 @@ def test_watch_browser_verify_tolerates_optional_browser_artifact_failures(
         del timeout_seconds, allow_failure
         assert session_name == "watch-browser"
         key = tuple(args)
-        if key == ("--annotate", "screenshot"):
+        if len(key) == 3 and key[:2] == ("--annotate", "screenshot"):
             raise RuntimeError("annotated screenshot timed out")
         if key == ("snapshot", "-i"):
             raise RuntimeError("snapshot timed out")
@@ -1205,6 +1939,177 @@ def test_watch_browser_verify_tolerates_optional_browser_artifact_failures(
     assert payload["snapshot_summary"] == "Browser snapshot unavailable."
     assert payload["screenshot_error"] == "annotated screenshot timed out"
     assert payload["snapshot_error"] == "snapshot timed out"
+
+
+def test_watch_browser_verify_uses_bounded_timeout_budget(monkeypatch) -> None:
+    observed: list[tuple[tuple[str, ...], float, bool]] = []
+    outputs = {
+        ("errors", "--clear"): "",
+        ("console", "--clear"): "",
+        ("open", "http://watch.test"): "",
+        ("wait", "2000"): "",
+        ("get", "url"): "http://watch.test/",
+        ("get", "title"): "OpenZues",
+        (
+            "eval",
+            "document.body && document.body.innerText.trim().length > 0 ? 'HAS_CONTENT' : 'BLANK'",
+        ): '"HAS_CONTENT"',
+        (
+            "eval",
+            "document.querySelector('[data-nextjs-dialog], .vite-error-overlay, "
+            "#webpack-dev-server-client-overlay') ? 'ERROR_OVERLAY' : 'OK'",
+        ): '"OK"',
+        ("snapshot", "-i"): "",
+        ("errors",): "",
+        ("console",): "",
+    }
+
+    def fake_run_browser_command(
+        args: list[str],
+        *,
+        session_name: str,
+        timeout_seconds: float = 60.0,
+        allow_failure: bool = False,
+    ) -> str:
+        assert session_name == "watch-browser"
+        key = tuple(args)
+        observed.append((key, timeout_seconds, allow_failure))
+        if len(key) == 3 and key[:2] == ("--annotate", "screenshot"):
+            return f"Screenshot saved to {key[2]}"
+        if key not in outputs:
+            raise AssertionError(f"Unexpected browser command: {key}")
+        return outputs[key]
+
+    monkeypatch.setattr("openzues.cli._run_browser_command", fake_run_browser_command)
+
+    _watch_browser_verify(
+        browser_url="http://watch.test",
+        session_name="watch-browser",
+    )
+
+    timeout_by_command = {key: timeout for key, timeout, _allow_failure in observed}
+    assert timeout_by_command[("open", "http://watch.test")] == 15.0
+    assert timeout_by_command[("wait", "2000")] == 5.0
+    assert timeout_by_command[("get", "url")] == 3.0
+    assert timeout_by_command[("get", "title")] == 3.0
+    assert timeout_by_command[("snapshot", "-i")] == 4.0
+    assert timeout_by_command[("errors",)] == 3.0
+    assert timeout_by_command[("console",)] == 3.0
+
+
+def test_watch_browser_verify_ignores_invalid_windows_probe_output(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    screenshot_path = tmp_path / "watch.png"
+    screenshot_path.write_bytes(b"\x89PNG\r\n\x1a\n" + b"x" * 40_000)
+    clr_failure = "Starting the CLR failed with HRESULT 80004005."
+    outputs = {
+        ("errors", "--clear"): "",
+        ("console", "--clear"): "",
+        ("open", "http://watch.test"): "",
+        ("wait", "2000"): "",
+        ("get", "url"): clr_failure,
+        ("get", "title"): clr_failure,
+        (
+            "eval",
+            "document.body && document.body.innerText.trim().length > 0 ? 'HAS_CONTENT' : 'BLANK'",
+        ): clr_failure,
+        (
+            "eval",
+            "document.querySelector('[data-nextjs-dialog], .vite-error-overlay, "
+            "#webpack-dev-server-client-overlay') ? 'ERROR_OVERLAY' : 'OK'",
+        ): clr_failure,
+        ("snapshot", "-i"): "",
+        ("errors",): "",
+        ("console",): "",
+    }
+
+    def fake_run_browser_command(
+        args: list[str],
+        *,
+        session_name: str,
+        timeout_seconds: float = 60.0,
+        allow_failure: bool = False,
+    ) -> str:
+        del timeout_seconds, allow_failure
+        assert session_name == "watch-browser"
+        key = tuple(args)
+        if len(key) == 3 and key[:2] == ("--annotate", "screenshot"):
+            Path(key[2]).write_bytes(screenshot_path.read_bytes())
+            return f"Screenshot saved to {key[2]}"
+        if key not in outputs:
+            raise AssertionError(f"Unexpected browser command: {key}")
+        return outputs[key]
+
+    monkeypatch.setattr("openzues.cli._run_browser_command", fake_run_browser_command)
+    monkeypatch.setattr("openzues.cli._watch_http_content_signal", lambda *_args, **_kwargs: True)
+
+    payload = _watch_browser_verify(
+        browser_url="http://watch.test",
+        session_name="watch-browser",
+    )
+
+    assert payload["ok"] is True
+    assert payload["status"] == "ready"
+    assert payload["url"] == "http://watch.test"
+    assert payload["title"] is None
+    assert payload["overlay_status"] == "unknown"
+    assert "HRESULT" not in payload["summary"]
+
+
+def test_run_windows_browser_command_captures_redirected_child_output(monkeypatch) -> None:
+    def fake_subprocess_run(command, **kwargs):  # noqa: ANN001
+        del kwargs
+        script = command[3]
+        stdout_match = re.search(r"RedirectStandardOutput = '([^']+)'", script)
+        stderr_match = re.search(r"RedirectStandardError = '([^']+)'", script)
+        assert stdout_match is not None
+        assert stderr_match is not None
+        Path(stdout_match.group(1)).write_bytes("http://watch.test/\n".encode("utf-16-le"))
+        Path(stderr_match.group(1)).write_bytes(b"")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr("openzues.cli.subprocess.run", fake_subprocess_run)
+
+    output = cli_module._run_windows_browser_command(
+        [
+            r"C:\Users\skull\AppData\Roaming\npm\agent-browser.cmd",
+            "--session",
+            "watch-browser",
+            "get",
+            "url",
+        ],
+        args=["get", "url"],
+        timeout_seconds=6.0,
+        allow_failure=False,
+    )
+
+    assert output == "http://watch.test/"
+
+
+def test_run_browser_command_uses_direct_capture_for_windows_output_probes(monkeypatch) -> None:
+    monkeypatch.setattr(cli_module.os, "name", "nt", raising=False)
+    monkeypatch.setattr("openzues.cli._browser_command", lambda: "agent-browser.cmd")
+
+    def fake_direct(invocation, **kwargs):  # noqa: ANN001
+        assert invocation == ["agent-browser.cmd", "--session", "watch-browser", "get", "url"]
+        assert kwargs["args"] == ["get", "url"]
+        return "http://watch.test/"
+
+    def fake_background(invocation, **kwargs):  # noqa: ANN001
+        raise AssertionError(f"Unexpected background runner call: {invocation} {kwargs}")
+
+    monkeypatch.setattr("openzues.cli._run_windows_browser_command_direct", fake_direct)
+    monkeypatch.setattr("openzues.cli._run_windows_browser_command", fake_background)
+
+    output = cli_module._run_browser_command(
+        ["get", "url"],
+        session_name="watch-browser",
+        timeout_seconds=3.0,
+    )
+
+    assert output == "http://watch.test/"
 
 
 def test_watch_human_output_calls_out_observer_mode(monkeypatch) -> None:

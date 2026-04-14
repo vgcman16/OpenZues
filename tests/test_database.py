@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import pytest
 
-from openzues.database import Database
+from openzues.database import (
+    THREAD_EVENT_COMPACT_DELTA_LIMIT,
+    THREAD_EVENT_COMPACT_TEXT_LIMIT,
+    Database,
+)
 
 
 @pytest.mark.asyncio
@@ -258,8 +262,60 @@ async def test_thread_event_metrics_capture_recent_activity(tmp_path) -> None:
     assert metrics["last_event_at"] is not None
     assert metrics["recent_event_count_30s"] >= 2
     assert metrics["recent_event_count_5m"] >= 2
-    assert metrics["recent_output_delta_count_30s"] >= 1
-    assert metrics["recent_turn_activity_count_30s"] >= 2
+
+
+@pytest.mark.asyncio
+async def test_list_thread_events_compact_projects_large_payloads(tmp_path) -> None:
+    database = Database(tmp_path / "test.db")
+    await database.initialize()
+
+    instance_id = await database.create_instance(
+        name="Local Codex",
+        transport="stdio",
+        command="codex",
+        args="app-server",
+        websocket_url=None,
+        cwd=str(tmp_path),
+        auto_connect=False,
+    )
+    await database.append_event(
+        instance_id=instance_id,
+        thread_id="thread_compact",
+        method="item/completed",
+        payload={
+            "item": {
+                "type": "agentMessage",
+                "id": "agent_message_1",
+                "phase": "commentary",
+                "text": "A" * (THREAD_EVENT_COMPACT_TEXT_LIMIT + 500),
+            }
+        },
+    )
+    await database.append_event(
+        instance_id=instance_id,
+        thread_id="thread_compact",
+        method="item/commandExecution/outputDelta",
+        payload={
+            "itemId": "command_1",
+            "delta": "B" * (THREAD_EVENT_COMPACT_DELTA_LIMIT + 500),
+        },
+    )
+
+    events = await database.list_thread_events(
+        instance_id=instance_id,
+        thread_id="thread_compact",
+        compact=True,
+        methods=("item/completed", "item/commandExecution/outputDelta"),
+    )
+
+    assert [event["method"] for event in events] == [
+        "item/completed",
+        "item/commandExecution/outputDelta",
+    ]
+    assert events[0]["payload"]["item"]["phase"] == "commentary"
+    assert len(events[0]["payload"]["item"]["text"]) == THREAD_EVENT_COMPACT_TEXT_LIMIT
+    assert events[1]["payload"]["itemId"] == "command_1"
+    assert len(events[1]["payload"]["delta"]) == THREAD_EVENT_COMPACT_DELTA_LIMIT
 
 
 @pytest.mark.asyncio

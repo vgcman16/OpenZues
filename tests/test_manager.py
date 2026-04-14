@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+import openzues.services.manager as manager_module
 from openzues.database import Database
 from openzues.services.hub import BroadcastHub
 from openzues.services.manager import InstanceRuntime, RuntimeManager, compact_event_payload
@@ -808,6 +809,51 @@ async def test_safe_refresh_call_coalesces_concurrent_timeouts(tmp_path) -> None
 
 
 @pytest.mark.asyncio
+async def test_schedule_refresh_instance_coalesces_repeated_requests(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = Database(tmp_path / "manager.db")
+    await database.initialize()
+    manager = RuntimeManager(database, BroadcastHub())
+    monkeypatch.setattr(manager_module, "REFRESH_SCHEDULE_DEBOUNCE_SECONDS", 0.01)
+    runtime = InstanceRuntime(
+        instance_id=1,
+        name="Local Codex Desktop",
+        transport="desktop",
+        command=None,
+        args=None,
+        websocket_url=None,
+        cwd="C:/workspace",
+        auto_connect=False,
+        connected=True,
+    )
+    manager.instances[1] = runtime
+
+    call_count = 0
+
+    async def fake_refresh(instance_id: int) -> InstanceRuntime:
+        nonlocal call_count
+        assert instance_id == 1
+        call_count += 1
+        await asyncio.sleep(0.01)
+        return runtime
+
+    manager.refresh_instance = fake_refresh  # type: ignore[method-assign]
+
+    manager._schedule_refresh_instance(1)
+    manager._schedule_refresh_instance(1)
+    manager._schedule_refresh_instance(1)
+    await asyncio.sleep(0.005)
+    manager._schedule_refresh_instance(1)
+    await asyncio.sleep(0.05)
+
+    assert call_count == 2
+    assert runtime.refresh_task is None
+    assert runtime.refresh_pending is False
+
+
+@pytest.mark.asyncio
 async def test_list_mcp_server_status_coalesces_concurrent_timeouts(tmp_path) -> None:
     database = Database(tmp_path / "manager.db")
     await database.initialize()
@@ -838,3 +884,38 @@ async def test_list_mcp_server_status_coalesces_concurrent_timeouts(tmp_path) ->
     assert second == cached_status
     assert client.calls == ["mcpServerStatus/list"]
     assert "mcpServerStatus/list" in runtime.refresh_backoff_until
+
+
+@pytest.mark.asyncio
+async def test_close_awaits_cancelled_refresh_tasks(tmp_path) -> None:
+    database = Database(tmp_path / "manager.db")
+    await database.initialize()
+    manager = RuntimeManager(database, BroadcastHub())
+    runtime = InstanceRuntime(
+        instance_id=1,
+        name="Local Codex Desktop",
+        transport="desktop",
+        command=None,
+        args=None,
+        websocket_url=None,
+        cwd="C:/workspace",
+        auto_connect=False,
+        connected=True,
+    )
+    cancelled = asyncio.Event()
+
+    async def fake_refresh_task() -> None:
+        try:
+            await asyncio.sleep(60)
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    runtime.refresh_task = asyncio.create_task(fake_refresh_task())
+    manager.instances[1] = runtime
+
+    await asyncio.sleep(0)
+    await manager.close()
+
+    assert cancelled.is_set()
+    assert runtime.refresh_task is None

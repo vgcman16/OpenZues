@@ -3,9 +3,12 @@ from __future__ import annotations
 import asyncio
 import codecs
 import json
+import os
 import re
 import shutil
 import subprocess
+import sys
+import tempfile
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -65,7 +68,17 @@ _ATTENTION_QUEUE_IDLE_REPLY = (
 )
 _DEFAULT_WATCH_TASK_NAME = "OpenClaw Total Parity Program"
 _DEFAULT_BROWSER_WATCH_SESSION = "openzues-watch"
+_BROWSER_RENDERED_SCREENSHOT_MIN_BYTES = 32_768
+_BROWSER_BLANK_SCREENSHOT_MAX_BYTES = 8_192
+_BROWSER_SNAPSHOT_CHAR_LIMIT = 24_000
+_BROWSER_SNAPSHOT_LINE_LIMIT = 240
 _WATCH_LEADER_PID_RE = re.compile(r"Leader PID:\s*(?P<pid>\d+)", re.IGNORECASE)
+
+
+def _coerce_int(value: object) -> int:
+    return int(cast("int | str", value or 0))
+
+
 gateway_app = typer.Typer(help="Inspect and stamp the saved gateway bootstrap profile.")
 hermes_app = typer.Typer(help="Inspect and tune Hermes runtime posture.")
 routes_app = typer.Typer(help="Inspect and test notification routes.")
@@ -752,11 +765,11 @@ def _emit_outbound_delivery_replay(payload: dict[str, object], *, json_output: b
         "counts: "
         + ", ".join(
             [
-                f"attempted={int(payload.get('attempted_count') or 0)}",
-                f"replayed={int(payload.get('replayed_count') or 0)}",
-                f"failed={int(payload.get('failed_count') or 0)}",
-                f"deferred={int(payload.get('deferred_count') or 0)}",
-                f"maxed={int(payload.get('skipped_max_retries_count') or 0)}",
+                f"attempted={_coerce_int(payload.get('attempted_count'))}",
+                f"replayed={_coerce_int(payload.get('replayed_count'))}",
+                f"failed={_coerce_int(payload.get('failed_count'))}",
+                f"deferred={_coerce_int(payload.get('deferred_count'))}",
+                f"maxed={_coerce_int(payload.get('skipped_max_retries_count'))}",
             ]
         )
     )
@@ -867,11 +880,22 @@ def _run_browser_command(
     allow_failure: bool = False,
 ) -> str:
     command = _browser_command()
-    command_path = Path(command)
     invocation = [command, "--session", session_name, *args]
     process_args = invocation
-    if command_path.suffix.lower() in {".cmd", ".bat"}:
-        process_args = ["cmd.exe", "/c", *invocation]
+    if os.name == "nt":
+        if _browser_command_expects_output(args):
+            return _run_windows_browser_command_direct(
+                invocation,
+                args=args,
+                timeout_seconds=timeout_seconds,
+                allow_failure=allow_failure,
+            )
+        return _run_windows_browser_command(
+            invocation,
+            args=args,
+            timeout_seconds=timeout_seconds,
+            allow_failure=allow_failure,
+        )
     try:
         completed = subprocess.run(
             process_args,
@@ -892,11 +916,182 @@ def _run_browser_command(
     return output or error_output
 
 
+def _powershell_single_quote(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
+
+
+def _browser_command_expects_output(args: list[str]) -> bool:
+    if not args:
+        return False
+    if args[0] in {"get", "eval", "snapshot"}:
+        return True
+    if args[0] in {"errors", "console"} and "--clear" not in args[1:]:
+        return True
+    return False
+
+
+def _decode_browser_capture_bytes(data: bytes) -> str:
+    if not data:
+        return ""
+    if data.startswith(codecs.BOM_UTF8):
+        return data.decode("utf-8-sig", errors="replace").strip()
+    if (
+        data.startswith(codecs.BOM_UTF16_LE)
+        or data.startswith(codecs.BOM_UTF16_BE)
+        or b"\x00" in data
+    ):
+        for encoding in ("utf-16", "utf-16-le", "utf-16-be"):
+            try:
+                return data.decode(encoding).strip()
+            except UnicodeDecodeError:
+                continue
+    return data.decode("utf-8", errors="replace").strip()
+
+
+def _read_browser_capture_text(path: Path) -> str:
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return ""
+    return _decode_browser_capture_bytes(data)
+
+
+def _run_windows_browser_command_direct(
+    invocation: list[str],
+    *,
+    args: list[str],
+    timeout_seconds: float,
+    allow_failure: bool,
+) -> str:
+    try:
+        completed = subprocess.run(
+            invocation,
+            capture_output=True,
+            text=False,
+            timeout=timeout_seconds,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(
+            f"agent-browser {' '.join(args)} timed out after {timeout_seconds:.0f}s."
+        ) from exc
+    output = _decode_browser_capture_bytes(completed.stdout or b"")
+    error_output = _decode_browser_capture_bytes(completed.stderr or b"")
+    if completed.returncode != 0 and not allow_failure:
+        detail = error_output or output or "browser command failed"
+        raise RuntimeError(f"agent-browser {' '.join(args)} failed: {detail}")
+    return output or error_output
+
+
+def _run_windows_browser_command(
+    invocation: list[str],
+    *,
+    args: list[str],
+    timeout_seconds: float,
+    allow_failure: bool,
+) -> str:
+    argument_list = ", ".join(_powershell_single_quote(item) for item in invocation[1:])
+    stdout_capture = Path(tempfile.mkstemp(prefix="openzues-browser-out-", suffix=".log")[1])
+    stderr_capture = Path(tempfile.mkstemp(prefix="openzues-browser-err-", suffix=".log")[1])
+    process_script = [
+        "$ErrorActionPreference = 'Stop'",
+        "$startArgs = @{",
+        f"  FilePath = {_powershell_single_quote(invocation[0])}",
+        "  PassThru = $true",
+        "  WindowStyle = 'Hidden'",
+        f"  RedirectStandardOutput = {_powershell_single_quote(str(stdout_capture))}",
+        f"  RedirectStandardError = {_powershell_single_quote(str(stderr_capture))}",
+        "}",
+    ]
+    if argument_list:
+        process_script.append(f"$startArgs.ArgumentList = @({argument_list})")
+    process_script.extend(
+        [
+            "$process = Start-Process @startArgs",
+            f"if (-not $process.WaitForExit({int(timeout_seconds * 1000)})) {{",
+            "  try { $process.Kill() } catch {}",
+            "  exit 124",
+            "}",
+            "exit $process.ExitCode",
+        ]
+    )
+    ps_command = "\n".join(process_script)
+    try:
+        completed = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-Command", ps_command],
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds + 5.0,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(
+            f"agent-browser {' '.join(args)} timed out after {timeout_seconds:.0f}s."
+        ) from exc
+    try:
+        wrapper_output = ((completed.stdout or "") + "\n" + (completed.stderr or "")).strip()
+        child_stdout = _read_browser_capture_text(stdout_capture)
+        child_stderr = _read_browser_capture_text(stderr_capture)
+        child_output = "\n".join(
+            part for part in (child_stdout, child_stderr) if str(part).strip()
+        ).strip()
+        if completed.returncode == 124 and not allow_failure:
+            raise RuntimeError(
+                f"agent-browser {' '.join(args)} timed out after {timeout_seconds:.0f}s."
+            )
+        if completed.returncode != 0 and not allow_failure:
+            detail = child_output or wrapper_output or "browser command failed"
+            raise RuntimeError(f"agent-browser {' '.join(args)} failed: {detail}")
+        return child_output or wrapper_output
+    finally:
+        for capture_path in (stdout_capture, stderr_capture):
+            try:
+                capture_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
+def _try_browser_command(
+    args: list[str],
+    *,
+    session_name: str,
+    timeout_seconds: float = 10.0,
+) -> str:
+    try:
+        return _run_browser_command(
+            args,
+            session_name=session_name,
+            timeout_seconds=timeout_seconds,
+            allow_failure=True,
+        )
+    except RuntimeError:
+        return ""
+
+
 def _strip_browser_value(value: str) -> str:
     text = value.strip()
     if text.startswith('"') and text.endswith('"') and len(text) >= 2:
         return text[1:-1]
     return text
+
+
+def _browser_url_value(value: str) -> str:
+    text = _strip_browser_value(value)
+    if re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", text):
+        return text
+    return ""
+
+
+def _browser_title_value(value: str) -> str:
+    text = _strip_browser_value(value)
+    if not text or "\x00" in text or "HRESULT" in text or "failed" in text.lower():
+        return ""
+    return text
+
+
+def _browser_probe_status(value: str, *, allowed: set[str]) -> str:
+    text = _strip_browser_value(value)
+    return text if text in allowed else ""
 
 
 def _browser_screenshot_path(output: str) -> str | None:
@@ -908,8 +1103,41 @@ def _browser_screenshot_path(output: str) -> str | None:
     return None
 
 
+def _browser_screenshot_signal(path_text: str | None) -> tuple[str | None, int | None]:
+    if not path_text:
+        return None, None
+    try:
+        size_bytes = Path(path_text).expanduser().stat().st_size
+    except OSError:
+        return None, None
+    if size_bytes >= _BROWSER_RENDERED_SCREENSHOT_MIN_BYTES:
+        return "rendered", size_bytes
+    if size_bytes <= _BROWSER_BLANK_SCREENSHOT_MAX_BYTES:
+        return "likely_blank", size_bytes
+    return "unknown", size_bytes
+
+
+def _watch_http_content_signal(browser_url: str, *, timeout_seconds: float = 20.0) -> bool:
+    request = Request(browser_url, headers={"Accept": "text/html"})
+    try:
+        with urlopen(request, timeout=timeout_seconds) as response:
+            response_text = response.read().decode("utf-8", errors="replace")
+    except (HTTPError, URLError, TimeoutError):
+        return False
+    normalized = response_text.lower()
+    return len(response_text.strip()) >= 200 and "<body" in normalized
+
+
 def _summarize_browser_snapshot(output: str, *, limit: int = 8) -> str:
-    lines = [line.strip() for line in output.splitlines() if line.strip()]
+    truncated_output = output[:_BROWSER_SNAPSHOT_CHAR_LIMIT]
+    lines: list[str] = []
+    for raw_line in truncated_output.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        lines.append(line)
+        if len(lines) >= _BROWSER_SNAPSHOT_LINE_LIMIT:
+            break
     if not lines:
         return "No interactive browser snapshot lines were returned."
     interesting = [
@@ -922,7 +1150,10 @@ def _summarize_browser_snapshot(output: str, *, limit: int = 8) -> str:
         or 'textbox "' in line
     ]
     sample = interesting[:limit] if interesting else lines[:limit]
-    return " | ".join(sample)
+    summary = " | ".join(sample)
+    if len(output) > len(truncated_output) or len(lines) >= _BROWSER_SNAPSHOT_LINE_LIMIT:
+        summary += " | [snapshot truncated]"
+    return summary
 
 
 def _watch_browser_verify(
@@ -930,19 +1161,24 @@ def _watch_browser_verify(
     browser_url: str,
     session_name: str,
 ) -> dict[str, Any]:
-    _run_browser_command(["errors", "--clear"], session_name=session_name, allow_failure=True)
-    _run_browser_command(["console", "--clear"], session_name=session_name, allow_failure=True)
-    _run_browser_command(["open", browser_url], session_name=session_name)
-    _run_browser_command(["wait", "2000"], session_name=session_name, allow_failure=True)
+    # Watch sessions are unique by default, so clearing prior error/console state is usually
+    # redundant and has proven flaky on some Windows agent-browser installs.
+    _run_browser_command(["open", browser_url], session_name=session_name, timeout_seconds=15.0)
+    _run_browser_command(
+        ["wait", "2000"],
+        session_name=session_name,
+        timeout_seconds=5.0,
+        allow_failure=True,
+    )
 
-    page_url = _strip_browser_value(
-        _run_browser_command(["get", "url"], session_name=session_name, allow_failure=True)
+    page_url = _browser_url_value(
+        _try_browser_command(["get", "url"], session_name=session_name, timeout_seconds=3.0)
     )
-    title = _strip_browser_value(
-        _run_browser_command(["get", "title"], session_name=session_name, allow_failure=True)
+    title = _browser_title_value(
+        _try_browser_command(["get", "title"], session_name=session_name, timeout_seconds=3.0)
     )
-    has_content = _strip_browser_value(
-        _run_browser_command(
+    has_content = _browser_probe_status(
+        _try_browser_command(
             [
                 "eval",
                 (
@@ -951,29 +1187,39 @@ def _watch_browser_verify(
                 ),
             ],
             session_name=session_name,
-        )
+            timeout_seconds=3.0,
+        ),
+        allowed={"HAS_CONTENT", "BLANK"},
     )
-    overlay_status = _strip_browser_value(
-        _run_browser_command(
+    overlay_status = _browser_probe_status(
+        _try_browser_command(
             [
                 "eval",
                 "document.querySelector('[data-nextjs-dialog], .vite-error-overlay, "
                 "#webpack-dev-server-client-overlay') ? 'ERROR_OVERLAY' : 'OK'",
             ],
             session_name=session_name,
-        )
+            timeout_seconds=3.0,
+        ),
+        allowed={"OK", "ERROR_OVERLAY"},
     )
     screenshot_path: str | None = None
     screenshot_error: str | None = None
     try:
-        screenshot_output = _run_browser_command(
-            ["--annotate", "screenshot"],
-            session_name=session_name,
-            timeout_seconds=20.0,
+        screenshot_target = (
+            Path(tempfile.gettempdir())
+            / f"openzues-watch-{session_name}-{int(time.time() * 1000)}.png"
         )
-        screenshot_path = _browser_screenshot_path(screenshot_output)
+        screenshot_output = _run_browser_command(
+            ["--annotate", "screenshot", str(screenshot_target)],
+            session_name=session_name,
+            timeout_seconds=12.0,
+        )
+        screenshot_path = _browser_screenshot_path(screenshot_output) or str(screenshot_target)
     except RuntimeError as exc:
         screenshot_error = str(exc)
+    screenshot_signal, screenshot_bytes = _browser_screenshot_signal(screenshot_path)
+    http_content_visible = _watch_http_content_signal(browser_url)
 
     snapshot_summary = "Browser snapshot unavailable."
     snapshot_error: str | None = None
@@ -981,48 +1227,136 @@ def _watch_browser_verify(
         snapshot_output = _run_browser_command(
             ["snapshot", "-i"],
             session_name=session_name,
-            timeout_seconds=20.0,
+            timeout_seconds=4.0,
+            allow_failure=True,
         )
-        snapshot_summary = _summarize_browser_snapshot(snapshot_output)
+        if snapshot_output:
+            snapshot_summary = _summarize_browser_snapshot(snapshot_output)
     except RuntimeError as exc:
         snapshot_error = str(exc)
-    errors_output = _run_browser_command(
+    errors_output = _try_browser_command(
         ["errors"],
         session_name=session_name,
-        allow_failure=True,
+        timeout_seconds=3.0,
     )
-    console_output = _run_browser_command(
+    console_output = _try_browser_command(
         ["console"],
         session_name=session_name,
-        allow_failure=True,
+        timeout_seconds=3.0,
     )
     error_count = len([line for line in errors_output.splitlines() if line.strip()])
     console_count = len([line for line in console_output.splitlines() if line.strip()])
-    ok = has_content == "HAS_CONTENT" and overlay_status == "OK" and error_count == 0
+    content_source = "agent-browser"
+    content_visible = has_content == "HAS_CONTENT"
+    if has_content not in {"HAS_CONTENT", "BLANK"}:
+        if screenshot_signal == "rendered":
+            content_visible = True
+            content_source = "screenshot"
+        elif http_content_visible:
+            content_visible = True
+            content_source = "http"
+        else:
+            content_visible = False
+            content_source = "unknown"
+    elif has_content == "BLANK" and screenshot_signal == "rendered" and http_content_visible:
+        content_visible = True
+        content_source = "screenshot_override"
+    overlay_ok = overlay_status == "OK"
+    if not overlay_status and error_count == 0 and screenshot_signal == "rendered":
+        overlay_ok = True
+    ok = content_visible and overlay_ok and error_count == 0
+    content_summary = "content visible" if content_visible else "page looks blank"
+    if content_source == "screenshot":
+        content_summary = "content visible (screenshot-backed fallback)"
+    elif content_source == "http":
+        content_summary = "content visible (HTTP fallback)"
+    elif content_source == "screenshot_override":
+        content_summary = "content visible (screenshot overrode a blank probe)"
+    overlay_summary = "no overlay" if overlay_ok else "error overlay present"
+    if not overlay_status and overlay_ok:
+        overlay_summary = "no overlay (probe unavailable)"
     summary_parts = [
         f"url {page_url or browser_url}",
-        "content visible" if has_content == "HAS_CONTENT" else "page looks blank",
-        "no overlay" if overlay_status == "OK" else "error overlay present",
+        content_summary,
+        overlay_summary,
         f"{error_count} page error(s)",
         f"{console_count} console line(s)",
     ]
+    if screenshot_signal == "rendered" and screenshot_bytes is not None:
+        summary_parts.append(f"screenshot {screenshot_bytes} bytes")
+    elif screenshot_signal == "likely_blank" and screenshot_bytes is not None:
+        summary_parts.append(f"screenshot looks blank at {screenshot_bytes} bytes")
     return {
         "ok": ok,
         "status": "ready" if ok else "warn",
         "summary": ", ".join(summary_parts) + ".",
         "url": page_url or browser_url,
         "title": title or None,
-        "has_content": has_content == "HAS_CONTENT",
+        "has_content": content_visible,
+        "content_source": content_source,
+        "http_content_visible": http_content_visible,
         "overlay_status": overlay_status or "unknown",
         "error_count": error_count,
         "console_count": console_count,
         "screenshot_path": screenshot_path,
+        "screenshot_signal": screenshot_signal,
+        "screenshot_bytes": screenshot_bytes,
         "screenshot_error": screenshot_error,
         "snapshot_summary": snapshot_summary,
         "snapshot_error": snapshot_error,
         "errors_excerpt": _first_text_line(errors_output, limit=280) or None,
         "console_excerpt": _first_text_line(console_output, limit=280) or None,
     }
+
+
+def _watch_browser_verify_guarded(
+    *,
+    browser_url: str,
+    session_name: str,
+    timeout_seconds: float = 45.0,
+) -> dict[str, Any]:
+    if os.name != "nt":
+        return _watch_browser_verify(browser_url=browser_url, session_name=session_name)
+    worker_code = "\n".join(
+        [
+            "import json",
+            "from openzues.cli import _watch_browser_verify",
+            (
+                "payload = _watch_browser_verify("
+                f"browser_url={json.dumps(browser_url)}, "
+                f"session_name={json.dumps(session_name)})"
+            ),
+            "print(json.dumps(payload, separators=(',', ':')))",
+        ]
+    )
+    try:
+        completed = subprocess.run(
+            [sys.executable, "-c", worker_code],
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(
+            f"browser verification timed out after {timeout_seconds:.0f}s."
+        ) from exc
+    stdout = (completed.stdout or "").strip()
+    stderr = (completed.stderr or "").strip()
+    if completed.returncode != 0:
+        detail = _first_text_line(stderr or stdout, limit=280) or "browser verification failed."
+        raise RuntimeError(detail)
+    lines = [line.strip() for line in stdout.splitlines() if line.strip()]
+    if not lines:
+        raise RuntimeError("browser verification returned no payload.")
+    try:
+        payload = json.loads(lines[-1])
+    except json.JSONDecodeError as exc:
+        detail = _first_text_line(stdout, limit=280) or "browser verification payload invalid."
+        raise RuntimeError(detail) from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError("browser verification returned an unexpected payload.")
+    return payload
 
 
 def _watch_target_payload(
@@ -2159,6 +2493,9 @@ def watch_command(
     auto_action: dict[str, Any] | None = None
     poll_timeout = max(60.0, interval_seconds * 12.0)
     browser_target_url = browser_url or base_url
+    resolved_browser_session = browser_session
+    if resolved_browser_session == _DEFAULT_BROWSER_WATCH_SESSION:
+        resolved_browser_session = f"{_DEFAULT_BROWSER_WATCH_SESSION}-{int(time.time())}"
     log_path = Path(log_file).expanduser() if log_file else None
     screenshot_artifact_path = (
         Path(browser_screenshot_copy).expanduser() if browser_screenshot_copy else None
@@ -2212,9 +2549,9 @@ def watch_command(
             browser_verification: dict[str, Any] | None = None
             if browser and cycle_index % browser_every == 0:
                 try:
-                    browser_verification = _watch_browser_verify(
+                    browser_verification = _watch_browser_verify_guarded(
                         browser_url=browser_target_url,
-                        session_name=browser_session,
+                        session_name=resolved_browser_session,
                     )
                     if screenshot_artifact_path is not None:
                         browser_verification = _copy_watch_screenshot(

@@ -913,6 +913,7 @@ def make_gateway_repair_opportunity(
     instance_id: int = 1,
     project_id: int | None = None,
     cwd: str = "C:/workspace",
+    start_immediately: bool = True,
 ) -> dict[str, object]:
     return {
         "id": "gateway-repair",
@@ -943,7 +944,7 @@ def make_gateway_repair_opportunity(
             "auto_recover_limit": 2,
             "reflex_cooldown_seconds": 900,
             "allow_failover": True,
-            "start_immediately": True,
+            "start_immediately": start_immediately,
         },
     }
 
@@ -4976,6 +4977,36 @@ def test_control_chat_prefers_gateway_repair_before_hardener_when_posture_needs_
     assert "Gateway Doctor says Connected lanes need repair before launch" in decision.reply
 
 
+def test_control_chat_stages_gateway_repair_when_saved_lane_is_offline() -> None:
+    gateway_capability = make_gateway_capability_view(
+        level="warn",
+        headline="Gateway capability has live gaps",
+        summary="Saved lane is offline, so gateway repair must wait for reconnect.",
+        ready_count=0,
+        connected_count=0,
+        total_count=1,
+        warning_count=0,
+        offline_count=1,
+        approval_count=0,
+        tracked_ready_count=0,
+        tracked_gap_count=1,
+        route_status="repair",
+        route_warning="Saved lane is disconnected from the launch policy.",
+    )
+    dashboard = make_dashboard_view(
+        instances=[make_instance_view(connected=False)],
+        opportunities=[make_gateway_repair_opportunity(start_immediately=False)],
+    ).model_copy(update={"gateway_capability": gateway_capability})
+
+    decision = plan_control_chat("continue", dashboard)
+
+    assert decision.action_kind == "observe"
+    assert decision.opportunity_id == "gateway-repair"
+    assert decision.mission_payload is None
+    assert "staged `Stabilize gateway posture`" in decision.reply
+    assert "offline" in decision.reply
+
+
 def test_control_chat_builds_new_mission_from_freeform_request() -> None:
     dashboard = make_dashboard_view(
         instances=[make_instance_view()],
@@ -5328,6 +5359,157 @@ def test_attention_queue_holds_when_gateway_posture_needs_repair_without_repair_
     assert "There is no bounded gateway repair draft attached yet" in decision.reply
 
 
+def test_attention_queue_stages_gateway_repair_when_saved_lane_is_offline() -> None:
+    gateway_capability = make_gateway_capability_view(
+        level="warn",
+        headline="Gateway capability has live gaps",
+        summary="Saved lane is offline, so gateway repair must wait for reconnect.",
+        ready_count=0,
+        connected_count=0,
+        total_count=1,
+        warning_count=0,
+        offline_count=1,
+        approval_count=0,
+        tracked_ready_count=0,
+        tracked_gap_count=1,
+        route_status="repair",
+        route_warning="Saved lane is disconnected from the launch policy.",
+    )
+    offline_instance = make_instance_view(connected=False)
+    dashboard = make_dashboard_view(
+        instances=[offline_instance],
+        opportunities=[make_gateway_repair_opportunity(start_immediately=False)],
+    ).model_copy(
+        update={
+            "gateway_capability": gateway_capability,
+            "radar": build_radar(
+                [offline_instance],
+                [],
+                [],
+                gateway_capability=gateway_capability,
+            ),
+        }
+    )
+
+    decision = plan_attention_queue(dashboard)
+
+    assert decision is not None
+    assert decision.action_kind == "observe"
+    assert decision.status == "escalated"
+    assert decision.opportunity_id == "gateway-repair"
+    assert decision.target_label == "Stabilize gateway posture"
+    assert "staged `Stabilize gateway posture`" in decision.reply
+    assert "offline" in decision.reply
+
+
+def test_attention_queue_failed_observation_dedupes_same_failed_cycle(tmp_path) -> None:
+    with make_client(tmp_path, attention_queue_enabled=False) as client:
+        instance_response = client.post(
+            "/api/instances",
+            json={
+                "name": "Local Codex Desktop",
+                "transport": "desktop",
+                "cwd": str(tmp_path),
+                "auto_connect": False,
+            },
+        )
+
+        assert instance_response.status_code == 200
+        instance_id = instance_response.json()["id"]
+        database = client.app.state.database
+        mission_id = asyncio.run(
+            database.create_mission(
+                name="OpenClaw Total Parity Program",
+                objective="Recover the parity seam from the saved checkpoint.",
+                status="failed",
+                instance_id=instance_id,
+                project_id=None,
+                task_blueprint_id=None,
+                thread_id="thread-failed-cycle",
+                cwd=str(tmp_path),
+                model="gpt-5.4",
+                reasoning_effort=None,
+                collaboration_mode=None,
+                max_turns=3,
+                use_builtin_agents=True,
+                run_verification=True,
+                auto_commit=False,
+                pause_on_approval=True,
+                allow_auto_reflexes=True,
+                auto_recover=True,
+                auto_recover_limit=2,
+                reflex_cooldown_seconds=900,
+                allow_failover=True,
+            )
+        )
+        asyncio.run(
+            database.update_mission(
+                mission_id,
+                phase="failed",
+                last_turn_id="turn-failed-once",
+                failure_count=1,
+                last_error="TimeoutError: Codex runtime failed to start the turn.",
+                last_checkpoint="Checkpoint exists.",
+            )
+        )
+
+        gateway_capability = make_gateway_capability_view(
+            level="ready",
+            headline="Gateway capability is ready",
+            summary="Connected lanes are ready for launch.",
+            ready_count=1,
+            connected_count=1,
+            total_count=1,
+            warning_count=0,
+            approval_count=0,
+            tracked_ready_count=1,
+            tracked_gap_count=0,
+            route_status="ready",
+            route_warning=None,
+        )
+
+        def ready_dashboard() -> DashboardView:
+            dashboard = DashboardView.model_validate(client.get("/api/dashboard").json())
+            return dashboard.model_copy(
+                update={
+                    "gateway_capability": gateway_capability,
+                    "radar": build_radar(
+                        dashboard.instances,
+                        dashboard.missions,
+                        dashboard.projects,
+                        gateway_capability=gateway_capability,
+                    ),
+                }
+            )
+
+        dashboard = ready_dashboard()
+        acted_once = asyncio.run(
+            client.app.state.control_chat_service.tick_attention_queue(dashboard)
+        )
+
+        asyncio.run(
+            database.update_mission(
+                mission_id,
+                last_commentary="Still waiting for a safe follow-up.",
+            )
+        )
+
+        dashboard = ready_dashboard()
+        acted_twice = asyncio.run(
+            client.app.state.control_chat_service.tick_attention_queue(dashboard)
+        )
+        actions = asyncio.run(database.list_attention_queue_actions())
+        messages = asyncio.run(database.list_control_chat_messages())
+
+    assert acted_once is True
+    assert acted_twice is False
+    assert len(actions) == 1
+    assert actions[0]["action_kind"] == "observe"
+    assert actions[0]["status"] == "escalated"
+    assert "retrying blindly" in (actions[0]["summary"] or "")
+    assert len(messages) == 1
+
+
 def test_control_chat_view_cites_gateway_doctor_when_posture_needs_repair(tmp_path) -> None:
     gateway_capability = make_gateway_capability_view(
         level="warn",
@@ -5442,6 +5624,76 @@ def test_control_chat_view_hides_stale_failure_and_quiet_messages_for_active_tar
     ]
 
 
+def test_control_chat_view_collapses_repeated_identical_messages(tmp_path) -> None:
+    dashboard = make_dashboard_view()
+
+    with make_client(tmp_path) as client:
+        database = client.app.state.database
+        for _ in range(3):
+            asyncio.run(
+                database.append_control_chat_message(
+                    role="assistant",
+                    content=(
+                        "`OpenClaw Total Parity Program` failed, but there is no safe recovery "
+                        "draft yet. I held the queue instead of retrying blindly."
+                    ),
+                    action_kind="observe",
+                    mission_id=40,
+                    target_label="OpenClaw Total Parity Program",
+                )
+            )
+
+        view = asyncio.run(client.app.state.control_chat_service.build_view(dashboard))
+
+    assert len(view.messages) == 1
+    assert "retrying blindly" in view.messages[0].content
+
+
+def test_control_chat_view_hides_stale_failure_and_quiet_messages_after_completed_handoff(
+    tmp_path,
+) -> None:
+    completed = make_mission_view(
+        mission_id=40,
+        name="OpenClaw Total Parity Program",
+        status="completed",
+        phase="completed",
+        in_progress=False,
+        last_checkpoint="Completed: the latest parity slice is verified.",
+    )
+    dashboard = make_dashboard_view(missions=[completed])
+
+    with make_client(tmp_path) as client:
+        database = client.app.state.database
+        asyncio.run(
+            database.append_control_chat_message(
+                role="assistant",
+                content=(
+                    "`OpenClaw Total Parity Program` failed, but there is no safe recovery "
+                    "draft yet. I held the queue instead of retrying blindly."
+                ),
+                action_kind="observe",
+                mission_id=40,
+                target_label="OpenClaw Total Parity Program",
+            )
+        )
+        asyncio.run(
+            database.append_control_chat_message(
+                role="assistant",
+                content=(
+                    "I nudged `OpenClaw Total Parity Program` into another cycle because the "
+                    "lane went quiet without closing the loop."
+                ),
+                action_kind="run_mission",
+                mission_id=40,
+                target_label="OpenClaw Total Parity Program",
+            )
+        )
+
+        view = asyncio.run(client.app.state.control_chat_service.build_view(dashboard))
+
+    assert view.messages == []
+
+
 def test_attention_queue_view_hides_stale_failure_and_quiet_actions_for_active_target(
     tmp_path,
 ) -> None:
@@ -5507,6 +5759,132 @@ def test_attention_queue_view_hides_stale_failure_and_quiet_actions_for_active_t
         )
 
     assert [action.signal_id for action in view.actions] == ["gateway/capability"]
+
+
+def test_attention_queue_view_hides_stale_failure_and_quiet_actions_after_completed_handoff(
+    tmp_path,
+) -> None:
+    completed = make_mission_view(
+        mission_id=40,
+        name="OpenClaw Total Parity Program",
+        status="completed",
+        phase="completed",
+        in_progress=False,
+        last_checkpoint="Completed: the latest parity slice is verified.",
+    )
+    dashboard = make_dashboard_view(missions=[completed])
+
+    with make_client(tmp_path) as client:
+        database = client.app.state.database
+        asyncio.run(
+            database.append_attention_queue_action(
+                signal_id="mission-40-failed",
+                signal_fingerprint="mission-40-failed|failed",
+                signal_level="critical",
+                action_kind="observe",
+                status="escalated",
+                mission_id=40,
+                target_label="OpenClaw Total Parity Program",
+                summary=(
+                    "`OpenClaw Total Parity Program` failed, but there is no safe recovery "
+                    "draft yet. I held the queue instead of retrying blindly."
+                ),
+            )
+        )
+        asyncio.run(
+            database.append_attention_queue_action(
+                signal_id="mission-40-quiet",
+                signal_fingerprint="mission-40-quiet|active",
+                signal_level="warn",
+                action_kind="run_mission",
+                status="executed",
+                mission_id=40,
+                target_label="OpenClaw Total Parity Program",
+                summary=(
+                    "I nudged `OpenClaw Total Parity Program` into another cycle because the "
+                    "lane went quiet without closing the loop."
+                ),
+            )
+        )
+
+        view = asyncio.run(
+            client.app.state.control_chat_service.build_attention_queue_view(
+                dashboard,
+                enabled=True,
+            )
+        )
+
+    assert view.actions == []
+
+
+def test_attention_queue_view_collapses_repeated_identical_actions(tmp_path) -> None:
+    dashboard = make_dashboard_view()
+
+    with make_client(tmp_path) as client:
+        database = client.app.state.database
+        for _ in range(3):
+            asyncio.run(
+                database.append_attention_queue_action(
+                    signal_id="mission-40-failed",
+                    signal_fingerprint="mission-40-failed|failed",
+                    signal_level="critical",
+                    action_kind="observe",
+                    status="escalated",
+                    mission_id=40,
+                    target_label="OpenClaw Total Parity Program",
+                    summary=(
+                        "`OpenClaw Total Parity Program` failed, but there is no safe recovery "
+                        "draft yet. I held the queue instead of retrying blindly."
+                    ),
+                )
+            )
+
+        view = asyncio.run(
+            client.app.state.control_chat_service.build_attention_queue_view(
+                dashboard,
+                enabled=True,
+            )
+        )
+
+    assert len(view.actions) == 1
+    assert view.actions[0].signal_id == "mission-40-failed"
+
+
+def test_build_launchpad_keeps_only_freshest_equivalent_checkpoint_hardener() -> None:
+    now = datetime.now(UTC)
+    newer = make_mission_view(
+        mission_id=40,
+        name="OpenClaw Total Parity Program",
+        status="completed",
+        phase="completed",
+        project_id=1,
+        project_label="OpenZues Workspace",
+        thread_id="thread_newer",
+        last_checkpoint="Completed the newest parity slice.",
+        updated_at=now,
+    )
+    older = make_mission_view(
+        mission_id=35,
+        name="OpenClaw Total Parity Program",
+        status="paused",
+        phase="paused",
+        project_id=1,
+        project_label="OpenZues Workspace",
+        thread_id="thread_older",
+        last_checkpoint="Older parity handoff.",
+        updated_at=now - timedelta(hours=2),
+    )
+    project = make_project_view(project_id=1, label="OpenZues Workspace")
+
+    launchpad = build_launchpad([make_instance_view()], [newer, older], [project])
+
+    hardeners = [
+        opportunity
+        for opportunity in launchpad.opportunities
+        if opportunity.kind == "checkpoint_hardener"
+    ]
+    assert len(hardeners) == 1
+    assert hardeners[0].id == "harden-40"
 
 
 def test_attention_queue_reuses_existing_hardener_instead_of_launching_duplicate() -> None:
@@ -6434,8 +6812,21 @@ def test_dashboard_index_includes_swarm_launch_controls(tmp_path) -> None:
     assert script_response.status_code == 200
     assert 'name="swarm_enabled"' in response.text
     assert "Run as swarm" in response.text
+    assert "Stage draft" in script_response.text
+    assert "Stage as swarm" in script_response.text
     assert "Launch as swarm" in script_response.text
     assert 'launch-opportunity-swarm' in script_response.text
+
+
+def test_dashboard_index_links_favicon_and_favicon_route_resolves(tmp_path) -> None:
+    with make_client(tmp_path) as client:
+        response = client.get("/")
+        favicon_response = client.get("/favicon.ico")
+
+    assert response.status_code == 200
+    assert "favicon.svg" in response.text
+    assert favicon_response.status_code == 200
+    assert "image/svg+xml" in favicon_response.headers.get("content-type", "")
 
 
 def test_mission_continuity_endpoint_returns_relay_packet(tmp_path) -> None:
@@ -7460,6 +7851,107 @@ def test_build_launchpad_prefers_gateway_ready_lanes_and_adds_gateway_repair_opp
     assert launchpad.summary == "Connected lanes need repair before launch."
     assert any(opportunity.kind == "gateway_repair" for opportunity in launchpad.opportunities)
     assert not any(opportunity.kind == "ship_slice" for opportunity in launchpad.opportunities)
+
+
+def test_build_launchpad_stages_gateway_repair_when_saved_lane_is_offline() -> None:
+    gateway_capability = make_gateway_capability_view(
+        level="warn",
+        headline="Gateway capability has live gaps",
+        summary="Saved lane is offline, so gateway repair must wait for reconnect.",
+        ready_count=0,
+        connected_count=0,
+        total_count=1,
+        warning_count=0,
+        offline_count=1,
+        approval_count=0,
+        tracked_ready_count=0,
+        tracked_gap_count=1,
+        route_status="repair",
+        route_warning="Saved lane is disconnected from the launch policy.",
+    )
+
+    launchpad = build_launchpad(
+        [make_instance_view(connected=False)],
+        [],
+        [make_project_view(project_id=9, label="Beacon")],
+        gateway_capability=gateway_capability,
+    )
+
+    repair = next(
+        opportunity
+        for opportunity in launchpad.opportunities
+        if opportunity.id == "gateway-repair"
+    )
+    assert launchpad.headline == "Gateway posture needs repair before broad launches"
+    assert repair.kind == "gateway_repair"
+    assert repair.mission_draft.instance_id == 1
+    assert repair.mission_draft.start_immediately is False
+    assert "saved lane posture" in repair.summary.lower()
+
+
+def test_build_launchpad_does_not_treat_busy_lane_as_idle_capacity() -> None:
+    active = make_mission_view(
+        mission_id=35,
+        name="OpenClaw Total Parity Program",
+        status="active",
+        phase="reporting",
+        instance_id=2,
+        project_id=1,
+        project_label="OpenZues Workspace",
+    )
+
+    launchpad = build_launchpad(
+        [make_instance_view(instance_id=2)],
+        [active],
+        [make_project_view(project_id=2, label="OpenClaw Source")],
+    )
+
+    assert launchpad.headline == "Connected lanes are already busy"
+    assert "already occupied by active missions" in launchpad.summary
+    assert launchpad.opportunities == []
+
+
+def test_build_launchpad_queues_gateway_repair_when_only_connected_lane_is_busy() -> None:
+    gateway_capability = make_gateway_capability_view(
+        level="warn",
+        headline="Gateway capability has live gaps",
+        summary="Connected lanes need repair before launch.",
+        ready_count=0,
+        connected_count=1,
+        total_count=1,
+        warning_count=1,
+        approval_count=1,
+        tracked_ready_count=0,
+        tracked_gap_count=1,
+        route_status="repair",
+        route_warning="Saved lane is still waiting on approval.",
+    )
+    active = make_mission_view(
+        mission_id=44,
+        name="OpenClaw Total Parity Program",
+        status="active",
+        phase="executing",
+        instance_id=1,
+        project_id=9,
+        project_label="Beacon",
+    )
+
+    launchpad = build_launchpad(
+        [make_instance_view(instance_id=1, unresolved_requests=[{"id": "approval-1"}])],
+        [active],
+        [make_project_view(project_id=9, label="Beacon")],
+        gateway_capability=gateway_capability,
+    )
+
+    repair = next(
+        opportunity
+        for opportunity in launchpad.opportunities
+        if opportunity.id == "gateway-repair"
+    )
+    assert repair.kind == "gateway_repair"
+    assert repair.mission_draft.instance_id == 1
+    assert repair.mission_draft.start_immediately is False
+    assert "active mission yields" in repair.summary.lower()
 
 
 def test_build_interference_surfaces_gateway_posture_vector() -> None:

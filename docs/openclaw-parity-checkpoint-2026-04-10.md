@@ -2940,6 +2940,135 @@ Blockers:
 
 - None.
 
+## Recovery checkpoint 2026-04-13 replay missing-route-row plain CLI verification America/Chicago
+
+Recovered context:
+
+- Used OpenZues Recall first, then a single bounded ledger tail read to resume the active saved outbound-delivery replay lane without reopening source inventory.
+- The prior checkpoint's stated next step was the plain `openzues routes replay` proof for the missing-route-row branch, so this turn only validated whether that gap was still real.
+
+Completed:
+
+- Confirmed the plain-text CLI proof was already landed in `tests/test_cli.py` as `test_routes_replay_reports_missing_saved_route_row_failure`.
+- Made no production or test edits because the claimed missing piece was already present and aligned with the existing replay service branch in `src/openzues/services/ops_mesh.py`.
+
+Verified:
+
+- Concrete claim rechecked: plain `openzues routes replay` already reports `Notification route {route_id} is unavailable for replay.` for a saved failed delivery whose persisted `route_id` points to a deleted notification-route row, shows the failed summary counts, does not call the webhook sender, and preserves the saved delivery as failed with max retries reached.
+- `.\\.venv\\Scripts\\python.exe -m pytest tests/test_cli.py -q -k routes_replay_reports_missing_saved_route_row_failure` -> `1 passed, 61 deselected in 8.73s`
+
+Next step:
+
+- Run one bounded replay-only verification pack that groups the missing-route-row service, JSON CLI, and plain CLI proofs together, then use that frozen replay branch to choose the next smallest parity seam outside saved outbound-delivery replay.
+
+Blockers:
+
+- None.
+
+## Recovery checkpoint 2026-04-13 outbound replay human-readable row-and-maxed proofs America/Chicago
+
+Recovered context:
+
+- Re-entered from OpenZues Recall and the parity-ledger tail, which already pinned the active lane to saved outbound-delivery replay rather than a new source inventory pass.
+- The ledger confirmed the next named seam was the plain `routes replay` proof for the missing saved-route-row branch; after landing that, the same formatter lane still had one equally small uncovered count-only branch for max-retries skips.
+
+Completed:
+
+- Added a focused human-readable CLI proof in `tests/test_cli.py` for replaying a saved failed delivery whose `route_id` still exists on the saved row after the notification route row has been deleted.
+- Added one adjacent human-readable CLI proof in `tests/test_cli.py` for replaying a saved failed delivery that is already at `OUTBOUND_DELIVERY_MAX_RETRIES`, locking the plain-text `maxed=` counter and summary path.
+- Kept the turn additive and test-only because the existing replay service and CLI formatter branches already matched the expected production contract.
+
+Verified:
+
+- Concrete claim rechecked: plain `openzues routes replay` now has focused proof that a missing saved route row renders the replay failure line `Notification route {route_id} is unavailable for replay.`, preserves the failed delivery in storage, and does not call the webhook sender.
+- Concrete claim rechecked: plain `openzues routes replay` now has focused proof that a saved failed delivery already at max retries is skipped without a replay attempt, increments `maxed=1`, emits the `hit max retries` summary, and leaves the saved row untouched.
+- `.\\.venv\\Scripts\\python.exe -m pytest tests/test_cli.py -q -k "routes_replay_json_reports_missing_saved_route_row_failure or routes_replay_reports_missing_saved_route_row_failure or routes_replay_json_skips_saved_failed_delivery_at_max_retries or routes_replay_skips_saved_failed_delivery_at_max_retries"` -> `4 passed, 56 deselected in 12.55s`
+
+Tool evidence:
+
+- `debugging`: used bounded reads on `tests/test_cli.py` and the replay formatter/service branch, additive test edits, and one focused `pytest` run on the four replay proofs in scope.
+- `memory`: used OpenZues Recall first on recovery to regain the active parity seam before repo reads.
+- `session_search`: satisfied by that Recall lookup because it queried saved mission/checkpoint state instead of rediscovering context from dumps.
+- `delegation`: not used on this slice because the owned file set and verification bar were already narrow enough to close directly.
+
+Next step:
+
+- Add the adjacent human-readable CLI proof for the remaining count-only replay branch where a saved failed delivery is still inside backoff, confirming plain `openzues routes replay` reports `deferred=1`, keeps `ok: True`, emits the `deferred by backoff` summary, and leaves the saved row untouched.
+
+Blockers:
+
+- None.
+
+## Recovery checkpoint 2026-04-13 outbound replay plain-cli missing-route proof America/Chicago
+
+Recovered context:
+
+- OpenZues Recall re-anchored the mission to the outbound replay seam.
+- A bounded replay-branch read plus focused pytest confirmed the live tree had already outrun the ledger on the missing-route-id branch: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`, and `tests/test_cli.py` already covered the service and JSON replay failure for `Saved delivery is missing its notification route.`
+
+Completed:
+
+- Added the next smallest adjacent parity proof on the human-readable CLI surface in `tests/test_cli.py`.
+- Landed `test_routes_replay_reports_missing_route_id_failure` to prove plain `routes replay` output preserves the same missing-route failure text, counter summary, and persisted row state as the already-covered JSON path.
+
+Verified:
+
+- Concrete claim rechecked before editing: `.\\.venv\\Scripts\\python.exe -m pytest tests/test_ops_mesh.py -q -k test_replay_outbound_deliveries_fails_when_saved_delivery_is_missing_route_id` -> `1 passed, 33 deselected in 1.10s`
+- Concrete claim rechecked before editing: `.\\.venv\\Scripts\\python.exe -m pytest tests/test_cli.py -q -k test_routes_replay_json_reports_missing_route_id_failure` -> `1 passed, 50 deselected in 9.93s`
+- New slice verified: plain `routes replay` now has a focused regression proof for the missing-route-id failure branch, including `ok: False`, the replay counters, the rendered `[error]` delivery line, the canonical error text, and the persisted maxed-out failed row.
+- `.\\.venv\\Scripts\\python.exe -m pytest tests/test_cli.py -q -k "test_routes_replay_reports_missing_route_id_failure or test_routes_replay_json_reports_missing_route_id_failure or test_routes_replay_json_reports_disabled_route_failure or test_routes_replay_json_defers_saved_failed_delivery_in_backoff or test_routes_replay_json_skips_saved_failed_delivery_at_max_retries or test_routes_replay_json_retries_saved_failed_delivery"` -> `6 passed, 46 deselected in 34.63s`
+- `.\\.venv\\Scripts\\python.exe -m pytest tests/test_ops_mesh.py -q -k "test_replay_outbound_deliveries_fails_when_saved_delivery_is_missing_route_id or test_replay_outbound_deliveries_fails_when_route_is_disabled or test_replay_outbound_deliveries_defers_saved_failed_delivery_in_backoff or test_replay_outbound_deliveries_skips_saved_failed_delivery_at_max_retries or test_replay_outbound_deliveries_retries_saved_failed_delivery"` -> `5 passed, 29 deselected in 1.46s`
+
+Tool evidence:
+
+- `debugging`: used focused `rg`, bounded file reads, one targeted test edit, and replay-only `pytest` runs.
+- `delegation`: used one architect sidecar to compare the narrow replay seam between `openclaw-main` and `OpenZues`, confirm the missing-route branch was already implemented, and identify the next smallest adjacent proof gap.
+- `memory`: used OpenZues Recall at re-entry to recover the active parity lane before opening repo files.
+- `session_search`: satisfied by the same Recall query because it searched saved mission and checkpoint state before the seam was re-selected.
+
+Next step:
+
+- Add one equally tight non-JSON `routes replay` proof for another failure/skipped variant, with disabled-route refusal as the best next slice because it exercises the same formatter on a distinct replay outcome without widening production code.
+
+Blockers:
+
+- None.
+
+## Recovery checkpoint 2026-04-13 outbound replay missing-route-id proof America/Chicago
+
+Recovered context:
+
+- Re-entered from the parity ledger anchor after OpenZues Recall confirmed the saved outbound-delivery replay seam was still the active lane for mission 28.
+- Verified the live service branch in `src/openzues/services/ops_mesh.py` before editing and corrected the seam wording against code: the exact `Saved delivery is missing its notification route.` failure path is the `route_id is None` branch, not the stale-route-row branch.
+
+Completed:
+
+- Added one focused service proof in `tests/test_ops_mesh.py` and one focused CLI proof in `tests/test_cli.py` for replaying a saved failed delivery whose `route_id` is missing.
+- Kept production code unchanged because the branch already existed; this slice only hardened the parity seam with direct coverage.
+
+Verified:
+
+- Concrete claim rechecked: when a saved failed outbound delivery has no `route_id`, `/api/notification-routes/replay` counts it as attempted and failed, does not call the webhook sender, maxes the saved delivery's attempt count, and records `Saved delivery is missing its notification route.` on both the replay result and the persisted row.
+- `.\\.venv\\Scripts\\python.exe -m pytest tests/test_ops_mesh.py -q -k replay_outbound_deliveries_fails_when_saved_delivery_is_missing_route_id` -> `1 passed, 33 deselected in 1.19s`
+- `.\\.venv\\Scripts\\python.exe -m pytest tests/test_cli.py -q -k routes_replay_json_reports_missing_route_id_failure` -> `1 passed, 50 deselected in 6.17s`
+- `.\\.venv\\Scripts\\python.exe -m pytest tests/test_ops_mesh.py -q -k "replay_outbound_deliveries_retries_saved_failed_delivery or replay_outbound_deliveries_fails_when_route_is_disabled or replay_outbound_deliveries_defers_saved_failed_delivery_in_backoff or replay_outbound_deliveries_skips_saved_failed_delivery_at_max_retries or replay_outbound_deliveries_fails_when_saved_delivery_is_missing_route_id"` -> `5 passed, 29 deselected in 1.32s`
+- `.\\.venv\\Scripts\\python.exe -m pytest tests/test_cli.py -q -k "routes_replay_json_retries_saved_failed_delivery or routes_replay_json_reports_disabled_route_failure or routes_replay_json_defers_saved_failed_delivery_in_backoff or routes_replay_json_skips_saved_failed_delivery_at_max_retries or routes_replay_json_reports_missing_route_id_failure"` -> `5 passed, 46 deselected in 26.82s`
+
+Tool evidence:
+
+- `debugging`: used one Recall-confirmed ledger tail read, one bounded service/test branch read, targeted test edits, and replay-only `pytest` runs.
+- `memory`: used OpenZues Recall first on re-entry to recover the active mission and checkpoint anchor before repo reads.
+- `session_search`: satisfied by the same Recall-backed recovery lookup because it queried saved mission/checkpoint state rather than rebuilding context from dumps.
+- `delegation`: not used on this slice because the exact seam, owned files, and verification bar were narrow enough to close directly.
+
+Next step:
+
+- Add one equally tight replay proof for the stale saved-route branch where `route_id` is still present but the notification route row is gone, confirming `/api/notification-routes/replay` reports `Notification route {route_id} is unavailable for replay.` and preserves the no-webhook failure behavior.
+
+Blockers:
+
+- None.
+
 ## Recovery checkpoint 2026-04-13 outbound replay backoff-deferral proof America/Chicago
 
 Completed:
@@ -3021,3 +3150,160 @@ Blockers: none.
 - delegation: unproven
 - memory: unproven
 - session_search: unproven
+
+## Recovery checkpoint 2026-04-13 outbound replay max-retries skip proof America/Chicago
+
+Recovered context:
+
+- Re-entered from the parity ledger anchor after Recall showed the saved outbound-delivery replay seam was still the active lane.
+- The ledger tail and live service branch agreed that successful replay, disabled-route refusal, and backoff deferral were already covered; the smallest unfinished seam was the max-retries skip path in `tests/test_ops_mesh.py` and `tests/test_cli.py`.
+
+Completed:
+
+- Added one focused service proof and one focused CLI proof for replaying saved failed deliveries that have already exhausted retries.
+- Locked the seam in `tests/test_ops_mesh.py` and `tests/test_cli.py` without widening production code because `OpsMeshService.replay_outbound_deliveries` already carries the `skipped_max_retries_count` branch.
+
+Verified:
+
+- Concrete claim rechecked: a saved failed delivery already at `OUTBOUND_DELIVERY_MAX_RETRIES` is skipped by `/api/notification-routes/replay`, counted under `skipped_max_retries_count`, does not call the webhook sender, and preserves the saved row's failed state, attempt count, and prior error.
+- `.\\.venv\\Scripts\\python.exe -m pytest tests/test_ops_mesh.py -q -k replay_outbound_deliveries_skips_saved_failed_delivery_at_max_retries` -> `1 passed, 32 deselected in 1.40s`
+- `.\\.venv\\Scripts\\python.exe -m pytest tests/test_cli.py -q -k routes_replay_json_skips_saved_failed_delivery_at_max_retries` -> `1 passed, 49 deselected in 7.98s`
+- `.\\.venv\\Scripts\\python.exe -m pytest tests/test_ops_mesh.py -q -k "replay_outbound_deliveries_retries_saved_failed_delivery or replay_outbound_deliveries_fails_when_route_is_disabled or replay_outbound_deliveries_defers_saved_failed_delivery_in_backoff or replay_outbound_deliveries_skips_saved_failed_delivery_at_max_retries"` -> `4 passed, 29 deselected in 1.57s`
+- `.\\.venv\\Scripts\\python.exe -m pytest tests/test_cli.py -q -k "routes_replay_json_retries_saved_failed_delivery or routes_replay_json_reports_disabled_route_failure or routes_replay_json_defers_saved_failed_delivery_in_backoff or routes_replay_json_skips_saved_failed_delivery_at_max_retries"` -> `4 passed, 46 deselected in 26.16s`
+
+Tool evidence:
+
+- `debugging`: used bounded reads on the replay service branch, targeted test edits, and focused replay-only `pytest` runs.
+- `memory`: used OpenZues Recall at re-entry to recover the active parity lane before touching repo files.
+- `session_search`: satisfied by the same Recall-backed recovery lookup because it queried saved mission and checkpoint state before the seam was chosen.
+- `delegation`: not used on this slice because the owned files and verification bar were already narrow enough to close directly.
+
+Next step:
+
+- Add one equally tight replay failure proof for the remaining untested branch where a saved failed delivery has lost its route row entirely and `/api/notification-routes/replay` returns `Saved delivery is missing its notification route.`
+
+Blockers:
+
+- None.
+
+## Recovery checkpoint 2026-04-13 outbound replay missing-route-row proof America/Chicago
+
+Recovered context:
+
+- Re-entered from OpenZues Recall and the parity-ledger tail without reopening the source inventory.
+- The active seam was still saved outbound-delivery replay; the smallest unfinished branch was the case where a failed saved delivery still carries `route_id` but the notification route row has been deleted.
+
+Completed:
+
+- Added one focused service proof in `tests/test_ops_mesh.py` and one focused CLI JSON proof in `tests/test_cli.py` for replaying a saved failed delivery whose route row is gone.
+- Verified the existing production branch in `src/openzues/services/ops_mesh.py` already synthesizes an unavailable disabled route view for `route_row is None`, so the turn stayed additive and test-only.
+
+Verified:
+
+- Concrete claim rechecked: when `/api/notification-routes/replay` sees a saved failed delivery with a persisted `route_id` whose notification route row no longer exists, it counts the delivery as attempted and failed, does not call the webhook sender, reports `Notification route {route_id} is unavailable for replay.`, synthesizes a disabled route view in the result payload, and maxes the saved delivery's retry state in storage.
+- `.\\.venv\\Scripts\\python.exe -m pytest tests/test_ops_mesh.py -q -k replay_outbound_deliveries_fails_when_saved_route_row_is_missing` -> `1 passed, 34 deselected in 1.36s`
+- `.\\.venv\\Scripts\\python.exe -m pytest tests/test_cli.py -q -k routes_replay_json_reports_missing_saved_route_row_failure` -> `1 passed, 53 deselected in 14.09s`
+- `.\\.venv\\Scripts\\python.exe -m pytest tests/test_ops_mesh.py -q -k "replay_outbound_deliveries_retries_saved_failed_delivery or replay_outbound_deliveries_fails_when_route_is_disabled or replay_outbound_deliveries_fails_when_saved_route_row_is_missing or replay_outbound_deliveries_defers_saved_failed_delivery_in_backoff or replay_outbound_deliveries_skips_saved_failed_delivery_at_max_retries or replay_outbound_deliveries_fails_when_saved_delivery_is_missing_route_id"` -> `6 passed, 29 deselected in 1.49s`
+- `.\\.venv\\Scripts\\python.exe -m pytest tests/test_cli.py -q -k "routes_replay_json_retries_saved_failed_delivery or routes_replay_json_reports_disabled_route_failure or routes_replay_json_reports_missing_saved_route_row_failure or routes_replay_json_defers_saved_failed_delivery_in_backoff or routes_replay_json_skips_saved_failed_delivery_at_max_retries or routes_replay_json_reports_missing_route_id_failure"` -> `6 passed, 48 deselected in 36.24s`
+
+Tool evidence:
+
+- `debugging`: used bounded `rg`/`Get-Content` reads on the replay branch, targeted test edits, and replay-only `pytest` verification.
+- `delegation`: used one tightly scoped explorer sidecar to confirm the missing-row assertion surface and keep the service/CLI expectations aligned with the disabled-route branch.
+- `memory`: used OpenZues Recall first on recovery to re-anchor the mission before repo reads.
+- `session_search`: satisfied by the same Recall lookup because it queried saved mission/checkpoint state instead of rebuilding context from dumps.
+
+Next step:
+
+- Add the adjacent human-readable CLI proof for the same missing-route-row branch so plain `openzues routes replay` output is parity-covered alongside the service and JSON surfaces.
+
+Blockers:
+
+- None.
+
+## 2026-04-13 Recovery Checkpoint
+Completed: Recovered the stale-thread lane with OpenZues Recall and resumed from the restart-safe anchor without reopening the full parity inventory.
+Verified: Ran `.\\.venv\\Scripts\\python.exe -m pytest tests/test_cli.py -k replay -q` in `C:\Users\skull\OneDrive\Documents\OpenZues`; result was `9 passed, 53 deselected` in 85.41s, confirming the current replay seam remains green.
+Next smallest step: Reopen one anchored excerpt from `docs/openclaw-parity-checkpoint-2026-04-10.md` to identify the next bounded missing seam adjacent to replay output parity, then implement and verify that slice only.
+Blockers: None on the verified replay seam. The remaining blocker is seam selection from the anchored ledger excerpt, which was intentionally deferred this turn to avoid broadening scope during recovery.
+
+## Recovery checkpoint 2026-04-13 parity re-anchor America/Chicago
+
+Recovered context:
+
+- This file's tail drifted with unrelated outbound replay checkpoints. For `OpenClaw Total Parity Program`, treat those replay, notification-route, delivery, and generic CLI replay sections as cross-mission contamination rather than the active parity seam.
+- The last trustworthy parity-specific trail stays on the OpenClaw control-plane kernel: gateway bootstrap and method-registry inventory, then routing and session-key policy, before channels, browser runtime, nodes, voice, or companion apps.
+
+Completed:
+
+- Patched mission-control recovery so live item events can correct a stale stored `last_turn_id`, which lets OpenZues recognize real final-answer progress instead of staring at the wrong turn window.
+- Hardened parity recovery doctrine so future re-entry ignores replay or outbound-route contamination inside this ledger and re-anchors on explicit OpenClaw parity domains instead.
+
+Verified:
+
+- `.\\.venv\\Scripts\\python.exe -m pytest tests/test_missions.py -q -k "final_answer_streams or restart_safe_snapshot_for_stale_turn or last_turn_id_from_live_item_event or reporting_orbit"` -> `5 passed, 91 deselected in 0.67s`
+- `.\\.venv\\Scripts\\python.exe -m ruff check src/openzues/services/missions.py tests/test_missions.py` -> passed
+
+Next step:
+
+- Resume genuine OpenClaw parity from this re-anchor, not from the outbound replay notes above.
+- Preferred next slice: inventory one bounded OpenClaw gateway bootstrap or method-registry gap against `openclaw-main`, land that slice end to end, run focused verification, and checkpoint it here before widening scope again.
+
+Blockers:
+
+- None. The remaining risk is ledger contamination if unrelated recovery notes are appended below this re-anchor again.
+
+## Recovery checkpoint 2026-04-13 parity re-anchor refresh America/Chicago
+
+Recovered context:
+
+- The ledger tail drifted again after the earlier parity re-anchor because a later recovery turn pulled in outbound replay, notification-route, delivery, and generic replay CLI notes.
+- For `OpenClaw Total Parity Program`, treat those outbound replay sections as cross-mission contamination, not as the active parity seam.
+
+Completed:
+
+- Hardened mission-control parity recovery so Recall queries seeded with reflex labels like `execution_stall`, `live_heartbeat`, `restart_safe`, `thread_rebind`, `orbit_rebind`, or `reflex_auto` are treated as drift rather than good recovery footing.
+- Hardened mission-control parity recovery so generic governor slogans like `force landing`, `checkpoint now`, `recovery packet`, or `next seam` no longer qualify as good Recall queries unless they also name a concrete parity seam.
+- Tightened checkpoint-now stall handling so wide parity-ledger tail reads like `Get-Content ... -Tail 80` or `Select-Object -Last 80` are cut quickly instead of being mistaken for useful seam recovery.
+- Reclassified OpenZues Recall as inspection-only for execution-stall handling, so read-only parity recovery loops get the same fast governor treatment as other inspection drift.
+
+Verified:
+
+- `.\\.venv\\Scripts\\python.exe -m pytest tests/test_missions.py -q -k "checkpoint_landing_drift or parity_recall_query_drift or wide_parity_tail_read or parity_recovery_prompt or final_answer_streams or reporting_orbit or tighter_for_inspection_commands"` -> `8 passed, 90 deselected in 1.85s`
+- `.\\.venv\\Scripts\\python.exe -m pytest tests/test_missions.py -q` -> `99 passed in 15.21s`
+- `.\\.venv\\Scripts\\python.exe -m ruff check src/openzues/services/missions.py tests/test_missions.py` -> passed
+
+Next step:
+
+- Resume genuine OpenClaw parity from this refreshed re-anchor, not from the replay notes above.
+- Preferred next slice: inventory one bounded OpenClaw gateway bootstrap or method-registry gap against `openclaw-main`, implement it end to end, run focused verification, and checkpoint it here before widening toward routing/session-key policy.
+
+Blockers:
+
+- None. The remaining risk is future ledger contamination below this heading, and the mission governor now explicitly pushes back on that path.
+
+## Recovery checkpoint 2026-04-13 gateway bootstrap verification America/Chicago
+
+Recovered context:
+
+- Re-entered from the parity re-anchor above and stayed on the bounded `gateway bootstrap` seam instead of reopening contaminated replay notes.
+- Used `openclaw-main/src/wizard/setup.gateway-config.ts` as the source-side bootstrap contract reference and compared it against `src/openzues/services/gateway_bootstrap.py` to confirm the target still exposes a real persisted bootstrap surface rather than a stub.
+
+Completed:
+
+- Verified the existing OpenZues gateway bootstrap slice is still intact end to end across onboarding bootstrap, saved gateway bootstrap state, dashboard backfill, reset cleanup, and Hermes launch-summary shaping.
+- Did not widen into method-registry or routing/session-key work after the governor warning because no single missing bootstrap gap was isolated from the bounded source/target read.
+
+Verified:
+
+- `.\\.venv\\Scripts\\python.exe -m pytest tests/test_app.py -q -k "onboarding_bootstrap or gateway_bootstrap or dashboard_backfills_gateway_bootstrap or dashboard_bootstraps_remote_access_foundations or setup_endpoint_reports_reentrant_posture_after_bootstrap or setup_reset_full_removes_bootstrap_managed_resources or setup_reset_full_removes_bootstrap_managed_mempalace_loop or hermes_profile_shapes_bootstrap_launch_draft or dashboard_bootstraps_remote_access_foundations"` -> `11 passed, 130 deselected in 20.82s`
+
+Next step:
+
+- Leave bootstrap closed for now and take the next smallest parity slice named in the re-anchor: `method registry`.
+- Lock that seam with one bounded source/target pair before editing, preferably a concrete registry entry or gateway method exposure gap that can be verified with one exact test file.
+
+Blockers:
+
+- No bootstrap blocker remains from this turn.
+- The next cycle still needs a narrower method-registry source anchor before code changes start.

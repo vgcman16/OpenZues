@@ -815,7 +815,14 @@ function renderLaunchpad() {
 
   launchpadOpportunitiesEl.innerHTML = launchpad.opportunities
     .map(
-      (opportunity) => `
+      (opportunity) => {
+        const launchLabel =
+          opportunity.mission_draft?.start_immediately === false ? "Stage draft" : "Launch now";
+        const swarmLabel =
+          opportunity.mission_draft?.start_immediately === false
+            ? "Stage as swarm"
+            : "Launch as swarm";
+        return `
         <article class="ghost-card ghost-${escapeHtml(opportunity.impact)}">
           <div class="signal-meta">
             ${pill(opportunity.impact, opportunity.impact === "high" ? "ok" : opportunity.impact === "medium" ? "warn" : "")}
@@ -839,7 +846,7 @@ function renderLaunchpad() {
               data-action="launch-opportunity"
               data-opportunity-id="${opportunity.id}"
             >
-              Launch now
+              ${launchLabel}
             </button>
             <button
               type="button"
@@ -847,11 +854,12 @@ function renderLaunchpad() {
               data-action="launch-opportunity-swarm"
               data-opportunity-id="${opportunity.id}"
             >
-              Launch as swarm
+              ${swarmLabel}
             </button>
           </div>
         </article>
-      `,
+      `;
+      },
     )
     .join("");
 }
@@ -6220,7 +6228,11 @@ document.addEventListener("click", async (event) => {
         "/api/missions",
         buildSwarmMissionPayload(opportunity.mission_draft),
       );
-      showToast(`Launched: ${opportunity.title}`);
+      showToast(
+        opportunity.mission_draft?.start_immediately === false
+          ? `Staged: ${opportunity.title}`
+          : `Launched: ${opportunity.title}`,
+      );
       resetMissionForm();
     }
     if (target.dataset.action === "launch-opportunity-swarm") {
@@ -6232,7 +6244,11 @@ document.addEventListener("click", async (event) => {
         "/api/missions",
         buildSwarmMissionPayload(opportunity.mission_draft, true),
       );
-      showToast(`Swarm launched: ${opportunity.title}`);
+      showToast(
+        opportunity.mission_draft?.start_immediately === false
+          ? `Swarm staged: ${opportunity.title}`
+          : `Swarm launched: ${opportunity.title}`,
+      );
       resetMissionForm();
     }
     if (target.dataset.action === "launch-dream") {

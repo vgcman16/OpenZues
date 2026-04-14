@@ -63,7 +63,11 @@ function Update-BrowserArtifact {
     $startedAt = Get-Date
     $opened = Invoke-AgentBrowserStep -Arguments @("open", $browserUrl) -TimeoutSeconds 20
     if (-not $opened) {
-        return "browser open step timed out or failed."
+        Start-Sleep -Seconds 1
+        $opened = Invoke-AgentBrowserStep -Arguments @("open", $browserUrl) -TimeoutSeconds 20
+        if (-not $opened) {
+            return "browser open step timed out or failed after one retry."
+        }
     }
 
     Invoke-AgentBrowserStep -Arguments @("wait", "2000") -TimeoutSeconds 10 | Out-Null
@@ -93,7 +97,7 @@ function Update-BrowserArtifact {
     }
 
     Copy-Item -LiteralPath $latest.FullName -Destination $watchScreenshot -Force
-    return "browser screenshot refreshed at $watchScreenshot"
+    return "browser screenshot refreshed at $watchScreenshot ($($latest.Length) bytes)"
 }
 
 function Write-ConsoleBlock {

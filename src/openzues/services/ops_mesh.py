@@ -2645,7 +2645,7 @@ class OpsMeshService:
                 else None
             )
             if route_row is None or not bool(route_row.get("enabled")):
-                error = (
+                route_error = (
                     f"Notification route {route_id} is unavailable for replay."
                     if route_id is not None
                     else "Saved delivery is missing its notification route."
@@ -2657,7 +2657,7 @@ class OpsMeshService:
                         max(0, int(row.get("attempt_count") or 0)),
                         OUTBOUND_DELIVERY_MAX_RETRIES,
                     ),
-                    last_error=error,
+                    last_error=route_error,
                 )
                 refreshed_row = await self.database.get_outbound_delivery(int(row["id"]))
                 route_view = (
@@ -2679,7 +2679,7 @@ class OpsMeshService:
                             "secret_preview": None,
                             "last_delivery_at": None,
                             "last_result": None,
-                            "last_error": error,
+                            "last_error": route_error,
                             "created_at": utcnow(),
                             "updated_at": utcnow(),
                         }
@@ -2694,8 +2694,8 @@ class OpsMeshService:
                         route_name=str(row.get("route_name") or route_view.name),
                         target=str(row.get("route_target") or route_view.target),
                         event_type=str(row.get("event_type") or ""),
-                        summary=error,
-                        error=error,
+                        summary=route_error,
+                        error=route_error,
                         route=route_view,
                         delivery=(
                             _serialize_outbound_delivery(refreshed_row)
@@ -2705,7 +2705,7 @@ class OpsMeshService:
                     )
                 )
                 continue
-            ok, error = await self._deliver_saved_outbound_delivery_row(
+            ok, delivery_error = await self._deliver_saved_outbound_delivery_row(
                 row,
                 route_row,
                 result_suffix=" (replay)",
@@ -2729,7 +2729,7 @@ class OpsMeshService:
                     target=route_view.target,
                     event_type=str(row.get("event_type") or ""),
                     summary=summary,
-                    error=error,
+                    error=delivery_error,
                     route=route_view,
                     delivery=(
                         _serialize_outbound_delivery(refreshed_row)
@@ -2954,7 +2954,7 @@ class OpsMeshService:
         )
         delivered_at = utcnow()
         route_conversation_target = _normalize_conversation_target(route.get("conversation_target"))
-        route_scope = {
+        route_scope: dict[str, Any] = {
             "route_id": route_id,
             "route_name": str(route.get("name") or f"Route {route_id}"),
             "route_kind": str(route.get("kind") or "webhook"),
@@ -3653,7 +3653,7 @@ class OpsMeshService:
             if route_conversation_target is not None and route_match is None:
                 continue
             route_id = int(route["id"])
-            route_scope = {
+            route_scope: dict[str, Any] = {
                 "route_id": route_id,
                 "route_name": str(route.get("name") or f"Route {route_id}"),
                 "route_kind": str(route.get("kind") or "webhook"),

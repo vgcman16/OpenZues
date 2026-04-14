@@ -14,7 +14,7 @@ from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -209,6 +209,7 @@ def _pick_launch_instance(
     *,
     prefer_idle: bool = True,
     allowed_instance_ids: set[int] | None = None,
+    allow_busy_fallback: bool = True,
 ) -> InstanceView | None:
     live_instance_ids = {
         mission.instance_id for mission in missions if mission.status in {"active", "blocked"}
@@ -221,6 +222,8 @@ def _pick_launch_instance(
                 and (allowed_instance_ids is None or instance.id in allowed_instance_ids)
             ):
                 return instance
+        if not allow_busy_fallback:
+            return None
     for instance in instances:
         if instance.connected and (
             allowed_instance_ids is None or instance.id in allowed_instance_ids
@@ -228,6 +231,51 @@ def _pick_launch_instance(
             return instance
     if allowed_instance_ids is not None:
         return None
+    return instances[0] if instances else None
+
+
+def _find_instance_view(
+    instances: list[InstanceView],
+    instance_id: int | None,
+) -> InstanceView | None:
+    if instance_id is None:
+        return None
+    return next((instance for instance in instances if instance.id == instance_id), None)
+
+
+def _pick_gateway_repair_instance(
+    instances: list[InstanceView],
+    gateway_capability: GatewayCapabilityView,
+) -> InstanceView | None:
+    candidate_ids: list[int] = []
+
+    def add_candidate(instance_id: int | None) -> None:
+        if instance_id is None or instance_id in candidate_ids:
+            return
+        candidate_ids.append(instance_id)
+
+    launch_route = gateway_capability.launch_policy.launch_route
+    if launch_route is not None:
+        add_candidate(
+            launch_route.resolved_instance.id
+            if launch_route.resolved_instance is not None
+            else None
+        )
+        add_candidate(
+            launch_route.preferred_instance.id
+            if launch_route.preferred_instance is not None
+            else None
+        )
+        for candidate in launch_route.candidates:
+            add_candidate(candidate.id)
+
+    for lane in gateway_capability.connected_lane_health.lanes:
+        add_candidate(lane.instance_id)
+
+    for instance_id in candidate_ids:
+        instance = _find_instance_view(instances, instance_id)
+        if instance is not None:
+            return instance
     return instances[0] if instances else None
 
 
@@ -717,12 +765,16 @@ def build_launchpad(
         preferred_memory_provider=preferred_memory_provider,
         preferred_executor=preferred_executor,
     )
+    live_instance_ids = {
+        mission.instance_id for mission in missions if mission.status in {"active", "blocked"}
+    }
     live_project_ids = {
         mission.project_id
         for mission in missions
         if mission.project_id is not None and mission.status in {"active", "blocked"}
     }
     seen_ids: set[str] = set()
+    seen_followup_keys: set[tuple[str, str, int | None, int]] = set()
 
     def has_equivalent_live_draft(draft: MissionDraftView) -> bool:
         return any(
@@ -768,6 +820,16 @@ def build_launchpad(
     ) -> None:
         if kind in {"checkpoint_hardener", "recovery_run"} and has_equivalent_live_draft(draft):
             return
+        if kind in {"checkpoint_hardener", "recovery_run"}:
+            followup_key = (
+                kind,
+                draft.name.strip().lower(),
+                draft.project_id,
+                draft.instance_id,
+            )
+            if followup_key in seen_followup_keys:
+                return
+            seen_followup_keys.add(followup_key)
         if opportunity_id in seen_ids:
             return
         seen_ids.add(opportunity_id)
@@ -818,6 +880,7 @@ def build_launchpad(
         missions,
         prefer_idle=True,
         allowed_instance_ids=ready_launch_instance_ids,
+        allow_busy_fallback=False,
     )
     connected_instance = _pick_launch_instance(
         instances,
@@ -831,6 +894,8 @@ def build_launchpad(
         prefer_idle=True,
         allowed_instance_ids=connected_launch_instance_ids,
     )
+    if gateway_capability is not None and repair_instance is None:
+        repair_instance = _pick_gateway_repair_instance(instances, gateway_capability)
 
     if (
         gateway_capability is not None
@@ -849,6 +914,9 @@ def build_launchpad(
             )
         )
     ):
+        repair_starts_immediately = (
+            repair_instance.connected and repair_instance.id not in live_instance_ids
+        )
         add_opportunity(
             "gateway-repair",
             kind="gateway_repair",
@@ -857,6 +925,16 @@ def build_launchpad(
             summary=(
                 "Use the shared gateway doctor surface to repair launch blockers before "
                 "starting another autonomous slice."
+                if repair_starts_immediately
+                else (
+                    "Queue the shared gateway doctor repair on the connected lane so it is "
+                    "ready once the active mission yields."
+                    if repair_instance.connected
+                    else (
+                        "Stage the shared gateway doctor repair on the saved lane posture so "
+                        "the fix is ready the moment that lane reconnects."
+                    )
+                )
             ),
             why_now=gateway_capability.summary,
             draft=MissionDraftView(
@@ -879,7 +957,7 @@ def build_launchpad(
                 run_verification=True,
                 auto_commit=False,
                 pause_on_approval=True,
-                start_immediately=True,
+                start_immediately=repair_starts_immediately,
                 **runtime_profile_fields,
             ),
             action_label="Load gateway repair",
@@ -1215,6 +1293,17 @@ def build_launchpad(
         ):
             headline = "Gateway posture needs repair before new launches"
             summary = gateway_capability.summary
+        elif (
+            any(instance.connected for instance in instances)
+            and live_instance_ids
+            and idle_instance is None
+        ):
+            headline = "Connected lanes are already busy"
+            summary = (
+                "Current connected capacity is already occupied by active missions. Launchpad "
+                "will suggest another ghost launch after the next checkpoint or when another "
+                "lane connects."
+            )
         else:
             headline = "No ghost launches yet"
             summary = (
@@ -1834,6 +1923,10 @@ def create_app(
             name="index.html",
             context={"settings": active_settings, "asset_version": asset_version},
         )
+
+    @fastapi_app.get("/favicon.ico", include_in_schema=False)
+    async def favicon() -> RedirectResponse:
+        return RedirectResponse(url="/static/favicon.svg", status_code=307)
 
     @fastapi_app.get("/api/health")
     async def health() -> dict[str, Any]:

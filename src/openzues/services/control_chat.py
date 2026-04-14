@@ -334,6 +334,42 @@ def _find_gateway_repair_opportunity(dashboard: DashboardView) -> DashboardOppor
     return _find_opportunity(dashboard, preferred_kinds=("gateway_repair",))
 
 
+def _find_draft_instance(
+    dashboard: DashboardView,
+    opportunity: DashboardOpportunityView,
+) -> Any | None:
+    instance_id = opportunity.mission_draft.instance_id
+    return next((instance for instance in dashboard.instances if instance.id == instance_id), None)
+
+
+def _opportunity_can_autolaunch(
+    dashboard: DashboardView,
+    opportunity: DashboardOpportunityView,
+) -> bool:
+    instance = _find_draft_instance(dashboard, opportunity)
+    return (
+        opportunity.mission_draft.start_immediately
+        and instance is not None
+        and bool(instance.connected)
+    )
+
+
+def _opportunity_hold_reason(
+    dashboard: DashboardView,
+    opportunity: DashboardOpportunityView,
+) -> str:
+    instance = _find_draft_instance(dashboard, opportunity)
+    if instance is None:
+        return "its target lane is not registered in the control plane right now"
+    if not opportunity.mission_draft.start_immediately:
+        if instance.connected:
+            return f"`{instance.name}` is available, but this draft is staged for a manual start"
+        return f"`{instance.name}` is offline, so this draft is staged until that lane reconnects"
+    if not instance.connected:
+        return f"`{instance.name}` is offline right now"
+    return "its target lane is not ready yet"
+
+
 def _find_mission(dashboard: DashboardView, mission_id: int | None) -> MissionView | None:
     if mission_id is None:
         return None
@@ -351,6 +387,35 @@ def _has_active_mission_for_target_label(
         mission.status == "active" and mission.name.strip().lower() == normalized_label
         for mission in dashboard.missions
     )
+
+
+def _latest_mission_for_target_label(
+    dashboard: DashboardView,
+    target_label: str | None,
+) -> MissionView | None:
+    normalized_label = str(target_label or "").strip().lower()
+    if not normalized_label:
+        return None
+    matches = [
+        mission
+        for mission in dashboard.missions
+        if mission.name.strip().lower() == normalized_label
+    ]
+    if not matches:
+        return None
+    return max(matches, key=lambda mission: mission.updated_at)
+
+
+def _latest_target_supersedes_stale_failure_or_quiet(
+    dashboard: DashboardView,
+    target_label: str | None,
+) -> bool:
+    mission = _latest_mission_for_target_label(dashboard, target_label)
+    if mission is None:
+        return False
+    if mission.status in {"active", "blocked"}:
+        return True
+    return mission.status in {"completed", "paused"} and bool(mission.last_checkpoint)
 
 
 def _is_stale_failure_or_quiet_summary(value: str | None) -> bool:
@@ -400,6 +465,37 @@ def _find_signal_mission_fingerprint(
 ) -> str:
     mission = _find_mission(dashboard, signal.mission_id)
     if mission is not None:
+        if signal.id.endswith("-failed"):
+            return "|".join(
+                [
+                    signal.id,
+                    mission.status,
+                    str(mission.phase or ""),
+                    str(mission.last_turn_id or ""),
+                    str(mission.failure_count),
+                    str(mission.last_error or ""),
+                    str(mission.last_checkpoint or ""),
+                ]
+            )
+        if signal.id.endswith("-queued"):
+            return "|".join(
+                [
+                    signal.id,
+                    mission.status,
+                    str(mission.phase or ""),
+                    str(mission.last_error or ""),
+                ]
+            )
+        if signal.id.endswith("-handoff"):
+            return "|".join(
+                [
+                    signal.id,
+                    mission.status,
+                    str(mission.phase or ""),
+                    str(mission.last_turn_id or ""),
+                    str(mission.last_checkpoint or ""),
+                ]
+            )
         return "|".join(
             [
                 signal.id,
@@ -700,6 +796,18 @@ def plan_control_chat(prompt: str, dashboard: DashboardView) -> ControlChatPlan:
 
         if gateway_needs_repair:
             if gateway_repair is not None:
+                if not _opportunity_can_autolaunch(dashboard, gateway_repair):
+                    hold_reason = _opportunity_hold_reason(dashboard, gateway_repair)
+                    return ControlChatPlan(
+                        action_kind="observe",
+                        opportunity_id=gateway_repair.id,
+                        target_label=gateway_repair.title,
+                        reply=(
+                            f"I staged `{gateway_repair.title}` because Gateway Doctor says "
+                            f"{gateway_reason.rstrip('.')} but I held the launch because "
+                            f"{hold_reason}. Reconnect the lane and then run the staged repair."
+                        ),
+                    )
                 return ControlChatPlan(
                     action_kind="launch_opportunity",
                     opportunity_id=gateway_repair.id,
@@ -807,6 +915,18 @@ def plan_control_chat(prompt: str, dashboard: DashboardView) -> ControlChatPlan:
 
         next_opportunity = _find_opportunity(dashboard)
         if next_opportunity is not None:
+            if not _opportunity_can_autolaunch(dashboard, next_opportunity):
+                hold_reason = _opportunity_hold_reason(dashboard, next_opportunity)
+                return ControlChatPlan(
+                    action_kind="observe",
+                    opportunity_id=next_opportunity.id,
+                    target_label=next_opportunity.title,
+                    reply=(
+                        f"I staged `{next_opportunity.title}` but I held the launch because "
+                        f"{hold_reason}. Reconnect the lane or start the draft manually when "
+                        "you are ready."
+                    ),
+                )
             return ControlChatPlan(
                 action_kind="launch_opportunity",
                 opportunity_id=next_opportunity.id,
@@ -954,6 +1074,23 @@ def plan_attention_queue(
     if gateway_needs_repair and gateway_signal is not None:
         gateway_repair = _find_gateway_repair_opportunity(dashboard)
         if gateway_repair is not None:
+            if not _opportunity_can_autolaunch(dashboard, gateway_repair):
+                hold_reason = _opportunity_hold_reason(dashboard, gateway_repair)
+                return AttentionQueuePlan(
+                    signal_id=gateway_signal.id,
+                    signal_fingerprint=_find_signal_mission_fingerprint(gateway_signal, dashboard),
+                    signal_level=gateway_signal.level,
+                    action_kind="observe",
+                    status="escalated",
+                    opportunity_id=gateway_repair.id,
+                    target_label=gateway_repair.title,
+                    reply=(
+                        f"I staged `{gateway_repair.title}` from the attention queue because "
+                        f"Gateway Doctor says {_gateway_repair_reason(dashboard).rstrip('.')} "
+                        f"but I held the launch because {hold_reason}. Reconnect the lane and "
+                        "then run the staged repair."
+                    ),
+                )
             return AttentionQueuePlan(
                 signal_id=gateway_signal.id,
                 signal_fingerprint=_find_signal_mission_fingerprint(gateway_signal, dashboard),
@@ -1178,6 +1315,59 @@ def plan_attention_queue(
     return None
 
 
+def _collapse_repeated_control_chat_messages(
+    messages: list[ControlChatMessageView],
+) -> list[ControlChatMessageView]:
+    collapsed: list[ControlChatMessageView] = []
+    for message in messages:
+        if collapsed and _same_control_chat_message(collapsed[-1], message):
+            collapsed[-1] = message
+            continue
+        collapsed.append(message)
+    return collapsed
+
+
+def _same_control_chat_message(
+    left: ControlChatMessageView,
+    right: ControlChatMessageView,
+) -> bool:
+    return (
+        left.role == right.role
+        and left.action_kind == right.action_kind
+        and left.mission_id == right.mission_id
+        and left.opportunity_id == right.opportunity_id
+        and left.target_label == right.target_label
+        and left.content == right.content
+    )
+
+
+def _collapse_repeated_attention_queue_actions(
+    actions: list[AttentionQueueActionView],
+) -> list[AttentionQueueActionView]:
+    collapsed: list[AttentionQueueActionView] = []
+    for action in actions:
+        if collapsed and _same_attention_queue_action(collapsed[-1], action):
+            collapsed[-1] = action
+            continue
+        collapsed.append(action)
+    return collapsed
+
+
+def _same_attention_queue_action(
+    left: AttentionQueueActionView,
+    right: AttentionQueueActionView,
+) -> bool:
+    return (
+        left.signal_id == right.signal_id
+        and left.action_kind == right.action_kind
+        and left.status == right.status
+        and left.mission_id == right.mission_id
+        and left.opportunity_id == right.opportunity_id
+        and left.target_label == right.target_label
+        and left.summary == right.summary
+    )
+
+
 class ControlChatService:
     def __init__(
         self,
@@ -1235,11 +1425,15 @@ class ControlChatService:
             message
             for message in messages
             if not (
-                _has_active_mission_for_target_label(dashboard, message.target_label)
+                _latest_target_supersedes_stale_failure_or_quiet(
+                    dashboard,
+                    message.target_label,
+                )
                 and message.action_kind in {"observe", "run_mission"}
                 and _is_stale_failure_or_quiet_summary(message.content)
             )
         ]
+        messages = _collapse_repeated_control_chat_messages(messages)
         attention_queue = getattr(dashboard, "attention_queue", None)
         gateway_needs_repair = _gateway_needs_repair(dashboard)
         active_running = sum(
@@ -1317,7 +1511,10 @@ class ControlChatService:
             action
             for action in actions
             if not (
-                _has_active_mission_for_target_label(dashboard, action.target_label)
+                _latest_target_supersedes_stale_failure_or_quiet(
+                    dashboard,
+                    action.target_label,
+                )
                 and (
                     action.signal_id.endswith("-failed")
                     or action.signal_id.endswith("-quiet")
@@ -1325,6 +1522,7 @@ class ControlChatService:
                 )
             )
         ]
+        actions = _collapse_repeated_attention_queue_actions(actions)
         gateway_needs_repair = _gateway_needs_repair(dashboard)
         critical = sum(signal.level == "critical" for signal in dashboard.radar.signals)
         if not enabled:

@@ -1,11 +1,18 @@
 from __future__ import annotations
 
 import json
+import sqlite3
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import aiosqlite
+
+THREAD_EVENT_COMPACT_COMMAND_LIMIT = 4096
+THREAD_EVENT_COMPACT_DELTA_LIMIT = 2048
+THREAD_EVENT_COMPACT_TEXT_LIMIT = 2048
+THREAD_EVENT_COMPACT_PROMPT_LIMIT = 1024
 
 
 def utcnow() -> str:
@@ -1977,18 +1984,134 @@ class Database:
         instance_id: int,
         thread_id: str,
         limit: int = 200,
+        compact: bool = False,
+        methods: Sequence[str] | None = None,
     ) -> list[dict[str, Any]]:
         async with aiosqlite.connect(self.path) as db:
             db.row_factory = aiosqlite.Row
+            method_clause = ""
+            method_params: list[Any] = []
+            if methods:
+                placeholders = ", ".join("?" for _ in methods)
+                method_clause = f" AND method IN ({placeholders})"
+                method_params.extend(methods)
+
+            if compact:
+                try:
+                    rows = await db.execute_fetchall(
+                        f"""
+                        SELECT
+                            id,
+                            instance_id,
+                            thread_id,
+                            method,
+                            created_at,
+                            COALESCE(
+                                json_extract(payload_json, '$.turnId'),
+                                json_extract(payload_json, '$.turn.id')
+                            ) AS turn_id,
+                            COALESCE(json_extract(payload_json, '$.itemId'), '') AS item_id,
+                            substr(
+                                COALESCE(json_extract(payload_json, '$.delta'), ''),
+                                1,
+                                ?
+                            ) AS delta,
+                            COALESCE(json_extract(payload_json, '$.item.type'), '') AS item_type,
+                            COALESCE(json_extract(payload_json, '$.item.id'), '') AS item_nested_id,
+                            COALESCE(json_extract(payload_json, '$.item.phase'), '') AS item_phase,
+                            COALESCE(json_extract(payload_json, '$.item.tool'), '') AS item_tool,
+                            substr(
+                                COALESCE(json_extract(payload_json, '$.item.command'), ''),
+                                1,
+                                ?
+                            ) AS item_command,
+                            substr(
+                                COALESCE(json_extract(payload_json, '$.item.text'), ''),
+                                1,
+                                ?
+                            ) AS item_text,
+                            substr(
+                                COALESCE(json_extract(payload_json, '$.item.prompt'), ''),
+                                1,
+                                ?
+                            ) AS item_prompt
+                        FROM events
+                        WHERE instance_id = ? AND thread_id = ?{method_clause}
+                        ORDER BY id DESC
+                        LIMIT ?
+                        """,
+                        (
+                            THREAD_EVENT_COMPACT_DELTA_LIMIT,
+                            THREAD_EVENT_COMPACT_COMMAND_LIMIT,
+                            THREAD_EVENT_COMPACT_TEXT_LIMIT,
+                            THREAD_EVENT_COMPACT_PROMPT_LIMIT,
+                            instance_id,
+                            thread_id,
+                            *method_params,
+                            limit,
+                        ),
+                    )
+                except sqlite3.OperationalError as exc:
+                    if "json_extract" not in str(exc).lower():
+                        raise
+                else:
+                    output = []
+                    for row in rows:
+                        payload: dict[str, Any] = {}
+                        turn_id_value = str(row["turn_id"] or "").strip()
+                        if turn_id_value:
+                            payload["turnId"] = turn_id_value
+                        item_id_value = str(row["item_id"] or "").strip()
+                        if item_id_value:
+                            payload["itemId"] = item_id_value
+                        delta_value = str(row["delta"] or "").strip()
+                        if delta_value:
+                            payload["delta"] = delta_value
+                        item_payload: dict[str, Any] = {}
+                        item_type = str(row["item_type"] or "").strip()
+                        if item_type:
+                            item_payload["type"] = item_type
+                        item_nested_id = str(row["item_nested_id"] or "").strip()
+                        if item_nested_id:
+                            item_payload["id"] = item_nested_id
+                        item_phase = str(row["item_phase"] or "").strip()
+                        if item_phase:
+                            item_payload["phase"] = item_phase
+                        item_tool = str(row["item_tool"] or "").strip()
+                        if item_tool:
+                            item_payload["tool"] = item_tool
+                        item_command = str(row["item_command"] or "").strip()
+                        if item_command:
+                            item_payload["command"] = item_command
+                        item_text = str(row["item_text"] or "").strip()
+                        if item_text:
+                            item_payload["text"] = item_text
+                        item_prompt = str(row["item_prompt"] or "").strip()
+                        if item_prompt:
+                            item_payload["prompt"] = item_prompt
+                        if item_payload:
+                            payload["item"] = item_payload
+                        output.append(
+                            {
+                                "id": row["id"],
+                                "instance_id": row["instance_id"],
+                                "thread_id": row["thread_id"],
+                                "method": row["method"],
+                                "created_at": row["created_at"],
+                                "payload": payload,
+                            }
+                        )
+                    return list(reversed(output))
+
             rows = await db.execute_fetchall(
-                """
+                f"""
                 SELECT *
                 FROM events
-                WHERE instance_id = ? AND thread_id = ?
+                WHERE instance_id = ? AND thread_id = ?{method_clause}
                 ORDER BY id DESC
                 LIMIT ?
                 """,
-                (instance_id, thread_id, limit),
+                (instance_id, thread_id, *method_params, limit),
             )
             output = []
             for row in rows:

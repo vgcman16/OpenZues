@@ -5,7 +5,7 @@ import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from openzues.database import Database, utcnow
 from openzues.schemas import (
@@ -22,11 +22,15 @@ from openzues.schemas import (
     GatewayCapabilityMethodCatalogView,
     GatewayCapabilityView,
     InstanceView,
+    IntegrationView,
     MissionCreate,
     MissionView,
+    OperatorView,
     ProjectView,
     RemoteRequestView,
     SignalLevel,
+    TaskBlueprintView,
+    TeamView,
 )
 from openzues.services.access import AccessService, build_access_posture
 from openzues.services.continuity import build_continuity_packet
@@ -869,17 +873,7 @@ class GatewayCapabilityService:
         mcp_server_status_task = asyncio.create_task(
             self._load_mcp_server_status_catalog(instances)
         )
-        (
-            gateway,
-            missions,
-            teams,
-            operators,
-            remote_requests,
-            integrations,
-            task_blueprints,
-            project_rows,
-            mcp_server_status_by_instance,
-        ) = await asyncio.gather(
+        gathered = await asyncio.gather(
             gateway_task,
             missions_task,
             teams_task,
@@ -889,6 +883,18 @@ class GatewayCapabilityService:
             task_blueprints_task,
             projects_task,
             mcp_server_status_task,
+        )
+        gateway = cast(GatewayBootstrapView, gathered[0])
+        missions = cast(list[MissionView], gathered[1])
+        teams = cast(list[TeamView], gathered[2])
+        operators = cast(list[OperatorView], gathered[3])
+        remote_requests = cast(list[RemoteRequestView], gathered[4])
+        integrations = cast(list[IntegrationView], gathered[5])
+        task_blueprints = cast(list[TaskBlueprintView], gathered[6])
+        project_rows = cast(list[dict[str, Any]], gathered[7])
+        mcp_server_status_by_instance = cast(
+            dict[int, list[dict[str, Any]]],
+            gathered[8],
         )
         access_posture = build_access_posture(teams, operators, remote_requests)
         projects = [_serialize_project(project) for project in project_rows]

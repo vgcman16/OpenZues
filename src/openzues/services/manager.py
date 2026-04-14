@@ -22,6 +22,7 @@ ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 LOG_TIMESTAMP_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z\s+")
 START_TURN_TIMEOUT_CONFIRM_SECONDS = 12.0
 REFRESH_TIMEOUT_BACKOFF_SECONDS = 30.0
+REFRESH_SCHEDULE_DEBOUNCE_SECONDS = 2.0
 
 
 def _pick_fields(item: dict[str, Any], keys: tuple[str, ...]) -> dict[str, Any]:
@@ -210,6 +211,8 @@ class InstanceRuntime:
     last_event_at: str | None = None
     refresh_backoff_until: dict[str, float] = field(default_factory=dict)
     refresh_method_locks: dict[str, asyncio.Lock] = field(default_factory=dict)
+    refresh_task: asyncio.Task[None] | None = None
+    refresh_pending: bool = False
 
     def view(self) -> InstanceView:
         return InstanceView(
@@ -444,6 +447,12 @@ class RuntimeManager:
 
     async def disconnect_instance(self, instance_id: int) -> None:
         runtime = await self.get(instance_id)
+        refresh_task = self._cancel_refresh_task(runtime)
+        if refresh_task is not None:
+            try:
+                await refresh_task
+            except asyncio.CancelledError:
+                pass
         if runtime.client is not None:
             await runtime.client.close()
             runtime.client = None
@@ -454,6 +463,12 @@ class RuntimeManager:
 
     async def delete_instance(self, instance_id: int) -> None:
         runtime = await self.get(instance_id)
+        refresh_task = self._cancel_refresh_task(runtime)
+        if refresh_task is not None:
+            try:
+                await refresh_task
+            except asyncio.CancelledError:
+                pass
         if runtime.client is not None:
             await runtime.client.close()
         self.instances.pop(instance_id, None)
@@ -461,6 +476,16 @@ class RuntimeManager:
         await self.publish_snapshot("instance/deleted", {"instanceId": instance_id})
 
     async def close(self) -> None:
+        refresh_tasks: list[asyncio.Task[None]] = []
+        for runtime in self.instances.values():
+            refresh_task = self._cancel_refresh_task(runtime)
+            if refresh_task is not None:
+                refresh_tasks.append(refresh_task)
+        for refresh_task in refresh_tasks:
+            try:
+                await refresh_task
+            except asyncio.CancelledError:
+                pass
         for runtime in self.instances.values():
             if runtime.client is not None:
                 await runtime.client.close()
@@ -699,8 +724,45 @@ class RuntimeManager:
             logger.warning("Instance refresh failed for %s", instance_id, exc_info=True)
             return runtime
 
+    async def _drain_refresh_instance(self, instance_id: int) -> None:
+        try:
+            while True:
+                runtime = await self.get(instance_id)
+                runtime.refresh_pending = False
+                await self._refresh_instance_safely(instance_id)
+                runtime = await self.get(instance_id)
+                if not runtime.refresh_pending:
+                    break
+                await asyncio.sleep(REFRESH_SCHEDULE_DEBOUNCE_SECONDS)
+        except asyncio.CancelledError:
+            raise
+        except KeyError:
+            return
+        finally:
+            final_runtime = self.instances.get(instance_id)
+            if final_runtime is not None:
+                final_runtime.refresh_task = None
+                final_runtime.refresh_pending = False
+
     def _schedule_refresh_instance(self, instance_id: int) -> None:
-        asyncio.create_task(self._refresh_instance_safely(instance_id))
+        runtime = self.instances.get(instance_id)
+        if runtime is None:
+            return
+        runtime.refresh_pending = True
+        if runtime.refresh_task is not None and not runtime.refresh_task.done():
+            return
+        runtime.refresh_task = asyncio.create_task(self._drain_refresh_instance(instance_id))
+
+    def _cancel_refresh_task(self, runtime: InstanceRuntime) -> asyncio.Task[None] | None:
+        task = runtime.refresh_task
+        if task is not None and not task.done():
+            task.cancel()
+            active_task: asyncio.Task[None] | None = task
+        else:
+            active_task = None
+        runtime.refresh_task = None
+        runtime.refresh_pending = False
+        return active_task
 
     async def _wait_for_thread_visibility(
         self,

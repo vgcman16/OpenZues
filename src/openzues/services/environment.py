@@ -113,12 +113,27 @@ class EnvironmentService:
             codex_detail = codex_probe.stdout or codex_probe.stderr or "Codex CLI is available."
             codex_action = None
         elif "Access is denied" in (codex_probe.stderr or codex_probe.error or codex_probe.stdout):
-            codex_status = "warn"
-            codex_detail = codex_probe.stderr or codex_probe.error or "Codex CLI launch is blocked."
-            codex_action = (
-                "Use Desktop transport. OpenZues can stage a local runnable "
-                "copy from the installed Codex desktop package."
-            )
+            if desktop.source_path is not None:
+                codex_status = "info"
+                codex_detail = (
+                    "Direct PATH launch is blocked on this Windows install, but Desktop "
+                    "transport can stage a runnable local Codex bridge."
+                )
+                codex_action = (
+                    "Use Desktop transport or Quick Connect when a direct `codex` PATH "
+                    "probe is blocked by Windows app execution policy."
+                )
+            else:
+                codex_status = "warn"
+                codex_detail = (
+                    codex_probe.stderr
+                    or codex_probe.error
+                    or "Codex CLI launch is blocked."
+                )
+                codex_action = (
+                    "Use Desktop transport. OpenZues can stage a local runnable "
+                    "copy from the installed Codex desktop package."
+                )
         else:
             codex_status = "warn"
             codex_detail = codex_probe.stderr or codex_probe.error or "Codex probe did not succeed."
@@ -253,10 +268,13 @@ class EnvironmentService:
             DiagnosticCheck(
                 key="openai_api_key",
                 label="OPENAI_API_KEY",
-                status="info" if openai_key else "warn",
+                status="info",
                 detail="Environment variable present."
                 if openai_key
-                else "Not set in the current shell environment.",
+                else (
+                    "Not set in the current shell environment. Desktop-authenticated Codex "
+                    "lanes can still operate without it."
+                ),
                 action="Set it only if your Codex workflow needs shell-visible API credentials."
                 if not openai_key
                 else None,
@@ -268,8 +286,12 @@ class EnvironmentService:
             DiagnosticCheck(
                 key="codex_home",
                 label="CODEX_HOME",
-                status="info" if code_dir else "warn",
-                detail=code_dir or "Using the default Codex home directory.",
+                status="info",
+                detail=code_dir
+                or (
+                    "Using the default Codex home directory, which is fine unless "
+                    "you want a custom profile path."
+                ),
                 action=(
                     "Set CODEX_HOME if you want a custom profile, skills, or automation location."
                 )

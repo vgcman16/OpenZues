@@ -1308,6 +1308,172 @@ async def test_turn_completed_after_final_answer_does_not_launch_another_cycle(t
 
 
 @pytest.mark.asyncio
+async def test_new_turn_started_reactivates_completed_mission(tmp_path) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    manager = FakeManager()
+    service = MissionService(database, manager, BroadcastHub(), poll_interval_seconds=3600)
+
+    mission_id = await database.create_mission(
+        name="Resume after checkpoint",
+        objective="Continue the next bounded slice after a checkpoint.",
+        status="completed",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread_resume",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=4,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=True,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+    )
+    await database.update_mission(
+        mission_id,
+        phase="completed",
+        in_progress=0,
+        last_checkpoint="Checkpoint landed.",
+    )
+
+    await service.handle_event(
+        7,
+        {
+            "method": "item/started",
+            "threadId": "thread_resume",
+            "params": {
+                "threadId": "thread_resume",
+                "turnId": "turn_resume",
+                "item": {
+                    "type": "userMessage",
+                    "id": "resume_prompt",
+                    "content": [
+                        {"type": "text", "text": "Resume the next bounded slice."},
+                    ],
+                },
+            },
+        },
+    )
+
+    mission = await database.get_mission(mission_id)
+
+    assert mission is not None
+    assert mission["status"] == "active"
+    assert mission["in_progress"] == 1
+
+
+@pytest.mark.asyncio
+async def test_context_compaction_does_not_reactivate_completed_mission(tmp_path) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    manager = FakeManager()
+    service = MissionService(database, manager, BroadcastHub(), poll_interval_seconds=3600)
+
+    mission_id = await database.create_mission(
+        name="Finished mission",
+        objective="Stay completed through cleanup noise.",
+        status="completed",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread_compaction",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=4,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=True,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+    )
+    await database.update_mission(
+        mission_id,
+        phase="completed",
+        in_progress=0,
+        last_checkpoint="Checkpoint landed.",
+    )
+
+    await service.handle_event(
+        7,
+        {
+            "method": "item/started",
+            "threadId": "thread_compaction",
+            "params": {
+                "threadId": "thread_compaction",
+                "turnId": "turn_compaction",
+                "item": {
+                    "type": "contextCompaction",
+                    "id": "compact_1",
+                },
+            },
+        },
+    )
+
+    mission = await database.get_mission(mission_id)
+
+    assert mission is not None
+    assert mission["status"] == "completed"
+    assert mission["in_progress"] == 0
+
+
+@pytest.mark.asyncio
+async def test_reconcile_recovers_completed_mission_that_is_still_executing(tmp_path) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    manager = FakeManager()
+    manager.instances[7].connected = True
+    manager.instances[7].threads = [{"id": "thread_recover", "status": {"type": "active"}}]
+    service = MissionService(database, manager, BroadcastHub(), poll_interval_seconds=3600)
+
+    mission_id = await database.create_mission(
+        name="Recovered completed row",
+        objective="Keep the mission active if work is still happening.",
+        status="completed",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread_recover",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=4,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=True,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+    )
+    await database.update_mission(
+        mission_id,
+        phase="executing",
+        in_progress=1,
+        current_command="python -m pytest tests/test_cli.py -q",
+        last_checkpoint="Checkpoint landed.",
+    )
+
+    await service._reconcile_mission(mission_id)
+    mission = await database.get_mission(mission_id)
+
+    assert mission is not None
+    assert mission["status"] == "active"
+    assert mission["phase"] == "executing"
+    assert mission["in_progress"] == 1
+
+
+@pytest.mark.asyncio
 async def test_turn_completed_without_final_answer_creates_continuity_snapshot(tmp_path) -> None:
     database = Database(tmp_path / "missions.db")
     await database.initialize()
@@ -1900,6 +2066,89 @@ async def test_get_view_surfaces_runtime_tool_evidence(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_get_view_uses_compact_event_projection_for_large_thread_payloads(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    manager = FakeManager()
+    manager.instances[7].connected = True
+    service = MissionService(database, manager, BroadcastHub(), poll_interval_seconds=3600)
+
+    mission_id = await database.create_mission(
+        name="Large payload parity watcher",
+        objective="Verify the seam without loading giant event payloads into supervision views.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread_large_payloads",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=4,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        toolsets=["debugging", "delegation"],
+    )
+    await database.append_event(
+        instance_id=7,
+        thread_id="thread_large_payloads",
+        method="item/started",
+        payload={
+            "turnId": "turn_large_payloads",
+            "item": {
+                "type": "commandExecution",
+                "id": "command_large_payloads",
+                "command": (
+                    'powershell.exe -Command "Get-Content '
+                    'docs/openclaw-parity-checkpoint-2026-04-10.md"'
+                ),
+            },
+        },
+    )
+    await database.append_event(
+        instance_id=7,
+        thread_id="thread_large_payloads",
+        method="item/completed",
+        payload={
+            "turnId": "turn_large_payloads",
+            "item": {
+                "type": "agentMessage",
+                "id": "agent_message_large_payloads",
+                "phase": "commentary",
+                "text": "checkpoint " * 40000,
+            },
+        },
+    )
+    await database.append_event(
+        instance_id=7,
+        thread_id="thread_large_payloads",
+        method="item/completed",
+        payload={
+            "turnId": "turn_large_payloads",
+            "item": {
+                "type": "collabAgentToolCall",
+                "tool": "spawnAgent",
+                "prompt": "Architect the next parity seam.",
+            },
+        },
+    )
+
+    view = await service.get_view(mission_id)
+
+    assert view.tool_evidence.observed_toolsets == ["debugging", "delegation"]
+    assert view.live_telemetry.summary is not None
+
+
+@pytest.mark.asyncio
 async def test_get_view_ignores_inspection_output_as_memory_tool_use(tmp_path) -> None:
     database = Database(tmp_path / "missions.db")
     await database.initialize()
@@ -2014,6 +2263,70 @@ async def test_get_view_counts_openzues_recall_as_memory_and_session_search(tmp_
         method="item/commandExecution/outputDelta",
         payload={
             "itemId": "call_recall_guard",
+            "delta": "openzues recall returned the latest parity checkpoint trail.",
+        },
+    )
+
+    view = await service.get_view(mission_id)
+
+    assert view.tool_evidence.observed_toolsets == ["memory", "session_search"]
+    assert view.tool_evidence.unproven_toolsets == []
+
+
+@pytest.mark.asyncio
+async def test_get_view_counts_openzues_cli_module_recall_as_memory_and_session_search(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    manager = FakeManager()
+    manager.instances[7].connected = True
+    service = MissionService(database, manager, BroadcastHub(), poll_interval_seconds=3600)
+
+    mission_id = await database.create_mission(
+        name="Recall proof guard",
+        objective="Recover parity context through durable recall before the next slice.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread_recall_guard_cli_module",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=4,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        toolsets=["memory", "session_search"],
+    )
+    await database.append_event(
+        instance_id=7,
+        thread_id="thread_recall_guard_cli_module",
+        method="item/started",
+        payload={
+            "item": {
+                "type": "commandExecution",
+                "id": "call_recall_guard_module",
+                "command": (
+                    'powershell.exe -Command ".\\.venv\\Scripts\\python.exe -m '
+                    'openzues.cli recall --json"'
+                ),
+            }
+        },
+    )
+    await database.append_event(
+        instance_id=7,
+        thread_id="thread_recall_guard_cli_module",
+        method="item/commandExecution/outputDelta",
+        payload={
+            "itemId": "call_recall_guard_module",
             "delta": "openzues recall returned the latest parity checkpoint trail.",
         },
     )
@@ -2800,7 +3113,7 @@ async def test_reconcile_uses_auto_reflex_for_in_progress_reporting_orbit(tmp_pa
         command_count=12,
         turns_completed=1,
         current_command=None,
-        last_checkpoint=None,
+        last_checkpoint="Recovered the last verified slice in a prior cycle.",
     )
 
     await service._reconcile_mission(mission_id)
@@ -2816,6 +3129,13 @@ async def test_reconcile_uses_auto_reflex_for_in_progress_reporting_orbit(tmp_pa
     )
     assert "Do not guess alternate Recall executable names" in manager.turn_calls[0]["text"]
     assert "If Recall succeeds, do not summarize it in commentary." in manager.turn_calls[0]["text"]
+    assert "If this turn already used Recall or another session-search step" in manager.turn_calls[
+        0
+    ]["text"]
+    assert (
+        "Do not use repo-wide `pytest -k` collection from the workspace root."
+        in manager.turn_calls[0]["text"]
+    )
     assert checkpoints[0]["kind"] == "reflex_auto"
 
 
@@ -2909,6 +3229,153 @@ async def test_reconcile_does_not_force_landing_while_final_answer_streams(tmp_p
     assert all(checkpoint["kind"] != "reflex_auto" for checkpoint in checkpoints)
 
 
+@pytest.mark.asyncio
+async def test_reconcile_skips_restart_safe_snapshot_for_stale_turn_when_final_answer_streams(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    manager = FakeManager()
+    manager.instances[7].connected = True
+    manager.instances[7].threads = [
+        {"id": "thread_final_answer_stale", "status": {"type": "active"}}
+    ]
+    service = MissionService(database, manager, BroadcastHub(), poll_interval_seconds=3600)
+
+    mission_id = await database.create_mission(
+        name="OpenClaw Total Parity Program",
+        objective="Keep iterating until OpenClaw parity is complete.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread_final_answer_stale",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=True,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+    )
+    await database.update_mission(
+        mission_id,
+        in_progress=1,
+        phase="reporting",
+        command_count=12,
+        turns_completed=1,
+        last_turn_id="turn_stale_snapshot",
+        current_command=None,
+        last_checkpoint=None,
+        total_tokens=62000,
+        last_commentary="I am only appending the checkpoint now.",
+    )
+    await database.append_event(
+        instance_id=7,
+        thread_id="thread_final_answer_stale",
+        method="item/started",
+        payload={
+            "item": {
+                "type": "agentMessage",
+                "id": "msg_final_answer_stale",
+                "text": "",
+                "phase": "final_answer",
+            },
+            "threadId": "thread_final_answer_stale",
+            "turnId": "turn_final_answer_actual",
+        },
+    )
+    for delta in ("**Checkpoint**", "\n\nCompleted:", " verified the seam."):
+        await database.append_event(
+            instance_id=7,
+            thread_id="thread_final_answer_stale",
+            method="item/agentMessage/delta",
+            payload={
+                "threadId": "thread_final_answer_stale",
+                "turnId": "turn_final_answer_actual",
+                "itemId": "msg_final_answer_stale",
+                "delta": delta,
+            },
+        )
+
+    await service._reconcile_mission(mission_id)
+    checkpoints = await database.list_mission_checkpoints(mission_id)
+
+    assert manager.turn_calls == []
+    assert manager.interrupt_calls == []
+    assert all(checkpoint["kind"] != "restart_safe" for checkpoint in checkpoints)
+    assert all(checkpoint["kind"] != "reflex_auto" for checkpoint in checkpoints)
+
+
+@pytest.mark.asyncio
+async def test_handle_event_updates_last_turn_id_from_live_item_event(tmp_path) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    manager = FakeManager()
+    service = MissionService(database, manager, BroadcastHub(), poll_interval_seconds=3600)
+
+    mission_id = await database.create_mission(
+        name="Turn sync",
+        objective="Keep the stored turn id aligned with live event traffic.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread_turn_sync",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+    )
+    await database.update_mission(
+        mission_id,
+        in_progress=1,
+        phase="reporting",
+        last_turn_id="turn_stale_sync",
+    )
+
+    event = {
+        "method": "item/started",
+        "threadId": "thread_turn_sync",
+        "params": {
+            "threadId": "thread_turn_sync",
+            "turnId": "turn_actual_sync",
+            "item": {
+                "type": "agentMessage",
+                "id": "msg_sync",
+                "phase": "final_answer",
+                "text": "",
+            },
+        },
+    }
+    await database.append_event(
+        instance_id=7,
+        thread_id="thread_turn_sync",
+        method=event["method"],
+        payload=event["params"],
+    )
+
+    await service.handle_event(7, event)
+    mission = await database.get_mission(mission_id)
+
+    assert mission is not None
+    assert mission["last_turn_id"] == "turn_actual_sync"
+    assert mission["phase"] == "reporting"
+
+
 def test_parity_fast_reporting_orbit_cutoff_triggers_after_recall_anchor() -> None:
     mission = {
         "objective": "Keep iterating until OpenClaw parity is complete.",
@@ -2924,6 +3391,12 @@ def test_parity_fast_reporting_orbit_cutoff_triggers_after_recall_anchor() -> No
 
 def test_execution_stall_threshold_is_tighter_for_inspection_commands() -> None:
     assert _execution_stall_threshold_seconds("git status --short") == 60
+    assert (
+        _execution_stall_threshold_seconds(
+            '.\\.venv\\Scripts\\python.exe -m openzues.cli recall --json "OpenClaw parity"'
+        )
+        == 60
+    )
     assert _execution_stall_threshold_seconds('powershell.exe -Command "pytest -q"') == 8 * 60
 
 
@@ -3588,6 +4061,152 @@ async def test_reconcile_rebinds_long_running_inspection_execution(tmp_path) -> 
 
 
 @pytest.mark.asyncio
+async def test_reconcile_rebinds_back_to_back_inspection_command_orbit(tmp_path) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    manager = FakeManager()
+    manager.instances[7].connected = True
+    manager.instances[7].threads = [
+        {"id": "thread_exec_command_orbit", "status": {"type": "active"}}
+    ]
+    service = MissionService(database, manager, BroadcastHub(), poll_interval_seconds=3600)
+
+    current_command = (
+        'powershell.exe -Command "rg -n \\"routes_replay\\" tests/test_cli.py"'
+    )
+    mission_id = await database.create_mission(
+        name="Inspection command orbit parity mission",
+        objective=(
+            "Use the verified OpenClaw parity checkpoint in "
+            "`docs/openclaw-parity-checkpoint-2026-04-10.md` and land the next bounded seam."
+        ),
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread_exec_command_orbit",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=True,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+    )
+    await database.update_mission(
+        mission_id,
+        in_progress=1,
+        phase="executing",
+        command_count=27,
+        turns_completed=3,
+        total_tokens=402000,
+        last_turn_id="turn_exec_command_orbit",
+        current_command=current_command,
+        last_checkpoint="Recovered the last verified slice in a prior cycle.",
+        last_commentary="I am still sweeping the same CLI replay seam before I land.",
+        last_activity_at=(datetime.now(UTC) - timedelta(seconds=10)).isoformat(),
+    )
+    await database.append_event(
+        instance_id=7,
+        thread_id="thread_exec_command_orbit",
+        method="turn/started",
+        payload={
+            "threadId": "thread_exec_command_orbit",
+            "turnId": "turn_exec_command_orbit",
+        },
+    )
+
+    inspection_commands = [
+        'powershell.exe -Command "Get-Content tests/test_cli.py -TotalCount 40"',
+        'powershell.exe -Command "rg -n \\"routes_replay\\" tests/test_cli.py"',
+        'powershell.exe -Command "Get-Content tests/test_cli.py -Tail 80"',
+        'powershell.exe -Command "rg -n \\"missing_route_row\\" tests/test_cli.py"',
+        'powershell.exe -Command "Get-Content tests/test_cli.py -Tail 120"',
+        current_command,
+    ]
+    for index, command in enumerate(inspection_commands):
+        item_id = f"call_exec_command_orbit_{index}"
+        await database.append_event(
+            instance_id=7,
+            thread_id="thread_exec_command_orbit",
+            method="item/started",
+            payload={
+                "threadId": "thread_exec_command_orbit",
+                "turnId": "turn_exec_command_orbit",
+                "item": {
+                    "type": "commandExecution",
+                    "id": item_id,
+                    "command": command,
+                },
+            },
+        )
+        for delta_index in range(2):
+            await database.append_event(
+                instance_id=7,
+                thread_id="thread_exec_command_orbit",
+                method="item/commandExecution/outputDelta",
+                payload={
+                    "threadId": "thread_exec_command_orbit",
+                    "turnId": "turn_exec_command_orbit",
+                    "itemId": item_id,
+                    "delta": f"Inspection output {index + 1}.{delta_index + 1}",
+                },
+            )
+        if index < len(inspection_commands) - 1:
+            await database.append_event(
+                instance_id=7,
+                thread_id="thread_exec_command_orbit",
+                method="item/completed",
+                payload={
+                    "threadId": "thread_exec_command_orbit",
+                    "turnId": "turn_exec_command_orbit",
+                    "item": {
+                        "type": "commandExecution",
+                        "id": item_id,
+                        "command": command,
+                    },
+                },
+            )
+
+    started_at = datetime.now(UTC) - timedelta(minutes=3)
+    with sqlite3.connect(database.path) as connection:
+        event_ids = [
+            row[0]
+            for row in connection.execute("SELECT id FROM events ORDER BY id ASC").fetchall()
+        ]
+        for offset, event_id in enumerate(event_ids):
+            created_at = started_at + timedelta(seconds=10 * offset)
+            connection.execute(
+                "UPDATE events SET created_at = ? WHERE id = ?",
+                (created_at.isoformat(), event_id),
+            )
+        connection.commit()
+
+    await service._reconcile_mission(mission_id)
+    mission = await database.get_mission(mission_id)
+    checkpoints = await database.list_mission_checkpoints(mission_id)
+
+    assert mission is not None
+    assert mission["thread_id"] == "thread_auto_7"
+    assert mission["status"] == "active"
+    assert mission["phase"] == "thinking"
+    assert mission["in_progress"] == 1
+    assert manager.interrupt_calls[0]["thread_id"] == "thread_exec_command_orbit"
+    assert manager.thread_calls[0]["instance_id"] == 7
+    assert manager.turn_calls[0]["thread_id"] == "thread_auto_7"
+    assert "stalled-execution recovery" in manager.turn_calls[0]["text"]
+    assert "back-to-back inspection commands" in manager.turn_calls[0]["text"]
+    assert "inspection orbit across multiple commands" in manager.turn_calls[0]["text"]
+    assert checkpoints[0]["kind"] == "execution_rebind"
+    assert "back-to-back inspection-command churn" in checkpoints[0]["summary"]
+
+
+@pytest.mark.asyncio
 async def test_detect_executing_stall_from_output_only_window(tmp_path) -> None:
     database = Database(tmp_path / "missions.db")
     await database.initialize()
@@ -3684,6 +4303,139 @@ async def test_detect_executing_stall_from_output_only_window(tmp_path) -> None:
     assert signal["elapsed_lower_bound"] is True
     assert signal["output_delta_count"] >= 200
     assert signal["elapsed_seconds"] >= 180
+
+
+@pytest.mark.asyncio
+async def test_detect_executing_stall_cuts_back_to_back_inspection_command_orbit(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    service = MissionService(database, None, BroadcastHub(), poll_interval_seconds=3600)
+
+    current_command = 'powershell.exe -Command "rg -n \\"routes_replay\\" tests/test_cli.py"'
+    mission_id = await database.create_mission(
+        name="Inspection command orbit parity mission",
+        objective="Catch back-to-back inspection churn before it burns the whole turn.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread_exec_command_orbit_detect",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=True,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+    )
+    await database.update_mission(
+        mission_id,
+        in_progress=1,
+        phase="executing",
+        command_count=28,
+        turns_completed=3,
+        total_tokens=404500,
+        last_turn_id="turn_exec_command_orbit_detect",
+        current_command=current_command,
+        last_checkpoint="Recovered the last verified slice in a prior cycle.",
+        last_activity_at=(datetime.now(UTC) - timedelta(seconds=10)).isoformat(),
+    )
+    await database.append_event(
+        instance_id=7,
+        thread_id="thread_exec_command_orbit_detect",
+        method="turn/started",
+        payload={
+            "threadId": "thread_exec_command_orbit_detect",
+            "turnId": "turn_exec_command_orbit_detect",
+        },
+    )
+
+    inspection_commands = [
+        'powershell.exe -Command "Get-Content tests/test_cli.py -TotalCount 40"',
+        'powershell.exe -Command "rg -n \\"routes_replay\\" tests/test_cli.py"',
+        'powershell.exe -Command "Get-Content tests/test_cli.py -Tail 80"',
+        'powershell.exe -Command "rg -n \\"missing_route_row\\" tests/test_cli.py"',
+        'powershell.exe -Command "Get-Content tests/test_cli.py -Tail 120"',
+        current_command,
+    ]
+    for index, command in enumerate(inspection_commands):
+        item_id = f"call_exec_command_orbit_detect_{index}"
+        await database.append_event(
+            instance_id=7,
+            thread_id="thread_exec_command_orbit_detect",
+            method="item/started",
+            payload={
+                "threadId": "thread_exec_command_orbit_detect",
+                "turnId": "turn_exec_command_orbit_detect",
+                "item": {
+                    "type": "commandExecution",
+                    "id": item_id,
+                    "command": command,
+                },
+            },
+        )
+        for delta_index in range(2):
+            await database.append_event(
+                instance_id=7,
+                thread_id="thread_exec_command_orbit_detect",
+                method="item/commandExecution/outputDelta",
+                payload={
+                    "threadId": "thread_exec_command_orbit_detect",
+                    "turnId": "turn_exec_command_orbit_detect",
+                    "itemId": item_id,
+                    "delta": f"Inspection output {index + 1}.{delta_index + 1}",
+                },
+            )
+        if index < len(inspection_commands) - 1:
+            await database.append_event(
+                instance_id=7,
+                thread_id="thread_exec_command_orbit_detect",
+                method="item/completed",
+                payload={
+                    "threadId": "thread_exec_command_orbit_detect",
+                    "turnId": "turn_exec_command_orbit_detect",
+                    "item": {
+                        "type": "commandExecution",
+                        "id": item_id,
+                        "command": command,
+                    },
+                },
+            )
+
+    started_at = datetime.now(UTC) - timedelta(minutes=3)
+    with sqlite3.connect(database.path) as connection:
+        event_ids = [
+            row[0]
+            for row in connection.execute("SELECT id FROM events ORDER BY id ASC").fetchall()
+        ]
+        for offset, event_id in enumerate(event_ids):
+            created_at = started_at + timedelta(seconds=10 * offset)
+            connection.execute(
+                "UPDATE events SET created_at = ? WHERE id = ?",
+                (created_at.isoformat(), event_id),
+            )
+        connection.commit()
+
+    mission = await database.get_mission(mission_id)
+    assert mission is not None
+    signal = await service._detect_executing_stall(
+        mission,
+        thread_status="active",
+        last_activity_seconds=10,
+    )
+
+    assert signal is not None
+    assert signal["mode"] == "inspection_command_orbit"
+    assert signal["command_count"] == 6
+    assert signal["output_delta_count"] == 12
+    assert signal["elapsed_seconds"] >= 120
 
 
 @pytest.mark.asyncio
@@ -3799,6 +4551,472 @@ async def test_detect_executing_stall_cuts_repeated_parity_ledger_read_after_rec
     assert signal["mode"] == "repeated_parity_ledger_read"
     assert signal["output_delta_count"] == 4
     assert signal["elapsed_seconds"] >= 30
+
+
+@pytest.mark.asyncio
+async def test_detect_executing_stall_cuts_post_checkpoint_landing_drift(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    service = MissionService(database, None, BroadcastHub(), poll_interval_seconds=3600)
+
+    mission_id = await database.create_mission(
+        name="Recovered parity landing mission",
+        objective=(
+            "Land the parity checkpoint instead of rereading the ledger after a forced "
+            "landing."
+        ),
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread_exec_checkpoint_landing",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=True,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+    )
+    await database.update_mission(
+        mission_id,
+        in_progress=1,
+        phase="executing",
+        command_count=19,
+        turns_completed=3,
+        total_tokens=405000,
+        last_turn_id="turn_exec_checkpoint_landing",
+        current_command=(
+            "powershell.exe -Command "
+            "\"Get-Content docs/openclaw-parity-checkpoint-2026-04-10.md "
+            "| Select-Object -Last 80\""
+        ),
+        last_reflex_kind="checkpoint_now",
+        last_reflex_at=(datetime.now(UTC) - timedelta(minutes=1)).isoformat(),
+        last_activity_at=(datetime.now(UTC) - timedelta(seconds=10)).isoformat(),
+    )
+
+    command_rows = [
+        (
+            "call_exec_checkpoint_recall",
+            (
+                '.\\.venv\\Scripts\\python.exe -m openzues.cli recall --json '
+                '"OpenClaw Total Parity Program"'
+            ),
+            2,
+            True,
+        ),
+        (
+            "call_exec_checkpoint_rg",
+            (
+                'powershell.exe -Command "rg -n -C 16 '
+                '\\"Auto continuity snapshot \\\\(execution_stall\\\\)\\" '
+                'docs/openclaw-parity-checkpoint-2026-04-10.md"'
+            ),
+            2,
+            True,
+        ),
+        (
+            "call_exec_checkpoint_tail",
+            (
+                "powershell.exe -Command "
+                "\"Get-Content docs/openclaw-parity-checkpoint-2026-04-10.md "
+                "| Select-Object -Last 80\""
+            ),
+            2,
+            False,
+        ),
+    ]
+    for item_id, command, output_count, completed in command_rows:
+        await database.append_event(
+            instance_id=7,
+            thread_id="thread_exec_checkpoint_landing",
+            method="item/started",
+            payload={
+                "threadId": "thread_exec_checkpoint_landing",
+                "turnId": "turn_exec_checkpoint_landing",
+                "item": {
+                    "type": "commandExecution",
+                    "id": item_id,
+                    "command": command,
+                },
+            },
+        )
+        for index in range(output_count):
+            await database.append_event(
+                instance_id=7,
+                thread_id="thread_exec_checkpoint_landing",
+                method="item/commandExecution/outputDelta",
+                payload={
+                    "threadId": "thread_exec_checkpoint_landing",
+                    "turnId": "turn_exec_checkpoint_landing",
+                    "itemId": item_id,
+                    "delta": f"Checkpoint drift output {item_id}.{index + 1}",
+                },
+            )
+        if completed:
+            await database.append_event(
+                instance_id=7,
+                thread_id="thread_exec_checkpoint_landing",
+                method="item/completed",
+                payload={
+                    "threadId": "thread_exec_checkpoint_landing",
+                    "turnId": "turn_exec_checkpoint_landing",
+                    "item": {
+                        "type": "commandExecution",
+                        "id": item_id,
+                        "command": command,
+                    },
+                },
+            )
+
+    started_at = datetime.now(UTC) - timedelta(seconds=40)
+    with sqlite3.connect(database.path) as connection:
+        event_ids = [
+            row[0]
+            for row in connection.execute("SELECT id FROM events ORDER BY id ASC").fetchall()
+        ]
+        for offset, event_id in enumerate(event_ids):
+            created_at = started_at + timedelta(seconds=5 * offset)
+            connection.execute(
+                "UPDATE events SET created_at = ? WHERE id = ?",
+                (created_at.isoformat(), event_id),
+            )
+        connection.commit()
+
+    mission = await database.get_mission(mission_id)
+    assert mission is not None
+    signal = await service._detect_executing_stall(
+        mission,
+        thread_status="active",
+        last_activity_seconds=10,
+    )
+
+    assert signal is not None
+    assert signal["mode"] == "checkpoint_landing_drift"
+    assert signal["command_count"] == 3
+    assert signal["inspection_command_count"] == 3
+    assert signal["output_delta_count"] == 6
+    assert signal["elapsed_seconds"] >= 20
+
+
+@pytest.mark.asyncio
+async def test_detect_executing_stall_cuts_wide_parity_tail_read_after_checkpoint_now(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    service = MissionService(database, None, BroadcastHub(), poll_interval_seconds=3600)
+
+    mission_id = await database.create_mission(
+        name="OpenClaw Total Parity Program",
+        objective="Resume the OpenClaw parity seam instead of rereading the ledger tail.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread_exec_checkpoint_tail",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=True,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+    )
+    await database.update_mission(
+        mission_id,
+        in_progress=1,
+        phase="executing",
+        command_count=12,
+        turns_completed=3,
+        total_tokens=405000,
+        last_turn_id="turn_exec_checkpoint_tail",
+        current_command=(
+            "powershell.exe -Command "
+            "\"Get-Content docs/openclaw-parity-checkpoint-2026-04-10.md "
+            "| Select-Object -Last 80\""
+        ),
+        last_reflex_kind="checkpoint_now",
+        last_reflex_at=(datetime.now(UTC) - timedelta(minutes=1)).isoformat(),
+        last_activity_at=(datetime.now(UTC) - timedelta(seconds=10)).isoformat(),
+    )
+    await database.append_event(
+        instance_id=7,
+        thread_id="thread_exec_checkpoint_tail",
+        method="item/started",
+        payload={
+            "threadId": "thread_exec_checkpoint_tail",
+            "turnId": "turn_exec_checkpoint_tail",
+            "item": {
+                "type": "commandExecution",
+                "id": "call_exec_checkpoint_tail",
+                "command": (
+                    "powershell.exe -Command "
+                    "\"Get-Content docs/openclaw-parity-checkpoint-2026-04-10.md "
+                    "| Select-Object -Last 80\""
+                ),
+            },
+        },
+    )
+    for index in range(2):
+        await database.append_event(
+            instance_id=7,
+            thread_id="thread_exec_checkpoint_tail",
+            method="item/commandExecution/outputDelta",
+            payload={
+                "threadId": "thread_exec_checkpoint_tail",
+                "turnId": "turn_exec_checkpoint_tail",
+                "itemId": "call_exec_checkpoint_tail",
+                "delta": f"Checkpoint tail output {index + 1}",
+            },
+        )
+
+    started_at = datetime.now(UTC) - timedelta(seconds=22)
+    with sqlite3.connect(database.path) as connection:
+        event_ids = [
+            row[0]
+            for row in connection.execute("SELECT id FROM events ORDER BY id ASC").fetchall()
+        ]
+        for offset, event_id in enumerate(event_ids):
+            created_at = started_at + timedelta(seconds=7 * offset)
+            connection.execute(
+                "UPDATE events SET created_at = ? WHERE id = ?",
+                (created_at.isoformat(), event_id),
+            )
+        connection.commit()
+
+    mission = await database.get_mission(mission_id)
+    assert mission is not None
+    signal = await service._detect_executing_stall(
+        mission,
+        thread_status="active",
+        last_activity_seconds=10,
+    )
+
+    assert signal is not None
+    assert signal["mode"] == "repeated_parity_ledger_read"
+    assert signal["output_delta_count"] == 2
+    assert signal["threshold_seconds"] == 12
+
+
+@pytest.mark.asyncio
+async def test_detect_executing_stall_cuts_parity_recall_query_drift_after_checkpoint_now(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    service = MissionService(database, None, BroadcastHub(), poll_interval_seconds=3600)
+
+    mission_id = await database.create_mission(
+        name="OpenClaw Total Parity Program",
+        objective="Resume the OpenClaw parity seam instead of querying recall with reflex labels.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread_exec_checkpoint_recall_drift",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=True,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+    )
+    await database.update_mission(
+        mission_id,
+        in_progress=1,
+        phase="executing",
+        command_count=13,
+        turns_completed=3,
+        total_tokens=405300,
+        last_turn_id="turn_exec_checkpoint_recall_drift",
+        current_command=(
+            '.\\.venv\\Scripts\\python.exe -m openzues.cli recall --json '
+            '"OpenClaw Total Parity Program execution_stall live_heartbeat parity '
+            'anchor next seam"'
+        ),
+        last_reflex_kind="checkpoint_now",
+        last_reflex_at=(datetime.now(UTC) - timedelta(minutes=1)).isoformat(),
+        last_activity_at=(datetime.now(UTC) - timedelta(seconds=10)).isoformat(),
+    )
+    await database.append_event(
+        instance_id=7,
+        thread_id="thread_exec_checkpoint_recall_drift",
+        method="item/started",
+        payload={
+            "threadId": "thread_exec_checkpoint_recall_drift",
+            "turnId": "turn_exec_checkpoint_recall_drift",
+            "item": {
+                "type": "commandExecution",
+                "id": "call_exec_checkpoint_recall_drift",
+                "command": (
+                    '.\\.venv\\Scripts\\python.exe -m openzues.cli recall --json '
+                    '"OpenClaw Total Parity Program execution_stall live_heartbeat '
+                    'parity anchor next seam"'
+                ),
+            },
+        },
+    )
+    for index in range(2):
+        await database.append_event(
+            instance_id=7,
+            thread_id="thread_exec_checkpoint_recall_drift",
+            method="item/commandExecution/outputDelta",
+            payload={
+                "threadId": "thread_exec_checkpoint_recall_drift",
+                "turnId": "turn_exec_checkpoint_recall_drift",
+                "itemId": "call_exec_checkpoint_recall_drift",
+                "delta": f"Recall drift output {index + 1}",
+            },
+        )
+
+    started_at = datetime.now(UTC) - timedelta(seconds=22)
+    with sqlite3.connect(database.path) as connection:
+        event_ids = [
+            row[0]
+            for row in connection.execute("SELECT id FROM events ORDER BY id ASC").fetchall()
+        ]
+        for offset, event_id in enumerate(event_ids):
+            created_at = started_at + timedelta(seconds=7 * offset)
+            connection.execute(
+                "UPDATE events SET created_at = ? WHERE id = ?",
+                (created_at.isoformat(), event_id),
+            )
+        connection.commit()
+
+    mission = await database.get_mission(mission_id)
+    assert mission is not None
+    signal = await service._detect_executing_stall(
+        mission,
+        thread_status="active",
+        last_activity_seconds=10,
+    )
+
+    assert signal is not None
+    assert signal["mode"] == "parity_recall_query_drift"
+    assert signal["output_delta_count"] == 2
+    assert signal["threshold_seconds"] == 12
+
+
+@pytest.mark.asyncio
+async def test_detect_executing_stall_cuts_generic_parity_recall_query_after_checkpoint_now(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    service = MissionService(database, None, BroadcastHub(), poll_interval_seconds=3600)
+
+    mission_id = await database.create_mission(
+        name="OpenClaw Total Parity Program",
+        objective="Resume the OpenClaw parity seam instead of querying recall with slogans.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread_exec_checkpoint_generic_recall",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=True,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+    )
+    await database.update_mission(
+        mission_id,
+        in_progress=1,
+        phase="executing",
+        command_count=13,
+        turns_completed=3,
+        total_tokens=405300,
+        last_turn_id="turn_exec_checkpoint_generic_recall",
+        current_command=(
+            '.\\.venv\\Scripts\\python.exe -m openzues.cli recall --json "force landing"'
+        ),
+        last_reflex_kind="checkpoint_now",
+        last_reflex_at=(datetime.now(UTC) - timedelta(minutes=1)).isoformat(),
+        last_activity_at=(datetime.now(UTC) - timedelta(seconds=10)).isoformat(),
+    )
+    await database.append_event(
+        instance_id=7,
+        thread_id="thread_exec_checkpoint_generic_recall",
+        method="item/started",
+        payload={
+            "threadId": "thread_exec_checkpoint_generic_recall",
+            "turnId": "turn_exec_checkpoint_generic_recall",
+            "item": {
+                "type": "commandExecution",
+                "id": "call_exec_checkpoint_generic_recall",
+                "command": (
+                    '.\\.venv\\Scripts\\python.exe -m openzues.cli recall --json '
+                    '"force landing"'
+                ),
+            },
+        },
+    )
+    for index in range(2):
+        await database.append_event(
+            instance_id=7,
+            thread_id="thread_exec_checkpoint_generic_recall",
+            method="item/commandExecution/outputDelta",
+            payload={
+                "threadId": "thread_exec_checkpoint_generic_recall",
+                "turnId": "turn_exec_checkpoint_generic_recall",
+                "itemId": "call_exec_checkpoint_generic_recall",
+                "delta": f"Generic recall drift output {index + 1}",
+            },
+        )
+
+    started_at = datetime.now(UTC) - timedelta(seconds=22)
+    with sqlite3.connect(database.path) as connection:
+        event_ids = [
+            row[0]
+            for row in connection.execute("SELECT id FROM events ORDER BY id ASC").fetchall()
+        ]
+        for offset, event_id in enumerate(event_ids):
+            created_at = started_at + timedelta(seconds=7 * offset)
+            connection.execute(
+                "UPDATE events SET created_at = ? WHERE id = ?",
+                (created_at.isoformat(), event_id),
+            )
+        connection.commit()
+
+    mission = await database.get_mission(mission_id)
+    assert mission is not None
+    signal = await service._detect_executing_stall(
+        mission,
+        thread_status="active",
+        last_activity_seconds=10,
+    )
+
+    assert signal is not None
+    assert signal["mode"] == "parity_recall_query_drift"
+    assert signal["output_delta_count"] == 2
+    assert signal["threshold_seconds"] == 12
 
 
 @pytest.mark.asyncio
@@ -4604,6 +5822,138 @@ async def test_reconcile_rebinds_untracked_in_progress_thread_without_command(tm
 
 
 @pytest.mark.asyncio
+async def test_reconcile_rebinds_checkpoint_backed_reporting_thread_when_it_goes_quiet(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    manager = FakeManager()
+    manager.instances[7].connected = True
+    manager.instances[7].threads = [
+        {
+            "id": "thread_reporting_not_loaded",
+            "status": {"type": "notLoaded"},
+        }
+    ]
+    service = MissionService(database, manager, BroadcastHub(), poll_interval_seconds=3600)
+
+    mission_id = await database.create_mission(
+        name="Checkpoint-backed reporting mission",
+        objective="Land the next parity checkpoint without getting stranded after restart.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread_reporting_not_loaded",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=True,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+    )
+    await database.update_mission(
+        mission_id,
+        in_progress=1,
+        phase="reporting",
+        command_count=8,
+        total_tokens=155000,
+        current_command=None,
+        last_checkpoint="Completed: a previous verified slice is already checkpointed.",
+        last_commentary="I am tightening the final checkpoint wording before I stop.",
+        last_activity_at=(datetime.now(UTC) - timedelta(minutes=5)).isoformat(),
+    )
+
+    await service._reconcile_mission(mission_id)
+    mission = await database.get_mission(mission_id)
+    checkpoints = await database.list_mission_checkpoints(mission_id)
+
+    assert mission is not None
+    assert mission["thread_id"] == "thread_auto_7"
+    assert mission["status"] == "active"
+    assert mission["phase"] == "thinking"
+    assert mission["in_progress"] == 1
+    assert manager.thread_calls[0]["instance_id"] == 7
+    assert manager.turn_calls[0]["thread_id"] == "thread_auto_7"
+    assert "stale-thread recovery" in manager.turn_calls[0]["text"]
+    assert "live thread stopped reporting" in manager.turn_calls[0]["text"]
+    assert checkpoints[0]["kind"] == "thread_rebind"
+    assert "thread_reporting_not_loaded" in checkpoints[0]["summary"]
+
+
+@pytest.mark.asyncio
+async def test_reconcile_rebinds_checkpoint_backed_reasoning_thread_when_it_goes_quiet(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    manager = FakeManager()
+    manager.instances[7].connected = True
+    manager.instances[7].threads = [
+        {
+            "id": "thread_reasoning_not_loaded",
+            "status": {"type": "notLoaded"},
+        }
+    ]
+    service = MissionService(database, manager, BroadcastHub(), poll_interval_seconds=3600)
+
+    mission_id = await database.create_mission(
+        name="Checkpoint-backed reasoning mission",
+        objective="Land the next parity checkpoint without getting stranded after recovery.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread_reasoning_not_loaded",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=True,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+    )
+    await database.update_mission(
+        mission_id,
+        in_progress=1,
+        phase="reasoning",
+        command_count=8,
+        total_tokens=155000,
+        current_command=None,
+        last_checkpoint="Completed: a previous verified slice is already checkpointed.",
+        last_commentary="I already verified the seam and only need to land the checkpoint cleanly.",
+        last_activity_at=(datetime.now(UTC) - timedelta(minutes=5)).isoformat(),
+    )
+
+    await service._reconcile_mission(mission_id)
+    mission = await database.get_mission(mission_id)
+    checkpoints = await database.list_mission_checkpoints(mission_id)
+
+    assert mission is not None
+    assert mission["thread_id"] == "thread_auto_7"
+    assert mission["status"] == "active"
+    assert mission["phase"] == "thinking"
+    assert mission["in_progress"] == 1
+    assert manager.thread_calls[0]["instance_id"] == 7
+    assert manager.turn_calls[0]["thread_id"] == "thread_auto_7"
+    assert "stale-thread recovery" in manager.turn_calls[0]["text"]
+    assert "live thread stopped reporting" in manager.turn_calls[0]["text"]
+    assert checkpoints[0]["kind"] == "thread_rebind"
+    assert "thread_reasoning_not_loaded" in checkpoints[0]["summary"]
+
+
+@pytest.mark.asyncio
 async def test_reconcile_creates_background_continuity_snapshot_for_hot_live_turn(
     tmp_path,
 ) -> None:
@@ -5000,6 +6350,16 @@ async def test_stale_thread_recovery_prompt_is_compact_for_openclaw_parity(tmp_p
     assert "If Recall succeeds, do not paraphrase the recovered context in commentary." in prompt
     assert "The next emitted item after Recall must be a bounded tool call" in prompt
     assert "does not count as session search" in prompt
+    assert "outbound replay, notification routes, deliveries" in prompt
+    assert "treat that as contamination from another mission" in prompt
+    assert "newest section that clearly names OpenClaw parity domains" in prompt
+    assert "Do not seed Recall/session search with reflex labels" in prompt
+    assert "execution_stall" in prompt
+    assert "Generic governor phrases like `force landing`" in prompt
+    assert "Do not use `Get-Content ... -Tail 80`" in prompt
+    assert "starts with `Recovery checkpoint 2026-04-13 parity re-anchor`" in prompt
+    assert "raw drift labels like `thread_rebind` or `reflex_auto`" in prompt
+    assert "Do not run repo-wide `pytest -k` collection" in prompt
     assert "list_mcp_resources" in prompt
     assert "do not satisfy the first-tool-call recovery rule" in prompt
     assert "Built-in agent stack:" not in prompt
@@ -5009,6 +6369,63 @@ async def test_stale_thread_recovery_prompt_is_compact_for_openclaw_parity(tmp_p
     assert "Relevant checkpoint trail:" in prompt
     assert "Persistent setup launch handoff landed." in prompt
     assert "First inventory the OpenClaw surface area" not in prompt
+
+
+@pytest.mark.asyncio
+async def test_parity_stale_thread_recovery_prompt_skips_repeat_recall_after_trace_proof(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    manager = FakeManager()
+    manager.instances[7].connected = True
+    service = MissionService(database, manager, BroadcastHub(), poll_interval_seconds=3600)
+
+    mission_id = await database.create_mission(
+        name="OpenClaw Total Parity Program",
+        objective="Resume from the parity checkpoint and lock the next bounded seam.",
+        status="failed",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread_parity_repeat_recall",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort="high",
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+    )
+    mission = await database.get_mission(mission_id)
+    assert mission is not None
+
+    prompt = service._build_stale_thread_recovery_prompt(
+        mission,
+        stale_thread_id="thread_parity_repeat_recall",
+        new_thread_id="thread_parity_repeat_recall_recovered",
+        stale_error="The live thread stopped reporting while the mission still looked in progress.",
+        checkpoints=[
+            {
+                "kind": "restart_safe",
+                "summary": "Restart-safe recovery packet after the prior recall-only landing.",
+            }
+        ],
+        trace_lines=[
+            r'Command started: ".\.venv\Scripts\python.exe" -m openzues.cli recall --json',
+            'Output: { "headline": "Recent recall is ready" }',
+        ],
+    )
+
+    assert "recent Recall step on the stale thread" in prompt
+    assert "Do not rerun Recall first on this fresh thread" in prompt
+    assert "Recent persisted live trace:" not in prompt
 
 
 @pytest.mark.asyncio
@@ -5456,6 +6873,178 @@ async def test_in_progress_checkpoint_reflex_rearms_after_rebind_during_cooldown
     assert mission is not None
     assert mission["last_reflex_kind"] == "checkpoint_now"
     assert manager.turn_calls[0]["thread_id"] == "thread_after_rebind"
+    assert "self-healing governor detected an in-progress reporting loop" in manager.turn_calls[0][
+        "text"
+    ]
+    assert checkpoints[0]["kind"] == "reflex_auto"
+
+
+@pytest.mark.asyncio
+async def test_in_progress_checkpoint_reflex_rearms_after_command_completion_during_cooldown(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    manager = FakeManager()
+    manager.instances[7].connected = True
+    manager.instances[7].threads = [{"id": "thread_after_verify", "status": {"type": "active"}}]
+    service = MissionService(database, manager, BroadcastHub(), poll_interval_seconds=3600)
+
+    mission_id = await database.create_mission(
+        name="Recovered parity verify landing",
+        objective="Resume the parity seam and land the checkpoint after a bounded verification.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread_after_verify",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort="high",
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+    )
+    await database.update_mission(
+        mission_id,
+        in_progress=1,
+        phase="reporting",
+        command_count=12,
+        turns_completed=1,
+        last_turn_id="turn_after_verify",
+        last_reflex_kind="checkpoint_now",
+        last_reflex_at=(datetime.now(UTC) - timedelta(minutes=2)).isoformat(),
+        last_activity_at=datetime.now(UTC).isoformat(),
+    )
+    await database.append_event(
+        instance_id=7,
+        thread_id="thread_after_verify",
+        method="item/started",
+        payload={
+            "threadId": "thread_after_verify",
+            "turnId": "turn_after_verify",
+            "item": {
+                "type": "commandExecution",
+                "id": "call_after_verify",
+                "command": '.\\.venv\\Scripts\\python.exe -m pytest tests/test_cli.py -k replay -q',
+            },
+        },
+    )
+    await database.append_event(
+        instance_id=7,
+        thread_id="thread_after_verify",
+        method="item/completed",
+        payload={
+            "threadId": "thread_after_verify",
+            "turnId": "turn_after_verify",
+            "item": {
+                "type": "commandExecution",
+                "id": "call_after_verify",
+                "command": '.\\.venv\\Scripts\\python.exe -m pytest tests/test_cli.py -k replay -q',
+            },
+        },
+    )
+
+    await service._reconcile_mission(mission_id)
+    mission = await database.get_mission(mission_id)
+    checkpoints = await database.list_mission_checkpoints(mission_id)
+
+    assert mission is not None
+    assert mission["last_reflex_kind"] == "checkpoint_now"
+    assert manager.turn_calls[0]["thread_id"] == "thread_after_verify"
+    assert "self-healing governor detected an in-progress reporting loop" in manager.turn_calls[0][
+        "text"
+    ]
+    assert checkpoints[0]["kind"] == "reflex_auto"
+
+
+@pytest.mark.asyncio
+async def test_in_progress_checkpoint_reflex_accepts_reasoning_phase_during_cooldown(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "missions.db")
+    await database.initialize()
+    manager = FakeManager()
+    manager.instances[7].connected = True
+    manager.instances[7].threads = [
+        {"id": "thread_reasoning_after_verify", "status": {"type": "active"}}
+    ]
+    service = MissionService(database, manager, BroadcastHub(), poll_interval_seconds=3600)
+
+    mission_id = await database.create_mission(
+        name="Recovered parity reasoning landing",
+        objective="Resume the parity seam and land the checkpoint after bounded verification.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread_reasoning_after_verify",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort="high",
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+    )
+    await database.update_mission(
+        mission_id,
+        in_progress=1,
+        phase="reasoning",
+        command_count=12,
+        turns_completed=1,
+        last_turn_id="turn_reasoning_after_verify",
+        last_reflex_kind="checkpoint_now",
+        last_reflex_at=(datetime.now(UTC) - timedelta(minutes=2)).isoformat(),
+        last_activity_at=datetime.now(UTC).isoformat(),
+    )
+    await database.append_event(
+        instance_id=7,
+        thread_id="thread_reasoning_after_verify",
+        method="item/started",
+        payload={
+            "threadId": "thread_reasoning_after_verify",
+            "turnId": "turn_reasoning_after_verify",
+            "item": {
+                "type": "commandExecution",
+                "id": "call_reasoning_after_verify",
+                "command": '.\\.venv\\Scripts\\python.exe -m pytest tests/test_cli.py -k replay -q',
+            },
+        },
+    )
+    await database.append_event(
+        instance_id=7,
+        thread_id="thread_reasoning_after_verify",
+        method="item/completed",
+        payload={
+            "threadId": "thread_reasoning_after_verify",
+            "turnId": "turn_reasoning_after_verify",
+            "item": {
+                "type": "commandExecution",
+                "id": "call_reasoning_after_verify",
+                "command": '.\\.venv\\Scripts\\python.exe -m pytest tests/test_cli.py -k replay -q',
+            },
+        },
+    )
+
+    await service._reconcile_mission(mission_id)
+    mission = await database.get_mission(mission_id)
+    checkpoints = await database.list_mission_checkpoints(mission_id)
+
+    assert mission is not None
+    assert mission["last_reflex_kind"] == "checkpoint_now"
+    assert manager.turn_calls[0]["thread_id"] == "thread_reasoning_after_verify"
     assert "self-healing governor detected an in-progress reporting loop" in manager.turn_calls[0][
         "text"
     ]
