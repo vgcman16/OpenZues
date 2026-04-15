@@ -26,7 +26,10 @@ from openzues.database import Database
 from openzues.schemas import (
     ConversationTargetView,
     DashboardView,
+    GatewayCapabilityView,
+    HermesDoctorView,
     HermesRuntimeProfileUpdate,
+    HermesUpdateView,
     MissionCreate,
     OnboardingBootstrapCreate,
     ProjectView,
@@ -39,8 +42,11 @@ from openzues.services.control_chat import (
     plan_attention_queue,
     plan_control_chat,
 )
+from openzues.services.control_plane import ControlPlaneLease
 from openzues.services.cortex import build_cortex, build_doctrines
+from openzues.services.device_bootstrap_profile import default_device_bootstrap_profile
 from openzues.services.environment import EnvironmentService
+from openzues.services.followups import operator_blocked_missions
 from openzues.services.gateway_bootstrap import GatewayBootstrapService
 from openzues.services.gateway_capability import GatewayCapabilityService
 from openzues.services.github import GitHubService
@@ -106,6 +112,116 @@ setup_app.add_typer(setup_wizard_app, name="wizard")
 
 def _runtime_settings() -> Settings:
     return Settings()
+
+
+def _control_plane_base_url(app_settings: Settings) -> str:
+    lease = ControlPlaneLease(app_settings.data_dir / "control-plane.lock")
+    try:
+        raw = lease.metadata_path.read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        raw = ""
+    except OSError:
+        raw = ""
+
+    if raw:
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            payload = None
+        if isinstance(payload, dict):
+            host_value = str(payload.get("host") or "").strip()
+            port_value = payload.get("port")
+            try:
+                port_number = int(port_value)
+            except (TypeError, ValueError):
+                port_number = 0
+            if host_value and port_number > 0:
+                return _watch_base_url(url=None, host=host_value, port=port_number)
+
+    return _watch_base_url(url=None, host=app_settings.host, port=app_settings.port)
+
+
+def _try_live_api_model(
+    base_url: str,
+    path: str,
+    model_type: Any,
+    *,
+    timeout_seconds: float,
+) -> Any | None:
+    try:
+        payload = _watch_api_json(base_url, path, timeout_seconds=timeout_seconds)
+    except RuntimeError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    try:
+        return model_type.model_validate(payload)
+    except Exception:
+        return None
+
+
+async def _try_live_dashboard_view(app_settings: Settings) -> DashboardView | None:
+    base_url = _control_plane_base_url(app_settings)
+    result = await asyncio.to_thread(
+        _try_live_api_model,
+        base_url,
+        "/api/dashboard",
+        DashboardView,
+        timeout_seconds=20.0,
+    )
+    return cast("DashboardView | None", result)
+
+
+async def _try_live_status_payload(app_settings: Settings) -> dict[str, object] | None:
+    base_url = _control_plane_base_url(app_settings)
+    try:
+        payload = await asyncio.to_thread(
+            _watch_api_json,
+            base_url,
+            "/api/status",
+            timeout_seconds=8.0,
+        )
+    except RuntimeError:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+async def _try_live_gateway_capability_view(
+    app_settings: Settings,
+) -> GatewayCapabilityView | None:
+    base_url = _control_plane_base_url(app_settings)
+    result = await asyncio.to_thread(
+        _try_live_api_model,
+        base_url,
+        "/api/gateway/capability",
+        GatewayCapabilityView,
+        timeout_seconds=15.0,
+    )
+    return cast("GatewayCapabilityView | None", result)
+
+
+async def _try_live_hermes_doctor_view(app_settings: Settings) -> HermesDoctorView | None:
+    base_url = _control_plane_base_url(app_settings)
+    result = await asyncio.to_thread(
+        _try_live_api_model,
+        base_url,
+        "/api/hermes/doctor",
+        HermesDoctorView,
+        timeout_seconds=15.0,
+    )
+    return cast("HermesDoctorView | None", result)
+
+
+async def _try_live_update_view(app_settings: Settings) -> HermesUpdateView | None:
+    base_url = _control_plane_base_url(app_settings)
+    result = await asyncio.to_thread(
+        _try_live_api_model,
+        base_url,
+        "/api/update/status",
+        HermesUpdateView,
+        timeout_seconds=10.0,
+    )
+    return cast("HermesUpdateView | None", result)
 
 
 @dataclass(slots=True)
@@ -286,6 +402,30 @@ def _emit_gateway_capability(payload: dict[str, object], *, json_output: bool) -
                     "method tools: "
                     + ", ".join(str(tool) for tool in method_tools[:6] if str(tool).strip())
                 )
+            reserved_admin_methods = method_catalog.get("reserved_admin_methods")
+            if isinstance(reserved_admin_methods, list) and reserved_admin_methods:
+                typer.echo(
+                    "reserved admin methods: "
+                    + ", ".join(
+                        str(tool) for tool in reserved_admin_methods[:6] if str(tool).strip()
+                    )
+                )
+            method_scopes = method_catalog.get("scopes")
+            if isinstance(method_scopes, list) and method_scopes:
+                scope_labels: list[str] = []
+                for scope_entry in method_scopes[:6]:
+                    if not isinstance(scope_entry, dict):
+                        continue
+                    scope_name = str(scope_entry.get("scope") or "").strip()
+                    method_count = scope_entry.get("method_count")
+                    if not scope_name:
+                        continue
+                    if isinstance(method_count, int):
+                        scope_labels.append(f"{scope_name} ({method_count})")
+                    else:
+                        scope_labels.append(scope_name)
+                if scope_labels:
+                    typer.echo("method scopes: " + ", ".join(scope_labels))
         memory_evidence = inventory.get("memory_evidence")
         if isinstance(memory_evidence, list):
             for evidence in memory_evidence[:3]:
@@ -2122,7 +2262,7 @@ def _attention_queue_idle_reply(*, signal_id: str | None = None) -> str:
 
 def _build_status_payload(dashboard: SimpleNamespace) -> dict[str, object]:
     active_count = sum(1 for mission in dashboard.missions if mission.status == "active")
-    blocked_count = sum(1 for mission in dashboard.missions if mission.status == "blocked")
+    blocked_count = len(operator_blocked_missions(dashboard.missions))
     paused_count = sum(1 for mission in dashboard.missions if mission.status == "paused")
     failed_count = sum(1 for mission in dashboard.missions if mission.status == "failed")
     connected_count = sum(1 for instance in dashboard.instances if instance.connected)
@@ -2151,7 +2291,10 @@ def _build_status_payload(dashboard: SimpleNamespace) -> dict[str, object]:
     }
 
 
-async def _build_operator_dashboard(services: CliServices) -> SimpleNamespace:
+async def _build_operator_dashboard(services: CliServices) -> DashboardView | SimpleNamespace:
+    live_dashboard = await _try_live_dashboard_view(services.settings)
+    if live_dashboard is not None:
+        return live_dashboard
     project_rows = await services.database.list_projects()
     projects = [
         ProjectView.model_validate(services.project_service.inspect(row)) for row in project_rows
@@ -2224,6 +2367,7 @@ def _build_bootstrap_payload(
     conversation_peer_kind: str | None = None,
     conversation_peer_id: str | None = None,
 ) -> OnboardingBootstrapCreate:
+    bootstrap_roles, bootstrap_scopes = default_device_bootstrap_profile()
     channel = str(conversation_channel or "").strip()
     account_id = str(conversation_account_id or "").strip() or None
     peer_kind = str(conversation_peer_kind or "").strip().lower() or None
@@ -2262,6 +2406,8 @@ def _build_bootstrap_payload(
         operator_email=operator_email,
         team_name=team_name,
         issue_api_key=issue_api_key,
+        bootstrap_roles=bootstrap_roles,
+        bootstrap_scopes=bootstrap_scopes,
         task_name=task_name,
         task_summary=task_summary,
         objective_template=objective_template,
@@ -2304,6 +2450,10 @@ def serve(
     port: int = typer.Option(settings.port, help="Port to bind."),
     reload: bool = typer.Option(False, help="Enable hot reload."),
 ) -> None:
+    settings.host = host
+    settings.port = port
+    os.environ["OPENZUES_HOST"] = host
+    os.environ["OPENZUES_PORT"] = str(port)
     uvicorn.run(
         "openzues.app:create_app",
         host=host,
@@ -2379,6 +2529,9 @@ def status_command(
     ),
 ) -> None:
     async def _action(services: CliServices) -> dict[str, object]:
+        live_status = await _try_live_status_payload(services.settings)
+        if live_status is not None:
+            return live_status
         dashboard = await _build_operator_dashboard(services)
         return _build_status_payload(dashboard)
 
@@ -3090,9 +3243,13 @@ def doctor(
         help="Emit the Hermes parity doctor view as JSON.",
     ),
 ) -> None:
-    payload = _run(
-        _run_with_services(lambda services: services.hermes_platform.get_doctor_view())
-    ).model_dump(mode="json")
+    async def _action(services: CliServices) -> dict[str, object]:
+        view = await _try_live_hermes_doctor_view(services.settings)
+        if view is None:
+            view = await services.hermes_platform.get_doctor_view()
+        return view.model_dump(mode="json")
+
+    payload = _run(_run_with_services(_action))
     _emit_hermes_doctor(payload, json_output=json_output)
 
 
@@ -3179,9 +3336,13 @@ def update_status(
         help="Emit the runtime update status as JSON.",
     ),
 ) -> None:
-    payload = _run(
-        _run_with_services(lambda services: services.hermes_platform.get_update_view())
-    ).model_dump(mode="json")
+    async def _action(services: CliServices) -> dict[str, object]:
+        view = await _try_live_update_view(services.settings)
+        if view is None:
+            view = await services.hermes_platform.get_update_view()
+        return view.model_dump(mode="json")
+
+    payload = _run(_run_with_services(_action))
     _emit_update_status(payload, json_output=json_output)
 
 
@@ -3264,9 +3425,13 @@ def gateway_doctor(
         help="Emit the gateway capability summary as JSON.",
     ),
 ) -> None:
-    payload = _run(
-        _run_with_services(lambda services: services.gateway_capability.get_view())
-    ).model_dump(mode="json")
+    async def _action(services: CliServices) -> dict[str, object]:
+        view = await _try_live_gateway_capability_view(services.settings)
+        if view is None:
+            view = await services.gateway_capability.get_view()
+        return view.model_dump(mode="json")
+
+    payload = _run(_run_with_services(_action))
     _emit_gateway_capability(payload, json_output=json_output)
 
 

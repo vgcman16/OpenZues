@@ -143,6 +143,8 @@ async def test_database_round_trip(tmp_path) -> None:
         last_route_instance_id=instance_id,
         last_route_resolved_at="2026-04-11T00:05:00+00:00",
         default_cwd=str(tmp_path),
+        bootstrap_roles=["node", "operator"],
+        bootstrap_scopes=["operator.approvals", "operator.read"],
         model="gpt-5.4",
         max_turns=4,
         use_builtin_agents=True,
@@ -161,6 +163,8 @@ async def test_database_round_trip(tmp_path) -> None:
             "mode": "remote",
             "flow": "advanced",
             "project_path": str(tmp_path),
+            "bootstrap_roles": ["operator", "node"],
+            "bootstrap_scopes": ["operator.write"],
             "task_name": "Nightly loop",
             "updated_at": "2026-04-11T00:00:00+00:00",
         }
@@ -221,10 +225,14 @@ async def test_database_round_trip(tmp_path) -> None:
     assert gateway_bootstrap["task_blueprint_id"] == task_id
     assert gateway_bootstrap["last_route_instance_id"] == instance_id
     assert gateway_bootstrap["model"] == "gpt-5.4"
+    assert gateway_bootstrap["bootstrap_roles"] == ["node", "operator"]
+    assert gateway_bootstrap["bootstrap_scopes"] == ["operator.approvals", "operator.read"]
     assert gateway_bootstrap["toolsets"] == ["hermes-cli", "browser"]
     assert wizard_session is not None
     assert wizard_session["session"]["mode"] == "remote"
     assert wizard_session["session"]["flow"] == "advanced"
+    assert wizard_session["session"]["bootstrap_roles"] == ["operator", "node"]
+    assert wizard_session["session"]["bootstrap_scopes"] == ["operator.write"]
 
 
 @pytest.mark.asyncio

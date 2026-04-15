@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 TransportType = Literal["desktop", "stdio", "websocket"]
 PlaybookKind = Literal["command", "turn", "thread_turn", "review"]
@@ -28,6 +28,7 @@ SetupFlow = Literal["quickstart", "advanced"]
 SetupWizardStatus = Literal["unconfigured", "staged", "ready"]
 LaunchRouteStatus = Literal["ready", "staged", "repair"]
 LaunchRouteBindingMode = Literal["task_lane", "saved_lane", "workspace_affinity"]
+LaunchRoutePolicy = Literal["main", "session"]
 ConversationTargetPeerKind = Literal["direct", "group", "channel"]
 LaunchRouteMatch = Literal[
     "task.instance",
@@ -742,14 +743,32 @@ class GatewayCapabilityMemoryProofReferenceView(BaseModel):
     updated_at: datetime | None = None
 
 
+class GatewayCapabilityMethodScopeView(BaseModel):
+    scope: str
+    method_count: int = 0
+    methods: list[str] = Field(default_factory=list)
+
+
 class GatewayCapabilityMethodCatalogView(BaseModel):
     headline: str
     summary: str
     tool_count: int = 0
     server_count: int = 0
     lane_count: int = 0
+    classified_method_count: int = 0
+    reserved_admin_method_count: int = 0
+    reserved_admin_scope: str | None = None
     tools: list[str] = Field(default_factory=list)
     servers: list[str] = Field(default_factory=list)
+    reserved_admin_methods: list[str] = Field(default_factory=list)
+    scopes: list[GatewayCapabilityMethodScopeView] = Field(default_factory=list)
+
+
+class GatewayCapabilityEventCatalogView(BaseModel):
+    headline: str
+    summary: str
+    event_count: int = 0
+    events: list[str] = Field(default_factory=list)
 
 
 class GatewayCapabilityInventoryView(BaseModel):
@@ -772,6 +791,7 @@ class GatewayCapabilityInventoryView(BaseModel):
     memory_proof_target_instance_id: int | None = None
     memory_proof_launch_label: str | None = None
     method_catalog: GatewayCapabilityMethodCatalogView | None = None
+    event_catalog: GatewayCapabilityEventCatalogView | None = None
     items: list[GatewayCapabilityInventoryItemView] = Field(default_factory=list)
 
 
@@ -1223,6 +1243,8 @@ class OnboardingBootstrapCreate(BaseModel):
     operator_name: str
     operator_email: str | None = None
     operator_role: OperatorRole = "operator"
+    bootstrap_roles: list[str] | None = None
+    bootstrap_scopes: list[str] | None = None
     issue_api_key: bool = True
     vault_secret_label: str | None = None
     vault_secret_value: str | None = None
@@ -1291,6 +1313,20 @@ class GatewayBootstrapResourceView(BaseModel):
     connected: bool | None = None
 
 
+class GatewayBootstrapRuntimeInventoryView(BaseModel):
+    headline: str
+    summary: str
+    app_count: int = 0
+    plugin_count: int = 0
+    mcp_server_count: int = 0
+    base_method_count: int = 0
+    app_names: list[str] = Field(default_factory=list)
+    plugin_names: list[str] = Field(default_factory=list)
+    mcp_server_names: list[str] = Field(default_factory=list)
+    base_methods: list[str] = Field(default_factory=list)
+    method_catalog: GatewayCapabilityMethodCatalogView | None = None
+
+
 class ConversationTargetView(BaseModel):
     channel: str
     account_id: str | None = None
@@ -1339,6 +1375,8 @@ class LaunchRouteView(BaseModel):
     headline: str
     summary: str
     session_key: str
+    main_session_key: str
+    last_route_policy: LaunchRoutePolicy
     conversation_target: ConversationTargetView | None = None
     warnings: list[str] = Field(default_factory=list)
     preferred_instance: GatewayBootstrapResourceView | None = None
@@ -1358,6 +1396,8 @@ class GatewayBootstrapUpdate(BaseModel):
     operator_id: int | None = None
     task_blueprint_id: int | None = None
     default_cwd: str | None = None
+    bootstrap_roles: list[str] | None = None
+    bootstrap_scopes: list[str] | None = None
     model: str = "gpt-5.4"
     max_turns: int | None = Field(default=4, ge=1)
     use_builtin_agents: bool = True
@@ -1382,10 +1422,13 @@ class GatewayBootstrapView(BaseModel):
     route_binding_mode: GatewayRouteBindingMode = "saved_lane"
     instance: GatewayBootstrapResourceView | None = None
     project: GatewayBootstrapResourceView | None = None
+    integration: GatewayBootstrapResourceView | None = None
     team: GatewayBootstrapResourceView | None = None
     operator: GatewayBootstrapResourceView | None = None
     task_blueprint: GatewayBootstrapResourceView | None = None
     default_cwd: str | None = None
+    bootstrap_roles: list[str] = Field(default_factory=list)
+    bootstrap_scopes: list[str] = Field(default_factory=list)
     model: str = "gpt-5.4"
     max_turns: int | None = 4
     use_builtin_agents: bool = True
@@ -1401,6 +1444,26 @@ class GatewayBootstrapView(BaseModel):
     tool_policy: HermesToolPolicyView | None = None
     launch_defaults_summary: str
     launch_route: LaunchRouteView | None = None
+    runtime_inventory: GatewayBootstrapRuntimeInventoryView | None = None
+
+
+class ControlUiBootstrapConfigView(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    base_path: str = Field(default="", alias="basePath")
+    assistant_name: str = Field(alias="assistantName")
+    assistant_avatar: str = Field(alias="assistantAvatar")
+    assistant_agent_id: str = Field(alias="assistantAgentId")
+    server_version: str | None = Field(default=None, alias="serverVersion")
+    local_media_preview_roots: list[str] = Field(
+        default_factory=list,
+        alias="localMediaPreviewRoots",
+    )
+    embed_sandbox: Literal["strict", "scripts", "trusted"] = Field(
+        default="scripts",
+        alias="embedSandbox",
+    )
+    allow_external_embed_urls: bool = Field(default=False, alias="allowExternalEmbedUrls")
 
 
 class SetupFootprintResourceView(BaseModel):
@@ -1447,6 +1510,8 @@ class SetupWizardSessionView(BaseModel):
     team_name: str | None = None
     operator_name: str | None = None
     operator_email: str | None = None
+    bootstrap_roles: list[str] = Field(default_factory=list)
+    bootstrap_scopes: list[str] = Field(default_factory=list)
     task_name: str | None = None
     cadence_minutes: int = 180
     model: str = "gpt-5.4"
@@ -1471,6 +1536,8 @@ class SetupWizardSessionUpdate(BaseModel):
     team_name: str | None = None
     operator_name: str | None = None
     operator_email: str | None = None
+    bootstrap_roles: list[str] | None = None
+    bootstrap_scopes: list[str] | None = None
     task_name: str | None = None
     cadence_minutes: int | None = Field(default=None, ge=1)
     model: str | None = None
@@ -1620,6 +1687,14 @@ class MissionCreate(BaseModel):
     swarm_enabled: bool = False
     toolsets: list[str] = Field(default_factory=list)
     start_immediately: bool = True
+
+    @field_validator("session_key")
+    @classmethod
+    def normalize_session_key(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip().lower()
+        return normalized or None
 
 
 class MissionDraftView(MissionCreate):

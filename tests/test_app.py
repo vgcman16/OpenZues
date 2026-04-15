@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import shutil
+import time
 import tomllib
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -11,6 +12,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from openzues.app import (
+    build_brief,
     build_continuity,
     build_cortex,
     build_economy,
@@ -40,8 +42,14 @@ from openzues.services.control_chat import plan_attention_queue, plan_control_ch
 from openzues.services.control_plane import ControlPlaneLease
 from openzues.services.dreams import build_dream_deck
 from openzues.services.ecc_catalog import configure_ecc_catalog
+from openzues.services.gateway_bootstrap import GatewayBootstrapBootResult, GatewayBootstrapService
+from openzues.services.gateway_method_policy import (
+    list_known_gateway_events,
+    list_known_gateway_methods,
+)
 from openzues.services.hermes_skills import configure_hermes_skill_catalog
 from openzues.services.launch_routing import LaunchRoutingService
+from openzues.services.manager import RuntimeManager
 from openzues.services.memory_protocol import (
     build_mempalace_control_plane_proof_signal,
     build_mempalace_roundtrip_signal,
@@ -883,6 +891,8 @@ def make_gateway_capability_view(
                     "headline": "Saved launch route",
                     "summary": "Launch route summary",
                     "session_key": "session-gateway",
+                    "main_session_key": "session-gateway-main",
+                    "last_route_policy": "session",
                     "warnings": [] if route_warning is None else [route_warning],
                     "preferred_instance": {
                         "id": 1,
@@ -1262,6 +1272,76 @@ def test_dashboard_merges_repeated_plugin_warning_events(tmp_path) -> None:
     assert len(prompt_event["payload"]["paths"]) == 2
 
 
+def test_dashboard_compacts_verbose_command_events(tmp_path) -> None:
+    long_command = "python -c \"" + ("print('gateway bootstrap parity') " * 20) + "\""
+    long_output = "gateway bootstrap checkpoint " * 80
+    long_delta = "relay note " * 90
+
+    with make_client(tmp_path, reset_data_dir=True) as client:
+        database = client.app.state.database
+        asyncio.run(
+            database.append_event(
+                instance_id=2,
+                thread_id="thread_live",
+                method="item/completed",
+                payload={
+                    "threadId": "thread_live",
+                    "turnId": "turn_live",
+                    "item": {
+                        "type": "commandExecution",
+                        "id": "cmd_1",
+                        "command": long_command,
+                        "aggregatedOutput": long_output,
+                        "status": "completed",
+                        "commandActions": [
+                            {"type": "run", "command": long_command},
+                            {"type": "run", "command": "rg -n gateway src/openzues"},
+                            {"type": "run", "command": "pytest tests/test_gateway_bootstrap.py -q"},
+                            {"type": "run", "command": "python -m compileall src/openzues"},
+                        ],
+                    },
+                },
+            )
+        )
+        asyncio.run(
+            database.append_event(
+                instance_id=2,
+                thread_id="thread_live",
+                method="item/commandExecution/outputDelta",
+                payload={
+                    "threadId": "thread_live",
+                    "turnId": "turn_live",
+                    "itemId": "cmd_1",
+                    "delta": long_delta,
+                },
+            )
+        )
+        response = client.get("/api/dashboard")
+
+    assert response.status_code == 200
+    payload = response.json()
+    command_event = next(
+        event for event in payload["events"] if event["method"] == "item/completed"
+    )
+    delta_event = next(
+        event
+        for event in payload["events"]
+        if event["method"] == "item/commandExecution/outputDelta"
+    )
+
+    item = command_event["payload"]["item"]
+    assert item["command"].endswith("... [truncated]")
+    assert item["commandLength"] == len(long_command)
+    assert item["aggregatedOutput"].endswith("... [truncated]")
+    assert item["aggregatedOutputLength"] == len(long_output)
+    assert item["commandActionCount"] == 4
+    assert item["commandActionsTruncated"] is True
+    assert len(item["commandActions"]) == 3
+
+    assert delta_event["payload"]["delta"].endswith("... [truncated]")
+    assert delta_event["payload"]["deltaLength"] == len(long_delta)
+
+
 def test_observer_mode_blocks_mutating_requests(tmp_path) -> None:
     lease = FakeControlPlaneLease(owner=False, owner_pid=4242)
     with make_client(tmp_path, control_plane_lease=lease) as client:
@@ -1298,6 +1378,134 @@ def test_project_creation_appears_on_dashboard(tmp_path) -> None:
     assert dashboard["missions"] == []
     assert dashboard["projects"][0]["label"] == "Sandbox"
     assert dashboard["playbooks"] == []
+
+
+def test_dashboard_compacts_inactive_mission_cards_but_keeps_live_cards_rich(tmp_path) -> None:
+    long_objective = (
+        "Resume from the verified parity checkpoint, inspect the current gateway seam, design the "
+        "next bounded slice, implement it end to end, run focused verification, and leave a clean "
+        "operator handoff before broadening into the next OpenClaw parity milestone. "
+    ) * 3
+    long_checkpoint = (
+        "Completed the gateway seam and left the next operator handoff with verification notes, "
+        "follow-on repair steps, and lane routing caveats so the next autonomous cycle can resume "
+        "without rebuilding the entire context map. "
+    ) * 3
+
+    with make_client(tmp_path) as client:
+        instance = client.post(
+            "/api/instances",
+            json={
+                "name": "Dashboard Lane",
+                "transport": "desktop",
+                "cwd": str(tmp_path),
+                "auto_connect": False,
+            },
+        ).json()
+        client.app.state.manager.instances[instance["id"]].connected = True
+        database = client.app.state.database
+
+        completed_id = asyncio.run(
+            database.create_mission(
+                name="Completed parity slice",
+                objective=long_objective,
+                status="completed",
+                instance_id=instance["id"],
+                project_id=None,
+                thread_id="thread_completed_dashboard",
+                cwd=str(tmp_path),
+                model="gpt-5.4",
+                reasoning_effort=None,
+                collaboration_mode=None,
+                max_turns=4,
+                use_builtin_agents=True,
+                run_verification=True,
+                auto_commit=False,
+                pause_on_approval=True,
+                allow_auto_reflexes=True,
+                auto_recover=True,
+                auto_recover_limit=2,
+                reflex_cooldown_seconds=900,
+                allow_failover=True,
+                toolsets=["debugging", "delegation", "memory"],
+            )
+        )
+        active_id = asyncio.run(
+            database.create_mission(
+                name="Active parity slice",
+                objective=long_objective,
+                status="active",
+                instance_id=instance["id"],
+                project_id=None,
+                thread_id="thread_active_dashboard",
+                cwd=str(tmp_path),
+                model="gpt-5.4",
+                reasoning_effort=None,
+                collaboration_mode=None,
+                max_turns=4,
+                use_builtin_agents=True,
+                run_verification=True,
+                auto_commit=False,
+                pause_on_approval=True,
+                allow_auto_reflexes=True,
+                auto_recover=True,
+                auto_recover_limit=2,
+                reflex_cooldown_seconds=900,
+                allow_failover=True,
+                toolsets=["debugging", "delegation", "memory"],
+            )
+        )
+        asyncio.run(
+            database.update_mission(
+                completed_id,
+                last_checkpoint=long_checkpoint,
+                last_commentary=long_checkpoint,
+            )
+        )
+        asyncio.run(
+            database.update_mission(
+                active_id,
+                in_progress=1,
+                phase="thinking",
+                last_checkpoint=long_checkpoint,
+                last_commentary=long_checkpoint,
+            )
+        )
+        for index in range(3):
+            summary = f"checkpoint {index}: {long_checkpoint}"
+            asyncio.run(
+                database.append_mission_checkpoint(
+                    mission_id=completed_id,
+                    thread_id="thread_completed_dashboard",
+                    turn_id=f"turn_completed_{index}",
+                    kind="checkpoint",
+                    summary=summary,
+                )
+            )
+            asyncio.run(
+                database.append_mission_checkpoint(
+                    mission_id=active_id,
+                    thread_id="thread_active_dashboard",
+                    turn_id=f"turn_active_{index}",
+                    kind="checkpoint",
+                    summary=summary,
+                )
+            )
+
+        dashboard = client.get("/api/dashboard").json()
+
+    missions = {mission["id"]: mission for mission in dashboard["missions"]}
+    completed = missions[completed_id]
+    active = missions[active_id]
+
+    assert len(completed["checkpoints"]) == 2
+    assert completed["objective"].endswith("...")
+    assert len(completed["objective"]) < len(long_objective)
+    assert completed["tool_evidence"]["items"] == []
+    assert active["status"] == "active"
+    assert len(active["checkpoints"]) == 3
+    assert not active["objective"].endswith("...")
+    assert len(active["objective"]) > len(completed["objective"])
 
 
 def test_project_creation_surfaces_ecc_source_workspace(tmp_path) -> None:
@@ -1495,6 +1703,10 @@ def test_onboarding_bootstrap_creates_first_run_bundle_and_launch_draft(tmp_path
     assert payload["launch_route"]["matched_by"] == "task.instance"
     assert payload["launch_route"]["resolved_instance"]["label"] == "Bootstrap Lane"
     assert payload["launch_route"]["session_key"] == payload["mission_draft"]["session_key"]
+    assert payload["launch_route"]["main_session_key"] != payload["launch_route"]["session_key"]
+    assert payload["launch_route"]["main_session_key"].startswith("launch:mode:task_lane:task:")
+    assert ":lane:" not in payload["launch_route"]["main_session_key"]
+    assert payload["launch_route"]["last_route_policy"] == "session"
     assert payload["launch_route"]["conversation_target"] == payload["mission_draft"][
         "conversation_target"
     ]
@@ -1516,6 +1728,13 @@ def test_onboarding_bootstrap_creates_first_run_bundle_and_launch_draft(tmp_path
     assert dashboard["gateway_bootstrap"]["route_binding_mode"] == "saved_lane"
     assert dashboard["gateway_bootstrap"]["run_verification"] is True
     assert dashboard["gateway_bootstrap"]["auto_commit"] is False
+    assert dashboard["gateway_bootstrap"]["bootstrap_roles"] == ["node", "operator"]
+    assert dashboard["gateway_bootstrap"]["bootstrap_scopes"] == [
+        "operator.approvals",
+        "operator.read",
+        "operator.talk.secrets",
+        "operator.write",
+    ]
     assert dashboard["gateway_bootstrap"]["toolsets"] == ["hermes-cli", "browser", "debugging"]
     assert dashboard["gateway_bootstrap"]["tool_policy"]["toolsets"] == [
         "hermes-cli",
@@ -1531,6 +1750,13 @@ def test_onboarding_bootstrap_creates_first_run_bundle_and_launch_draft(tmp_path
     setup = setup_response.json()
     assert setup["wizard_session"]["conversation_target"]["channel"] == "slack"
     assert setup["wizard_session"]["conversation_target"]["account_id"] == "workspace-bot"
+    assert setup["wizard_session"]["bootstrap_roles"] == ["node", "operator"]
+    assert setup["wizard_session"]["bootstrap_scopes"] == [
+        "operator.approvals",
+        "operator.read",
+        "operator.talk.secrets",
+        "operator.write",
+    ]
     assert (
         setup["launch_handoff"]["launch_route"]["conversation_target"]["peer_id"]
         == "deploy-room"
@@ -2819,6 +3045,8 @@ def test_launch_routing_uses_gateway_default_cwd_when_task_has_no_workspace_cont
     assert route.resolved_instance.id == matching_instance["id"]
     assert route.candidates[0].id == matching_instance["id"]
     assert route.session_key == "launch:mode:workspace_affinity:task:77:operator:1"
+    assert route.main_session_key == route.session_key
+    assert route.last_route_policy == "main"
     assert gateway is not None
     assert gateway["last_route_instance_id"] == matching_instance["id"]
     assert gateway["last_route_resolved_at"] is not None
@@ -3009,6 +3237,312 @@ def test_setup_launch_handoff_surfaces_session_conversation_reuse(tmp_path) -> N
     assert payload["launch_handoff"]["mission_draft"]["thread_id"] == "thread_saved"
     assert payload["launch_handoff"]["mission_draft"]["session_key"] == session_key
     assert payload["launch_handoff"]["mission_draft"]["conversation_target"] == target
+
+
+def test_setup_launch_handoff_preserves_thread_child_session_key_for_reuse(tmp_path) -> None:
+    workspace_path = tmp_path / "workspace"
+    workspace_path.mkdir()
+
+    with make_client(tmp_path) as client:
+        lane = client.post(
+            "/api/instances",
+            json={
+                "name": "Workspace Lane",
+                "transport": "desktop",
+                "cwd": str(workspace_path),
+                "auto_connect": False,
+            },
+        ).json()
+        manager = client.app.state.manager
+        manager.instances[lane["id"]].connected = True
+
+        database = client.app.state.database
+        project_id = asyncio.run(
+            database.create_project(path=str(workspace_path), label="Workspace")
+        )
+        team_id = asyncio.run(
+            database.create_team(
+                name="Operators",
+                slug="operators",
+                description="Remote operators",
+            )
+        )
+        operator_id = asyncio.run(
+            database.create_operator(
+                team_id=team_id,
+                name="Operator",
+                email="operator@example.com",
+                role="operator",
+                enabled=True,
+                api_key_hash="hash123",
+                api_key_preview="ozk_abcd...1234",
+                api_key_issued_at="2026-04-12T00:00:00+00:00",
+            )
+        )
+        task_id = asyncio.run(
+            database.create_task_blueprint(
+                name="OpenClaw Total Parity Program",
+                summary="Continue the verified parity spine.",
+                project_id=project_id,
+                instance_id=None,
+                cadence_minutes=180,
+                enabled=True,
+                payload={
+                    "objective_template": "Ship the next verified parity slice.",
+                    "cwd": str(workspace_path),
+                    "model": "gpt-5.4",
+                    "max_turns": 4,
+                    "use_builtin_agents": True,
+                    "run_verification": True,
+                    "auto_commit": False,
+                    "pause_on_approval": True,
+                    "allow_auto_reflexes": True,
+                    "auto_recover": True,
+                    "auto_recover_limit": 2,
+                    "reflex_cooldown_seconds": 900,
+                    "allow_failover": True,
+                    "toolsets": ["debugging", "delegation"],
+                    "run_until_complete": False,
+                    "continuation_cooldown_minutes": 10,
+                },
+            )
+        )
+        asyncio.run(
+            database.upsert_gateway_bootstrap(
+                setup_mode="remote",
+                setup_flow="advanced",
+                route_binding_mode="workspace_affinity",
+                preferred_instance_id=None,
+                preferred_project_id=project_id,
+                team_id=team_id,
+                operator_id=operator_id,
+                task_blueprint_id=task_id,
+                default_cwd=str(workspace_path),
+                model="gpt-5.4",
+                max_turns=4,
+                use_builtin_agents=True,
+                run_verification=True,
+                auto_commit=False,
+                pause_on_approval=True,
+                allow_auto_reflexes=True,
+                auto_recover=True,
+                auto_recover_limit=2,
+                reflex_cooldown_seconds=900,
+                allow_failover=True,
+            )
+        )
+        main_session_key = (
+            f"launch:mode:workspace_affinity:task:{task_id}:project:{project_id}:operator:{operator_id}"
+        )
+        child_session_key = f"{main_session_key}:thread:thread_saved"
+        asyncio.run(
+            database.create_mission(
+                name="Previous parity run",
+                objective="Ship the prior parity slice.",
+                status="completed",
+                instance_id=lane["id"],
+                project_id=project_id,
+                task_blueprint_id=task_id,
+                thread_id="thread_saved",
+                session_key=child_session_key,
+                cwd=str(workspace_path),
+                model="gpt-5.4",
+                reasoning_effort=None,
+                collaboration_mode=None,
+                max_turns=4,
+                use_builtin_agents=True,
+                run_verification=True,
+                auto_commit=False,
+                pause_on_approval=True,
+                allow_auto_reflexes=True,
+                auto_recover=True,
+                auto_recover_limit=2,
+                reflex_cooldown_seconds=900,
+                allow_failover=True,
+                toolsets=["debugging"],
+            )
+        )
+
+        setup_response = client.get("/api/setup")
+
+    assert setup_response.status_code == 200
+    payload = setup_response.json()
+    route = payload["launch_handoff"]["launch_route"]
+    reuse = route["conversation_reuse"]
+    assert route["main_session_key"] == main_session_key
+    assert route["session_key"] == child_session_key
+    assert route["last_route_policy"] == "session"
+    assert reuse["reusable"] is True
+    assert reuse["thread_id"] == "thread_saved"
+    assert "reuse thread thread_saved" in reuse["summary"]
+    assert payload["launch_handoff"]["mission_draft"]["thread_id"] == "thread_saved"
+    assert payload["launch_handoff"]["mission_draft"]["session_key"] == child_session_key
+
+
+def test_setup_launch_handoff_keeps_workspace_affinity_session_key_across_lane_churn(
+    tmp_path,
+) -> None:
+    workspace_path = tmp_path / "workspace"
+    workspace_path.mkdir()
+
+    with make_client(tmp_path) as client:
+        previous_lane = client.post(
+            "/api/instances",
+            json={
+                "name": "Previous Workspace Lane",
+                "transport": "desktop",
+                "cwd": str(workspace_path),
+                "auto_connect": False,
+            },
+        ).json()
+        current_lane = client.post(
+            "/api/instances",
+            json={
+                "name": "Current Workspace Lane",
+                "transport": "desktop",
+                "cwd": str(workspace_path),
+                "auto_connect": False,
+            },
+        ).json()
+        manager = client.app.state.manager
+        manager.instances[previous_lane["id"]].connected = False
+        manager.instances[current_lane["id"]].connected = True
+
+        database = client.app.state.database
+        project_id = asyncio.run(
+            database.create_project(path=str(workspace_path), label="Workspace")
+        )
+        team_id = asyncio.run(
+            database.create_team(
+                name="Operators",
+                slug="operators",
+                description="Remote operators",
+            )
+        )
+        operator_id = asyncio.run(
+            database.create_operator(
+                team_id=team_id,
+                name="Operator",
+                email="operator@example.com",
+                role="operator",
+                enabled=True,
+                api_key_hash="hash123",
+                api_key_preview="ozk_abcd...1234",
+                api_key_issued_at="2026-04-12T00:00:00+00:00",
+            )
+        )
+        task_id = asyncio.run(
+            database.create_task_blueprint(
+                name="OpenClaw Total Parity Program",
+                summary="Continue the verified parity spine.",
+                project_id=project_id,
+                instance_id=None,
+                cadence_minutes=180,
+                enabled=True,
+                payload={
+                    "objective_template": "Ship the next verified parity slice.",
+                    "conversation_target": {
+                        "channel": "slack",
+                        "account_id": "workspace-bot",
+                        "peer_kind": "channel",
+                        "peer_id": "deploy-room",
+                    },
+                    "cwd": str(workspace_path),
+                    "model": "gpt-5.4",
+                    "max_turns": 4,
+                    "use_builtin_agents": True,
+                    "run_verification": True,
+                    "auto_commit": False,
+                    "pause_on_approval": True,
+                    "allow_auto_reflexes": True,
+                    "auto_recover": True,
+                    "auto_recover_limit": 2,
+                    "reflex_cooldown_seconds": 900,
+                    "allow_failover": True,
+                    "toolsets": ["debugging", "delegation"],
+                    "run_until_complete": False,
+                    "continuation_cooldown_minutes": 10,
+                },
+            )
+        )
+        asyncio.run(
+            database.upsert_gateway_bootstrap(
+                setup_mode="remote",
+                setup_flow="advanced",
+                route_binding_mode="workspace_affinity",
+                preferred_instance_id=None,
+                preferred_project_id=project_id,
+                team_id=team_id,
+                operator_id=operator_id,
+                task_blueprint_id=task_id,
+                default_cwd=str(workspace_path),
+                model="gpt-5.4",
+                max_turns=4,
+                use_builtin_agents=True,
+                run_verification=True,
+                auto_commit=False,
+                pause_on_approval=True,
+                allow_auto_reflexes=True,
+                auto_recover=True,
+                auto_recover_limit=2,
+                reflex_cooldown_seconds=900,
+                allow_failover=True,
+                last_route_instance_id=previous_lane["id"],
+            )
+        )
+        session_key = (
+            f"launch:mode:workspace_affinity:task:{task_id}:project:{project_id}:operator:{operator_id}:"
+            "channel:slack:account:workspace-bot:peer:channel:deploy-room"
+        )
+        asyncio.run(
+            database.create_mission(
+                name="Previous parity run",
+                objective="Ship the prior parity slice.",
+                status="completed",
+                instance_id=previous_lane["id"],
+                project_id=project_id,
+                task_blueprint_id=task_id,
+                thread_id="thread_saved",
+                session_key=session_key,
+                conversation_target={
+                    "channel": "slack",
+                    "account_id": "workspace-bot",
+                    "peer_kind": "channel",
+                    "peer_id": "deploy-room",
+                },
+                cwd=str(workspace_path),
+                model="gpt-5.4",
+                reasoning_effort=None,
+                collaboration_mode=None,
+                max_turns=4,
+                use_builtin_agents=True,
+                run_verification=True,
+                auto_commit=False,
+                pause_on_approval=True,
+                allow_auto_reflexes=True,
+                auto_recover=True,
+                auto_recover_limit=2,
+                reflex_cooldown_seconds=900,
+                allow_failover=True,
+                toolsets=["debugging"],
+            )
+        )
+
+        setup_response = client.get("/api/setup")
+
+    assert setup_response.status_code == 200
+    payload = setup_response.json()
+    reuse = payload["launch_handoff"]["launch_route"]["conversation_reuse"]
+    assert payload["launch_handoff"]["launch_route"]["mode"] == "workspace_affinity"
+    assert (
+        payload["launch_handoff"]["launch_route"]["resolved_instance"]["label"]
+        == "Current Workspace Lane"
+    )
+    assert reuse["reusable"] is False
+    assert reuse["thread_id"] == "thread_saved"
+    assert "current route resolves to Current Workspace Lane" in reuse["summary"]
+    assert payload["launch_handoff"]["mission_draft"]["thread_id"] is None
+    assert payload["launch_handoff"]["mission_draft"]["session_key"] == session_key
 
 
 def test_gateway_backfill_does_not_overwrite_saved_remote_bootstrap(tmp_path) -> None:
@@ -3230,8 +3764,22 @@ def test_setup_endpoint_reports_reentrant_posture_after_bootstrap(tmp_path) -> N
     assert payload["recommended_action"] == "modify"
     assert payload["available_actions"] == ["keep", "modify", "reset"]
     assert payload["gateway_bootstrap"]["status"] == "staged"
+    assert payload["gateway_bootstrap"]["bootstrap_roles"] == ["node", "operator"]
+    assert payload["gateway_bootstrap"]["bootstrap_scopes"] == [
+        "operator.approvals",
+        "operator.read",
+        "operator.talk.secrets",
+        "operator.write",
+    ]
     assert payload["footprint"]["instance"]["label"] == "Bootstrap Lane"
     assert payload["wizard_session"]["mode"] == "local"
+    assert payload["wizard_session"]["bootstrap_roles"] == ["node", "operator"]
+    assert payload["wizard_session"]["bootstrap_scopes"] == [
+        "operator.approvals",
+        "operator.read",
+        "operator.talk.secrets",
+        "operator.write",
+    ]
     assert payload["launch_handoff"]["status"] == "staged"
     assert payload["launch_handoff"]["launch_route"]["mode"] == "task_lane"
     assert payload["launch_handoff"]["recommended_action"] == "connect_lane"
@@ -3509,6 +4057,196 @@ def test_gateway_bootstrap_endpoint_updates_saved_launch_profile(tmp_path) -> No
     assert read_response.json()["task_blueprint"]["label"] == "Gateway Loop"
 
 
+def test_gateway_bootstrap_endpoint_marks_connected_local_lane_ready_without_api_key(
+    tmp_path,
+) -> None:
+    with make_client(tmp_path) as client:
+        project_response = client.post(
+            "/api/projects",
+            json={"path": str(tmp_path), "label": "Gateway Workspace"},
+        )
+        instance_response = client.post(
+            "/api/instances",
+            json={
+                "name": "Gateway Lane",
+                "transport": "desktop",
+                "cwd": str(tmp_path),
+                "auto_connect": False,
+            },
+        )
+        task_response = client.post(
+            "/api/tasks",
+            json={
+                "name": "Gateway Loop",
+                "summary": "Launch the next verified gateway slice.",
+                "objective_template": "Inspect the repo and ship the next verified gateway slice.",
+                "instance_id": instance_response.json()["id"],
+                "project_id": project_response.json()["id"],
+                "cadence_minutes": 120,
+                "cwd": str(tmp_path),
+                "model": "gpt-5.4-mini",
+                "reasoning_effort": None,
+                "collaboration_mode": None,
+                "max_turns": 3,
+                "use_builtin_agents": False,
+                "run_verification": True,
+                "auto_commit": False,
+                "pause_on_approval": True,
+                "allow_auto_reflexes": True,
+                "auto_recover": True,
+                "auto_recover_limit": 2,
+                "reflex_cooldown_seconds": 900,
+                "allow_failover": True,
+                "enabled": True,
+            },
+        )
+        runtime = client.app.state.manager.instances[instance_response.json()["id"]]
+        runtime.connected = True
+        runtime.initialized = True
+
+        profile_response = client.put(
+            "/api/gateway/bootstrap",
+            json={
+                "preferred_instance_id": instance_response.json()["id"],
+                "preferred_project_id": project_response.json()["id"],
+                "team_id": 1,
+                "operator_id": 1,
+                "task_blueprint_id": task_response.json()["id"],
+                "default_cwd": str(tmp_path),
+                "model": "gpt-5.4-mini",
+                "max_turns": 3,
+                "use_builtin_agents": False,
+                "run_verification": True,
+                "auto_commit": False,
+                "pause_on_approval": True,
+                "allow_auto_reflexes": True,
+                "auto_recover": True,
+                "auto_recover_limit": 2,
+                "reflex_cooldown_seconds": 900,
+                "allow_failover": True,
+            },
+        )
+        read_response = client.get("/api/gateway/bootstrap")
+
+    assert profile_response.status_code == 200
+    profile = profile_response.json()
+    assert profile["status"] == "ready"
+    assert profile["headline"] == "Gateway bootstrap is launch-ready"
+    assert profile["instance"]["connected"] is True
+    assert "local-only" in profile["operator"]["detail"]
+    assert not any("active API key" in warning for warning in profile["warnings"])
+
+    assert read_response.status_code == 200
+    assert read_response.json()["status"] == "ready"
+
+
+def test_gateway_capability_stays_ready_with_offline_aux_lane_when_primary_lane_is_healthy(
+    tmp_path,
+) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        bootstrap_response = client.post(
+            "/api/onboarding/bootstrap",
+            json={
+                "setup_mode": "local",
+                "setup_flow": "quickstart",
+                "instance_mode": "create_desktop",
+                "instance_name": "Primary Lane",
+                "project_path": str(tmp_path),
+                "project_label": "Primary Workspace",
+                "operator_name": "Local Builder",
+                "task_name": "Primary Loop",
+                "objective_template": "Ship the next verified slice.",
+            },
+        )
+        assert bootstrap_response.status_code == 200
+
+        primary_instance_id = bootstrap_response.json()["instance"]["id"]
+        primary_runtime = client.app.state.manager.instances[primary_instance_id]
+        primary_runtime.connected = True
+        primary_runtime.initialized = True
+
+        aux_response = client.post(
+            "/api/instances",
+            json={
+                "name": "Workspace Shell",
+                "transport": "desktop",
+                "cwd": str(tmp_path),
+                "auto_connect": False,
+            },
+        )
+        assert aux_response.status_code == 200
+
+        capability_response = client.get("/api/gateway/capability")
+        dashboard_response = client.get("/api/dashboard")
+
+    assert capability_response.status_code == 200
+    capability = capability_response.json()
+    assert capability["level"] == "ready"
+    assert capability["headline"] == "Gateway capability is operator-ready"
+    assert capability["connected_lane_health"]["connected_count"] == 1
+    assert capability["connected_lane_health"]["offline_count"] == 1
+    assert capability["connected_lane_health"]["warning_count"] == 0
+
+    assert dashboard_response.status_code == 200
+    dashboard = dashboard_response.json()
+    assert dashboard["gateway_capability"]["level"] == "ready"
+
+
+def test_status_endpoint_reuses_gateway_contract_and_surfaces_queue_plan(tmp_path) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        bootstrap_response = client.post(
+            "/api/onboarding/bootstrap",
+            json={
+                "setup_mode": "local",
+                "setup_flow": "quickstart",
+                "instance_mode": "create_desktop",
+                "instance_name": "Gateway Lane",
+                "project_path": str(tmp_path),
+                "project_label": "Gateway Workspace",
+                "operator_name": "Gateway Builder",
+                "task_name": "Gateway Loop",
+                "objective_template": "Ship the next verified gateway slice.",
+            },
+        )
+        assert bootstrap_response.status_code == 200
+
+        status_response = client.get("/api/status")
+        capability_response = client.get("/api/gateway/capability")
+
+    assert status_response.status_code == 200
+    payload = status_response.json()
+    capability_payload = capability_response.json()
+    status_gateway = {
+        key: value for key, value in payload["gateway_capability"].items() if key != "checked_at"
+    }
+    capability_payload = {
+        key: value for key, value in capability_payload.items() if key != "checked_at"
+    }
+    if "diagnostics" in status_gateway and "diagnostics" in capability_payload:
+        for key in ("ok_count", "warn_count", "fail_count"):
+            status_gateway["diagnostics"].pop(key, None)
+            capability_payload["diagnostics"].pop(key, None)
+
+    assert payload["headline"]
+    assert payload["status_plan"]["action_kind"] == "observe"
+    assert payload["queue_plan"] is not None
+    assert payload["queue_plan"]["signal_id"] is not None
+    assert "Gateway Doctor says" in payload["queue_plan"]["reply"]
+    assert status_gateway == capability_payload
+
+
 def test_gateway_capability_endpoint_summarizes_connected_lane_health_inventory_and_warnings(
     tmp_path,
 ) -> None:
@@ -3644,6 +4382,429 @@ def test_gateway_capability_endpoint_summarizes_connected_lane_health_inventory_
         dashboard["gateway_capability"]["connected_lane_health"]["lanes"][0]["instance_name"]
         == "Gateway Lane"
     )
+
+
+def test_gateway_capability_classifies_operator_scopes_and_reserved_admin_methods(
+    tmp_path,
+) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        bootstrap_response = client.post(
+            "/api/onboarding/bootstrap",
+            json={
+                "setup_mode": "local",
+                "setup_flow": "quickstart",
+                "instance_mode": "create_desktop",
+                "instance_name": "Registry Lane",
+                "project_path": str(tmp_path),
+                "project_label": "Registry Workspace",
+                "operator_name": "Registry Builder",
+                "task_name": "Registry Loop",
+                "objective_template": "Ship the registry slice.",
+            },
+        )
+        assert bootstrap_response.status_code == 200
+
+        instance_id = bootstrap_response.json()["instance"]["id"]
+        runtime = client.app.state.manager.instances[instance_id]
+        runtime.connected = True
+        runtime.initialized = True
+        runtime.apps = []
+        runtime.plugins = []
+        runtime.mcp_servers = [
+            {"name": "Control Plane MCP", "source": "control-plane", "status": "ready"}
+        ]
+        runtime.mcp_server_status = [
+            {
+                "name": "Control Plane MCP",
+                "source": "control-plane",
+                "status": "ready",
+                "tools": [
+                    "connect",
+                    "config.reload",
+                    "exec.approval.list",
+                    "node.pending.drain",
+                    "node.pair.request",
+                    "send",
+                    "skills.bins",
+                    "status",
+                    "github_search",
+                    "wizard.bootstrap",
+                ],
+            }
+        ]
+
+        capability_response = client.get("/api/gateway/capability")
+        dashboard_response = client.get("/api/dashboard")
+
+    assert capability_response.status_code == 200
+    capability = capability_response.json()
+    method_catalog = capability["inventory"]["method_catalog"]
+    assert method_catalog["tool_count"] == 10
+    assert method_catalog["classified_method_count"] == 9
+    assert method_catalog["reserved_admin_method_count"] == 2
+    assert method_catalog["reserved_admin_scope"] == "operator.admin"
+    assert method_catalog["reserved_admin_methods"] == [
+        "config.reload",
+        "wizard.bootstrap",
+    ]
+    assert method_catalog["scopes"] == [
+        {
+            "scope": "operator.admin",
+            "method_count": 3,
+            "methods": ["config.reload", "connect", "wizard.bootstrap"],
+        },
+        {
+            "scope": "operator.read",
+            "method_count": 1,
+            "methods": ["status"],
+        },
+        {
+            "scope": "operator.write",
+            "method_count": 1,
+            "methods": ["send"],
+        },
+        {
+            "scope": "operator.approvals",
+            "method_count": 1,
+            "methods": ["exec.approval.list"],
+        },
+        {
+            "scope": "operator.pairing",
+            "method_count": 1,
+            "methods": ["node.pair.request"],
+        },
+        {
+            "scope": "node.role",
+            "method_count": 2,
+            "methods": ["node.pending.drain", "skills.bins"],
+        },
+    ]
+    assert "Scope coverage: operator.admin 3, operator.read 1" in method_catalog["summary"]
+    assert "node.role 2" in method_catalog["summary"]
+    assert "2 reserved admin method(s) require operator.admin." in method_catalog["summary"]
+
+    dashboard = dashboard_response.json()
+    assert (
+        dashboard["gateway_capability"]["inventory"]["method_catalog"][
+            "reserved_admin_method_count"
+        ]
+        == 2
+    )
+    assert (
+        dashboard["gateway_capability"]["inventory"]["method_catalog"][
+            "classified_method_count"
+        ]
+        == 9
+    )
+
+
+def test_gateway_capability_tracks_reserved_admin_registry_prefixes_end_to_end(
+    tmp_path,
+) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        bootstrap_response = client.post(
+            "/api/onboarding/bootstrap",
+            json={
+                "setup_mode": "local",
+                "setup_flow": "quickstart",
+                "instance_mode": "create_desktop",
+                "instance_name": "Reserved Registry Lane",
+                "project_path": str(tmp_path),
+                "project_label": "Reserved Registry Workspace",
+                "operator_name": "Reserved Registry Builder",
+                "task_name": "Reserved Registry Loop",
+                "objective_template": "Lock the reserved gateway registry seam.",
+            },
+        )
+        assert bootstrap_response.status_code == 200
+
+        instance_id = bootstrap_response.json()["instance"]["id"]
+        runtime = client.app.state.manager.instances[instance_id]
+        runtime.connected = True
+        runtime.initialized = True
+        runtime.apps = []
+        runtime.plugins = []
+        runtime.mcp_servers = [
+            {"name": "Control Plane MCP", "source": "control-plane", "status": "ready"}
+        ]
+        runtime.mcp_server_status = [
+            {
+                "name": "Control Plane MCP",
+                "source": "control-plane",
+                "status": "ready",
+                "tools": [
+                    "config.patch",
+                    "exec.approvals.node.set",
+                    "node.pending.drain",
+                    "status",
+                    "update.run",
+                    "wizard.status",
+                ],
+            }
+        ]
+
+        capability_response = client.get("/api/gateway/capability")
+        dashboard_response = client.get("/api/dashboard")
+
+    assert capability_response.status_code == 200
+    method_catalog = capability_response.json()["inventory"]["method_catalog"]
+    assert method_catalog["tool_count"] == 6
+    assert method_catalog["classified_method_count"] == 6
+    assert method_catalog["reserved_admin_method_count"] == 4
+    assert method_catalog["reserved_admin_scope"] == "operator.admin"
+    assert method_catalog["reserved_admin_methods"] == [
+        "config.patch",
+        "exec.approvals.node.set",
+        "update.run",
+        "wizard.status",
+    ]
+    assert method_catalog["scopes"] == [
+        {
+            "scope": "operator.admin",
+            "method_count": 4,
+            "methods": [
+                "config.patch",
+                "exec.approvals.node.set",
+                "update.run",
+                "wizard.status",
+            ],
+        },
+        {
+            "scope": "operator.read",
+            "method_count": 1,
+            "methods": ["status"],
+        },
+        {
+            "scope": "node.role",
+            "method_count": 1,
+            "methods": ["node.pending.drain"],
+        },
+    ]
+    assert "Scope coverage: operator.admin 4, operator.read 1, node.role 1." in method_catalog[
+        "summary"
+    ]
+    assert "4 reserved admin method(s) require operator.admin." in method_catalog["summary"]
+
+    dashboard_method_catalog = dashboard_response.json()["gateway_capability"]["inventory"][
+        "method_catalog"
+    ]
+    assert dashboard_method_catalog["reserved_admin_method_count"] == 4
+    assert dashboard_method_catalog["reserved_admin_methods"] == [
+        "config.patch",
+        "exec.approvals.node.set",
+        "update.run",
+        "wizard.status",
+    ]
+
+
+def test_gateway_capability_classifies_plugin_scoped_methods_from_catalog_metadata(
+    tmp_path,
+) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        bootstrap_response = client.post(
+            "/api/onboarding/bootstrap",
+            json={
+                "setup_mode": "local",
+                "setup_flow": "quickstart",
+                "instance_mode": "create_desktop",
+                "instance_name": "Plugin Registry Lane",
+                "project_path": str(tmp_path),
+                "project_label": "Plugin Registry Workspace",
+                "operator_name": "Plugin Registry Builder",
+                "task_name": "Plugin Registry Loop",
+                "objective_template": "Classify plugin method scopes from live metadata.",
+            },
+        )
+        assert bootstrap_response.status_code == 200
+
+        instance_id = bootstrap_response.json()["instance"]["id"]
+        runtime = client.app.state.manager.instances[instance_id]
+        runtime.connected = True
+        runtime.initialized = True
+        runtime.apps = []
+        runtime.plugins = []
+        runtime.mcp_servers = [
+            {
+                "name": "Plugin Control Plane MCP",
+                "source": "plugin-control-plane",
+                "status": "ready",
+            }
+        ]
+        runtime.mcp_server_status = [
+            {
+                "name": "Plugin Control Plane MCP",
+                "source": "plugin-control-plane",
+                "status": "ready",
+                "tools": [
+                    {"name": "browser.request", "scope": "operator.write"},
+                    {"name": "wizard.custom", "scope": "operator.read"},
+                    "status",
+                ],
+            }
+        ]
+
+        capability_response = client.get("/api/gateway/capability")
+        dashboard_response = client.get("/api/dashboard")
+
+    assert capability_response.status_code == 200
+    method_catalog = capability_response.json()["inventory"]["method_catalog"]
+    assert method_catalog["tool_count"] == 3
+    assert method_catalog["classified_method_count"] == 3
+    assert method_catalog["reserved_admin_method_count"] == 1
+    assert method_catalog["reserved_admin_scope"] == "operator.admin"
+    assert method_catalog["reserved_admin_methods"] == ["wizard.custom"]
+    assert method_catalog["scopes"] == [
+        {
+            "scope": "operator.admin",
+            "method_count": 1,
+            "methods": ["wizard.custom"],
+        },
+        {
+            "scope": "operator.read",
+            "method_count": 1,
+            "methods": ["status"],
+        },
+        {
+            "scope": "operator.write",
+            "method_count": 1,
+            "methods": ["browser.request"],
+        },
+    ]
+    assert "Scope coverage: operator.admin 1, operator.read 1, operator.write 1." in method_catalog[
+        "summary"
+    ]
+    assert "1 reserved admin method(s) require operator.admin." in method_catalog["summary"]
+
+    dashboard_method_catalog = dashboard_response.json()["gateway_capability"]["inventory"][
+        "method_catalog"
+    ]
+    assert dashboard_method_catalog["classified_method_count"] == 3
+    assert dashboard_method_catalog["reserved_admin_methods"] == ["wizard.custom"]
+
+
+def test_gateway_capability_falls_back_to_staged_local_registry_when_lane_catalogs_are_offline(
+    tmp_path,
+) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        bootstrap_response = client.post(
+            "/api/onboarding/bootstrap",
+            json={
+                "setup_mode": "local",
+                "setup_flow": "quickstart",
+                "instance_mode": "create_desktop",
+                "instance_name": "Offline Registry Lane",
+                "project_path": str(tmp_path),
+                "project_label": "Offline Registry Workspace",
+                "operator_name": "Offline Registry Builder",
+                "task_name": "Offline Registry Loop",
+                "objective_template": "Prove the staged gateway registry fallback.",
+            },
+        )
+        assert bootstrap_response.status_code == 200
+
+        instance_id = bootstrap_response.json()["instance"]["id"]
+        runtime = client.app.state.manager.instances[instance_id]
+        runtime.connected = True
+        runtime.initialized = True
+        runtime.apps = []
+        runtime.plugins = []
+        runtime.mcp_servers = []
+        runtime.mcp_server_status = []
+
+        capability_response = client.get("/api/gateway/capability")
+        dashboard_response = client.get("/api/dashboard")
+
+    assert capability_response.status_code == 200
+    method_catalog = capability_response.json()["inventory"]["method_catalog"]
+    assert method_catalog["headline"] == "Gateway method registry is staged"
+    assert method_catalog["tool_count"] == len(list_known_gateway_methods())
+    assert method_catalog["server_count"] == 0
+    assert method_catalog["lane_count"] == 0
+    assert method_catalog["classified_method_count"] == len(list_known_gateway_methods())
+    assert method_catalog["reserved_admin_method_count"] == 14
+    assert method_catalog["reserved_admin_scope"] == "operator.admin"
+    assert [
+        (entry["scope"], entry["method_count"]) for entry in method_catalog["scopes"]
+    ] == [
+        ("operator.admin", 38),
+        ("operator.read", 47),
+        ("operator.write", 28),
+        ("operator.approvals", 9),
+        ("operator.pairing", 12),
+        ("node.role", 7),
+    ]
+    assert method_catalog["reserved_admin_methods"] == [
+        "config.apply",
+        "config.openFile",
+        "config.patch",
+        "config.schema",
+        "config.set",
+        "exec.approvals.get",
+        "exec.approvals.node.get",
+        "exec.approvals.node.set",
+        "exec.approvals.set",
+        "update.run",
+        "wizard.cancel",
+        "wizard.next",
+        "wizard.start",
+        "wizard.status",
+    ]
+    assert method_catalog["summary"].startswith(
+        "141 built-in gateway method(s) are registered locally while lane-published "
+        "MCP catalogs are offline."
+    )
+    assert (
+        "Scope coverage: operator.admin 38, operator.read 47, operator.write 28, "
+        "operator.approvals 9, operator.pairing 12, node.role 7."
+    ) in method_catalog["summary"]
+    assert "14 reserved admin method(s) require operator.admin." in method_catalog["summary"]
+
+    dashboard_method_catalog = dashboard_response.json()["gateway_capability"]["inventory"][
+        "method_catalog"
+    ]
+    assert dashboard_method_catalog["headline"] == "Gateway method registry is staged"
+    assert dashboard_method_catalog["tool_count"] == len(list_known_gateway_methods())
+    assert dashboard_method_catalog["classified_method_count"] == len(list_known_gateway_methods())
+    assert dashboard_method_catalog["reserved_admin_methods"] == [
+        "config.apply",
+        "config.openFile",
+        "config.patch",
+        "config.schema",
+        "config.set",
+        "exec.approvals.get",
+        "exec.approvals.node.get",
+        "exec.approvals.node.set",
+        "exec.approvals.set",
+        "update.run",
+        "wizard.cancel",
+        "wizard.next",
+        "wizard.start",
+        "wizard.status",
+    ]
 
 
 def test_gateway_capability_surfaces_mempalace_memory_posture(tmp_path) -> None:
@@ -3837,6 +4998,7 @@ def test_gateway_capability_uses_cached_mcp_status_when_live_refresh_times_out(
                 ],
             }
         ]
+        calls: list[tuple[int, bool]] = []
 
         async def fake_list_mcp_server_status(
             instance_id: int,
@@ -3844,7 +5006,8 @@ def test_gateway_capability_uses_cached_mcp_status_when_live_refresh_times_out(
             limit: int = 50,
             refresh: bool = True,
         ) -> list[dict[str, object]]:
-            del instance_id, limit, refresh
+            del limit
+            calls.append((instance_id, refresh))
             raise TimeoutError
 
         monkeypatch.setattr(
@@ -3869,9 +5032,111 @@ def test_gateway_capability_uses_cached_mcp_status_when_live_refresh_times_out(
     assert dashboard_response.status_code == 200
     dashboard = dashboard_response.json()
     assert dashboard["gateway_capability"]["inventory"]["memory_status"] == "ready"
+    assert calls == []
 
 
-def test_dashboard_reuses_cached_gateway_capability_when_refresh_turns_slow(
+def test_gateway_capability_falls_back_to_staged_registry_without_cached_catalogs(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        bootstrap_response = client.post(
+            "/api/onboarding/bootstrap",
+            json={
+                "setup_mode": "local",
+                "setup_flow": "quickstart",
+                "instance_mode": "create_desktop",
+                "instance_name": "Offline Timeout Lane",
+                "project_path": str(tmp_path),
+                "project_label": "Offline Timeout Workspace",
+                "operator_name": "Offline Timeout Builder",
+                "task_name": "Offline Timeout Loop",
+                "objective_template": "Prove timeout fallback reaches the staged registry.",
+            },
+        )
+        assert bootstrap_response.status_code == 200
+
+        instance_id = bootstrap_response.json()["instance"]["id"]
+        runtime = client.app.state.manager.instances[instance_id]
+        runtime.connected = True
+        runtime.initialized = True
+        runtime.apps = []
+        runtime.plugins = []
+        runtime.mcp_servers = [
+            {
+                "name": "Control Plane MCP",
+                "source": "control-plane",
+                "status": "ready",
+            }
+        ]
+        runtime.mcp_server_status = []
+
+        async def fake_list_mcp_server_status(
+            instance_id: int,
+            *,
+            limit: int = 50,
+            refresh: bool = True,
+        ) -> list[dict[str, object]]:
+            del instance_id, limit, refresh
+            raise TimeoutError
+
+        monkeypatch.setattr(
+            "openzues.services.gateway_capability.GATEWAY_MCP_STATUS_REFRESH_TIMEOUT_SECONDS",
+            0.01,
+        )
+        monkeypatch.setattr(
+            client.app.state.manager,
+            "list_mcp_server_status",
+            fake_list_mcp_server_status,
+        )
+
+        capability_response = client.get("/api/gateway/capability")
+        dashboard_response = client.get("/api/dashboard")
+
+    assert capability_response.status_code == 200
+    method_catalog = capability_response.json()["inventory"]["method_catalog"]
+    event_catalog = capability_response.json()["inventory"]["event_catalog"]
+    assert method_catalog["headline"] == "Gateway method registry is staged"
+    assert method_catalog["tool_count"] == len(list_known_gateway_methods())
+    assert method_catalog["server_count"] == 0
+    assert method_catalog["lane_count"] == 0
+    assert method_catalog["classified_method_count"] == len(list_known_gateway_methods())
+    assert (
+        "lane-published MCP catalogs are offline" in method_catalog["summary"]
+    )
+    assert (
+        "14 reserved admin method(s) require operator.admin." in method_catalog["summary"]
+    )
+    assert event_catalog == {
+        "headline": "Gateway event registry is staged",
+        "summary": (
+            f"{len(list_known_gateway_events())} built-in gateway event(s) are registered "
+            "locally to mirror the OpenClaw event surface while lane-published event "
+            "catalogs are offline."
+        ),
+        "event_count": len(list_known_gateway_events()),
+        "events": list(list_known_gateway_events()),
+    }
+
+    assert dashboard_response.status_code == 200
+    dashboard_method_catalog = dashboard_response.json()["gateway_capability"]["inventory"][
+        "method_catalog"
+    ]
+    dashboard_event_catalog = dashboard_response.json()["gateway_capability"]["inventory"][
+        "event_catalog"
+    ]
+    assert dashboard_method_catalog["headline"] == "Gateway method registry is staged"
+    assert dashboard_method_catalog["tool_count"] == len(list_known_gateway_methods())
+    assert dashboard_event_catalog["event_count"] == len(list_known_gateway_events())
+
+
+def test_gateway_capability_background_refresh_replaces_stale_cached_posture(
     tmp_path,
     monkeypatch,
 ) -> None:
@@ -3884,7 +5149,6 @@ def test_dashboard_reuses_cached_gateway_capability_when_refresh_turns_slow(
     monkeypatch.setattr("openzues.app.settings", cache_settings)
     clock = {"now": 0.0}
     monkeypatch.setattr("openzues.app.perf_counter", lambda: clock["now"])
-    app = create_app()
     cached_gateway = make_gateway_capability_view(headline="Cached gateway posture is available")
     refresh_calls = {"count": 0}
 
@@ -3892,30 +5156,37 @@ def test_dashboard_reuses_cached_gateway_capability_when_refresh_turns_slow(
         refresh_calls["count"] += 1
         if refresh_calls["count"] == 1:
             return cached_gateway
-        await asyncio.sleep(1.0)
+        await asyncio.sleep(0.05)
         return cached_gateway.model_copy(
-            update={"headline": "Slow refresh should not replace the cached posture"}
+            update={"headline": "Background refresh replaced the cached posture"}
         )
 
-    with TestClient(app, client=("testclient", 50000)) as client:
-        monkeypatch.setattr(client.app.state.gateway_capability_service, "get_view", fake_get_view)
+    class FakeGatewayCapabilityService:
+        async def get_view(self) -> GatewayCapabilityView:
+            return await fake_get_view()
 
-        initial_dashboard = client.get("/api/dashboard")
+    app = create_app(gateway_capability_service=FakeGatewayCapabilityService())
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        initial_dashboard = client.get("/api/gateway/capability")
         assert initial_dashboard.status_code == 200
         assert (
-            initial_dashboard.json()["gateway_capability"]["headline"]
+            initial_dashboard.json()["headline"]
             == "Cached gateway posture is available"
         )
 
         clock["now"] = 5.0
-        refreshed_dashboard = client.get("/api/dashboard")
+        refreshed_gateway = client.get("/api/gateway/capability")
+        assert refreshed_gateway.status_code == 200
+        assert refreshed_gateway.json()["headline"] == "Cached gateway posture is available"
 
-    assert refreshed_dashboard.status_code == 200
-    assert refresh_calls["count"] == 2
-    assert (
-        refreshed_dashboard.json()["gateway_capability"]["headline"]
-        == "Cached gateway posture is available"
-    )
+        time.sleep(0.1)
+        clock["now"] = 7.0
+        updated_gateway = client.get("/api/gateway/capability")
+
+    assert refresh_calls["count"] >= 2
+    assert updated_gateway.status_code == 200
+    assert updated_gateway.json()["headline"] == "Background refresh replaced the cached posture"
 
 
 def test_mutating_api_failure_invalidates_operator_surface_caches(
@@ -3971,6 +5242,46 @@ def test_mutating_api_failure_invalidates_operator_surface_caches(
         project["label"] == "Recovered Workspace"
         for project in refreshed_dashboard.json()["projects"]
     )
+
+
+def test_gateway_bootstrap_startup_failure_preserves_boot_reason(tmp_path, monkeypatch) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "startup-data",
+        db_path=tmp_path / "startup-data" / "openzues-test.db",
+        hermes_source_path=None,
+        ecc_source_path=None,
+    )
+    boot_calls: list[str] = []
+    close_calls: list[RuntimeManager] = []
+    lease = FakeControlPlaneLease(owner=True)
+
+    async def fail_startup_boot(self) -> GatewayBootstrapBootResult:
+        boot_calls.append("called")
+        return GatewayBootstrapBootResult(
+            status="failed",
+            reason="agent run failed: lane offline",
+        )
+
+    original_close = RuntimeManager.close
+
+    async def track_close(self: RuntimeManager) -> None:
+        close_calls.append(self)
+        await original_close(self)
+
+    monkeypatch.setattr(GatewayBootstrapService, "run_startup_boot_once", fail_startup_boot)
+    monkeypatch.setattr(RuntimeManager, "close", track_close)
+    app = create_app(
+        app_settings,
+        control_plane_lease=lease,
+    )
+
+    with pytest.raises(RuntimeError, match="agent run failed: lane offline"):
+        with TestClient(app, client=("testclient", 50000)):
+            pass
+
+    assert boot_calls == ["called"]
+    assert close_calls == [app.state.manager]
+    assert lease.acquired is False
 
 
 def test_gateway_capability_warns_when_mempalace_memory_loop_last_failed(tmp_path) -> None:
@@ -4732,9 +6043,23 @@ def test_dashboard_backfills_gateway_bootstrap_from_existing_quickstart_artifact
     assert dashboard["gateway_bootstrap"]["status"] == "staged"
     assert dashboard["gateway_bootstrap"]["task_blueprint"]["label"] == "Backfill Loop"
     assert dashboard["gateway_bootstrap"]["project"]["label"] == "Backfill Workspace"
+    assert dashboard["gateway_bootstrap"]["bootstrap_roles"] == ["node", "operator"]
+    assert dashboard["gateway_bootstrap"]["bootstrap_scopes"] == [
+        "operator.approvals",
+        "operator.read",
+        "operator.talk.secrets",
+        "operator.write",
+    ]
 
     assert profile_response.status_code == 200
     assert profile_response.json()["task_blueprint"]["label"] == "Backfill Loop"
+    assert profile_response.json()["bootstrap_roles"] == ["node", "operator"]
+    assert profile_response.json()["bootstrap_scopes"] == [
+        "operator.approvals",
+        "operator.read",
+        "operator.talk.secrets",
+        "operator.write",
+    ]
 
 
 def test_dashboard_bootstraps_remote_access_foundations(tmp_path) -> None:
@@ -6752,6 +8077,146 @@ def test_mission_creation_appears_on_dashboard(tmp_path) -> None:
     assert dashboard["brief"]["focus_mission_id"] == created["id"]
 
 
+def test_mission_creation_normalizes_explicit_session_key_for_thread_reuse(tmp_path) -> None:
+    with make_client(tmp_path) as client:
+        instance_response = client.post(
+            "/api/instances",
+            json={
+                "name": "Local Codex Desktop",
+                "transport": "desktop",
+                "cwd": str(tmp_path),
+                "auto_connect": False,
+            },
+        )
+        instance_id = instance_response.json()["id"]
+        database = client.app.state.database
+        asyncio.run(
+            database.create_mission(
+                name="Previous explicit session run",
+                objective="Keep the explicit session alive.",
+                status="completed",
+                instance_id=instance_id,
+                project_id=None,
+                task_blueprint_id=None,
+                thread_id="thread_saved",
+                session_key="slack:deploy-room",
+                conversation_target=None,
+                cwd=str(tmp_path),
+                model="gpt-5.4",
+                reasoning_effort=None,
+                collaboration_mode=None,
+                max_turns=3,
+                use_builtin_agents=True,
+                run_verification=True,
+                auto_commit=False,
+                pause_on_approval=True,
+                allow_auto_reflexes=True,
+                auto_recover=True,
+                auto_recover_limit=2,
+                reflex_cooldown_seconds=900,
+                allow_failover=True,
+                toolsets=["debugging"],
+            )
+        )
+
+        mission_response = client.post(
+            "/api/missions",
+            json={
+                "name": "Follow the explicit session",
+                "objective": "Continue the prior explicit session without forking it.",
+                "instance_id": instance_id,
+                "project_id": None,
+                "cwd": str(tmp_path),
+                "thread_id": None,
+                "session_key": "  Slack:Deploy-Room  ",
+                "model": "gpt-5.4",
+                "reasoning_effort": None,
+                "collaboration_mode": None,
+                "max_turns": 3,
+                "use_builtin_agents": True,
+                "run_verification": True,
+                "auto_commit": True,
+                "pause_on_approval": True,
+                "start_immediately": False,
+            },
+        )
+
+    assert mission_response.status_code == 200, mission_response.text
+    created = mission_response.json()
+    assert created["session_key"] == "slack:deploy-room"
+    assert created["thread_id"] == "thread_saved"
+
+
+def test_mission_creation_reuses_default_agent_main_session_alias(tmp_path) -> None:
+    with make_client(tmp_path) as client:
+        instance_response = client.post(
+            "/api/instances",
+            json={
+                "name": "Local Codex Desktop",
+                "transport": "desktop",
+                "cwd": str(tmp_path),
+                "auto_connect": False,
+            },
+        )
+        instance_id = instance_response.json()["id"]
+        database = client.app.state.database
+        asyncio.run(
+            database.create_mission(
+                name="Previous default agent run",
+                objective="Keep the default agent thread alive.",
+                status="completed",
+                instance_id=instance_id,
+                project_id=None,
+                task_blueprint_id=None,
+                thread_id="thread_saved",
+                session_key="main",
+                conversation_target=None,
+                cwd=str(tmp_path),
+                model="gpt-5.4",
+                reasoning_effort=None,
+                collaboration_mode=None,
+                max_turns=3,
+                use_builtin_agents=True,
+                run_verification=True,
+                auto_commit=False,
+                pause_on_approval=True,
+                allow_auto_reflexes=True,
+                auto_recover=True,
+                auto_recover_limit=2,
+                reflex_cooldown_seconds=900,
+                allow_failover=True,
+                toolsets=["debugging"],
+            )
+        )
+
+        mission_response = client.post(
+            "/api/missions",
+            json={
+                "name": "Follow the default agent session",
+                "objective": "Continue the prior default agent session without forking it.",
+                "instance_id": instance_id,
+                "project_id": None,
+                "cwd": str(tmp_path),
+                "thread_id": None,
+                "session_key": " main ",
+                "model": "gpt-5.4",
+                "reasoning_effort": None,
+                "collaboration_mode": None,
+                "max_turns": 3,
+                "use_builtin_agents": True,
+                "run_verification": True,
+                "auto_commit": True,
+                "pause_on_approval": True,
+                "start_immediately": False,
+            },
+        )
+
+    assert mission_response.status_code == 200, mission_response.text
+    created = mission_response.json()
+    assert created["session_key"] == "agent:main:main"
+    assert created["thread_id"] == "thread_saved"
+
+
 def test_mission_creation_can_enable_swarm_from_api(tmp_path) -> None:
     with make_client(tmp_path) as client:
         instance_response = client.post(
@@ -7069,6 +8534,118 @@ def test_build_radar_collapses_large_ready_handoff_backlog() -> None:
     assert "Harden OpenZues Workspace" in backlog.detail
 
 
+def test_build_brief_ignores_passive_queued_recovery_followup() -> None:
+    active = make_mission_view(
+        mission_id=59,
+        name="OpenClaw Total Parity Program",
+        status="active",
+        phase="thinking",
+        in_progress=True,
+        project_id=5,
+        project_label="OpenZues",
+        cwd="C:/workspace/openzues",
+        thread_id="thread-parity",
+    )
+    queued_recovery = make_mission_view(
+        mission_id=63,
+        name="Recover OpenClaw Total Parity Program",
+        objective=(
+            "Continue the mission 'OpenClaw Total Parity Program' from its existing "
+            "thread. Start by reading the last checkpoint and failure context, fix the "
+            "blocker, verify the path forward, and leave a cleaner checkpoint when done."
+        ),
+        status="blocked",
+        phase="queued",
+        in_progress=False,
+        project_id=5,
+        project_label="OpenZues",
+        cwd="C:/workspace/openzues",
+        thread_id="thread-parity",
+        last_error="Queued behind mission: OpenClaw Total Parity Program",
+    )
+
+    brief = build_brief([make_instance_view()], [active, queued_recovery], [make_project_view()])
+
+    assert brief.status == "active"
+    assert brief.headline == "1 mission currently running"
+    assert brief.focus_mission_id == 59
+
+
+def test_build_radar_ignores_passive_queued_recovery_followup_signal() -> None:
+    active = make_mission_view(
+        mission_id=59,
+        name="OpenClaw Total Parity Program",
+        status="active",
+        phase="thinking",
+        in_progress=True,
+        project_id=5,
+        project_label="OpenZues",
+        cwd="C:/workspace/openzues",
+        thread_id="thread-parity",
+    )
+    queued_recovery = make_mission_view(
+        mission_id=63,
+        name="Recover OpenClaw Total Parity Program",
+        objective=(
+            "Continue the mission 'OpenClaw Total Parity Program' from its existing "
+            "thread. Start by reading the last checkpoint and failure context, fix the "
+            "blocker, verify the path forward, and leave a cleaner checkpoint when done."
+        ),
+        status="blocked",
+        phase="queued",
+        in_progress=False,
+        project_id=5,
+        project_label="OpenZues",
+        cwd="C:/workspace/openzues",
+        thread_id="thread-parity",
+        last_error="Queued behind mission: OpenClaw Total Parity Program",
+    )
+
+    radar = build_radar([make_instance_view()], [active, queued_recovery], [make_project_view()])
+
+    assert not any(signal.id == "mission-63-queued" for signal in radar.signals)
+
+
+def test_plan_control_chat_status_ignores_passive_queued_recovery_followup() -> None:
+    active = make_mission_view(
+        mission_id=59,
+        name="OpenClaw Total Parity Program",
+        status="active",
+        phase="thinking",
+        in_progress=True,
+        project_id=5,
+        project_label="OpenZues",
+        cwd="C:/workspace/openzues",
+        thread_id="thread-parity",
+    )
+    queued_recovery = make_mission_view(
+        mission_id=63,
+        name="Recover OpenClaw Total Parity Program",
+        objective=(
+            "Continue the mission 'OpenClaw Total Parity Program' from its existing "
+            "thread. Start by reading the last checkpoint and failure context, fix the "
+            "blocker, verify the path forward, and leave a cleaner checkpoint when done."
+        ),
+        status="blocked",
+        phase="queued",
+        in_progress=False,
+        project_id=5,
+        project_label="OpenZues",
+        cwd="C:/workspace/openzues",
+        thread_id="thread-parity",
+        last_error="Queued behind mission: OpenClaw Total Parity Program",
+    )
+    dashboard = make_dashboard_view(
+        instances=[make_instance_view()],
+        missions=[active, queued_recovery],
+        projects=[make_project_view()],
+    )
+
+    plan = plan_control_chat("status", dashboard)
+
+    assert "1 mission(s) are actively running, 0 are blocked" in plan.reply
+
+
 def test_build_radar_keeps_small_ready_handoff_set_expanded() -> None:
     mission = make_mission_view(
         mission_id=34,
@@ -7084,6 +8661,68 @@ def test_build_radar_keeps_small_ready_handoff_set_expanded() -> None:
 
     assert any(signal.id == "mission-34-handoff" for signal in radar.signals)
     assert not any(signal.id == "attention/handoff-backlog" for signal in radar.signals)
+
+
+def test_build_radar_ignores_historical_handoffs_for_active_lineage() -> None:
+    active = make_mission_view(
+        mission_id=59,
+        name="OpenClaw Total Parity Program",
+        status="active",
+        phase="executing",
+        in_progress=True,
+        project_id=5,
+        project_label="OpenZues",
+        cwd="C:/workspace/openzues",
+        thread_id="thread-live",
+    ).model_copy(update={"task_blueprint_id": 2})
+    historical = make_mission_view(
+        mission_id=55,
+        name="OpenClaw Total Parity Program",
+        status="completed",
+        phase="completed",
+        project_id=5,
+        project_label="OpenZues",
+        cwd="C:/workspace/openzues",
+        thread_id="thread-old",
+        last_checkpoint="Checkpoint ready.",
+    ).model_copy(update={"task_blueprint_id": 2})
+
+    radar = build_radar([make_instance_view()], [active, historical], [make_project_view()])
+
+    assert not any(signal.id == "attention/handoff-backlog" for signal in radar.signals)
+    assert not any(signal.id == "mission-55-handoff" for signal in radar.signals)
+
+
+def test_build_launchpad_ignores_historical_handoffs_for_active_lineage() -> None:
+    active = make_mission_view(
+        mission_id=59,
+        name="OpenClaw Total Parity Program",
+        status="active",
+        phase="executing",
+        in_progress=True,
+        project_id=5,
+        project_label="OpenZues",
+        cwd="C:/workspace/openzues",
+        thread_id="thread-live",
+    ).model_copy(update={"task_blueprint_id": 2})
+    historical = make_mission_view(
+        mission_id=55,
+        name="OpenClaw Total Parity Program",
+        status="completed",
+        phase="completed",
+        project_id=5,
+        project_label="OpenZues",
+        cwd="C:/workspace/openzues",
+        thread_id="thread-old",
+        last_checkpoint="Checkpoint ready.",
+    ).model_copy(update={"task_blueprint_id": 2})
+
+    launchpad = build_launchpad([make_instance_view()], [active, historical], [make_project_view()])
+
+    assert not any(
+        opportunity.kind == "checkpoint_hardener"
+        for opportunity in launchpad.opportunities
+    )
 
 
 def test_build_launchpad_suggests_workspace_scout_without_projects() -> None:

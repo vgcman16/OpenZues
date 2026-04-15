@@ -1,6 +1,7 @@
 import asyncio
 import codecs
 import json
+import os
 import re
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -9,6 +10,7 @@ from types import SimpleNamespace
 from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 
+import openzues.app as app_module
 import openzues.cli as cli_module
 from openzues.app import create_app
 from openzues.cli import (
@@ -22,8 +24,15 @@ from openzues.cli import (
     app,
 )
 from openzues.database import Database
-from openzues.schemas import ControlChatMessageView, ControlChatResponse, MissionDraftView
+from openzues.schemas import (
+    ControlChatMessageView,
+    ControlChatResponse,
+    GatewayCapabilityView,
+    MissionDraftView,
+)
 from openzues.services.control_chat import ControlChatPlan
+from openzues.services.device_bootstrap_profile import BOOTSTRAP_HANDOFF_OPERATOR_SCOPES
+from openzues.services.gateway_method_policy import list_known_gateway_methods
 from openzues.services.ops_mesh import OUTBOUND_DELIVERY_MAX_RETRIES
 from openzues.settings import Settings
 
@@ -234,6 +243,71 @@ def test_gateway_doctor_json_includes_gateway_capability_summary(tmp_path, monke
     assert cli_payload == api_payload
 
 
+def test_gateway_doctor_prefers_live_gateway_view_when_available(tmp_path, monkeypatch) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch)
+
+    settings = Settings(data_dir=data_dir, db_path=data_dir / "openzues.db")
+    api_app = create_app(settings)
+    with TestClient(api_app, client=("testclient", 50000)) as client:
+        gateway_payload = client.get("/api/gateway/capability").json()
+
+    gateway_payload["headline"] = "Live gateway headline"
+    gateway_payload["summary"] = "Live gateway summary"
+
+    async def fake_live_gateway(_settings: Settings) -> GatewayCapabilityView:
+        return GatewayCapabilityView.model_validate(gateway_payload)
+
+    monkeypatch.setattr(cli_module, "_try_live_gateway_capability_view", fake_live_gateway)
+
+    result = runner.invoke(app, ["gateway", "doctor", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["headline"] == "Live gateway headline"
+    assert payload["summary"] == "Live gateway summary"
+
+
+def test_control_plane_base_url_prefers_lease_metadata(tmp_path) -> None:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    (data_dir / "control-plane.lock.meta.json").write_text(
+        json.dumps({"pid": 42, "host": "127.0.0.1", "port": 8884}),
+        encoding="utf-8",
+    )
+    cli_settings = Settings(data_dir=data_dir, db_path=data_dir / "openzues.db", port=8765)
+
+    assert cli_module._control_plane_base_url(cli_settings) == "http://127.0.0.1:8884"
+
+
+def test_serve_sets_openzues_host_and_port_env(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_run(app_target: str, **kwargs: object) -> None:
+        captured["app_target"] = app_target
+        captured["kwargs"] = kwargs
+
+    monkeypatch.delenv("OPENZUES_HOST", raising=False)
+    monkeypatch.delenv("OPENZUES_PORT", raising=False)
+    monkeypatch.setattr(cli_module.uvicorn, "run", fake_run)
+
+    cli_module.serve(host="0.0.0.0", port=9999, reload=False)
+
+    assert os.environ["OPENZUES_HOST"] == "0.0.0.0"
+    assert os.environ["OPENZUES_PORT"] == "9999"
+    assert cli_module.settings.host == "0.0.0.0"
+    assert cli_module.settings.port == 9999
+    assert app_module.settings.host == "0.0.0.0"
+    assert app_module.settings.port == 9999
+    assert captured["app_target"] == "openzues.app:create_app"
+    assert captured["kwargs"] == {
+        "host": "0.0.0.0",
+        "port": 9999,
+        "reload": False,
+        "factory": True,
+    }
+
+
 def test_emit_gateway_capability_surfaces_conversation_reuse_summary(capsys) -> None:
     _emit_gateway_capability(
         {
@@ -301,6 +375,174 @@ def test_emit_gateway_capability_surfaces_callable_method_inventory(capsys) -> N
     output = capsys.readouterr().out
     assert "method catalog: 3 callable method(s) are visible" in output
     assert "method tools: github_create_pull_request, github_search, github_search_prs" in output
+
+
+def test_emit_gateway_capability_surfaces_reserved_admin_methods(capsys) -> None:
+    _emit_gateway_capability(
+        {
+            "headline": "Gateway capability is operator-ready",
+            "summary": "Control plane is aligned.",
+            "connected_lane_health": {"summary": "1/1 lane(s) connected."},
+            "inventory": {
+                "summary": "Tracked inventory is healthy.",
+                "memory_summary": "Idle.",
+                "method_catalog": {
+                    "summary": (
+                        "10 callable method(s) are visible across 1 MCP server catalog(s) on "
+                        "1 connected lane(s). Scope coverage: operator.admin 3, "
+                        "operator.read 1, operator.write 1, operator.approvals 1, "
+                        "operator.pairing 1, node.role 2. 2 reserved admin method(s) require "
+                        "operator.admin."
+                    ),
+                    "tool_count": 10,
+                    "server_count": 1,
+                    "lane_count": 1,
+                    "classified_method_count": 9,
+                    "reserved_admin_method_count": 2,
+                    "reserved_admin_scope": "operator.admin",
+                    "tools": [
+                        "connect",
+                        "config.reload",
+                        "exec.approval.list",
+                        "github_search",
+                        "node.pending.drain",
+                        "node.pair.request",
+                        "send",
+                        "skills.bins",
+                        "status",
+                        "wizard.bootstrap",
+                    ],
+                    "servers": ["Control Plane MCP"],
+                    "reserved_admin_methods": [
+                        "config.reload",
+                        "wizard.bootstrap",
+                    ],
+                    "scopes": [
+                        {
+                            "scope": "operator.admin",
+                            "method_count": 3,
+                            "methods": ["config.reload", "connect", "wizard.bootstrap"],
+                        },
+                        {
+                            "scope": "operator.read",
+                            "method_count": 1,
+                            "methods": ["status"],
+                        },
+                        {
+                            "scope": "operator.write",
+                            "method_count": 1,
+                            "methods": ["send"],
+                        },
+                        {
+                            "scope": "operator.approvals",
+                            "method_count": 1,
+                            "methods": ["exec.approval.list"],
+                        },
+                        {
+                            "scope": "operator.pairing",
+                            "method_count": 1,
+                            "methods": ["node.pair.request"],
+                        },
+                        {
+                            "scope": "node.role",
+                            "method_count": 2,
+                            "methods": ["node.pending.drain", "skills.bins"],
+                        },
+                    ],
+                },
+            },
+            "approval_posture": {"summary": "No approvals waiting."},
+            "launch_policy": {"summary": "Saved local launch policy."},
+            "diagnostics": {"summary": "Diagnostics are clean."},
+        },
+        json_output=False,
+    )
+
+    output = capsys.readouterr().out
+    assert "reserved admin methods: config.reload, wizard.bootstrap" in output
+    assert (
+        "method scopes: operator.admin (3), operator.read (1), operator.write (1), "
+        "operator.approvals (1), operator.pairing (1), node.role (2)"
+    ) in output
+
+
+def test_emit_gateway_capability_surfaces_staged_local_method_registry_summary(capsys) -> None:
+    registry_methods = list(list_known_gateway_methods())
+
+    _emit_gateway_capability(
+        {
+            "headline": "Gateway method registry is staged",
+            "summary": "Built-in registry is staged locally.",
+            "connected_lane_health": {"summary": "0/0 lane(s) connected."},
+            "inventory": {
+                "summary": "Tracked inventory is healthy.",
+                "memory_summary": "Idle.",
+                "method_catalog": {
+                    "summary": (
+                        "141 built-in gateway method(s) are registered locally while "
+                        "lane-published MCP catalogs are offline. Scope coverage: "
+                        "operator.admin 38, operator.read 47, operator.write 28, "
+                        "operator.approvals 9, operator.pairing 12, node.role 7. "
+                        "14 reserved admin method(s) require operator.admin."
+                    ),
+                    "tool_count": len(registry_methods),
+                    "server_count": 0,
+                    "lane_count": 0,
+                    "classified_method_count": len(registry_methods),
+                    "reserved_admin_method_count": 14,
+                    "reserved_admin_scope": "operator.admin",
+                    "tools": registry_methods,
+                    "servers": [],
+                    "reserved_admin_methods": [
+                        "config.apply",
+                        "config.openFile",
+                        "config.patch",
+                        "config.schema",
+                        "config.set",
+                        "exec.approvals.get",
+                        "exec.approvals.node.get",
+                        "exec.approvals.node.set",
+                        "exec.approvals.set",
+                        "update.run",
+                        "wizard.cancel",
+                        "wizard.next",
+                        "wizard.start",
+                        "wizard.status",
+                    ],
+                    "scopes": [
+                        {"scope": "operator.admin", "method_count": 38},
+                        {"scope": "operator.read", "method_count": 47},
+                        {"scope": "operator.write", "method_count": 28},
+                        {"scope": "operator.approvals", "method_count": 9},
+                        {"scope": "operator.pairing", "method_count": 12},
+                        {"scope": "node.role", "method_count": 7},
+                    ],
+                },
+            },
+            "approval_posture": {"summary": "No approvals waiting."},
+            "launch_policy": {"summary": "Saved local launch policy."},
+            "diagnostics": {"summary": "Diagnostics are clean."},
+        },
+        json_output=False,
+    )
+
+    output = capsys.readouterr().out
+    assert (
+        "method catalog: 141 built-in gateway method(s) are registered locally while "
+        "lane-published MCP catalogs are offline."
+    ) in output
+    assert (
+        "method tools: agent, agent.identity.get, agent.wait, agents.create, "
+        "agents.delete, agents.files.get"
+    ) in output
+    assert (
+        "reserved admin methods: config.apply, config.openFile, config.patch, "
+        "config.schema, config.set, exec.approvals.get"
+    ) in output
+    assert (
+        "method scopes: operator.admin (38), operator.read (47), operator.write (28), "
+        "operator.approvals (9), operator.pairing (12), node.role (7)"
+    ) in output
 
 
 def test_continue_plan_uses_gateway_aware_repair_first_posture(tmp_path, monkeypatch) -> None:
@@ -433,6 +675,33 @@ def test_status_json_reuses_gateway_contract_and_surfaces_queue_plan(tmp_path, m
     assert payload["queue_plan"]["signal_id"] is not None
     assert "Gateway Doctor says" in payload["queue_plan"]["reply"]
     assert cli_gateway == api_payload
+
+
+def test_status_json_prefers_live_status_payload_when_available(tmp_path, monkeypatch) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch)
+
+    settings = Settings(data_dir=data_dir, db_path=data_dir / "openzues.db")
+    api_app = create_app(settings)
+    with TestClient(api_app, client=("testclient", 50000)) as client:
+        status_payload = client.get("/api/status").json()
+
+    status_payload["brief"]["headline"] = "Live dashboard headline"
+    status_payload["summary"] = "Live dashboard summary"
+    status_payload["instance_summary"]["connected_count"] = 1
+
+    async def fake_live_status(_settings: Settings) -> dict[str, object]:
+        return status_payload
+
+    monkeypatch.setattr(cli_module, "_try_live_status_payload", fake_live_status)
+
+    result = runner.invoke(app, ["status", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["brief"]["headline"] == "Live dashboard headline"
+    assert payload["summary"] == "Live dashboard summary"
+    assert payload["instance_summary"]["connected_count"] == 1
 
 
 def test_routes_list_json_surfaces_saved_notification_routes(tmp_path, monkeypatch) -> None:
@@ -2903,6 +3172,39 @@ def test_setup_bootstrap_can_stage_mempalace_from_cli(tmp_path, monkeypatch) -> 
     assert payload["integration"]["label"] == "MemPalace"
     assert payload["memory_task_blueprint"]["label"] == "MemPalace Memory Loop"
     assert "MemPalace memory protocol:" in payload["mission_draft"]["objective"]
+
+
+def test_setup_bootstrap_cli_persists_default_device_bootstrap_profile(
+    tmp_path, monkeypatch
+) -> None:
+    data_dir = tmp_path / "data"
+    monkeypatch.setenv("OPENZUES_DATA_DIR", str(data_dir))
+
+    bootstrap = runner.invoke(
+        app,
+        [
+            "setup",
+            "bootstrap",
+            "--project-path",
+            str(tmp_path),
+            "--operator-name",
+            "CLI Builder",
+            "--task-name",
+            "CLI Bootstrap Profile",
+            "--objective-template",
+            "Ship the next verified bootstrap slice.",
+            "--json",
+        ],
+    )
+
+    assert bootstrap.exit_code == 0, bootstrap.stdout
+
+    gateway = runner.invoke(app, ["gateway", "show", "--json"])
+
+    assert gateway.exit_code == 0, gateway.stdout
+    payload = json.loads(gateway.stdout)
+    assert payload["bootstrap_roles"] == ["node", "operator"]
+    assert payload["bootstrap_scopes"] == list(BOOTSTRAP_HANDOFF_OPERATOR_SCOPES)
 
 
 def test_doctor_and_update_status_json_include_hermes_sections(tmp_path, monkeypatch) -> None:

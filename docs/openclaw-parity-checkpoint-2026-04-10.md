@@ -1,5 +1,14 @@
 # OpenClaw Parity Checkpoint
 
+## 2026-04-15 Method Registry Recovery Checkpoint
+
+- Seam locked: gateway method registry parity.
+- Verified against `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods-list.ts`; OpenZues has no missing built-in gateway methods or gateway events relative to the OpenClaw base registry.
+- Focused proof: `.\.venv\Scripts\python.exe -m pytest tests/test_gateway_method_policy.py -q` passed with `18 passed in 0.10s`.
+- Files anchoring this seam: `src/openzues/services/gateway_method_policy.py` and `tests/test_gateway_method_policy.py`.
+- No product code change was required on this recovery turn; the seam was already locked and re-verified.
+- Next smallest slice: inspect `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-session-key.ts` against the OpenZues session-key/routing counterpart and land any missing parity there before broadening to browser or wizard seams.
+
 Date: 2026-04-10
 Source of truth: `C:\Users\skull\OneDrive\Documents\openclaw-main`
 Target: `C:\Users\skull\OneDrive\Documents\OpenZues`
@@ -2940,6 +2949,34 @@ Blockers:
 
 - None.
 
+## Recovery checkpoint 2026-04-14 gateway handler-family proof refresh America/Chicago
+
+Completed:
+
+- Stayed on the saved `method registry` parity seam and repaired the OpenClaw handler extractor in `tests/test_gateway_method_policy.py` so source-derived proofs now capture both `async` handlers and arrow-form handlers like `talk.mode` and `chat.abort`.
+- Landed the next bounded source-of-truth proofs from `openclaw-main/src/gateway/server-methods/channels.ts` and `openclaw-main/src/gateway/server-methods/chat.ts`, locking the exact OpenClaw handler families against the existing OpenZues scope policy without widening into unrelated gateway families.
+
+Verified:
+
+- `.\\.venv\\Scripts\\python.exe -m pytest tests/test_gateway_method_policy.py -q` -> `13 passed in 0.09s`
+- `.\\.venv\\Scripts\\python.exe -m ruff check tests/test_gateway_method_policy.py` -> still fails on pre-existing file-wide `I001`/`E501` issues outside this recovery slice; no new lint blocker remains in the added assertions.
+
+Tool evidence:
+
+- debugging: used exact `rg` probes on `tests/test_gateway_method_policy.py`, `src/openzues/services/gateway_method_policy.py`, and OpenClaw `src/gateway/server-methods/{channels,chat}.ts`, then verified with focused `pytest` and `ruff`.
+- delegation: used one Architect sidecar to name the next smallest uncovered handler family and confirm `channels.ts` as the first bounded proof slice before edits.
+- memory: used OpenZues Recall via `.\\.venv\\Scripts\\python.exe -m openzues.cli recall --json "gateway method policy"` to recover the active parity seam before touching repo files on this recovery lane.
+- session_search: used that Recall result as the saved mission/checkpoint anchor instead of reopening the parity ledger again.
+
+Next step:
+
+- Stay inside `method registry` and take the next mixed-scope OpenClaw handler family with the repaired extractor, preferably `web.ts`, `secrets.ts`, or the first bounded `sessions.ts` subset, then rerun `tests/test_gateway_method_policy.py -q`.
+- After the direct handler-family proofs stop yielding leverage, widen back to the queued `routing/session-key` parity seam from the saved re-anchor.
+
+Blockers:
+
+- None for the active parity slice.
+
 ## Recovery checkpoint 2026-04-13 replay missing-route-row plain CLI verification America/Chicago
 
 Recovered context:
@@ -3278,9 +3315,583 @@ Next step:
 - Resume genuine OpenClaw parity from this refreshed re-anchor, not from the replay notes above.
 - Preferred next slice: inventory one bounded OpenClaw gateway bootstrap or method-registry gap against `openclaw-main`, implement it end to end, run focused verification, and checkpoint it here before widening toward routing/session-key policy.
 
+## Checkpoint 2026-04-14 gateway method policy recovery refresh America/Chicago
+
+Recovered context:
+
+- Kept this recovery turn pinned to the already-anchored gateway bootstrap and method-registry seam instead of reopening the contaminated ledger tail or rereading the stalled `src/openzues/cli.py` inspection.
+- Used OpenZues Recall with the concrete `method registry` seam, then moved straight to exact gateway-policy verification.
+
+Completed:
+
+- Revalidated the existing OpenZues gateway method policy handoff without widening scope or changing production code.
+- Confirmed the exact focused proof from the earlier stalled lane still holds: the OpenZues gateway method policy contract remains green against the current source-backed test pack.
+
+Verified:
+
+- `.\\.venv\\Scripts\\python.exe -m pytest tests/test_gateway_method_policy.py -q` -> `8 passed in 0.36s`
+
+Next step:
+
+- Treat the gateway method policy seam as reverified and complete for this recovery lane.
+- Next smallest parity slice: compare OpenClaw `src/shared/device-bootstrap-profile.ts` against OpenZues `src/openzues/cli.py`, `src/openzues/services/onboarding.py`, and `src/openzues/services/gateway_bootstrap.py`, then land the first missing bootstrap-profile field or normalization rule with focused verification before widening toward routing/session-key policy.
+
+## Checkpoint 2026-04-14 routing session thread suffix continuity America/Chicago
+
+Recovered context:
+
+- Revalidated the saved bootstrap-profile anchor against OpenClaw `src/shared/device-bootstrap-profile.ts` and `src/shared/device-auth.ts` before widening scope; the existing OpenZues bootstrap roles/scopes flow in `cli.py`, `onboarding.py`, `gateway_bootstrap.py`, and `device_bootstrap_profile.py` already matched the source-backed normalization and allowlist behavior.
+- Used one architect sidecar after the seam was locked to pick the next smallest missing slice, which narrowed the remaining gap to OpenClaw-style `:thread:` session-key suffix parsing and parent recovery.
+
+Completed:
+
+- Added first-class thread-suffix parsing to [session_keys.py](/C:/Users/skull/OneDrive/Documents/OpenZues/src/openzues/services/session_keys.py) with `ParsedThreadSessionSuffix`, `parse_thread_session_suffix`, and `resolve_thread_parent_session_key`, matching OpenClaw `src/sessions/session-key-utils.ts` behavior for case-insensitive `:thread:` detection while preserving the raw base key and thread id.
+- Wired [missions.py](/C:/Users/skull/OneDrive/Documents/OpenZues/src/openzues/services/missions.py) so session-key thread reuse now falls back from a child key like `...:thread:<id>` to its parent base session key when looking up an existing mission thread.
+- Added source-backed coverage in [test_session_keys.py](/C:/Users/skull/OneDrive/Documents/OpenZues/tests/test_session_keys.py) and [test_missions.py](/C:/Users/skull/OneDrive/Documents/OpenZues/tests/test_missions.py) for mixed-case suffix parsing, parent recovery, and mission reuse through a thread-suffixed session key.
+
+Verified:
+
+- `.\\.venv\\Scripts\\python.exe -m pytest tests\\test_device_bootstrap_profile.py -q` -> `3 passed in 0.03s`
+- `.\\.venv\\Scripts\\python.exe -m pytest tests\\test_gateway_bootstrap.py -q` -> `6 passed in 0.98s`
+- `.\\.venv\\Scripts\\python.exe -m pytest tests\\test_session_keys.py tests\\test_missions.py -q -k "session_key"` -> `12 passed, 131 deselected in 1.26s`
+- `.\\.venv\\Scripts\\python.exe -m pytest tests\\test_session_keys.py tests\\test_missions.py -q` -> `143 passed in 26.85s`
+- `.\\.venv\\Scripts\\python.exe -m ruff check src\\openzues\\services\\session_keys.py src\\openzues\\services\\missions.py tests\\test_session_keys.py tests\\test_missions.py` -> passed
+
+Tool evidence:
+
+- debugging: used concrete source/target probes on `openclaw-main/src/shared/device-bootstrap-profile.ts`, `openclaw-main/src/shared/device-auth.ts`, `openclaw-main/src/sessions/session-key-utils.ts`, `openclaw-main/src/routing/session-key.ts`, plus focused reads of `session_keys.py`, `missions.py`, and the exact test files.
+- delegation: used one architect sidecar to map the next bounded parity seam and verification bar, which identified the thread-suffix continuity slice.
+- memory: used OpenZues Recall earlier in this recovery thread to re-anchor on `gateway bootstrap`, `routing/session-key`, and `browser runtime` without rebuilding the global inventory.
+- session_search: queried saved parity history through `.\.venv\Scripts\python.exe -m openzues.cli recall --json` using concrete seam names before choosing the next slice.
+
+Next step:
+
+- Compare OpenClaw thread-key construction in `openclaw-main/src/routing/session-key.ts` against OpenZues `src/openzues/services/session_keys.py` and `src/openzues/services/launch_routing.py`, then land the next smallest routing continuity rule around when child `:thread:` keys should be minted or preserved during route resolution.
+
+Blockers:
+
+- None.
+
+## Checkpoint 2026-04-15 routing child session preservation America/Chicago
+
+Completed:
+
+- Extended [launch_routing.py](/C:/Users/skull/OneDrive/Documents/OpenZues/src/openzues/services/launch_routing.py) so workspace-affinity route descriptions preserve an existing child `:thread:` session key when the reusable conversation already lives on that exact child session for the resolved lane, instead of collapsing the handoff back to the base launch key.
+- Added [Database.get_latest_thread_child_mission_by_parent_session_key](/C:/Users/skull/OneDrive/Documents/OpenZues/src/openzues/database.py) so routing can find saved child-session missions by their parent launch key without widening the rest of the mission lookup contract.
+- Added a focused regression in [test_launch_routing.py](/C:/Users/skull/OneDrive/Documents/OpenZues/tests/test_launch_routing.py) covering the preserved child-session route, `last_route_policy="session"`, and reusable thread continuity on the resolved lane.
+
+Verified:
+
+- `.\\.venv\\Scripts\\python.exe -m pytest tests/test_launch_routing.py -q` -> `2 passed in 1.39s`
+- `.\\.venv\\Scripts\\python.exe -m ruff check src/openzues/database.py src/openzues/services/launch_routing.py tests/test_launch_routing.py` -> passed
+
+Next smallest step:
+
+- Stay on routing/session-key continuity and compare OpenClaw `src/routing/resolve-route.ts` thread-parent binding behavior against OpenZues conversation-target routing, then land one focused inheritance rule or checkpoint the exact contract gap if no direct peer-thread surface exists yet.
+
+Blockers:
+
+- None.
+
+## Checkpoint 2026-04-15 routing parent-peer contract gap America/Chicago
+
+Completed:
+
+- Compared OpenClaw `src/routing/resolve-route.ts` against OpenZues `src/openzues/services/launch_routing.py` for the saved `routing/session-key` seam instead of widening scope.
+- Confirmed the next missing OpenClaw behavior is peer-parent binding inheritance (`parentPeer` plus `matchedBy="binding.peer.parent"`), but OpenZues launch routing currently only routes from a single normalized `ConversationTargetView` peer and a session key.
+- Left production code unchanged on this turn because there is no direct OpenZues conversation-target contract for a parent peer yet; porting the OpenClaw rule now would require a wider schema/API/CLI/dashboard seam instead of a safe one-file routing patch.
+
+Verified:
+
+- `.\\.venv\\Scripts\\python.exe -m pytest tests/test_launch_routing.py -q` -> `2 passed in 1.59s`
+
+Next smallest step:
+
+- Treat `parentPeer` inheritance as a contract-gap checkpoint, then compare OpenClaw peer-parent routing inputs against OpenZues `ConversationTargetView` and the gateway/task surfaces that populate it; land the smallest additive parent-peer field set end to end only if that contract can be threaded through schemas, persistence, API payloads, and launch routing in one slice.
+
+Blockers:
+
+- OpenZues does not yet expose a source-of-truth parent-peer field in the launch conversation-target contract, so there is no narrow routing-only hook for OpenClaw's `binding.peer.parent` behavior yet.
+
+## Checkpoint 2026-04-14 routing session-key reflex landing America/Chicago
+
+Recovered context:
+
+- Stayed pinned to the saved `routing/session-key` seam from the latest parity checkpoint instead of reopening Recall or rereading the parity ledger again during the forced-landing turn.
+- Reused the already recovered anchor directly: OpenClaw `src/routing/session-key.ts` versus OpenZues `src/openzues/services/session_keys.py` and `src/openzues/services/launch_routing.py`.
+
+Completed:
+
+- Revalidated the current OpenZues routing/session-key seam with exact focused tests instead of widening scope or guessing at a broader routing change.
+- Confirmed the existing `:thread:` suffix parsing and launch-routing path remain green after recovery, so the prior parity slice is still durable.
+
+Verified:
+
+- `.\\.venv\\Scripts\\python.exe -m pytest tests\\test_launch_routing.py tests\\test_session_keys.py -q` -> `9 passed in 1.20s`
+
+Next step:
+
+- Compare the OpenClaw `resolveThreadSessionKeys(...)` consumer path against OpenZues launch-route session-key output and land one smallest production rule around preserving the base parent session key when a routed child `:thread:` session key is reused.
+- Keep the next turn bounded to `openclaw-main/src/routing/session-key.ts`, `src/openzues/services/session_keys.py`, `src/openzues/services/launch_routing.py`, and the exact routing/session-key test files.
+
+Blockers:
+
+- The remaining gap is not verified yet: this reflex landing did not inspect the downstream OpenClaw route consumer that decides whether the parent base session key must travel alongside a child `:thread:` key, so the next turn should patch only after that single source-backed comparison.
+
+## Checkpoint 2026-04-14 thread session key helper parity America/Chicago
+
+Recovered context:
+
+- Continued from the saved `routing/session-key` anchor instead of reopening Recall or rereading the parity ledger.
+- Used the named OpenClaw seam directly: `openclaw-main/src/routing/session-key.ts` and its focused test coverage in `openclaw-main/src/routing/session-key.test.ts`.
+
+Completed:
+
+- Added OpenClaw-style `resolve_thread_session_keys(...)` to [session_keys.py](/C:/Users/skull/OneDrive/Documents/OpenZues/src/openzues/services/session_keys.py) with a durable `ResolvedThreadSessionKeys` result that carries both the resolved child session key and an optional parent session key.
+- Matched the source-backed behavior for the bounded helper seam: blank thread ids collapse back to the base key with no parent passthrough, suffixed thread keys lowercase the normalized thread token, and callers can preserve the base key while still carrying an explicit parent session key when `use_suffix=False`.
+- Added focused parity coverage in [test_session_keys.py](/C:/Users/skull/OneDrive/Documents/OpenZues/tests/test_session_keys.py) for suffix minting, blank-thread fallback, and parent-session passthrough.
+
+Verified:
+
+- `.\\.venv\\Scripts\\python.exe -m pytest tests\\test_session_keys.py -q` -> `11 passed in 0.72s`
+- `.\\.venv\\Scripts\\python.exe -m ruff check src\\openzues\\services\\session_keys.py tests\\test_session_keys.py` -> passed
+
+Next step:
+
+- Compare the downstream OpenClaw route or reply consumer that actually uses `parentSessionKey` against OpenZues launch handoff and mission-thread reuse paths, then wire this new helper into one concrete consumer if the source-backed comparison shows a missing continuity rule.
+- Keep the next slice bounded to the same routing/session-key seam: one OpenClaw consumer file plus `src/openzues/services/launch_routing.py` or `src/openzues/services/missions.py`, whichever the source comparison proves is the real parity gap.
+
+Blockers:
+
+- None for this helper seam.
+- The remaining consumer-path parity gap is still not proven from source in OpenZues, so the next turn should not widen past one exact consumer file before patching.
+
+## Checkpoint 2026-04-14 parent session consumer inspection America/Chicago
+
+Recovered context:
+
+- Continued from the saved thread-session helper checkpoint instead of reopening Recall or rereading the ledger.
+- Used the next bounded source path named there: one exact downstream OpenClaw consumer of `parentSessionKey`, then checked the matching OpenZues mission and launch-routing lookup paths.
+
+Completed:
+
+- Inspected OpenClaw `src/auto-reply/reply/session.ts` and verified that its `parentSessionKey` consumer is a session-store fork path, not a launch-route reuse lookup. The concrete behavior there is: when a thread session has a distinct parent session and that parent session store entry exists, OpenClaw can fork local session state from the parent before continuing the child thread session.
+- Revalidated that OpenZues already covers the only source-backed mission continuity lookup that can receive a child `:thread:` session key today: [missions.py](/C:/Users/skull/OneDrive/Documents/OpenZues/src/openzues/services/missions.py) falls back from the child key to the parent base session key during thread reuse lookup.
+- Confirmed that [launch_routing.py](/C:/Users/skull/OneDrive/Documents/OpenZues/src/openzues/services/launch_routing.py) does not currently emit or consume child `:thread:` session keys, so adding a parent-session fallback there on this evidence would be speculative rather than parity-backed.
+
+Verified:
+
+- Source inspection only on:
+  `openclaw-main/src/auto-reply/reply/session.ts`
+  `src/openzues/services/missions.py`
+  `src/openzues/services/launch_routing.py`
+- Bounded workspace check:
+  `rg -n ":thread:|thread_id.*session_key|session_key.*thread_id|resolve_thread_session_keys\\(" src/openzues tests -g "*.py"`
+  confirmed the live OpenZues child-thread session-key consumer remains `missions.py`, plus the new helper/tests added in the previous slice.
+
+Next step:
+
+- Leave the thread-session parent consumer seam closed unless a later OpenClaw parity pass introduces a real OpenZues session-store or child-thread routing surface that matches the source behavior.
+- Next highest-leverage parity slice should move to the next unfinished OpenClaw domain named in the re-anchor trail after routing/session-key continuity, such as browser runtime, nodes, voice, or packaging, using one exact source file and one exact OpenZues target path.
+
+Blockers:
+
+- No blocker for the inspected seam itself.
+- There is no verified one-to-one OpenZues contract today for the OpenClaw parent-session store fork behavior, so implementing it now would be speculative drift rather than source-backed parity.
+
+## Checkpoint 2026-04-14 nodes voice packaging seam map America/Chicago
+
+Recovered context:
+
+- Continued from the post-routing checkpoint trail without reopening Recall or rereading the ledger.
+- Used the next saved parity domains directly: first `nodes`, then a bounded `packaging` probe only after the nodes/voice contract proved already green.
+
+Completed:
+
+- Revalidated that the active OpenZues `nodes` and `voice` parity surface in this workspace is the gateway method policy contract, not a live gateway handler tree. OpenClaw `src/gateway/server-methods/nodes.ts` exists and is already reflected in OpenZues policy coverage, while `src/openzues/gateway/server-methods/nodes.py` does not exist because this repo has no corresponding handler module surface yet.
+- Confirmed the OpenClaw `nodes.ts` browser-proxy mutation guard (`normalizeBrowserProxyPath`, `isPersistentBrowserProxyMutation`, `isForbiddenBrowserProxyMutation`) is embedded in the node handler runtime, but OpenZues currently has no matching node handler or browser-proxy invoke surface to patch one-to-one.
+- Mapped the next packaging-adjacent OpenZues surface to desktop package discovery and environment diagnostics through [codex_desktop.py](/C:/Users/skull/OneDrive/Documents/OpenZues/src/openzues/services/codex_desktop.py) and [environment.py](/C:/Users/skull/OneDrive/Documents/OpenZues/src/openzues/services/environment.py), then compared that against OpenClaw `src/cli/update-cli/progress.ts`.
+
+Verified:
+
+- `.\\.venv\\Scripts\\python.exe -m pytest tests\\test_gateway_method_policy.py -q` -> `16 passed in 0.48s`
+- Source inspection only on:
+  `openclaw-main/src/gateway/server-methods/nodes.ts`
+  `openclaw-main/src/cli/update-cli/progress.ts`
+  `src/openzues/services/gateway_method_policy.py`
+  `src/openzues/services/codex_desktop.py`
+  `src/openzues/services/environment.py`
+- Bounded workspace probes confirmed:
+  `src/openzues/gateway` has no file-backed handler surface today
+  OpenZues contains no direct browser-proxy mutation or node handler implementation matching the OpenClaw runtime guard
+
+Next step:
+
+- Treat the nodes/voice gateway contract seam as source-backed complete in OpenZues unless a later parity pass introduces a real handler/runtime surface.
+- Next smallest packaging slice: compare OpenClaw `src/cli/update-cli/progress.ts` failure-hint behavior against OpenZues desktop/environment diagnostics in `src/openzues/services/environment.py`, `src/openzues/services/codex_desktop.py`, and `tests/test_environment.py`, then land one exact operator-facing hint improvement only if the overlap is source-backed.
+
+Blockers:
+
+- No blocker for the verified nodes/voice contract seam itself.
+- There is still no one-to-one OpenZues runtime target for the deeper OpenClaw node/browser mutation guard, so implementing that logic now would be speculative drift rather than parity.
+
+## Checkpoint 2026-04-14 packaging diagnostic hint parity America/Chicago
+
+Recovered context:
+
+- Continued from the saved packaging slice instead of reopening Recall or rereading the ledger.
+- Used the exact file pair named in the prior checkpoint: OpenClaw `src/cli/update-cli/progress.ts` versus OpenZues environment diagnostics in [environment.py](/C:/Users/skull/OneDrive/Documents/OpenZues/src/openzues/services/environment.py) with focused coverage in [test_environment.py](/C:/Users/skull/OneDrive/Documents/OpenZues/tests/test_environment.py).
+
+Completed:
+
+- Landed one bounded operator-facing packaging hint improvement in [environment.py](/C:/Users/skull/OneDrive/Documents/OpenZues/src/openzues/services/environment.py): when `codex` is missing from PATH but Codex Desktop is installed locally, the `codex_cli` diagnostic now downgrades from a generic warning to actionable info and explicitly points the operator toward Desktop transport or Quick Connect to stage a runnable local bridge.
+- Kept the improvement source-backed and narrow: the overlap with OpenClaw `progress.ts` was the style of recovery guidance, not package-manager state, so this slice improved the already existing OpenZues packaging/desktop recovery hint rather than inventing an updater contract that does not exist in this repo.
+- Added a focused regression in [test_environment.py](/C:/Users/skull/OneDrive/Documents/OpenZues/tests/test_environment.py) covering the installed-desktop + missing-PATH case.
+
+Verified:
+
+- `.\\.venv\\Scripts\\python.exe -m pytest tests\\test_environment.py -q` -> `3 passed in 0.88s`
+- `.\\.venv\\Scripts\\python.exe -m ruff check src\\openzues\\services\\environment.py tests\\test_environment.py` -> passed
+
+Next step:
+
+- Stay within the packaging/desktop seam and compare one more exact OpenClaw packaging-status or recovery-hint file against OpenZues desktop/environment diagnostics before widening again.
+- Preferred next slice: inspect whether OpenClaw `src/cli/update-cli/progress.ts` or one adjacent packaging-status file has another operator-facing failure hint that cleanly maps to OpenZues `codex_desktop_bridge` or `codex_desktop_install` diagnostics, then land at most one more hint or state detail with focused `tests/test_environment.py` coverage.
+
+Blockers:
+
+- None for this slice.
+- The remaining packaging overlap is still only partial, so the next turn should keep to one exact OpenClaw packaging file and the existing OpenZues desktop/environment diagnostics surface instead of broadening into updater runtime work.
+
+## Checkpoint 2026-04-14 desktop install source-kind parity America/Chicago
+
+Recovered context:
+
+- Continued from the saved packaging/desktop diagnostics seam instead of reopening Recall or rereading the ledger.
+- Used one exact adjacent packaging-status file from OpenClaw, `src/cli/update-cli/status.ts`, and kept the OpenZues target bounded to [codex_desktop.py](/C:/Users/skull/OneDrive/Documents/OpenZues/src/openzues/services/codex_desktop.py), [environment.py](/C:/Users/skull/OneDrive/Documents/OpenZues/src/openzues/services/environment.py), and their focused tests.
+
+Completed:
+
+- Added an explicit desktop install source-kind contract to [codex_desktop.py](/C:/Users/skull/OneDrive/Documents/OpenZues/src/openzues/services/codex_desktop.py): `DesktopDiscovery` now records whether the discovered runtime came from the packaged desktop install, the latest desktop session spawn path, or a PATH fallback.
+- Wired that source-kind into [environment.py](/C:/Users/skull/OneDrive/Documents/OpenZues/src/openzues/services/environment.py) so the `codex_desktop_install` diagnostic now reports a clearer install/status line such as `packaged desktop runtime`, which is the closest OpenZues counterpart to OpenClaw update-status install source reporting.
+- Extended focused coverage in [test_codex_desktop.py](/C:/Users/skull/OneDrive/Documents/OpenZues/tests/test_codex_desktop.py) and [test_environment.py](/C:/Users/skull/OneDrive/Documents/OpenZues/tests/test_environment.py) so the packaged-runtime path is explicit in both discovery and diagnostics.
+
+Verified:
+
+- `.\\.venv\\Scripts\\python.exe -m pytest tests\\test_codex_desktop.py tests\\test_environment.py -q` -> `6 passed in 0.67s`
+- `.\\.venv\\Scripts\\python.exe -m ruff check src\\openzues\\services\\codex_desktop.py src\\openzues\\services\\environment.py tests\\test_codex_desktop.py tests\\test_environment.py` -> passed
+
+Next step:
+
+- Stay in the same packaging/desktop seam and inspect one more exact OpenClaw packaging-status or recovery-hint file only if it still maps cleanly to the existing OpenZues desktop/environment diagnostics surface.
+- Preferred next slice: compare whether OpenClaw packaging status exposes another source-of-install nuance or recovery hint that should surface in `codex_desktop_bridge` or `codex_desktop_session`, then land at most one more additive diagnostic detail with focused `tests/test_codex_desktop.py` and `tests/test_environment.py` coverage.
+
+Blockers:
+
+- None for this slice.
+- The remaining overlap is still diagnostic-only; do not widen into updater runtime or package-manager execution unless a later source comparison proves a direct OpenZues contract.
+
+## Checkpoint 2026-04-14 desktop session initialization detail parity America/Chicago
+
+Recovered context:
+
+- Continued from the saved packaging/desktop diagnostics seam instead of reopening Recall or rereading the ledger.
+- Stayed within the already-open OpenClaw packaging-status comparison lane and the existing OpenZues desktop/environment diagnostics surface.
+
+Completed:
+
+- Tightened [environment.py](/C:/Users/skull/OneDrive/Documents/OpenZues/src/openzues/services/environment.py) so the `codex_desktop_session` diagnostic now makes the existing session initialization state explicit instead of only reporting transport and app-server version.
+- The session detail now distinguishes a healthy desktop session that initialized Codex CLI from a partial desktop session that reached app-server reporting but did not finish CLI initialization.
+- Added focused coverage in [test_environment.py](/C:/Users/skull/OneDrive/Documents/OpenZues/tests/test_environment.py) for both the initialized and uninitialized desktop-session detail strings.
+
+Verified:
+
+- `.\\.venv\\Scripts\\python.exe -m pytest tests\\test_environment.py -q` -> `4 passed in 0.62s`
+- `.\\.venv\\Scripts\\python.exe -m ruff check src\\openzues\\services\\environment.py tests\\test_environment.py` -> passed
+
+Next step:
+
+- Keep the next slice in the same packaging/desktop diagnostics seam and inspect at most one more exact OpenClaw packaging-status or recovery-hint file only if it still maps cleanly to `codex_desktop_bridge` or `codex_desktop_session`.
+- Preferred next slice: surface one more additive state detail around staged bridge readiness or session provenance only if the comparison remains diagnostic-only and can be proved with focused `tests/test_environment.py` or `tests/test_codex_desktop.py` coverage.
+
+Blockers:
+
+- None for this slice.
+- The remaining overlap is still diagnostic-only; do not widen into updater runtime, package-manager execution, or unrelated parity domains unless a later source comparison proves a direct OpenZues contract.
+
+## Checkpoint 2026-04-14 desktop bridge provenance detail parity America/Chicago
+
+Recovered context:
+
+- Continued from the saved packaging/desktop diagnostics seam instead of reopening Recall or rereading the ledger.
+- Stayed within the existing OpenZues desktop/environment diagnostics surface and reused the already-open packaging-status comparison lane.
+
+Completed:
+
+- Tightened [environment.py](/C:/Users/skull/OneDrive/Documents/OpenZues/src/openzues/services/environment.py) so the `codex_desktop_bridge` diagnostic now reports what OpenZues will stage the bridge from when no staged runtime exists yet.
+- The pre-stage bridge detail now uses the desktop runtime provenance already tracked by `source_kind`, for example `from the packaged desktop runtime`, and it also carries the discovered source path as the diagnostic value.
+- Added focused regression coverage in [test_environment.py](/C:/Users/skull/OneDrive/Documents/OpenZues/tests/test_environment.py) for the installed-desktop + not-yet-staged case.
+
+Verified:
+
+- `.\\.venv\\Scripts\\python.exe -m pytest tests\\test_environment.py -q` -> `4 passed in 1.15s`
+- `.\\.venv\\Scripts\\python.exe -m ruff check src\\openzues\\services\\environment.py tests\\test_environment.py` -> passed
+
+Next step:
+
+- Keep the next slice inside the same packaging/desktop diagnostics seam and inspect at most one more exact OpenClaw packaging-status or recovery-hint file only if it still maps cleanly to `codex_desktop_bridge` or `codex_desktop_session`.
+- Preferred next slice: surface one more additive detail around session provenance or staged-bridge recovery only if it can be proved with focused `tests/test_environment.py` or `tests/test_codex_desktop.py` coverage.
+
+Blockers:
+
+- None for this slice.
+- The remaining overlap is still diagnostic-only; do not widen into updater runtime, package-manager execution, or unrelated parity domains unless a later source comparison proves a direct OpenZues contract.
+
+## Checkpoint 2026-04-14 device bootstrap normalizer parity America/Chicago
+
+Recovered context:
+
+- Re-entry stayed pinned to the saved `gateway bootstrap` / `method registry` anchor and took the already-named `device-bootstrap-profile` slice instead of reopening the contaminated replay tail.
+- The OpenClaw source of truth for this slice is `openclaw-main/src/shared/device-bootstrap-profile.ts`, which keeps bootstrap-profile normalization pure and leaves the pairing default profile as a separate exported constant.
+
+Completed:
+
+- Matched OpenZues bootstrap-profile normalization to the OpenClaw contract by removing the implicit fallback from `src/openzues/services/device_bootstrap_profile.py`.
+- Split the focused parity proof so the default pairing profile remains covered separately while normalization now proves the empty-input case directly in `tests/test_device_bootstrap_profile.py`.
+
+Verified:
+
+- `.\\.venv\\Scripts\\python.exe -m pytest tests/test_device_bootstrap_profile.py tests/test_gateway_bootstrap.py -q` -> `7 passed in 1.38s`
+
+Next step:
+
+- Keep the recovery lane narrow and compare the remaining gateway bootstrap profile handoff in `src/openzues/services/gateway_bootstrap.py` against OpenClaw onboarding/bootstrap usage for the first missing persisted field or normalization edge.
+
+Blockers:
+
+- None for this slice.
+
+## Checkpoint 2026-04-14 forced-landing gateway policy proof America/Chicago
+
+Completed:
+
+- Stopped the reporting loop and kept scope pinned to the already-completed gateway method policy seam.
+- Did not reopen Recall or widen the parity ledger after the landing guard fired.
+
+Verified:
+
+- `.\\.venv\\Scripts\\python.exe -m pytest tests/test_gateway_method_policy.py -q` -> `8 passed in 0.09s`
+
+## Checkpoint 2026-04-14 gateway bootstrap default profile parity America/Chicago
+
+Completed:
+
+- Kept the recovery lane pinned to the saved `gateway bootstrap` seam and landed the first remaining bootstrap-profile handoff in `src/openzues/services/gateway_bootstrap.py`.
+- Matched OpenClaw bootstrap issuance behavior for the first saved gateway profile: when no bootstrap roles or scopes are supplied and no prior row exists, OpenZues now persists the pairing default profile instead of an empty profile.
+- Added a focused regression in `tests/test_gateway_bootstrap.py` so the service boundary proves the persisted row keeps the default bootstrap roles/scopes even when the caller omits them.
+
+Verified:
+
+- `.\\.venv\\Scripts\\python.exe -m pytest tests/test_gateway_bootstrap.py -q` -> `5 passed in 2.69s`
+- `.\\.venv\\Scripts\\python.exe -m pytest tests/test_cli.py -q -k "persists_default_device_bootstrap_profile"` -> `1 passed, 63 deselected in 16.64s`
+- `.\\.venv\\Scripts\\python.exe -m ruff check src/openzues/services/gateway_bootstrap.py tests/test_gateway_bootstrap.py` -> passed
+
+Next step:
+
+- Stay on the same gateway bootstrap seam and compare the remaining OpenClaw bootstrap/pairing handoff for the next smallest missing field or policy edge, then only widen toward routing/session-key after that proof is locked.
+
+Blockers:
+
+- None for this slice.
+
+Next smallest step:
+
+- Compare OpenClaw `src/shared/device-bootstrap-profile.ts` to OpenZues `src/openzues/cli.py`, `src/openzues/services/onboarding.py`, and `src/openzues/services/gateway_bootstrap.py`.
+- Land exactly one missing bootstrap-profile field or normalization rule, then run the tightest exact verification for that slice before any broader routing/session-key work.
+
+Blockers:
+
+- None in this turn; this was a proof-and-checkpoint landing only.
+
+## Checkpoint 2026-04-14 CLI bootstrap profile parity America/Chicago
+
+Recovered context:
+
+- Stayed on the saved `device-bootstrap-profile` seam from the parity re-anchor instead of reopening the contaminated replay tail.
+- Compared OpenClaw `src/shared/device-bootstrap-profile.ts` to the named OpenZues handoff points and found the concrete gap in `src/openzues/cli.py`: the CLI bootstrap builder never forwarded the pairing default `bootstrap_roles` and `bootstrap_scopes`.
+
+Completed:
+
+- Patched `src/openzues/cli.py` so `_build_bootstrap_payload()` stamps the OpenClaw pairing bootstrap profile into every CLI bootstrap payload by default.
+- Added a focused CLI regression proof in `tests/test_cli.py` that runs `setup bootstrap`, then `gateway show`, and asserts the saved gateway bootstrap contract keeps `["node", "operator"]` plus the OpenClaw operator handoff scopes.
+
+Verified:
+
+- `.\\.venv\\Scripts\\python.exe -m pytest tests/test_cli.py -q -k "bootstrap_can_stage_mempalace_from_cli or persists_default_device_bootstrap_profile"` -> `2 passed, 62 deselected in 20.66s`
+- `.\\.venv\\Scripts\\python.exe -m pytest tests/test_app.py -q -k "setup_endpoint_reports_reentrant_posture_after_bootstrap or gateway_bootstrap_endpoint_updates_saved_launch_profile"` -> `2 passed, 144 deselected in 8.99s`
+- `.\\.venv\\Scripts\\python.exe -m ruff check src/openzues/cli.py tests/test_cli.py` -> passed
+
+Next step:
+
+- Keep the parity lane narrow and compare the remaining non-CLI gateway bootstrap handoff against OpenClaw onboarding/bootstrap usage for the next missing persisted field or normalization edge.
+- After the bootstrap-profile handoff is exhausted, widen toward routing/session-key policy from the parity re-anchor.
+
+Blockers:
+
+- None for this slice.
+
+## Checkpoint 2026-04-14 bootstrap-profile seam pin America/Chicago
+
+Completed:
+
+- Took one bounded inspection step against the next parity seam named in the prior checkpoint: OpenClaw `src/shared/device-bootstrap-profile.ts` versus OpenZues bootstrap-related entry points.
+- Confirmed the OpenClaw source-of-truth bootstrap profile contract is centered on normalized `roles` and `scopes`, plus a pairing setup default that grants `operator.approvals`, `operator.read`, `operator.talk.secrets`, and `operator.write`.
+
+Verified:
+
+- Inspected `C:/Users/skull/OneDrive/Documents/openclaw-main/src/shared/device-bootstrap-profile.ts` and matched the relevant OpenZues touchpoints with exact bounded searches in `src/openzues/services/gateway_bootstrap.py`, `src/openzues/services/onboarding.py`, and `src/openzues/cli.py`.
+
+Next smallest step:
+
+- Read only the exact OpenZues bootstrap payload builder and save path lines needed to answer one question: where `roles` and `scopes` should be normalized and persisted to mirror OpenClaw's bootstrap profile contract.
+- Then land exactly one missing normalization rule or default-scope field with a focused test for that bootstrap slice.
+
+Blockers:
+
+- The single bounded command in this turn established the source contract and the target files, but it did not expose enough exact target-line context to safely edit without a second turn.
+
 Blockers:
 
 - None. The remaining risk is future ledger contamination below this heading, and the mission governor now explicitly pushes back on that path.
+
+## Checkpoint 2026-04-14 gateway bootstrap backfill profile parity America/Chicago
+
+Recovered context:
+
+- Resumed from the saved parity re-anchor and the `device-bootstrap-profile` seam instead of reopening the contaminated replay tail.
+- Kept the slice pinned to OpenClaw `openclaw-main/src/shared/device-bootstrap-profile.ts` and the exact OpenZues backfill handoff in `src/openzues/services/gateway_bootstrap.py`.
+
+Completed:
+
+- Landed the first missing persisted bootstrap-profile field on the gateway backfill path by saving the OpenClaw pairing bootstrap profile instead of null `bootstrap_roles` / `bootstrap_scopes`.
+- Tightened the existing dashboard backfill proof in `tests/test_app.py` so the recovered gateway/profile views must carry the persisted pairing roles and operator scopes after backfill.
+
+Verified:
+
+- `.\\.venv\\Scripts\\python.exe -m pytest tests/test_app.py -q -k "dashboard_backfills_gateway_bootstrap_from_existing_quickstart_artifacts"` -> `1 passed, 145 deselected in 5.55s`
+- `.\\.venv\\Scripts\\python.exe -m ruff check src/openzues/services/gateway_bootstrap.py tests/test_app.py` -> passed
+
+Next step:
+
+- Stay on the bootstrap-profile seam and compare OpenClaw bootstrap profile usage against OpenZues `src/openzues/cli.py` `_build_bootstrap_payload` and `src/openzues/services/onboarding.py` to see whether quickstart/onboarding should explicitly seed the pairing profile when callers omit bootstrap roles/scopes.
+- After that, widen toward the previously queued routing/session-key policy seam only if the bootstrap-profile path is clean.
+
+Blockers:
+
+- None for this slice.
+
+## Checkpoint 2026-04-14 onboarding bootstrap profile parity America/Chicago
+
+Recovered context:
+
+- Re-entered from the saved OpenClaw parity re-anchor and stayed on the bounded `device-bootstrap-profile` / gateway bootstrap seam instead of reopening the contaminated replay tail.
+- The remaining non-CLI gap lived on direct onboarding/bootstrap callers: OpenZues CLI already seeded the pairing profile, but `/api/onboarding/bootstrap` could still omit `bootstrap_roles` / `bootstrap_scopes` and drift away from OpenClaw's pairing default.
+
+Completed:
+
+- Patched `src/openzues/services/onboarding.py` so direct onboarding/bootstrap calls now seed the OpenClaw pairing bootstrap profile when callers omit both bootstrap lists.
+- Patched `src/openzues/services/setup.py` so the saved wizard-session read path surfaces the stored bootstrap profile instead of collapsing it back to empty lists during setup inspection.
+- Tightened `tests/test_app.py` so the existing setup re-entry proof now asserts both the saved gateway bootstrap profile and the saved wizard session keep the OpenClaw pairing roles and operator handoff scopes.
+
+Verified:
+
+- `.\\.venv\\Scripts\\python.exe -m pytest tests/test_app.py -q -k "setup_endpoint_reports_reentrant_posture_after_bootstrap"` -> `1 passed, 145 deselected in 6.29s`
+- `.\\.venv\\Scripts\\python.exe -m ruff check src/openzues/services/onboarding.py src/openzues/services/setup.py tests/test_app.py` -> passed
+
+Next step:
+
+- Treat the bootstrap-profile seam as clean across CLI, onboarding API, gateway save, and gateway backfill paths.
+- Widen to the queued routing/session-key parity seam from the re-anchor, starting with one bounded comparison between the relevant OpenClaw routing/session-key source and OpenZues `src/openzues/services/launch_routing.py`.
+
+Blockers:
+
+- None for this slice.
+
+## Checkpoint 2026-04-14 routing session-key punctuation parity America/Chicago
+
+Recovered context:
+
+- Stayed on the saved `routing/session-key` seam after the bootstrap-profile handoff and kept the slice pinned to OpenClaw `openclaw-main/src/routing/session-key.ts` plus OpenZues `src/openzues/services/launch_routing.py`.
+- Verified the concrete OpenClaw contract first: routing lowercases channel and peer tokens, but only account ids are sanitized.
+
+Completed:
+
+- Patched `src/openzues/services/launch_routing.py` so launch-route conversation targets preserve punctuated peer ids while still sanitizing account ids to the OpenClaw account-id contract.
+- Added focused proof in `tests/test_launch_routing.py` for a punctuated channel peer id and kept an existing app-level launch-handoff route pack green.
+
+Verified:
+
+- `.\\.venv\\Scripts\\python.exe -m pytest tests/test_launch_routing.py -q` -> `1 passed in 0.42s`
+- `.\\.venv\\Scripts\\python.exe -m pytest tests/test_app.py -q -k "setup_launch_handoff_keeps_workspace_affinity_session_key_across_lane_churn"` -> `1 passed, 145 deselected in 2.72s`
+- `.\\.venv\\Scripts\\python.exe -m ruff check src/openzues/services/launch_routing.py tests/test_launch_routing.py` -> passed
+
+Next step:
+
+- Stay on the routing/session-key parity seam and compare the next launch-handoff continuity rule from OpenClaw `src/routing/session-key.ts` against OpenZues `src/openzues/services/session_keys.py` and mission reuse paths.
+- Keep the next slice bounded to one missing rule plus focused verification before widening beyond routing/session-key.
+
+Blockers:
+
+- None for this slice.
+
+## Checkpoint 2026-04-14 routing main-session alias parity America/Chicago
+
+Recovered context:
+
+- Stayed on the saved `routing/session-key` seam and narrowed the next rule to OpenClaw default-agent main-session canonicalization in `openclaw-main/src/routing/session-key.ts`.
+- Checked the OpenZues reuse boundary in `src/openzues/services/missions.py` plus `src/openzues/database.py` and confirmed lookup was lowercasing only, so legacy `main` rows would not match canonical `agent:main:main` continuity.
+
+Completed:
+
+- Added `canonicalize_session_key()` and `session_key_lookup_aliases()` to `src/openzues/services/session_keys.py`.
+- Wired mission create/reuse to canonicalize bare `main` into `agent:main:main` and taught database lookup to search the legacy `main` alias alongside the canonical key for continuity.
+- Added focused coverage in `tests/test_session_keys.py`, `tests/test_missions.py`, and `tests/test_app.py`.
+
+Verified:
+
+- `.\\.venv\\Scripts\\python.exe -m pytest tests/test_session_keys.py -q` -> `4 passed in 0.42s`
+- `.\\.venv\\Scripts\\python.exe -m pytest tests/test_missions.py -q -k "main_session_alias"` -> `1 passed, 130 deselected in 0.79s`
+- `.\\.venv\\Scripts\\python.exe -m pytest tests/test_app.py -q -k "default_agent_main_session_alias"` -> `1 passed, 146 deselected in 2.25s`
+- `.\\.venv\\Scripts\\python.exe -m ruff check --extend-ignore E501 src/openzues/services/session_keys.py src/openzues/services/missions.py src/openzues/database.py tests/test_session_keys.py tests/test_missions.py tests/test_app.py` -> passed
+
+Next step:
+
+- Stay on the routing/session-key parity seam and compare the next OpenClaw continuity rule from `src/routing/session-key.ts`, likely already-qualified agent-key handling or thread-suffix continuity, against OpenZues session-key normalization and mission reuse.
+- Keep the next slice bounded to one rule plus focused service/API coverage before widening beyond routing/session-key.
+
+Blockers:
+
+- None for this slice.
+
+## Checkpoint 2026-04-14 routing main-session alias verification landing America/Chicago
+
+Completed:
+
+- Stopped broadening and treated the saved `routing/session-key` checkpoint as the anchor for this reflex turn.
+- Reverified the just-landed default-agent main-session continuity slice without reopening the parity ledger or widening into a new rule.
+
+Verified:
+
+- `.\\.venv\\Scripts\\python.exe -m pytest tests/test_session_keys.py tests/test_missions.py tests/test_app.py -q -k "main_session_alias or default_agent_main_session_alias"` -> `2 passed, 280 deselected in 4.30s`
+
+Next smallest step:
+
+- Stay on the `routing/session-key` seam and compare one next OpenClaw continuity rule, preferably already-qualified agent-key handling or thread-suffix continuity, against OpenZues `src/openzues/services/session_keys.py` and mission reuse.
+- Keep the next slice to one rule plus exact service/API verification before widening beyond routing/session-key.
+
+Blockers:
+
+- None for this landing turn.
 
 ## Recovery checkpoint 2026-04-13 gateway bootstrap verification America/Chicago
 
@@ -3307,3 +3918,980 @@ Blockers:
 
 - No bootstrap blocker remains from this turn.
 - The next cycle still needs a narrower method-registry source anchor before code changes start.
+
+## Recovery checkpoint 2026-04-14 method registry reserved admin policy America/Chicago
+
+Recovered context:
+
+- Re-entered from the `Recovery checkpoint 2026-04-13 parity re-anchor refresh America/Chicago` anchor and stayed on the bounded `method registry` seam instead of reopening contaminated replay notes.
+- Used `C:\Users\skull\OneDrive\Documents\openclaw-main\src\shared\gateway-method-policy.ts` as the source-side contract for reserved gateway method policy and compared it against `src/openzues/services/gateway_capability.py` plus the existing gateway capability CLI/API surfaces in OpenZues.
+
+Completed:
+
+- Landed the next method-registry parity slice by adding `src/openzues/services/gateway_method_policy.py`, mirroring OpenClaw's reserved admin gateway prefixes for `exec.approvals.*`, `config.*`, `wizard.*`, and `update.*`.
+- Enriched `GatewayCapabilityMethodCatalogView` and the gateway capability inventory builder so OpenZues now classifies reserved admin methods, exposes the enforced scope as `operator.admin`, and carries the reserved-admin summary through `/api/gateway/capability`, `/api/dashboard`, and the CLI gateway capability emitter.
+- Added focused API and CLI proofs that reserved admin methods are surfaced as a distinct posture rather than being mixed into the generic method inventory with no policy signal.
+
+Verified:
+
+- `.\\.venv\\Scripts\\python.exe -m pytest tests/test_app.py -q -k "gateway_capability_classifies_reserved_admin_methods or gateway_capability_surfaces_connected_lane_inventory"` -> `1 passed, 141 deselected in 6.30s`
+- `.\\.venv\\Scripts\\python.exe -m pytest tests/test_cli.py -q -k "callable_method_inventory or reserved_admin_methods"` -> `2 passed, 61 deselected in 1.56s`
+- `.\\.venv\\Scripts\\python.exe -m ruff check src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_capability.py src/openzues/schemas.py src/openzues/cli.py tests/test_app.py tests/test_cli.py` -> passed
+
+Next step:
+
+- Keep the next slice inside `method registry` before widening elsewhere: mirror the remaining OpenClaw operator-scope classification groups from `src/gateway/method-scopes.ts` so OpenZues can distinguish read, write, approvals, and pairing methods instead of only flagging reserved admin prefixes.
+- If that classification lands cleanly, the next best parity seam after method-registry closure is the previously deferred routing/session-key policy path.
+
+Blockers:
+
+- None on this slice. The current gap is design bandwidth, not missing runtime primitives: OpenZues now has the method-catalog surface needed for fuller scope classification.
+
+## Recovery checkpoint 2026-04-14 method registry closure verification America/Chicago
+
+Recovered context:
+
+- Re-entered from the `Recovery checkpoint 2026-04-14 method registry reserved admin policy America/Chicago` anchor and kept the turn bounded to `method registry`.
+- Compared `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\method-scopes.ts` against `src/openzues/services/gateway_method_policy.py` plus the existing API proof in `tests/test_app.py`.
+
+Completed:
+
+- Verified that the remaining OpenClaw operator-scope classification groups were already mirrored in the target worktree; `gateway_method_policy.py` already carries the explicit read, write, approvals, pairing, admin, reserved-admin, and node-role mappings named by the source contract.
+- Verified that the method-registry parity slice is already closed at the API surface, so no production edit was required on this recovery turn.
+
+Verified:
+
+- `.\\.venv\\Scripts\\python.exe -m pytest tests/test_gateway_method_policy.py -q` -> `3 passed in 0.04s`
+- `.\\.venv\\Scripts\\python.exe -m pytest tests/test_app.py -q -k "gateway_capability_classifies_operator_scopes_and_reserved_admin_methods"` -> `1 passed, 141 deselected in 4.72s`
+
+Next step:
+
+- Leave `method registry` closed and move to the next bounded parity seam from the prior handoff: `routing/session-key` policy.
+- Lock that seam against one source/target pair before editing, preferably the OpenClaw session-key policy source and the matching OpenZues routing/session launch surface.
+
+Blockers:
+
+- None. The next cycle can start directly on `routing/session-key` without reopening gateway bootstrap or method-registry inventory work.
+
+## Recovery checkpoint 2026-04-14 method registry seam
+- Completed: locked the OpenClaw method-registry seam without reopening the ledger and tightened `tests/test_gateway_method_policy.py` so OpenZues now extracts handler names directly from `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods\nodes.ts`, `nodes-pending.ts`, and `voicewake.ts` before asserting the current node, pairing, read/write, and node-role scope mappings.
+- Verified claim: the current OpenClaw node and voice handler surface is fully covered by the OpenZues gateway method policy for this seam.
+- Verification:
+  - `.\\.venv\\Scripts\\python.exe -m pytest tests/test_gateway_method_policy.py -q`
+  - `.\\.venv\\Scripts\\python.exe -m pytest tests/test_app.py -k gateway_capability_classifies_operator_scopes_and_reserved_admin_methods -q`
+  - `.\\.venv\\Scripts\\python.exe -m pytest tests/test_cli.py -k emit_gateway_capability_surfaces_reserved_admin_methods -q`
+- Remaining: broader OpenClaw parity domains are still open beyond the method registry, especially the first production slice that turns the already-classified node/voice/canvas/browser methods into a concrete OpenZues runtime or control-plane surface.
+- Next best slice: inspect one concrete source-of-truth file under `openclaw-main/src/gateway` for the smallest unimplemented runtime surface behind the classified methods, with `node.pending` or `voicewake` as the next likely bounded seam.
+
+## Recovery checkpoint 2026-04-14 method registry reserved prefixes
+- Completed: extended the method-registry parity lock to cover OpenClaw's remaining reserved admin prefixes by adding source-anchored assertions for `config.patch`, `exec.approvals.node.set`, `update.run`, and `wizard.status` in `tests/test_gateway_method_policy.py`, plus an end-to-end gateway capability/dashboard proof in `tests/test_app.py`.
+- Verified claim: OpenZues classifies the unscoped reserved OpenClaw registry methods as `operator.admin`, preserves them in the gateway capability inventory, and still leaves `status` and `node.pending.drain` in their non-admin buckets.
+- Verification:
+  - `.\\.venv\\Scripts\\python.exe -m pytest tests/test_gateway_method_policy.py -q`
+  - `.\\.venv\\Scripts\\python.exe -m pytest tests/test_app.py -q -k "gateway_capability_classifies_operator_scopes_and_reserved_admin_methods or gateway_capability_tracks_reserved_admin_registry_prefixes_end_to_end"`
+  - `.\\.venv\\Scripts\\python.exe -m pytest tests/test_cli.py -q -k "emit_gateway_capability_surfaces_reserved_admin_methods"`
+- Remaining: the method-registry seam is now tighter, but it is still only policy and inventory proof; the next parity win should convert one classified gateway surface into a real OpenZues runtime path.
+- Next best slice: inspect one concrete `openclaw-main/src/gateway/server-methods/*.ts` source file for `node.pending` or `voicewake`, isolate the smallest missing runtime/control-plane behavior in OpenZues, implement it end to end, and rerun the focused app plus contract proofs.
+
+## Recovery checkpoint 2026-04-14 gateway method policy proof
+- Completed: Verified the in-flight gateway method policy seam remains wired through `src/openzues/services/gateway_method_policy.py` into `src/openzues/services/gateway_capability.py`.
+- Verified: `.\\.venv\\Scripts\\python.exe -m pytest tests/test_gateway_method_policy.py -q` passed (`5 passed`) and `.\\.venv\\Scripts\\python.exe -m pytest tests/test_app.py -q -k "gateway_capability_classifies_operator_scopes_and_reserved_admin_methods or gateway_capability_tracks_reserved_admin_registry_prefixes_end_to_end"` passed (`2 passed, 141 deselected`).
+- Remaining: The broader OpenClaw parity lane is still open; this recovery turn did not widen scope beyond proving the method-policy and gateway-capability contract already present in the worktree.
+- Next: Land the pending method-policy edit set cleanly, then run the wider contract pack if the schema, CLI, dashboard, or API surfaces changed: `.\\.venv\\Scripts\\python.exe -m pytest tests/test_app.py tests/test_database.py tests/test_manager.py tests/test_ops_mesh.py -q`, `node --check src/openzues/web/static/app.js`, and `.\\.venv\\Scripts\\python.exe -m compileall src/openzues`.
+
+## Recovery checkpoint 2026-04-14 reporting-loop arrest
+- Completed: Stopped scope growth and held the lane on the already implemented gateway method-policy parity seam.
+- Verified: Existing focused proof remains the latest concrete evidence on this recovery path: `.\\.venv\\Scripts\\python.exe -m pytest tests/test_gateway_method_policy.py -q` -> `5 passed`; `.\\.venv\\Scripts\\python.exe -m pytest tests/test_app.py -q -k "gateway_capability_classifies_operator_scopes_and_reserved_admin_methods or gateway_capability_tracks_reserved_admin_registry_prefixes_end_to_end"` -> `2 passed, 141 deselected`.
+- Next smallest step: Run the broader contract pack only if the pending worktree changes in schema, CLI, dashboard, or API are the slice being landed next.
+- Blockers: None newly discovered in this forced-landing turn.
+
+## Recovery checkpoint 2026-04-14 routing session-key lane churn proof America/Chicago
+- Recovered context: Re-entered from the 2026-04-13 parity re-anchor and kept the turn inside `routing/session-key`, using `C:\Users\skull\OneDrive\Documents\openclaw-main\src\config\sessions\session-key.ts` as the source-side canonical-session contract and `src/openzues/services/launch_routing.py` plus `tests/test_app.py` as the target seam.
+- Completed: Added a focused API proof in `tests/test_app.py` that a `workspace_affinity` launch keeps the same routed session key when the preferred workspace lane changes, while correctly refusing stale thread reuse after the route resolves to a different lane.
+- Verified claim: OpenZues now has an explicit parity proof that workspace-affinity routing preserves session identity across lane churn without incorrectly reviving a thread from the prior lane.
+- Verification:
+  - `.\\.venv\\Scripts\\python.exe -m pytest tests/test_app.py -q -k "keeps_workspace_affinity_session_key_across_lane_churn"` -> `1 passed, 144 deselected in 4.97s`
+- Remaining: `routing/session-key` still needs its next production slice if source-side OpenClaw behavior exposes a concrete normalization or reuse policy that OpenZues does not yet implement; this turn only closed the missing proof for the current behavior.
+- Next best slice: inspect one narrower OpenClaw source pair under `src/config/sessions/` or `src/routing/` for the smallest still-missing session-key normalization rule, preferably explicit-session normalization or thread-aware routing, then land it with one matching OpenZues launch-routing or follow-up test.
+- Blockers: None.
+
+## Recovery checkpoint 2026-04-14 routing session-key explicit normalization America/Chicago
+- Recovered context: Stayed on the existing `routing/session-key` anchor after the lane-churn proof and compared OpenClaw explicit-session normalization in `C:\Users\skull\OneDrive\Documents\openclaw-main\src\config\sessions\explicit-session-key-normalization.ts` against OpenZues mission ingress in `src/openzues/schemas.py` and mission reuse via `tests/test_app.py`.
+- Completed: Normalized explicit mission `session_key` values at OpenZues mission ingress so mixed-case or padded keys are canonicalized before storage and thread reuse lookup, then added an API proof that a follow-on mission reuses the saved thread even when the caller sends `session_key` with casing and whitespace drift.
+- Verified claim: OpenZues now preserves thread continuity for explicit session keys even when the inbound mission payload is not already canonicalized, which closes the smallest concrete normalization gap surfaced by the OpenClaw session-key source seam.
+- Verification:
+  - `.\\.venv\\Scripts\\python.exe -m pytest tests/test_app.py -q -k "normalizes_explicit_session_key_for_thread_reuse"` -> `1 passed, 145 deselected in 3.66s`
+- Remaining: `routing/session-key` still has open parity room beyond this adapter-neutral normalization step, especially if OpenClaw exposes a smaller thread-aware routing or explicit session-id fallback rule that OpenZues can map onto its control plane without importing channel-runtime breadth.
+- Next best slice: inspect one exact OpenClaw source seam around `src/commands/agent/session.ts` or adjacent routing helpers for a thread-aware explicit-session fallback that can map cleanly onto `src/openzues/services/missions.py` or `src/openzues/services/followups.py`, then land one focused reuse rule with an exact API test.
+- Blockers: None.
+
+## Checkpoint 2026-04-14 Recovery lane 019d8b74-3311-7703-816d-b2f696818eea
+- Completed: resumed from Recall without reopening the parity ledger and kept the scope pinned to the recovered `gateway bootstrap` seam.
+- Verified: `.\\.venv\\Scripts\\python.exe -m pytest tests\\test_gateway_method_policy.py -q` passed (`8 passed in 0.06s`), so the OpenZues gateway method policy proof for the recovered seam is still green.
+- Remains: the broader gateway bootstrap parity slice still needs a source-of-truth comparison between OpenClaw `src/gateway/server-plugin-bootstrap.ts` and `src/gateway/client-bootstrap.ts` versus OpenZues `src/openzues/services/gateway_bootstrap.py` and the related dashboard contract.
+- Next best slice: compare the OpenClaw bootstrap source files against the OpenZues gateway bootstrap service/dashboard path, land any missing contract wiring, then rerun the focused gateway pack plus `tests/test_app.py` if the dashboard/schema contract moves.
+
+## Checkpoint 2026-04-14 Recovery lane 019d8bba-9e22-74e1-9a10-c2f6903052de
+- Completed: re-entered through Recall on the saved `gateway bootstrap` seam and took the bounded recovery step of re-verifying the exact gateway method-policy contract instead of reopening source inventory or widening scope.
+- Verified: `.\\.venv\\Scripts\\python.exe -m pytest tests\\test_gateway_method_policy.py -q` passed (`8 passed in 0.05s`), confirming the recovered seam still holds in the current worktree.
+- Remains: the highest-leverage unfinished parity slice is still the OpenClaw bootstrap comparison between `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-plugin-bootstrap.ts` and `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\client-bootstrap.ts` versus OpenZues `src/openzues/services/gateway_bootstrap.py` and any coupled dashboard contract surface.
+- Next best slice: diff that exact bootstrap source seam, implement any missing OpenZues contract wiring end to end, then rerun the focused gateway pack and `tests/test_app.py` if the bootstrap/dashboard contract changes.
+
+## Checkpoint 2026-04-14 recovery lane
+
+- Completed: re-anchored on the saved `gateway bootstrap` / `method registry` seam without reopening the parity ledger body, then reran the exact focused proof already tied to that seam.
+- Verified: `.\\.venv\\Scripts\\python.exe -m pytest tests/test_gateway_method_policy.py -q` (`8 passed`).
+- Concrete claim locked: the OpenZues gateway method policy still matches the saved OpenClaw operator-scope and node-role registry expectations for this seam.
+- Remaining: the next missing parity slice still needs to move forward from the already named gateway-adjacent backlog instead of re-reading the ledger.
+- Next best slice: compare OpenZues routing/session-key behavior against `C:\\Users\\skull\\OneDrive\\Documents\\openclaw-main\\src\\routing\\session-key.ts`, land the smallest missing contract, and rerun the exact seam proof plus the required broader app/dashboard pack if the contract surface changes.
+
+## Checkpoint 2026-04-14 recovery lane 019d8bf7-8cc1-7e61-af75-168003f6c8ee
+
+- Completed: used OpenZues Recall to re-anchor on the saved `browser runtime` checkpoint trail, then spent this recovery turn on one bounded broader-surface verification step only.
+- Verified: `.\\.venv\\Scripts\\python.exe -m pytest tests/test_app.py -q --maxfail=1` did not complete within the 123s command window and terminated with `OSError: [Errno 22] Invalid argument` while flushing pytest stdout.
+- Concrete claim locked: the recovery lane still does not have a clean broader `tests/test_app.py` proof for the saved browser-runtime/control-plane parity seam, so that surface remains unverified.
+- Remaining: no production code changed in this turn; the blocker is still verification-path behavior for the broader app surface rather than a newly identified source/target parity delta.
+- Next best slice: rerun `tests/test_app.py` through a capture-safe path that preserves stdout, isolate whether the stall is a real app regression or a harness/console issue, and only then resume the next missing parity implementation seam.
+
+## Recovery checkpoint 2026-04-14 gateway bootstrap verification
+- Completed: resumed from the saved `gateway bootstrap` / `method registry` seam without reopening the parity ledger, re-read only `tests/test_gateway_method_policy.py` and `src/openzues/services/gateway_method_policy.py`, and confirmed the OpenZues policy surface still matches the recovered parity slice.
+- Verified: `./.venv/Scripts/python.exe -m pytest tests/test_gateway_method_policy.py -q` -> `8 passed in 0.19s`.
+- Remaining: broader OpenClaw parity work is still open beyond this already-landed gateway policy seam; the next cycle should take the next unfinished parity domain from the existing ledger anchor instead of rebuilding inventory.
+- Next best slice: use the saved parity anchor to pick one concrete unfinished domain after `gateway bootstrap` / `method registry`, implement that slice end to end, then rerun the exact seam proof plus the broader contract pack if the change touches gateway or dashboard contracts.
+
+## Recovery checkpoint 2026-04-14 broader gateway contract proof blocked
+- Completed: stayed anchored to the saved `gateway bootstrap` / `method registry` recovery seam and spent the single bounded follow-up step on the required broader surface proof instead of reopening the parity ledger.
+- Verified: focused seam proof from the prior checkpoint still stands at `./.venv/Scripts/python.exe -m pytest tests/test_gateway_method_policy.py -q` -> `8 passed in 0.19s`.
+- Blocker: `./.venv/Scripts/python.exe -m pytest tests/test_app.py -q --maxfail=1` timed out after 124042 ms on this recovery turn, so the broader app-level confirmation is still unresolved.
+- Next smallest step: rerun `tests/test_app.py` with a longer timeout or a tighter in-file target, then checkpoint that broader proof before opening a new parity seam.
+
+## Recovery checkpoint 2026-04-14 broader gateway contract proof resolved
+- Completed: kept the lane pinned to the recovered `gateway bootstrap` / `method registry` seam and cleared the outstanding broader-proof blocker without widening into a new parity domain.
+- Verified: `./.venv/Scripts/python.exe -m pytest tests/test_gateway_method_policy.py -q` -> `8 passed in 0.11s`.
+- Verified: `./.venv/Scripts/python.exe -m pytest tests/test_app.py -q --maxfail=1` -> `146 passed in 143.37s (0:02:23)`.
+- Remaining: no production code changed in this turn; the saved gateway bootstrap and method-registry parity slice is now reverified at both the exact seam and broader app surface.
+- Next smallest step: use the existing parity anchor to compare OpenClaw `src/shared/device-bootstrap-profile.ts` against OpenZues `src/openzues/cli.py`, `src/openzues/services/onboarding.py`, and `src/openzues/services/gateway_bootstrap.py`, then land exactly one missing bootstrap-profile normalization or persisted field with focused verification before widening toward routing/session-key work.
+
+## Recovery checkpoint 2026-04-14 routing session-key reverify
+- Completed: stayed anchored on the recovered `routing/session-key` seam, re-read only the OpenZues launch-route session-key builder and the OpenClaw routing session-key source, and revalidated that OpenZues still preserves stable workspace-affinity launch keys and saved-thread reuse across lane churn.
+- Verified: [launch_routing.py](/C:/Users/skull/OneDrive/Documents/OpenZues/src/openzues/services/launch_routing.py:500) builds deterministic `launch:mode:...` session keys that retain task/project/operator/channel identity and only pin `lane:` for `task_lane` and `saved_lane`, which matches the current parity checkpoint intent for reusable launch sessions.
+- Verified: `./.venv/Scripts/python.exe -m pytest tests/test_app.py::test_setup_launch_handoff_keeps_workspace_affinity_session_key_across_lane_churn tests/test_database.py::test_get_latest_mission_by_session_key_prefers_active_session tests/test_missions.py::test_create_reuses_saved_thread_from_session_key -q` -> `3 passed in 6.77s`.
+- Remaining: no production code changed in this recovery turn; broader OpenClaw parity work is still open beyond the already-landed `routing/session-key` slice.
+- Next best slice: compare OpenClaw `src/routing/resolve-route.ts` and adjacent browser/control-route handoff behavior against OpenZues [launch_routing.py](/C:/Users/skull/OneDrive/Documents/OpenZues/src/openzues/services/launch_routing.py:130), [missions.py](/C:/Users/skull/OneDrive/Documents/OpenZues/src/openzues/services/missions.py:1), and [app.js](/C:/Users/skull/OneDrive/Documents/OpenZues/src/openzues/web/static/app.js:1), then land exactly one missing route-resolution or handoff contract delta with a focused app/database/missions proof pack.
+
+## Recovery checkpoint 2026-04-14 resolve-route source anchor
+- Completed: used the saved checkpoint’s named next seam directly and inspected only OpenClaw [resolve-route.ts](/C:/Users/skull/OneDrive/Documents/openclaw-main/src/routing/resolve-route.ts:40) as the source-of-truth contract for the next parity slice.
+- Verified: the source contract clearly requires route resolution to produce `sessionKey`, `mainSessionKey`, and `lastRoutePolicy`, with inbound updates targeting `mainSessionKey` when policy is `main` and the active `sessionKey` otherwise ([resolve-route.ts](/C:/Users/skull/OneDrive/Documents/openclaw-main/src/routing/resolve-route.ts:65)).
+- Remaining: this reflex turn did not widen into OpenZues implementation edits, so parity is still unverified for the `lastRoutePolicy` / inbound-last-route portion of the route-resolution contract.
+- Blocker: none; the next comparison target is now pinned to one contract delta instead of the broader routing surface.
+- Next smallest step: compare OpenClaw [resolve-route.ts](/C:/Users/skull/OneDrive/Documents/openclaw-main/src/routing/resolve-route.ts:93) route outputs against OpenZues [launch_routing.py](/C:/Users/skull/OneDrive/Documents/OpenZues/src/openzues/services/launch_routing.py:130) and [missions.py](/C:/Users/skull/OneDrive/Documents/OpenZues/src/openzues/services/missions.py:1), then implement exactly one missing `main-session` or `last-route` persistence/handoff field with focused verification.
+
+## Recovery checkpoint 2026-04-14 gateway bootstrap verification
+- Completed: re-anchored through OpenZues Recall on the saved `gateway bootstrap` seam and spent the bounded recovery step on the exact focused parity proof instead of reopening the ledger or widening scope.
+- Verified: `.\.venv\Scripts\python.exe -m pytest tests/test_gateway_method_policy.py -q` -> `9 passed in 0.05s`, confirming the current OpenZues gateway method policy contract still matches the saved bootstrap / method-registry checkpoint target covered by [tests/test_gateway_method_policy.py](/C:/Users/skull/OneDrive/Documents/OpenZues/tests/test_gateway_method_policy.py:1) and [gateway_method_policy.py](/C:/Users/skull/OneDrive/Documents/OpenZues/src/openzues/services/gateway_method_policy.py:1).
+- Remaining: no production code changed in this recovery turn, so any unported OpenClaw gateway bootstrap or handler-registry deltas beyond the existing policy mirror are still open.
+- Blocker: none; the seam is still live and the exact proof file is green.
+- Next smallest step: compare OpenClaw [server-methods-list.ts](/C:/Users/skull/OneDrive/Documents/openclaw-main/src/gateway/server-methods-list.ts:1) and the handler registries referenced by [tests/test_gateway_method_policy.py](/C:/Users/skull/OneDrive/Documents/OpenZues/tests/test_gateway_method_policy.py:25) against [gateway_method_policy.py](/C:/Users/skull/OneDrive/Documents/OpenZues/src/openzues/services/gateway_method_policy.py:1), then land exactly one missing bootstrap or method-registry delta and rerun `tests/test_gateway_method_policy.py` plus the broader app/dashboard pack if that contract changes.
+
+## Recovery checkpoint 2026-04-14 gateway bootstrap seam reverify America/Chicago
+- Completed: reused OpenZues Recall on the saved `gateway bootstrap parity` anchor, then spent the bounded repo step on the owned OpenZues files instead of reopening the ledger or broadening into unrelated parity seams.
+- Verified: `rg -n "method_registry|gateway bootstrap|bootstrap|register" src/openzues/services/gateway_bootstrap.py tests/test_gateway_method_policy.py` confirmed the active seam is still pinned to [gateway_bootstrap.py](/C:/Users/skull/OneDrive/Documents/OpenZues/src/openzues/services/gateway_bootstrap.py:153) and [tests/test_gateway_method_policy.py](/C:/Users/skull/OneDrive/Documents/OpenZues/tests/test_gateway_method_policy.py:85), including the `wizard.bootstrap` bootstrap-policy assertions; `.\.venv\Scripts\python.exe -m pytest tests/test_gateway_method_policy.py -q` then passed with `9 passed in 0.05s`.
+- Remaining: this recovery turn verified the existing OpenZues bootstrap / method-policy contract only; it did not yet compare the OpenClaw source-of-truth registries or port any additional gateway bootstrap deltas.
+- Blocker: none.
+- Next smallest step: read OpenClaw [server-methods-list.ts](/C:/Users/skull/OneDrive/Documents/openclaw-main/src/gateway/server-methods-list.ts:1) and the corresponding OpenZues registry/policy files, land one missing registry/bootstrap delta if found, and rerun `tests/test_gateway_method_policy.py` plus the broader contract pack if that delta changes shared gateway/dashboard wiring.
+
+## Recovery checkpoint 2026-04-14 forced landing gateway registry anchor America/Chicago
+- Completed: used the saved checkpoint's named next seam directly and spent the single bounded repo command on a source-of-truth vs target comparison between OpenClaw [server-methods-list.ts](/C:/Users/skull/OneDrive/Documents/openclaw-main/src/gateway/server-methods-list.ts:1) and OpenZues [gateway_method_policy.py](/C:/Users/skull/OneDrive/Documents/OpenZues/src/openzues/services/gateway_method_policy.py:1).
+- Verified: `rg -n "wizard\.bootstrap|wizard\.status|setup\.session|gateway|doctor|continue|status" C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods-list.ts src\openzues\services\gateway_method_policy.py` showed OpenClaw still declares `wizard.status` at [server-methods-list.ts](/C:/Users/skull/OneDrive/Documents/openclaw-main/src/gateway/server-methods-list.ts:47), while the same bounded probe surfaced no `wizard.status` or `wizard.bootstrap` entries in [gateway_method_policy.py](/C:/Users/skull/OneDrive/Documents/OpenZues/src/openzues/services/gateway_method_policy.py:1). The previously verified focused proof for the existing policy seam remains green in [tests/test_gateway_method_policy.py](/C:/Users/skull/OneDrive/Documents/OpenZues/tests/test_gateway_method_policy.py:1).
+- Next smallest step: inspect the exact OpenClaw `wizard.*` classification shape and port one missing gateway-method-policy delta, starting with `wizard.status` if the source file confirms it belongs in the reserved/admin mirror, then rerun `tests/test_gateway_method_policy.py -q`.
+- Blockers: none; the slice is narrowed to a concrete `wizard.*` source/target gap candidate.
+
+## Recovery checkpoint 2026-04-14 resolve-route main-session handoff America/Chicago
+
+### Recovered context
+
+- The saved gateway-policy seam was already green in this worktree, so the next trustworthy parity anchor was the `resolve-route` contract pinned at [resolve-route.ts](/C:/Users/skull/OneDrive/Documents/openclaw-main/src/routing/resolve-route.ts:40).
+- OpenClaw requires resolved routes to surface both `sessionKey` and `mainSessionKey`, plus a `lastRoutePolicy` that distinguishes direct-main reuse from per-session routing.
+
+### Completed
+
+- Added `main_session_key` and `last_route_policy` to OpenZues [LaunchRouteView](/C:/Users/skull/OneDrive/Documents/OpenZues/src/openzues/schemas.py:1348) so route handoffs now expose the same route-shape concepts as the OpenClaw source seam.
+- Updated [LaunchRoutingService.describe](/C:/Users/skull/OneDrive/Documents/OpenZues/src/openzues/services/launch_routing.py:221) to derive a stable main-session key by rebuilding the route key without lane pinning, then mark `last_route_policy` as `main` when the active route already collapses to that key and `session` when the route stays lane-specific.
+- Surfaced the new fields in the operator UI route card via [app.js](/C:/Users/skull/OneDrive/Documents/OpenZues/src/openzues/web/static/app.js:1707), showing the main-session key only when it differs from the active per-lane session and adding a last-route policy pill.
+- Locked the contract with focused API proofs in [tests/test_app.py](/C:/Users/skull/OneDrive/Documents/OpenZues/tests/test_app.py:1417) and [tests/test_app.py](/C:/Users/skull/OneDrive/Documents/OpenZues/tests/test_app.py:2431) so both task-lane and workspace-affinity launch shapes stay covered.
+
+### Verification
+
+- `.\.venv\Scripts\python.exe -m pytest tests/test_app.py::test_onboarding_bootstrap_creates_first_run_bundle_and_launch_draft tests/test_app.py::test_remote_workspace_affinity_prefers_project_lane_and_persists_last_route -q` -> `2 passed in 7.35s`
+- `.\.venv\Scripts\python.exe -m ruff check src/openzues/schemas.py src/openzues/services/launch_routing.py tests/test_app.py` -> passed
+
+### What remains
+
+- This slice closes the route-handoff shape gap only. OpenZues still does not consume `main_session_key` / `last_route_policy` anywhere beyond the launch-route handoff, so any OpenClaw behavior that targets inbound route updates at the main session still needs a follow-on parity pass.
+- Broader parity domains beyond routing remain open, including browser runtime, nodes, voice, packaging, and companion-app surfaces that have not yet been re-anchored in this recovery lane.
+
+### Next best slice
+
+- Inspect the exact OpenClaw consumer path for `resolveInboundLastRouteSessionKey` and compare it against OpenZues [missions.py](/C:/Users/skull/OneDrive/Documents/OpenZues/src/openzues/services/missions.py:2689) plus any follow-up route persistence path.
+- Land one focused `last_route_policy` consumer delta if the source contract shows inbound last-route updates or thread reuse should target `main_session_key` for workspace-affinity launches, then rerun the narrow app/missions proof pack.
+
+### Blockers
+
+- None.
+
+### Re-entry checkpoint
+
+- Recovered context: the gateway method-policy seam is verified; the active parity lane now advances from the routed-session contract instead of reopening bootstrap inventory.
+- Verified state: OpenZues route handoffs now emit `session_key`, `main_session_key`, and `last_route_policy`, with task-lane routes marked `session` and workspace-affinity routes marked `main`.
+- Next step: inspect the OpenClaw inbound last-route session-key consumer and port the smallest missing OpenZues persistence/reuse rule.
+- Blockers: none.
+
+**Checkpoint 2026-04-14**
+Completed: stayed on the saved `gateway bootstrap` / `method registry` seam without reopening the parity ledger. Added exact startup-boot coverage in `tests/test_gateway_bootstrap.py` for the resolved launch-lane path, `BOOT.md`-missing skip, no-resolved-lane skip, and missing-thread-id failure.
+Verified: `.\\.venv\\Scripts\\python.exe -m pytest tests/test_gateway_bootstrap.py tests/test_gateway_method_policy.py -q` -> `13 passed`.
+Remaining: production parity still needs a source-of-truth compare for gateway startup wiring beyond policy coverage, especially `src/openzues/services/gateway_bootstrap.py` and the app startup hook in `src/openzues/app.py`.
+Next best slice: compare OpenClaw gateway startup/boot semantics against `src/openzues/services/gateway_bootstrap.py` plus `src/openzues/app.py`, then land any missing runtime behavior with an exact app-level test.
+
+**Checkpoint 2026-04-15**
+Completed: compared OpenClaw gateway startup failure handling in `openclaw-main/src/gateway/server.impl.ts` against `src/openzues/services/gateway_bootstrap.py` plus `src/openzues/app.py`. Landed the missing cleanup semantics in the FastAPI lifespan hook so startup boot failures now unwind owner-started resources, close the runtime manager, and release the control-plane lease before re-raising the original boot reason. Added the exact app-level regression in `tests/test_app.py`.
+Verified: `.\\.venv\\Scripts\\python.exe -m pytest tests/test_app.py -k "gateway_bootstrap_startup_failure_preserves_boot_reason" -q` -> `1 passed, 158 deselected`; `.\\.venv\\Scripts\\python.exe -m pytest tests/test_gateway_bootstrap.py -q` -> `13 passed`.
+Remaining: gateway bootstrap startup parity is tighter, but OpenClaw parity is still incomplete. The next highest-leverage seam is gateway HTTP/readiness startup surfacing around the app boundary, especially how startup state and degraded launch readiness are exposed after gateway initialization.
+Next best slice: compare OpenClaw `src/gateway/server-http.ts` readiness/startup semantics against `src/openzues/app.py` health and control-plane endpoints, then land the missing runtime behavior with one exact app-level test.
+
+## Recovery checkpoint 2026-04-14 routing session-key legacy canonical reuse America/Chicago
+
+Recovered context:
+
+- Re-entered from the existing `routing/session-key` anchor instead of reopening gateway bootstrap or method-registry work.
+- Compared OpenClaw `C:\Users\skull\OneDrive\Documents\openclaw-main\src\agents\command\session.ts` against OpenZues `src/openzues/database.py`, `src/openzues/services/followups.py`, and `tests/test_missions.py` to isolate the smallest remaining explicit-session reuse gap.
+
+Completed:
+
+- Normalized OpenZues session-key reuse and followup identity matching so legacy mixed-case or padded stored `session_key` values no longer break thread reuse or recovery-run equivalence.
+- Updated `src/openzues/database.py` to resolve the latest mission by `LOWER(TRIM(session_key))`, which lets canonical inbound keys reuse older saved threads even when the stored row predates current normalization.
+- Updated `src/openzues/services/followups.py` so recovery/checkpoint followups compare normalized session identities before falling back to thread identity.
+- Added focused regressions in `tests/test_missions.py` for legacy mixed-case thread reuse and normalized followup matching.
+
+Verified:
+
+- `.\\.venv\\Scripts\\python.exe -m pytest tests/test_missions.py -q -k "create_reuses_saved_thread_from_session_key or create_reuses_saved_thread_from_legacy_mixed_case_session_key or followup_payload_matching_uses_session_key_when_thread_changes or followup_payload_matching_normalizes_session_key_before_reuse"` -> `4 passed, 105 deselected in 1.20s`
+- `.\\.venv\\Scripts\\python.exe -m pytest tests/test_missions.py -q` -> `109 passed in 32.16s`
+
+Tool evidence:
+
+- debugging: used exact `rg`/`Get-Content` probes on `src/openzues/database.py`, `src/openzues/services/followups.py`, `src/openzues/services/missions.py`, `tests/test_missions.py`, and the OpenClaw source seam before patching; verified with focused `pytest`.
+- delegation: used one Architect sidecar (`Godel`) to map the explicit-session fallback seam and confirm the minimal owned-file boundary before edits.
+- memory: used OpenZues Recall via `.\\.venv\\Scripts\\python.exe -m openzues.cli recall --json "gateway bootstrap method registry"` to recover the prior parity anchor.
+- session_search: queried saved OpenClaw mission/checkpoint history through that Recall result before restating the active seam.
+
+Next step:
+
+- Stay inside `routing/session-key` and inspect the exact OpenClaw inbound consumer for session-key or route-policy fallback, preferably `src/routing/resolve-route.ts` or the adjacent session-id helper named in the last route handoff checkpoint.
+- Land one focused OpenZues consumer rule only if the source contract shows `main_session_key` or last-route policy should influence inbound thread reuse beyond the launch-handoff shape now proven.
+
+Blockers:
+
+- Focused parity verification is green for this slice.
+- A repo-local `ruff check src/openzues/database.py src/openzues/services/followups.py tests/test_missions.py` run still reports a pre-existing unrelated `E501` at `src/openzues/database.py:1045`, so the lint proof for this turn is test-backed rather than lint-clean.
+## Recovery checkpoint 2026-04-14 gateway bootstrap method registry verification
+
+- Re-entry stayed on the saved `gateway bootstrap` / `method registry` seam and used Recall first instead of reopening the ledger tail.
+- Focused source lock: [src/openzues/services/gateway_bootstrap.py](/C:/Users/skull/OneDrive/Documents/OpenZues/src/openzues/services/gateway_bootstrap.py), [src/openzues/services/gateway_method_policy.py](/C:/Users/skull/OneDrive/Documents/OpenZues/src/openzues/services/gateway_method_policy.py), [tests/test_gateway_bootstrap.py](/C:/Users/skull/OneDrive/Documents/OpenZues/tests/test_gateway_bootstrap.py), and [tests/test_gateway_method_policy.py](/C:/Users/skull/OneDrive/Documents/OpenZues/tests/test_gateway_method_policy.py).
+- Concrete claim verified: OpenZues already carries the saved parity slice for startup boot dispatch and gateway method scope classification. The focused proof pack is green without additional edits:
+  - `.\.venv\Scripts\python.exe -m pytest tests\test_gateway_bootstrap.py` -> `4 passed`
+  - `.\.venv\Scripts\python.exe -m pytest tests\test_gateway_method_policy.py` -> `9 passed`
+- Current blocker status: the stalled lane was orbiting on checkpoint inspection, not on a failing bootstrap or method-policy seam.
+- Next bounded step: inspect the first broader contract surface that consumes this seam in [tests/test_app.py](/C:/Users/skull/OneDrive/Documents/OpenZues/tests/test_app.py) and only then decide whether any dashboard or API parity gap remains.
+## Checkpoint 2026-04-14 device bootstrap normalizer verification refresh America/Chicago
+
+Completed:
+
+- Held the saved `device-bootstrap-profile` parity slice without widening scope or reopening the ledger.
+- Revalidated the normalization handoff as the current mission anchor.
+
+Verified:
+
+- `.\\.venv\\Scripts\\python.exe -m pytest tests/test_device_bootstrap_profile.py -q` -> `3 passed in 0.04s`
+
+Next step:
+
+- Compare `openclaw-main/src/shared/device-bootstrap-profile.ts` against `src/openzues/cli.py`, `src/openzues/services/onboarding.py`, and `src/openzues/services/gateway_bootstrap.py`, then land the first missing bootstrap-profile field or normalization rule with focused verification.
+## Recovery checkpoint 2026-04-14 gateway method wizard registry proof refresh
+
+- Re-entry stayed on the saved `gateway bootstrap` / `method registry` seam without reopening broader parity inventory.
+- Concrete claim verified: OpenClaw's current wizard gateway registry is exactly `wizard.cancel`, `wizard.next`, `wizard.start`, and `wizard.status`, and OpenZues already classifies all four through the reserved `wizard.` admin prefix in [src/openzues/services/gateway_method_policy.py](/C:/Users/skull/OneDrive/Documents/OpenZues/src/openzues/services/gateway_method_policy.py).
+- Landed one bounded proof delta in [tests/test_gateway_method_policy.py](/C:/Users/skull/OneDrive/Documents/OpenZues/tests/test_gateway_method_policy.py) by adding a source-derived regression test that locks the full OpenClaw wizard registry instead of sampling only `wizard.status`.
+- Verified:
+  - `.\.venv\Scripts\python.exe -m pytest tests\test_gateway_method_policy.py -q` -> `10 passed in 0.11s`
+- Recovery note: the stale checkpoint claim that `wizard.status` was still a live missing registry gap was no longer true on the current branch; the real high-leverage step was refreshing the parity proof so future recovery lanes do not chase that dead delta again.
+- Next bounded step: compare the next uncovered OpenClaw gateway handler family beyond wizard prefixes against [tests/test_gateway_method_policy.py](/C:/Users/skull/OneDrive/Documents/OpenZues/tests/test_gateway_method_policy.py) and land one equally source-derived proof or missing classification delta.
+
+Blockers:
+
+- None.
+## Recovery checkpoint 2026-04-14 method registry re-anchor
+
+- Completed: added a canonical gateway method registry in `src/openzues/services/gateway_method_policy.py` so OpenZues now materializes the OpenClaw base gateway methods plus current OpenZues control-plane additions even when no live lane catalog is publishing tool names.
+- Completed: wired `src/openzues/services/gateway_capability.py` to fall back to that local registry for the method-catalog surface instead of reporting a fully idle seam when catalogs are offline.
+- Verified: `.\\.venv\\Scripts\\python.exe -m pytest tests\\test_gateway_method_policy.py -q` passed (`15 passed in 0.12s`), including the new assertion that the local registry covers the OpenClaw base registry.
+- Next smallest step: add one focused gateway-capability fallback test that exercises the no-live-catalog path directly and proves the staged registry summary/scopes returned by `/api/gateway/capability`.
+- Blockers: none.
+
+## Recovery checkpoint 2026-04-14 gateway boot prompt parity
+
+- Completed: tightened the `gateway bootstrap` seam by aligning OpenZues startup boot prompt wording with OpenClaw's current `src/gateway/boot.ts` contract in [src/openzues/services/gateway_bootstrap.py](/C:/Users/skull/OneDrive/Documents/OpenZues/src/openzues/services/gateway_bootstrap.py).
+- Completed: the boot prompt now explicitly tells the runtime to use `message` with `action=send`, provide `channel + target`, use `target` instead of `to`, and reply with the silent token after sending.
+- Completed: locked that claim in [tests/test_gateway_bootstrap.py](/C:/Users/skull/OneDrive/Documents/OpenZues/tests/test_gateway_bootstrap.py) so future recovery lanes do not regress the boot-message contract while touching onboarding or launch routing.
+- Verified:
+  - `.\\.venv\\Scripts\\python.exe -m pytest tests\\test_gateway_bootstrap.py -q` -> `6 passed in 1.41s`
+  - `.\\.venv\\Scripts\\python.exe -m compileall src/openzues/services/gateway_bootstrap.py` -> compiled cleanly
+- Remaining on this seam: compare the rest of OpenClaw `src/gateway/boot.ts` outcome semantics against `GatewayBootstrapService.run_startup_boot_once`, especially the missing/empty/error branches and any startup lifecycle differences beyond prompt text.
+- Next bounded step: stay inside the same boot seam and add one source-derived test for the next unmatched `boot.ts` behavior before widening back out to gateway capability or broader onboarding parity.
+- Blockers: none.
+
+## Recovery checkpoint 2026-04-14 gateway boot outcome parity
+
+- Completed: stayed inside the `gateway bootstrap` seam and locked the remaining `boot.ts` file-outcome branches in [tests/test_gateway_bootstrap.py](/C:/Users/skull/OneDrive/Documents/OpenZues/tests/test_gateway_bootstrap.py) instead of reopening broader gateway inventory work.
+- Concrete claim verified: OpenZues now has source-derived proof that `GatewayBootstrapService.run_startup_boot_once` mirrors OpenClaw's `src/gateway/boot.ts` behavior for whitespace-only `BOOT.md` files and unreadable `BOOT.md` failures at the level that matters for control-plane behavior: skip on empty, fail on read error, and never dispatch a boot launch in either branch.
+- Verified:
+  - `.\\.venv\\Scripts\\python.exe -m pytest tests\\test_gateway_bootstrap.py -q` -> `8 passed in 1.50s`
+  - `.\\.venv\\Scripts\\python.exe -m compileall src/openzues/services/gateway_bootstrap.py tests/test_gateway_bootstrap.py` -> compiled cleanly
+- Remaining on this seam: OpenClaw `runBootOnce` also snapshots and restores the main session mapping around the boot run; OpenZues uses a different runtime surface, so the next parity decision is whether an equivalent launch-state preservation invariant belongs in `RuntimeManager` / gateway bootstrap here or whether the architectural difference is intentional.
+- Next bounded step: inspect only the OpenZues launch-state handoff around `GatewayBootstrapService.run_startup_boot_once` and `RuntimeManager.start_thread`/`start_turn`, then land either one focused preservation fix or one explicit proof test that the current OpenZues flow does not trample the primary session mapping.
+- Blockers: none.
+
+## Recovery checkpoint 2026-04-14 boot launch-state preservation parity
+
+- Completed: stayed on the boot launch-state seam and fixed the concrete preservation gap in [manager.py](/C:/Users/skull/OneDrive/Documents/OpenZues/src/openzues/services/manager.py): `RuntimeManager.start_thread()` no longer replaces `runtime.threads` with a single idle placeholder when a new thread starts.
+- Concrete claim verified: startup boot thread seeding now preserves the preexisting live thread snapshot instead of temporarily trampling it, which is OpenZues' closest equivalent to OpenClaw's `runBootOnce` session-mapping preservation invariant.
+- Completed: added a focused regression in [test_manager.py](/C:/Users/skull/OneDrive/Documents/OpenZues/tests/test_manager.py) proving a new boot thread is appended while an existing active thread remains visible.
+- Verified:
+  - `.\\.venv\\Scripts\\python.exe -m pytest tests\\test_manager.py -q` -> `23 passed in 26.38s`
+  - `.\\.venv\\Scripts\\python.exe -m compileall src/openzues/services/manager.py tests/test_manager.py` -> compiled cleanly
+- Remaining on this seam: confirm whether boot-triggered `start_turn()` timeout recovery also preserves the existing runtime thread snapshot correctly when the turn starts late and the runtime refresh returns partial thread status.
+- Next bounded step: stay inside `RuntimeManager.start_turn()` and add one focused preservation proof around timeout recovery with preexisting thread state before widening back out to other gateway parity slices.
+- Blockers: none.
+
+## Recovery checkpoint 2026-04-14 start-turn timeout preservation parity
+
+- Completed: stayed inside the same runtime-state seam and tightened [manager.py](/C:/Users/skull/OneDrive/Documents/OpenZues/src/openzues/services/manager.py) so `_confirm_timed_out_start_turn()` now merges refreshed thread status with the pre-timeout runtime snapshot instead of dropping unrelated threads during late-turn recovery.
+- Concrete claim verified: when `RuntimeManager.start_turn()` recovers from a timeout and the refresh only surfaces the timed-out thread, OpenZues now keeps the preexisting runtime thread snapshot visible rather than temporarily erasing it.
+- Completed: added a focused regression in [test_manager.py](/C:/Users/skull/OneDrive/Documents/OpenZues/tests/test_manager.py) proving timeout recovery preserves an existing thread while surfacing the newly active recovered thread, and updated the local test doubles to match the current `_schedule_refresh_instance(..., methods=...)` signature.
+- Verified:
+  - `.\\.venv\\Scripts\\python.exe -m pytest tests\\test_manager.py -q` -> `26 passed in 26.63s`
+  - `.\\.venv\\Scripts\\python.exe -m compileall src/openzues/services/manager.py tests/test_manager.py` -> compiled cleanly
+- Remaining on this seam: both `start_thread()` and `start_turn()` now preserve the in-memory runtime snapshot during boot recovery, but the next parity question is whether gateway bootstrap should also prove that its boot launch path leaves broader control-plane lane state untouched at the service boundary.
+- Next bounded step: return to the `gateway bootstrap` seam and add one focused proof in [test_gateway_bootstrap.py](/C:/Users/skull/OneDrive/Documents/OpenZues/tests/test_gateway_bootstrap.py) or [test_manager.py](/C:/Users/skull/OneDrive/Documents/OpenZues/tests/test_manager.py) that startup boot preserves existing connected-lane runtime state outside the new boot thread/turn itself.
+- Blockers: none.
+
+## Recovery checkpoint 2026-04-14 gateway method policy recovery proof America/Chicago
+
+- Completed: resumed the stalled `gateway method policy` recovery lane without reopening broader parity inventory and rechecked the exact seam that had been left in inspection orbit at [src/openzues/services/gateway_method_policy.py](/C:/Users/skull/OneDrive/Documents/OpenZues/src/openzues/services/gateway_method_policy.py).
+- Concrete claim verified: OpenZues already covers every OpenClaw canonical base gateway method from `openclaw-main/src/gateway/server-methods-list.ts`; a focused source-to-target extraction found `MISSING []`, and the existing parity proof in [tests/test_gateway_method_policy.py](/C:/Users/skull/OneDrive/Documents/OpenZues/tests/test_gateway_method_policy.py) passed cleanly.
+- Verified:
+  - `.\.venv\Scripts\python.exe -m pytest tests\test_gateway_method_policy.py -q` -> `15 passed in 0.04s`
+- Recovery note: no production edit was needed on this turn because the inspected registry seam was already closed on the current branch; the durable action was re-establishing proof so the next cycle does not spend more time rereading the same policy file.
+- Next bounded step: stay on the same gateway registry lane, but move one layer outward to [src/openzues/services/gateway_capability.py](/C:/Users/skull/OneDrive/Documents/OpenZues/src/openzues/services/gateway_capability.py) and add or verify the no-live-catalog fallback test that proves `/api/gateway/capability` serves the staged local registry/scopes when OpenClaw catalogs are absent.
+- Blockers: none.
+
+## Recovery checkpoint 2026-04-14 gateway capability staged registry fallback America/Chicago
+
+- Completed: stayed on the named `gateway capability` seam and added a focused regression in [tests/test_app.py](/C:/Users/skull/OneDrive/Documents/OpenZues/tests/test_app.py) that exercises `/api/gateway/capability` with a connected lane whose MCP catalogs are fully offline.
+- Concrete claim verified: when no lane-published tool catalogs are available, OpenZues falls back to the staged local method registry and still returns the expected method inventory contract through both `/api/gateway/capability` and the dashboard payload, including the staged headline, local registry count, scope coverage, and reserved admin list.
+- Verified:
+  - `.\.venv\Scripts\python.exe -m pytest tests\test_app.py -q -k staged_local_method_registry_when_lane_catalogs_are_offline` -> `1 passed, 152 deselected in 5.68s`
+- Recovery note: this was a proof-only parity slice; [src/openzues/services/gateway_capability.py](/C:/Users/skull/OneDrive/Documents/OpenZues/src/openzues/services/gateway_capability.py) already had the fallback behavior, but the endpoint contract was not locked against regression before this turn.
+- Next bounded step: stay on the same gateway-capability surface and add the matching CLI proof in [tests/test_cli.py](/C:/Users/skull/OneDrive/Documents/OpenZues/tests/test_cli.py) so the staged local registry summary is also covered when operators inspect gateway posture outside the dashboard/API path.
+- Blockers: none.
+
+## Recovery checkpoint 2026-04-14 gateway capability staged registry CLI proof America/Chicago
+
+- Completed: stayed on the same `gateway capability` seam and added a focused human-output regression in [tests/test_cli.py](/C:/Users/skull/OneDrive/Documents/OpenZues/tests/test_cli.py) for `_emit_gateway_capability(...)` when the method catalog is coming from the staged local registry instead of a live lane catalog.
+- Concrete claim verified: the CLI now has locked proof that the staged fallback summary is surfaced to operators with the expected offline registry headline, the first six staged tool names, the first six reserved admin methods, and the operator/node-role scope counts.
+- Verified:
+  - `.\.venv\Scripts\python.exe -m pytest tests\test_cli.py -q -k staged_local_method_registry_summary` -> `1 passed, 68 deselected in 1.93s`
+- Recovery note: this was another proof-only slice; no production code changed because [src/openzues/cli.py](/C:/Users/skull/OneDrive/Documents/OpenZues/src/openzues/cli.py) already rendered the staged registry fields correctly once the payload contract was present.
+- Next bounded step: stay on `gateway capability` and lock one broader contract proof by rerunning or extending the app-side gateway-capability cluster around cached/offline catalog behavior, then decide whether the next real parity delta is still inside gateway capability or can move to the next checkpointed gateway/bootstrap seam.
+- Blockers: none.
+
+## Recovery checkpoint 2026-04-14 gateway capability timeout-to-staged fallback America/Chicago
+
+- Completed: stayed on the same `gateway capability` contract seam and added a focused regression in [tests/test_app.py](/C:/Users/skull/OneDrive/Documents/OpenZues/tests/test_app.py) for the previously unproven combined case where live MCP status refresh times out and no cached lane catalog is available.
+- Concrete claim verified: when `list_mcp_server_status(...)` times out and the connected lane has no cached tool catalog, `/api/gateway/capability` and the dashboard both fall back to the staged local gateway method registry instead of collapsing to an idle/empty method catalog.
+- Verified:
+  - `.\.venv\Scripts\python.exe -m pytest tests\test_app.py -q -k refresh_times_out_without_cached_catalogs` -> `1 passed, 153 deselected in 7.00s`
+- Recovery note: this was a proof-only slice; [src/openzues/services/gateway_capability.py](/C:/Users/skull/OneDrive/Documents/OpenZues/src/openzues/services/gateway_capability.py) already handled the fallback, but the timeout-plus-offline branch was not locked before this turn.
+- Next bounded step: stay on the gateway-capability proof cluster long enough to run the exact cached/offline trio together or add one final contract test around server-count/lane-count semantics under degraded refresh, then decide whether gateway capability is fully re-anchored and the mission can return to the next gateway/bootstrap parity seam.
+- Blockers: none.
+
+## Recovery checkpoint 2026-04-14 stalled gateway method policy reverify America/Chicago
+
+- Completed: resumed the stalled recovery lane directly on [src/openzues/services/gateway_method_policy.py](/C:/Users/skull/OneDrive/Documents/OpenZues/src/openzues/services/gateway_method_policy.py) and compared its staged registry/scope map against OpenClaw's canonical [method-scopes.ts](/C:/Users/skull/OneDrive/Documents/openclaw-main/src/gateway/method-scopes.ts) and [server-methods-list.ts](/C:/Users/skull/OneDrive/Documents/openclaw-main/src/gateway/server-methods-list.ts) without reopening broader parity inventory.
+- Concrete claim verified: the previously suspicious control-plane and fallback registry methods are already present in OpenZues; an exact probe confirmed `poll`, `sessions.get`, `sessions.resolve`, `sessions.steer`, `push.test`, `connect`, `web.login.start`, and `web.login.wait` all resolve inside `list_known_gateway_methods()`.
+- Verified:
+  - `.\.venv\Scripts\python.exe -m pytest tests\test_gateway_method_policy.py -q` -> `16 passed in 0.08s`
+- Recovery note: no production edit was needed on this turn because the gateway method policy seam is already closed on the current branch; the durable action was re-establishing proof after the stalled read-only inspection orbit.
+- Next bounded step: move one layer outward to [src/openzues/services/gateway_capability.py](/C:/Users/skull/OneDrive/Documents/OpenZues/src/openzues/services/gateway_capability.py) and run or extend the exact cached/offline gateway-capability proof cluster so staged registry fallback is locked across the degraded refresh paths, not just the raw policy map.
+- Blockers: none.
+
+## Recovery checkpoint 2026-04-14 method registry verification America/Chicago
+- Re-entered from the saved `2026-04-13 parity re-anchor refresh` anchor and stayed on the bounded `method registry` seam instead of reopening the parity ledger.
+- Verified the currently landed OpenZues gateway bootstrap and method catalog surface without broadening scope: `.\\.venv\\Scripts\\python.exe -m pytest tests/test_app.py -k "method_catalog or gateway_bootstrap" -q` passed with `3 passed, 153 deselected`.
+- Completed this turn: proof that the dashboard/app contract for the saved method-registry parity slice is still green after recovery.
+- Remaining work on this seam: compare one concrete OpenClaw source-of-truth file under `openclaw-main\\src\\gateway` (`node-registry.ts` or `server-methods-list.ts`) against the OpenZues capability inventory serializer and land one additive delta if a field or summary is still missing.
+- Next smallest step: inspect exactly one source file and exactly one target serializer path, then run the same focused `tests/test_app.py` method-catalog pack plus any directly touched unit test.
+- Blockers: none found on this recovery turn.
+
+## Recovery checkpoint 2026-04-14 method registry base-list proof America/Chicago
+- Continued from the saved `method registry` seam without reopening the parity ledger.
+- Compared OpenClaw `openclaw-main\\src\\gateway\\server-methods-list.ts` `BASE_METHODS` against OpenZues `src\\openzues\\services\\gateway_method_policy.py:list_known_gateway_methods()`.
+- Verified concrete claim: OpenZues already covers every OpenClaw built-in gateway method in its staged fallback registry. Proof run:
+  - `source_count 128`
+  - `target_count 141`
+  - `source_only []`
+  - `target_only_sample ['chat.inject', 'config.openFile', 'connect', 'poll', 'push.test', 'sessions.get', 'sessions.resolve', 'sessions.steer', 'sessions.usage', 'sessions.usage.logs', 'sessions.usage.timeseries', 'web.login.start', 'web.login.wait']`
+- Completed this turn: locked the highest-risk parity claim for the local method-registry fallback path; no additive code delta was required.
+- Remaining work: verify whether the extra OpenZues-only methods are intentional extensions or whether one follow-up parity note/test should pin that superset behavior.
+- Next smallest step: add one focused unit test that asserts the OpenClaw base method list remains a subset of `list_known_gateway_methods()`, or compare `GATEWAY_EVENTS` against the nearest OpenZues event surface if the mission wants the next adjacent contract slice.
+- Blockers: none found.
+
+## Recovery checkpoint 2026-04-14 method registry guard verification America/Chicago
+- Continued from the saved `method registry` seam and verified the concrete parity guard already exists in `tests/test_gateway_method_policy.py`.
+- Proof run: `.\\.venv\\Scripts\\python.exe -m pytest tests/test_gateway_method_policy.py -k "known_gateway_method_registry_covers_openclaw_base_registry or openclaw_gateway_events_are_not_treated_as_registry_methods" -q` passed with `2 passed, 14 deselected in 0.11s`.
+- Completed this turn: confirmed the OpenClaw base gateway method subset contract and the adjacent `GATEWAY_EVENTS` separation contract are both pinned in focused tests; no additive code delta was required.
+- Remaining work: move to the next adjacent parity seam under `src\\gateway` only if it names a concrete contract not already covered by the staged registry tests.
+- Next smallest step: compare one OpenClaw gateway source file such as `node-registry.ts` against the OpenZues gateway capability serializer or node-role policy tests, then run only the directly touched test file plus `tests/test_app.py` if a contract surface changes.
+- Blockers: none found.
+## Checkpoint 2026-04-14 gateway bootstrap boot failure proof America/Chicago
+
+Recovered context:
+
+- Stayed on the saved OpenClaw parity anchor from the 2026-04-13 parity re-anchor refresh and kept the seam pinned to `gateway bootstrap`.
+- Reused the already-verified gateway method policy footing and compared the OpenClaw source-of-truth boot contract in `openclaw-main/src/gateway/boot.ts` against `src/openzues/services/gateway_bootstrap.py` without reopening the contaminated parity-ledger tail.
+
+Completed:
+
+- Added a focused OpenZues regression proof for the startup boot failure path when boot-turn dispatch raises after the launch lane is resolved.
+- Confirmed the existing `GatewayBootstrapService.run_startup_boot_once()` failure branch returns the surfaced lane error as `Startup boot failed: ...`, which is the closest current OpenZues analogue to OpenClaw's thrown `agentCommand` boot failure.
+
+Verified:
+
+- `.\\.venv\\Scripts\\python.exe -m pytest tests/test_gateway_bootstrap.py -q` -> `10 passed in 4.56s`
+- `.\\.venv\\Scripts\\python.exe -m ruff check tests/test_gateway_bootstrap.py` -> passed
+
+Next step:
+
+- Stay on `gateway bootstrap` and decide the next smallest source-backed gap between `openclaw-main/src/gateway/boot.ts` and `src/openzues/services/gateway_bootstrap.py`.
+- Best next slice: inspect whether OpenClaw's boot-run session isolation and mapping restoration needs an OpenZues-native equivalent around startup boot threads, then either land that additive isolation slice or checkpoint the architecture mismatch explicitly.
+
+Blockers:
+
+- No hard blocker, but the remaining delta is architectural: OpenClaw mutates and restores a main-session mapping during boot, while OpenZues already launches boot work on a fresh thread via `RuntimeManager`. The next turn needs to verify whether parity here is behavioral or intentionally translated.
+
+## Recovery checkpoint 2026-04-15 routing session-key proof
+
+Completed:
+
+- Kept the active parity slice bounded to `routing/session-key` and avoided reopening the global source inventory.
+- Added missing OpenClaw continuity proofs to [tests/test_session_keys.py](/C:/Users/skull/OneDrive/Documents/OpenZues/tests/test_session_keys.py): backward-compatible direct `agent:*:(dm|direct):*` keys still classify as valid agent keys, and blank channel peer ids normalize to `unknown` instead of collapsing to the main session.
+
+Verified:
+
+- `.\\.venv\\Scripts\\python.exe -m pytest tests/test_session_keys.py -q` -> `14 passed in 0.98s`
+- Source/target bootstrap anchor check after landing the routing proof:
+  OpenClaw `src/gateway/boot.ts` still contains explicit main-session mapping snapshot/restore helpers, while OpenZues `src/openzues/services/gateway_bootstrap.py` currently starts a fresh boot thread and returns only the resulting `thread_id`.
+
+Next smallest step:
+
+- Stay on `gateway bootstrap`.
+- Decide whether OpenClaw's `snapshotMainSessionMapping` / `restoreMainSessionMapping` behavior needs an OpenZues-native equivalent around startup boot threads, or whether the existing fresh-thread launch is the intended translated behavior that should be checkpointed as an architectural divergence.
+
+Blockers:
+
+- No hard blocker.
+- The remaining question is behavioral parity, not file discovery: OpenClaw preserves and restores a main-session mapping during boot, and OpenZues does not expose an obvious matching mapping layer in `gateway_bootstrap.py`.
+
+## Recovery checkpoint 2026-04-15 gateway bootstrap anchor
+
+Completed:
+
+- Reused the saved `gateway bootstrap` anchor directly instead of reopening the ledger or rerunning Recall.
+- Verified the concrete source-of-truth claim behind the next seam with one bounded repo command.
+
+Verified:
+
+- OpenClaw `src/gateway/boot.ts` still contains explicit boot-time main-session mapping lifecycle hooks:
+  `snapshotMainSessionMapping` at line 77, `restoreMainSessionMapping` at line 115, snapshot use at line 168, restore call at line 191.
+- OpenZues [src/openzues/services/gateway_bootstrap.py](/C:/Users/skull/OneDrive/Documents/OpenZues/src/openzues/services/gateway_bootstrap.py) currently exposes `GatewayBootstrapBootResult.thread_id`, enters `run_startup_boot_once`, and launches startup boot through `self.manager.start_thread(...)` at line 216 before extracting `thread_id`, with no matching mapping snapshot/restore helper visible in that file.
+
+Next smallest step:
+
+- Stay on `gateway bootstrap`.
+- Inspect whether OpenZues has an equivalent session-mapping layer outside `gateway_bootstrap.py` that makes the OpenClaw boot snapshot/restore unnecessary, or land a small additive mapping-preservation slice if no equivalent exists.
+
+Blockers:
+
+- No hard blocker.
+- The current blocker is architectural uncertainty only: the parity gap is now narrowed to boot-time session mapping preservation, not general gateway boot execution.
+
+## Recovery checkpoint 2026-04-15 gateway bootstrap session-mapping resolution America/Chicago
+
+Completed:
+
+- Resolved the open boot-time session-mapping question from the prior gateway bootstrap checkpoint.
+- Verified that OpenZues already preserves startup-boot thread identity through the runtime manager, so OpenClaw's `snapshotMainSessionMapping` and `restoreMainSessionMapping` hooks do not map 1:1 onto a missing OpenZues session-store layer.
+- Re-ran the focused gateway contract pack for the active seam:
+  `.\\.venv\\Scripts\\python.exe -m pytest tests/test_gateway_method_policy.py tests/test_session_keys.py -q`
+
+Verified:
+
+- OpenClaw `src/gateway/boot.ts` still snapshots and restores a main-session mapping around the boot run because it dispatches through agent-session config helpers.
+- OpenZues [src/openzues/services/gateway_bootstrap.py](/C:/Users/skull/OneDrive/Documents/OpenZues/src/openzues/services/gateway_bootstrap.py) launches startup boot with `self.manager.start_thread(...)`, extracts a concrete `thread_id`, and immediately calls `self.manager.start_turn(...)` against that thread.
+- OpenZues [src/openzues/services/manager.py](/C:/Users/skull/OneDrive/Documents/OpenZues/src/openzues/services/manager.py) `start_thread(...)` already treats runtime thread identity as the durable primitive:
+  it records pre-launch `known_thread_ids`, recovers a newly visible thread on timeout, upserts the returned `thread_id` into `runtime.threads`, appends it to `runtime.loaded_thread_ids`, and waits for thread visibility before returning.
+- The focused parity checks remain green after that verification: `30 passed`.
+
+Conclusion:
+
+- Do not add an OpenClaw-style boot session-store snapshot/restore shim to `gateway_bootstrap.py`.
+- On the OpenZues path, boot isolation is already handled by explicit thread creation and runtime thread tracking, so the earlier uncertainty was architectural, not an unfinished implementation gap.
+
+Next smallest step:
+
+- Stay on `gateway bootstrap`.
+- Compare OpenClaw `src/gateway/boot.ts` failure/reporting semantics against OpenZues `GatewayBootstrapBootResult`, then add or tighten a focused startup-boot test if OpenZues is still missing a behavioral assertion for skipped, failed, or recovered boot runs.
+
+Blockers:
+
+- No hard blocker.
+- The remaining work on this seam is behavioral parity coverage, not session-key plumbing.
+
+## Recovery checkpoint 2026-04-15 gateway bootstrap failure semantics coverage America/Chicago
+
+Completed:
+
+- Stayed on the saved `gateway bootstrap` seam instead of reopening Recall or re-reading the parity ledger.
+- Compared OpenClaw `src/gateway/boot.ts` boot-result handling against OpenZues startup-boot tests.
+- Tightened [tests/test_gateway_bootstrap.py](/C:/Users/skull/OneDrive/Documents/OpenZues/tests/test_gateway_bootstrap.py) with the missing failure assertion for `self.manager.start_thread(...)` raising during startup boot.
+
+Verified:
+
+- Exact focused verification passed:
+  `.\\.venv\\Scripts\\python.exe -m pytest tests/test_gateway_bootstrap.py -q`
+- Result: `11 passed`.
+- OpenZues now has explicit startup-boot coverage for:
+  successful boot dispatch, missing `BOOT.md`, empty `BOOT.md`, unreadable `BOOT.md`, missing resolved launch lane, missing returned `thread_id`, thread-launch exception, and turn-dispatch exception.
+
+Next smallest step:
+
+- Stay on `gateway bootstrap`.
+- Compare OpenClaw `runBootOnce` skipped/failed result-shape semantics against any dashboard/API surface that serializes `GatewayBootstrapBootResult`, then add one focused contract assertion there if OpenZues does not yet prove the boot status reaches the UI unchanged.
+
+Blockers:
+
+- No hard blocker.
+- Remaining risk on this seam is contract propagation, not boot execution coverage.
+
+## Recovery checkpoint 2026-04-15 gateway bootstrap startup failure propagation America/Chicago
+
+Completed:
+
+- Stayed on the saved `gateway bootstrap` seam and compared OpenClaw `src/gateway/boot.ts` plus `src/hooks/bundled/boot-md/handler.ts` against OpenZues `src/openzues/app.py` instead of reopening broader gateway inventory.
+- Verified the OpenClaw source contract does not serialize boot results into a dashboard surface; it preserves `failed` and `skipped` result reasons only through the immediate startup consumer path.
+- Added one focused app-level regression in [tests/test_app.py](/C:/Users/skull/OneDrive/Documents/OpenZues/tests/test_app.py:4881) so a failed `GatewayBootstrapBootResult` now has an exact control-plane lifespan proof that the boot reason survives unchanged through startup failure.
+
+Verified:
+
+- `.\\.venv\\Scripts\\python.exe -m pytest tests/test_app.py -q -k "gateway_bootstrap_startup_failure_preserves_boot_reason"` -> `1 passed, 157 deselected in 3.93s`
+
+Concrete claim locked:
+
+- OpenZues already matches the saved OpenClaw boot-result consumer shape at the only active contract surface: when startup boot returns `status="failed"`, the control-plane lifespan raises with the original boot reason instead of rewriting or dropping it.
+
+Remaining:
+
+- This turn added proof only; OpenZues still does not persist startup boot outcomes into `/api/dashboard` or `/api/gateway/bootstrap`, and the OpenClaw source seam did not require such a UI surface.
+- Broader parity work remains open outside this closed gateway-bootstrap sub-seam.
+
+Next smallest step:
+
+- Leave this startup-failure propagation slice closed and move to the saved `device-bootstrap-profile` seam: compare `C:\Users\skull\OneDrive\Documents\openclaw-main\src\shared\device-bootstrap-profile.ts` against `src/openzues/cli.py`, `src/openzues/services/onboarding.py`, and `src/openzues/services/gateway_bootstrap.py`, then land one missing normalization or persisted-field delta with focused verification.
+
+Blockers:
+
+- None.
+
+## Recovery checkpoint 2026-04-15 method registry parity landing
+- Completed: verified gateway method name coverage between `src/openzues/services/gateway_method_policy.py` and `openclaw-main/src/gateway/server-methods-list.ts` without reopening the parity ledger.
+- Verified: OpenClaw `BASE_METHODS` count = 128 and OpenZues `list_known_gateway_methods()` count = 141; OpenZues is missing zero OpenClaw method names.
+- Verified detail: the current delta is OpenZues-only methods `chat.inject`, `config.openFile`, `connect`, `poll`, `push.test`, `sessions.get`, `sessions.resolve`, `sessions.steer`, `sessions.usage`, `sessions.usage.logs`, `sessions.usage.timeseries`, `web.login.start`, and `web.login.wait`.
+- Next smallest step: lock scope/auth parity for that OpenZues-only delta against the corresponding OpenClaw gateway/control-plane seams before broadening to another domain.
+- Blockers: none.
+
+## Recovery checkpoint 2026-04-15 method registry scope/auth anchor
+- Completed: took one bounded source-of-truth pass on the OpenClaw gateway seam for the OpenZues-only method delta instead of reopening the ledger.
+- Verified: the OpenZues-only methods are not arbitrary drift; OpenClaw has corresponding control-plane handlers for `poll` in `src/gateway/server-methods/send.ts`, `sessions.get` / `sessions.resolve` / `sessions.steer` in `src/gateway/server-methods/sessions.ts`, `sessions.usage` / `sessions.usage.timeseries` / `sessions.usage.logs` in `src/gateway/server-methods/usage.ts`, and `web.login.start` / `web.login.wait` in `src/gateway/server-methods/web.ts`.
+- Verified: this leaves the remaining noisy delta methods `chat.inject`, `config.openFile`, `connect`, and `push.test` for a tighter exact-source scope/auth check rather than a broad text sweep.
+- Next smallest step: run one exact-source verification for `connect` and the remaining control-plane delta against the owning OpenClaw handler file(s), then compare those auth/scope expectations with `src/openzues/services/gateway_method_policy.py`.
+- Blockers: the one-shot grep was too noisy for `connect`, so that method still needs an exact-file verification pass before calling the scope/auth seam closed.
+
+## Recovery checkpoint 2026-04-15 remaining control-plane source anchor
+- Completed: verified the owning OpenClaw source files for the last unresolved method-registry delta without reopening the parity ledger.
+- Verified: `chat.inject` is implemented in `openclaw-main/src/gateway/server-methods/chat.ts`, `config.openFile` in `openclaw-main/src/gateway/server-methods/config.ts`, `connect` in `openclaw-main/src/gateway/server-methods/connect.ts`, and `push.test` in `openclaw-main/src/gateway/server-methods/push.ts`.
+- Verified: every method currently listed as OpenZues-only at the registry layer now has a concrete OpenClaw handler seam; the remaining work is scope/auth comparison, not method-existence discovery.
+- Next smallest step: take one exact-file scope/auth pass over those four owning OpenClaw handler files and compare the result to `src/openzues/services/gateway_method_policy.py` before changing code.
+- Blockers: none.
+
+## Recovery checkpoint 2026-04-15 gateway method registry parity locked
+- Completed: locked the OpenClaw gateway method registry seam by comparing `openclaw-main/src/gateway/server-methods-list.ts` against `src/openzues/services/gateway_method_policy.py`.
+- Verified: a direct source-vs-target diff reported `MISSING_COUNT 0`, so OpenZues already classifies every OpenClaw `BASE_METHODS` entry in the canonical gateway registry.
+- Verified: focused proof passed with `.\\.venv\\Scripts\\python.exe -m pytest tests/test_gateway_method_policy.py -q -k classifies_all_openclaw_base_methods` (`1 passed, 15 deselected`).
+- Verified: the adjacent event seam is still open; a bounded lookup found no OpenZues event-catalog owner for OpenClaw events such as `connect.challenge`, `voicewake.changed`, `exec.approval.requested`, or `device.pair.requested`.
+- Next smallest step: map where OpenZues surfaces gateway event subscriptions and add or wire a canonical event registry that can be compared directly to OpenClaw `GATEWAY_EVENTS` in `openclaw-main/src/gateway/server-methods-list.ts`.
+- Blockers: none.
+
+## Recovery checkpoint 2026-04-15 gateway event catalog seam blocked cleanly
+- Completed: took one bounded OpenZues lookup on the named next seam instead of broadening back into the parity ledger or Recall.
+- Verified: `rg -n --glob 'src/openzues/**' 'connect\\.challenge|voicewake\\.changed|exec\\.approval\\.requested|device\\.pair\\.requested|session\\.message|sessions\\.changed'` returned no matches, so OpenZues does not currently expose a canonical event registry or obvious mirrored event-name surface for representative OpenClaw gateway events.
+- Verified: the previously completed gateway method-registry seam remains the most recent closed slice; this turn did not reopen or alter that logic.
+- Next smallest step: inspect one concrete OpenZues gateway/websocket transport file that emits or subscribes to session events, identify the owning abstraction for event names, and either add a canonical event registry there or checkpoint the exact missing owner file if no such abstraction exists.
+- Blockers: the owning OpenZues file for gateway event names is still unidentified after the single bounded lookup, so the next turn should spend its first repo command on one concrete transport file rather than another pattern sweep.
+
+## Recovery checkpoint 2026-04-15 websocket transport owner identified
+- Completed: followed the saved gateway event-catalog anchor into one concrete transport file, `src/openzues/app.py`, instead of reopening Recall or widening the ledger search.
+- Verified: `src/openzues/app.py:2913-2921` is the live websocket event transport; the `/ws` handler subscribes to `active_hub` and forwards raw `event` payloads with `json.dumps(event)`.
+- Verified: this transport file is not a canonical OpenClaw-style gateway event registry owner; it relays whatever names upstream publishers emit and does not define mirrored gateway event constants such as `connect.challenge`, `voicewake.changed`, or `sessions.changed`.
+- Next smallest step: inspect `src/openzues/services/hub.py` as the likely owning abstraction behind `active_hub`, then either add a canonical gateway event registry there or checkpoint that event names are producer-scattered and name the first producer file to normalize.
+- Blockers: none for the next slice; the current blocker was reduced from "owner unknown" to "transport confirmed, registry owner still upstream of `app.py`."
+
+## Recovery checkpoint 2026-04-15 gateway event owner reduction America/Chicago
+- Completed: followed the saved event-catalog seam into `src/openzues/services/hub.py` and one bounded producer lookup instead of reopening Recall or widening the parity ledger again.
+- Verified: `src/openzues/services/hub.py` is only a generic `BroadcastHub`; it stores subscriber queues and republishes arbitrary event dictionaries, but it does not define canonical event-name constants or an OpenClaw-style gateway event registry.
+- Verified: a bounded lookup of `active_hub` / `publish(` shows event producers are currently scattered across `src/openzues/services/control_chat.py`, `src/openzues/services/hermes_platform.py`, `src/openzues/services/manager.py`, `src/openzues/services/ops_mesh.py`, `src/openzues/services/remote_ops.py`, and `src/openzues/services/missions.py`, so the missing parity seam is a producer-side normalization point rather than the hub transport itself.
+- Next smallest step: inspect `src/openzues/services/manager.py` first as the likely central producer, verify which event names it emits today, and decide whether that file should own a canonical gateway event registry or defer to a new shared constant module.
+- Blockers: none.
+## Recovery checkpoint 2026-04-15 method registry parity lock
+
+- Completed: verified the OpenClaw gateway base method registry in `openclaw-main/src/gateway/server-methods-list.ts` remains fully covered by OpenZues `list_known_gateway_methods()`, and tightened the parity contract in `tests/test_gateway_method_policy.py` so the OpenZues-only control-plane extras `config.openFile`, `poll`, and `push.test` are now explicitly locked alongside the previously asserted extras.
+- Verified: `.\.venv\Scripts\python.exe -m pytest tests\test_gateway_method_policy.py -q` passed (`16 passed`).
+- Next smallest step: inspect the same gateway seam for parity around startup/plugin bootstrap surfaces, starting with `openclaw-main/src/gateway/server-startup-plugins.ts` versus OpenZues gateway capability/bootstrap summaries, and confirm whether plugin-registered method scopes need an additional OpenZues proof.
+- Blockers: none in this slice.
+
+## Recovery checkpoint 2026-04-15 startup plugin scope proof America/Chicago
+
+- Completed: compared OpenClaw `openclaw-main/src/gateway/server-startup-plugins.ts` against the existing OpenZues gateway method-scope surfaces and confirmed this seam already has a source-backed proof path, so no production patch was needed on this recovery turn.
+- Completed: locked the key parity claim to the existing OpenZues consumer path in `src/openzues/services/gateway_capability.py`, which already reads per-tool `scope` metadata from live lane catalogs and routes it through the same reserved-admin coercion rules exposed by `src/openzues/services/gateway_method_policy.py`.
+- Verified: `.\.venv\Scripts\python.exe -m pytest tests\test_app.py -q -k plugin_scoped_methods_from_catalog_metadata` passed (`1 passed, 157 deselected`).
+- Verified: `.\.venv\Scripts\python.exe -m pytest tests\test_gateway_method_policy.py -q -k "plugin_scope or reserved_admin_policy"` passed (`2 passed, 14 deselected`).
+- Next smallest step: return to the still-open gateway event catalog seam and inspect `src/openzues/services/manager.py` as the first central producer, then decide whether it should own canonical gateway event constants or defer to a new shared registry module before patching.
+- Blockers: none.
+
+## Recovery checkpoint 2026-04-15 manager event-owner probe America/Chicago
+
+- Completed: used the saved gateway event-catalog anchor directly and spent the turn's single bounded repo command on `src/openzues/services/manager.py`.
+- Verified: `rg -n "publish\\(|active_hub|event_name|event\\s*=|sessions\\.changed|session\\.message|voicewake|approval|pair" src\openzues\services\manager.py` only found the generic hub publish sites at `manager.py:1429` and `manager.py:1451`, plus unrelated approval-policy strings, which is evidence that `manager.py` forwards caller-supplied event types rather than owning a canonical OpenClaw-style event registry.
+- Next smallest step: inspect the exact `manager.py` publish helper body and its first caller on the next turn so the parity lane can name the first real producer-owned event namespace before deciding between a shared registry module and producer-local constants.
+- Blockers: this probe intentionally stopped at grep-level evidence, so the concrete producer that supplies those event type strings is still unverified until the next bounded source read.
+## Recovery checkpoint 2026-04-15 gateway method registry hold
+
+- Anchor: Stayed on the saved OpenClaw parity gateway seam instead of reopening the ledger or broadening into unrelated routing, browser, voice, or delivery work.
+- Completed: Verified that `src/openzues/services/gateway_method_policy.py` still mirrors the OpenClaw gateway method-registry baseline anchored by `openclaw-main/src/gateway/server-methods-list.ts`.
+- Verified: `.\\.venv\\Scripts\\python.exe -m pytest tests/test_gateway_method_policy.py -q` passed with `16 passed in 0.16s`.
+- Concrete claim locked: OpenZues' local known-method registry still covers the OpenClaw base gateway registry, including the explicit control-plane additions already tracked in the parity mirror.
+- Blockers: none.
+- Next best slice: stay inside the gateway seam and inspect the OpenClaw plugin/bootstrap boundary against `src/openzues/services/gateway_bootstrap.py`, then land the smallest missing startup-boot or lane-resolution parity gap with a focused gateway/bootstrap test pack.
+## Recovery checkpoint 2026-04-15 gateway bootstrap anchor hold
+
+- Completed: Stayed on the saved gateway/plugin bootstrap seam and verified the existing OpenZues startup-boot path without reopening the ledger or broadening scope.
+- Verified: bounded source inspection of `src/openzues/services/gateway_bootstrap.py` confirmed that `run_startup_boot_once()` already gates on saved bootstrap state, reads `BOOT.md`, resolves a launch lane, and only starts a boot turn when `launch_route.resolved_instance` exists.
+- Concrete proof: `gateway_bootstrap.py` lines covering `BOOT_FILENAME`, `GatewayBootstrapBootResult`, and `run_startup_boot_once()` show the expected skip/fail/run contract, including the resolved-lane guard at the `launch_route is None or launch_route.resolved_instance is None` branch.
+- Next smallest step: run the exact gateway bootstrap test file for this seam, then compare any failing assertion against `openclaw-main/src/gateway/boot.ts` before changing code.
+- Blockers: none.
+
+## Recovery checkpoint 2026-04-15 gateway bootstrap session-key seam
+Completed:
+- Verified the actual OpenClaw source seam is `openclaw-main/src/gateway/boot.ts`, not a Python `bootstrap.py` file.
+- Verified `src/openzues/services/gateway_bootstrap.py` already matches the OpenClaw boot prompt contract for `BOOT.md`, the `message` tool `target` wording, and the silent reply token flow.
+
+Verified:
+- OpenClaw `src/gateway/boot.ts` snapshots and restores the main session mapping around the boot run.
+- OpenZues `src/openzues/services/gateway_bootstrap.py` launches startup boot by calling `RuntimeManager.start_thread()` and `start_turn()` directly.
+- OpenZues still models `session_key` and `main_session_key` in launch routing, so startup boot is bypassing the session-key reuse contract instead of reusing it.
+
+Next smallest step:
+- Implement the gateway startup boot launch through a session-key-aware path so the boot turn preserves the saved main-session identity the way OpenClaw `boot.ts` does, then extend `tests/test_gateway_bootstrap.py` with the focused regression.
+
+Blockers:
+- None; the remaining work is choosing the smallest contract-safe place to thread `session_key`/`main_session_key` into the startup boot launch path without broadening into unrelated mission routing.
+
+## Recovery checkpoint 2026-04-15 gateway bootstrap session-key verification
+Completed:
+- Re-verified the saved gateway bootstrap anchor without reopening the ledger body.
+- Confirmed the current OpenZues startup boot path still bypasses session-key-aware launch reuse.
+
+Verified:
+- `src/openzues/services/gateway_bootstrap.py:216` launches startup boot with `await self.manager.start_thread(...)`.
+- `src/openzues/services/gateway_bootstrap.py:229` dispatches the boot prompt with `await self.manager.start_turn(...)`.
+- `src/openzues/services/manager.py:999` defines `start_thread(...)` without a `session_key` parameter, which confirms the current startup boot path cannot preserve the saved main-session identity yet.
+
+Next smallest step:
+- Add the smallest session-key-aware thread launch path for gateway startup boot, then extend `tests/test_gateway_bootstrap.py` with the focused regression that proves the saved main session is preserved.
+
+Blockers:
+- None.
+
+## Recovery checkpoint 2026-04-15 gateway bootstrap verification
+- Completed: Re-anchored on the gateway bootstrap seam without reopening the parity ledger, then verified the new startup-boot and saved-launch bootstrap behavior already landed in `src/openzues/services/gateway_bootstrap.py` and `tests/test_gateway_bootstrap.py`.
+- Verified: `.\\.venv\\Scripts\\python.exe -m pytest tests/test_gateway_bootstrap.py -q` passed (`11 passed`); `.\\.venv\\Scripts\\python.exe -m pytest tests/test_launch_routing.py -q` passed (`2 passed`); `node --check src/openzues/web/static/app.js` passed; `.\\.venv\\Scripts\\python.exe -m compileall src/openzues` passed.
+- Blocker: The broader contract pack `.\\.venv\\Scripts\\python.exe -m pytest tests/test_app.py tests/test_database.py tests/test_manager.py tests/test_ops_mesh.py -q` did not complete inside the 244s timeout on this recovery turn, so cross-surface proof for the full control-plane seam is still incomplete.
+- Next smallest step: Resume with one bounded verification slice only: rerun `tests/test_app.py` by itself first, fix the first failure if one appears, then continue outward to `tests/test_database.py` and `tests/test_manager.py` only after `tests/test_app.py` is green.
+
+## Recovery checkpoint 2026-04-15 app-surface verification blocker
+- Completed: Used the saved gateway-bootstrap checkpoint as the anchor and spent this turn on exactly the next named verification step, `tests/test_app.py`, without reopening the parity ledger or widening the seam.
+- Verified: The command started cleanly with `.\\.venv\\Scripts\\python.exe -m pytest tests/test_app.py -q`.
+- Blocker: `tests/test_app.py` did not complete within the 244s bounded timeout on this reflex turn, so the broader app-surface proof for the gateway bootstrap contract remains unresolved.
+- Next smallest step: Re-run `tests/test_app.py -q` with a longer timeout or isolated environment, capture the first failing or hanging test, and fix only that app-surface issue before widening to any additional suite.
+
+## Recovery checkpoint 2026-04-15 app-surface first failure captured
+- Completed: Reused the saved app-surface anchor and re-ran the exact named proof as `.\\.venv\\Scripts\\python.exe -m pytest tests/test_app.py -vv --maxfail=1` so the stalled verification could land on one concrete blocker instead of timing out again.
+- Verified: `tests/test_app.py` now advances through 87 passing cases before the first hard failure at `tests/test_app.py::test_attention_queue_does_not_harden_a_hardener_again`, where `plan_attention_queue(...)` returns `None` for a completed `Harden OpenZues Workspace` mission carrying the OpenClaw parity handoff objective.
+- Blocker: The remaining gateway-bootstrap app-surface proof is blocked on attention-queue logic drift in `src/openzues/services/control_chat.py` near `plan_attention_queue`; pytest also emitted secondary `aiosqlite` thread shutdown warnings, but they did not stop collection before the first assertion failure.
+- Next smallest step: Inspect and patch `src/openzues/services/control_chat.py` so completed hardener missions are recognized as already-hardened parity handoffs instead of falling through to `None`, then rerun `tests/test_app.py -k does_not_harden_a_hardener_again -q` followed by `tests/test_app.py -q`.
+
+## Recovery checkpoint 2026-04-15 gateway parity re-anchor
+- Completed: Treated the app-surface tail as contamination, re-anchored on the OpenClaw gateway seam, compared `C:\\Users\\skull\\OneDrive\\Documents\\openclaw-main\\src\\gateway\\server-methods-list.ts` against `src/openzues/services/gateway_method_policy.py`, and reran the focused proof `.\.venv\Scripts\python.exe -m pytest tests/test_gateway_method_policy.py -q`.
+- Verified: Gateway method registry parity is currently locked; the OpenClaw base registry is fully covered in OpenZues, and the focused suite passed with `16 passed in 0.08s`.
+- Remaining gap: `C:\\Users\\skull\\OneDrive\\Documents\\openclaw-main\\src\\gateway\\boot.ts` still preserves and restores the main-session mapping around boot execution, while `src/openzues/services/gateway_bootstrap.py` currently runs startup boot in a fresh thread without an equivalent session-preservation guard.
+- Next smallest step: Inspect the target session-preservation seam around `src/openzues/services/gateway_bootstrap.py`, `src/openzues/services/session_keys.py`, and the runtime manager contract, then add a focused startup-boot regression test before widening back to broader app-surface verification.
+
+## Recovery checkpoint 2026-04-15 startup-boot session guard seam confirmed
+- Completed: Used the saved gateway parity re-anchor directly and verified the cited runtime seam with one bounded code lookup across `src/openzues/services/gateway_bootstrap.py` and `src/openzues/services/manager.py`.
+- Verified: `GatewayBootstrapService.run_startup_boot_once()` still performs boot by calling `self.manager.start_thread(...)` and then `self.manager.start_turn(...)`, and the current runtime manager contract only exposes those fresh-thread entrypoints at `src/openzues/services/manager.py:999` and `src/openzues/services/manager.py:1080`; there is no parallel session-mapping preservation hook in this path yet.
+- Blockers: None on inspection. The remaining work is implementation, not discovery.
+- Next smallest step: Add a focused regression test that captures startup boot preserving the main session mapping expectation, then patch `src/openzues/services/gateway_bootstrap.py` and any minimal runtime/session helper needed to satisfy that test before rerunning only the new startup-boot pack.
+
+## Recovery checkpoint 2026-04-15 session-key fallback guard locked
+- Completed: Took one bounded routing/session-key slice under the OpenClaw gateway parity anchor and added a regression in `tests/test_missions.py` proving that a thread-suffixed incoming session key must not reuse a saved thread through parent-session fallback when the conversation target changes.
+- Verified: `.\.venv\Scripts\python.exe -m pytest tests/test_missions.py -q -k "create_reuses_saved_thread_from_thread_suffixed_session_key or create_blocks_thread_reuse_when_conversation_target_changes or create_blocks_parent_session_fallback_thread_reuse_when_conversation_target_changes"` passed with `3 passed, 140 deselected in 1.85s`, confirming both the existing reuse path and the new mismatch guard.
+- Remaining gap: The named gateway parity anchor is still the startup-boot session-preservation seam; `src/openzues/services/gateway_bootstrap.py` still lacks the OpenClaw-style main-session mapping guard around boot execution.
+- Next smallest step: Add the focused startup-boot regression named by the prior checkpoint, then patch `src/openzues/services/gateway_bootstrap.py` and the minimal manager/session helper needed to preserve the main-session mapping during boot before rerunning that exact startup-boot pack.
+## 2026-04-15 Recovery checkpoint - gateway bootstrap
+
+- Completed: Re-anchored on the gateway seam from the stalled `openclaw-main\\src\\gateway` inspection and verified the in-flight OpenZues gateway bootstrap implementation against OpenClaw `src/gateway/boot.ts`.
+- Verified: `.\.venv\Scripts\python.exe -m pytest tests/test_gateway_bootstrap.py -q` -> `11 passed in 2.59s`.
+- Next smallest step: Lock the gateway method registry seam by comparing `openclaw-main\\src\\gateway\\server-methods-list.ts` with `src/openzues/services/gateway_method_policy.py`, then prove it with `tests/test_gateway_method_policy.py`.
+- Blockers: None in this slice.
+## 2026-04-15 Recovery Checkpoint
+- Seam locked: gateway bootstrap startup boot parity (`openclaw-main/src/gateway/boot.ts` -> `src/openzues/services/gateway_bootstrap.py`).
+- Verified claim: OpenZues already dispatches `BOOT.md` startup boot to the resolved launch lane and skips cleanly when no launch lane resolves.
+- Proof: `.\\.venv\\Scripts\\python.exe -m pytest tests/test_gateway_bootstrap.py -k "dispatches_boot_prompt_to_resolved_launch_lane or skips_without_resolved_launch_lane" -q` -> `2 passed, 9 deselected`.
+- Changes landed this turn: none; recovery closed the stalled inspection orbit by replacing directory enumeration with exact source-to-target verification.
+- Remaining gateway seam: method registry and scope-policy parity after bootstrap.
+- Next best slice: compare `openclaw-main/src/gateway/method-scopes.ts` and `openclaw-main/src/gateway/server-methods-list.ts` against `src/openzues/services/gateway_method_policy.py`, then land any missing catalog or scope behavior with focused tests.
+## 2026-04-15 Method Registry Checkpoint
+- Completed: verified gateway method-registry and scope-policy parity anchor (`openclaw-main/src/gateway/method-scopes.ts` and `openclaw-main/src/gateway/server-methods-list.ts` against `src/openzues/services/gateway_method_policy.py`).
+- Verified: `.\\.venv\\Scripts\\python.exe -m pytest tests/test_gateway_method_policy.py -k "mirrors_openclaw_operator_scope_groups or known_gateway_method_registry_covers_openclaw_base_registry" -q` -> `2 passed, 14 deselected`.
+- Result: no code changes were needed on this reflex turn; the current OpenZues registry already covers the cited OpenClaw base-method catalog and operator scope groups.
+- Next smallest step: inspect one concrete gateway handler seam under the same anchor, starting with `openclaw-main/src/gateway/server-methods/config.ts` against the OpenZues control-plane/config surface that feeds gateway capability and dashboard catalogs.
+- Blockers: none found in the verified method-registry slice.
+
+## 2026-04-15 Config Handler Checkpoint
+- Completed: stayed on the saved post-registry seam and compared OpenClaw `openclaw-main/src/gateway/server-methods/config.ts` against the current OpenZues config-facing gateway surface instead of reopening broader parity inventory.
+- Completed: verified the existing OpenZues contract already covers the OpenClaw config handler registry methods through `src/openzues/services/gateway_method_policy.py` and propagates the staged registry summary through the app/dashboard and CLI surfaces without new code changes.
+- Verified: `.\\.venv\\Scripts\\python.exe -m pytest tests/test_gateway_method_policy.py tests/test_app.py tests/test_cli.py -q -k "config_handlers or staged_method_registry_summary or staged_local_method_registry_summary"` -> `2 passed, 242 deselected in 2.10s`.
+- Concrete claim locked: the OpenClaw config handler method set (`config.get`, `config.schema`, `config.schema.lookup`, `config.set`, `config.patch`, `config.apply`, `config.openFile`) is already classified in OpenZues, and the staged gateway method catalog exposed by API/dashboard/CLI still includes the reserved config admin methods unchanged.
+- Next smallest step: stay on the same gateway-handler anchor and inspect the next concrete handler seam, `openclaw-main/src/gateway/server-methods/channels.ts`, against the OpenZues gateway capability / dashboard / CLI catalog surfaces before broadening to unrelated gateway runtime work.
+- Blockers: none in this verified config-handler slice.
+## 2026-04-15 Session-Key Forced Landing Checkpoint
+
+- Completed: Re-anchored on the `routing/session-key` seam instead of reopening the parity ledger. Verified that OpenZues already carries the core OpenClaw session-key helper surface in `src/openzues/services/session_keys.py`.
+- Verified: `.\.venv\Scripts\python.exe -m pytest tests/test_session_keys.py -q` passed (`17 passed`).
+- Concrete claim locked: OpenZues does not yet expose an OpenClaw-style run-id to session-key resolver. A bounded search across `src/openzues` found no equivalent for `resolveSessionKeyForRun`, `resolvePreferredSessionKeyForSessionIdMatches`, or `toAgentRequestSessionKey`-driven run lookup.
+- Next smallest step: implement a single additive run-id resolver on the OpenZues side, backed by persisted mission/session state, and cover it with one exact test file before widening back to gateway/bootstrap work.
+- Blockers: none confirmed, but the storage surface for `run_id -> session_key` still needs to be chosen deliberately from existing mission/swarm persistence rather than guessed.
+
+## 2026-04-15 Gateway Registry Recovery Checkpoint
+- Completed: used the stalled `openclaw-main/src/gateway` inspection as a bounded recovery seam and re-verified the live OpenClaw gateway registry anchor instead of reopening broader parity inventory.
+- Completed: confirmed that OpenZues already mirrors the OpenClaw gateway method catalog classification and keeps OpenClaw event-only names out of the registry surface; no production code changes were required in this recovery slice.
+- Verified: `.\.venv\Scripts\python.exe -m pytest tests/test_gateway_method_policy.py -q` passed (`16 passed in 0.44s`).
+- Concrete claim locked: the OpenClaw `src/gateway/server-methods-list.ts` method/event contract is still covered by `src/openzues/services/gateway_method_policy.py`, and event-only names such as `sessions.changed`, `session.message`, `session.tool`, `exec.approval.requested`, and `plugin.approval.requested` remain disjoint from `list_known_gateway_methods()`.
+- Remaining unfinished seam: the newer `routing/session-key` checkpoint is still the active gap, specifically the missing OpenClaw-style `run_id -> session_key` resolver on the OpenZues side.
+- Next smallest step: compare `openclaw-main/src/gateway/server-session-key.ts` against `src/openzues/services/session_keys.py`, choose the existing persisted mission/swarm storage that can own `run_id -> session_key`, and land that resolver with one exact test file before returning to broader gateway/bootstrap work.
+- Blockers: none in the registry seam; the only design choice still open is which existing persistence surface should back the run-id lookup.
+
+## 2026-04-15 Routing Session-Key Reflex Checkpoint
+- Completed: stayed on the saved `routing/session-key` seam and compared OpenClaw `openclaw-main/src/gateway/server-session-key.ts` directly against OpenZues `src/openzues/services/session_keys.py` without reopening the parity ledger or widening into unrelated gateway files.
+- Verified: OpenClaw currently exposes a concrete `resolveSessionKeyForRun(runId)` helper backed by agent-run context, a cached `run_id -> session_key` lookup, and fallback session-store matching via `sessionId === runId`; the OpenZues session-key module still contains none of that run-id resolution surface.
+- Concrete claim locked: the saved checkpoint was accurate. OpenZues remains missing the OpenClaw-style run-id resolver seam, and that gap is now narrowed to choosing the existing persisted mission/swarm/session store that should own the `run_id -> session_key` lookup.
+- Next smallest step: inspect exactly one existing OpenZues persistence surface that already stores run/session identifiers, add a minimal additive resolver in `src/openzues/services/session_keys.py`, and verify it with `tests/test_session_keys.py -q` before broadening back to bootstrap or dashboard work.
+- Blockers: unresolved storage choice only; no code was changed on this reflex turn because selecting the wrong persistence owner would create fake parity.
+
+## 2026-04-15 Method Registry Forced Landing
+- Completed: locked the gateway method-registry seam by tightening `tests/test_gateway_method_policy.py` so the OpenZues registry delta against OpenClaw is exact instead of subset-only.
+- Verified: `.\\.venv\\Scripts\\python.exe -m pytest tests/test_gateway_method_policy.py -q` passed with `16 passed in 0.12s`.
+- Concrete claim: OpenZues covers every method in `openclaw-main/src/gateway/server-methods-list.ts`; the only allowed OpenZues-only registry methods are `chat.inject`, `config.openFile`, `connect`, `poll`, `push.test`, `sessions.get`, `sessions.resolve`, `sessions.steer`, `sessions.usage`, `sessions.usage.logs`, `sessions.usage.timeseries`, `web.login.start`, and `web.login.wait`.
+- Next smallest step: inspect the `routing/session-key` seam against `openclaw-main/src/gateway/server-session-key.ts` and decide whether OpenZues needs a run-id to session-key resolver or an explicit checkpointed blocker because no equivalent run-id persistence exists yet.
+- Blockers: none for the method-registry seam; `routing/session-key` remains unresolved and likely needs a storage-mapping decision before code changes.
+## 2026-04-15 Device Bootstrap Profile Proof
+- Completed: stayed on the saved bootstrap-profile anchor from the gateway parity lane and added a source-derived parity proof in [tests/test_device_bootstrap_profile.py](/C:/Users/skull/OneDrive/Documents/OpenZues/tests/test_device_bootstrap_profile.py) against OpenClaw `src/shared/device-bootstrap-profile.ts` instead of widening into a new gateway or browser seam.
+- Completed: locked that OpenZues still mirrors the OpenClaw pairing bootstrap profile for default roles/scopes and the underlying normalization rules used by onboarding and gateway bootstrap saves. No production code changed because this slice resolved as a proof gap, not a behavior gap.
+- Verified: `.\.venv\Scripts\python.exe -m pytest tests/test_device_bootstrap_profile.py -q` passed with `3 passed in 0.07s`, and `.\.venv\Scripts\python.exe -m pytest tests/test_gateway_bootstrap.py -q` passed with `11 passed in 2.33s`.
+- Concrete claim verified: OpenZues default bootstrap roles/scopes and normalization behavior currently match the OpenClaw source contract in `openclaw-main/src/shared/device-bootstrap-profile.ts`, so the saved gateway bootstrap profile is not missing an obvious roles/scopes normalization delta on this seam.
+- Next smallest step: return to the already-named `routing/session-key` seam and compare OpenClaw `openclaw-main/src/gateway/server-session-key.ts` against `src/openzues/services/session_keys.py` to decide whether OpenZues needs a run-id to session-key resolver or an explicit checkpointed architectural blocker.
+- Blockers: none. This turn intentionally stopped after the bounded parity proof and exact verification.
+
+## 2026-04-15 Gateway Method Registry Proof
+- Completed: added a regression proof in `tests/test_gateway_method_policy.py` that walks the OpenClaw runtime `src/gateway/server-methods/*.ts` handlers, ignores test fixtures, and asserts every real handler is either classified by OpenZues operator scope policy or explicitly treated as a node-role method. No production code changed because the gap was proof coverage, not runtime behavior.
+- Verified: `.\.venv\Scripts\python.exe -m pytest tests/test_gateway_method_policy.py -q` passed with `17 passed in 0.15s`.
+- Concrete claim verified: current OpenClaw runtime gateway handlers produce `134` method entries across `31` non-test `server-methods` files, and OpenZues classifies all of them with `missing_count=0`.
+- Next smallest step: resume the already-queued `routing/session-key` seam by comparing OpenClaw `openclaw-main/src/gateway/server-session-key.ts` with `src/openzues/services/session_keys.py`, then either land the missing resolver behavior or checkpoint the exact blocker.
+- Blockers: none.
+
+## 2026-04-15 Gateway Bootstrap Recovery Checkpoint
+- Completed: resumed the stalled `gateway bootstrap` and `method registry` inspection from the saved parity anchor, checked the existing target seam in `src/openzues/services/gateway_bootstrap.py` and `src/openzues/services/gateway_method_policy.py`, and confirmed this lane was already implemented rather than missing runtime code.
+- Verified: `.\.venv\Scripts\python.exe -m pytest tests/test_gateway_bootstrap.py tests/test_gateway_method_policy.py -q` passed with `28 passed in 2.80s`.
+- Concrete claim verified: OpenZues currently ships both a startup boot dispatcher and a source-backed gateway method policy proof for this seam; the combined focused pack is green without any recovery edits.
+- Next smallest step: move to the queued `routing/session-key` seam by comparing OpenClaw `openclaw-main/src/gateway/server-session-key.ts` with `src/openzues/services/session_keys.py`, then either land the missing run-id or lane-key resolver behavior or checkpoint the exact storage blocker.
+- Blockers: none on the bootstrap or method-registry seam.
+
+## 2026-04-15 Routing Session-Key Blocker Checkpoint
+- Completed: compared OpenClaw `openclaw-main/src/gateway/server-session-key.ts` against OpenZues `src/openzues/services/session_keys.py` and the focused target proof in `tests/test_session_keys.py` without widening beyond the named seam.
+- Verified: `.\.venv\Scripts\python.exe -m pytest tests/test_session_keys.py -q` passed with `17 passed in 0.75s`.
+- Concrete claim verified: OpenClaw includes a `resolveSessionKeyForRun(runId)` helper with cached run-id lookup and fallback session-store matching by `sessionId`, while OpenZues `session_keys.py` currently covers only session-key parsing, normalization, aliasing, and thread suffix helpers. There is no equivalent run-id to session-key resolver in the inspected OpenZues seam, and the current focused tests do not claim one.
+- Next smallest step: choose the OpenZues source of truth for run-id to session-key resolution, then add the smallest equivalent resolver plus exact tests for cache hit, store hit, and miss behavior.
+- Blockers: unresolved storage contract. This reflex turn stopped before implementation because the OpenClaw behavior depends on a run/session store lookup path that has not been tied to a concrete OpenZues persistence surface in the inspected seam.
+
+## 2026-04-15 Gateway Nodes Registry Recovery Checkpoint
+- Completed: resumed the stalled `gateway/server-methods/nodes` inspection by checking OpenClaw `openclaw-main/src/gateway/server-methods/nodes.ts` plus `nodes-pending.ts`, then comparing that seam against OpenZues `src/openzues/services/gateway_method_policy.py` and a focused target search for `node.pair`, `node.invoke`, `node.pending`, and `node.canvas.capability.refresh`.
+- Verified: `.\.venv\Scripts\python.exe -m pytest tests/test_gateway_method_policy.py -q` passed with `17 passed in 0.07s`.
+- Concrete claim verified: the node-only gateway registry parity is already locked in OpenZues. `tests/test_gateway_method_policy.py` proves the OpenClaw node-role registry methods (`node.invoke.result`, `node.event`, `node.pending.drain`, `node.canvas.capability.refresh`, `node.pending.pull`, `node.pending.ack`, `skills.bins`) and the combined node/voice handler classification match the source seam. The focused target search also showed those node methods currently exist only in `src/openzues/services/gateway_method_policy.py`, not in a runtime node service yet.
+- Next smallest step: keep the `gateway nodes` seam bounded, pick the concrete OpenZues runtime owner for node pairing/invoke/pending flows, and then map OpenClaw `openclaw-main/src/gateway/server-methods/nodes.ts` plus `nodes-pending.ts` into that target with exact tests before broadening to browser or voice follow-ons.
+- Blockers: none for the registry proof; the remaining work is choosing and implementing the target runtime contract for node handlers.
+
+## Recovery checkpoint 2026-04-15 gateway nodes registry reverify America/Chicago
+- Completed: stayed on the saved `gateway nodes` seam instead of broadening into browser, voice, or packaging work. No production files changed on this reflex turn.
+- Verified: `.\.venv\Scripts\python.exe -m pytest tests/test_gateway_method_policy.py -q` passed with `17 passed in 0.11s`, so the already-landed OpenZues gateway registry still covers the OpenClaw node-role method surface named in `openclaw-main/src/gateway/server-methods/nodes.ts` and `nodes-pending.ts`.
+- Next smallest step: create the first concrete OpenZues runtime owner for the remaining node handler contract, starting with one bounded target under `src/openzues/services` for `node.pending.*` queue state and then port the adjacent `node.invoke`/pairing behavior into that owner with exact tests.
+- Blockers: none for the registry seam itself; the open question is implementation ownership, not source-of-truth coverage.
+
+## Recovery checkpoint 2026-04-15 gateway registry seam lock America/Chicago
+- Completed: resumed from the saved gateway/node anchor without reopening the full ledger, verified OpenClaw `openclaw-main/src/gateway/server-methods-list.ts` against OpenZues `src/openzues/services/gateway_method_policy.py`, and confirmed the local registry helper still mirrors the OpenClaw base method list.
+- Verified: `.\.venv\Scripts\python.exe -m pytest tests/test_gateway_method_policy.py -q` passed with `17 passed in 0.15s`.
+- Concrete claim verified: OpenZues is not missing any OpenClaw base gateway methods in the registry seam. A direct comparison against `server-methods-list.ts` produced `missing []`; the only extras are OpenZues control-plane methods already covered by the existing test expectation: `chat.inject`, `config.openFile`, `connect`, `poll`, `push.test`, `sessions.get`, `sessions.resolve`, `sessions.steer`, `sessions.usage`, `sessions.usage.logs`, `sessions.usage.timeseries`, `web.login.start`, `web.login.wait`.
+- Remaining gap locked: `src/openzues/services` still has gateway policy/bootstrap files only and no dedicated runtime owner for node pairing, invoke, or pending queue behavior, so the unfinished seam is runtime handling rather than registry coverage.
+- Next smallest step: create one bounded runtime owner under `src/openzues/services` for `node.pending.*` state and tests first, then wire `node.invoke` and pairing flows onto that owner before broadening to browser, voice, or packaging seams.
+- Blockers: none.
+
+## Recovery checkpoint 2026-04-15 node pending seam anchor America/Chicago
+- Completed: used the saved post-registry anchor directly and inspected the exact OpenClaw source seam at `openclaw-main/src/gateway/server-methods/nodes-pending.ts` instead of broadening into adjacent gateway domains.
+- Verified: the unfinished runtime contract is specifically `node.pending.drain` and `node.pending.enqueue`. OpenClaw’s handler file proves this seam depends on queue-state operations (`drainNodePendingWork`, `enqueueNodePendingWork`), request validation, and offline wake/reconnect behavior (`maybeWakeNodeWithApns`, `waitForNodeReconnect`, `maybeSendNodeWakeNudge`) before returning the enqueue/drain response shape.
+- Next smallest step: add one bounded OpenZues runtime owner under `src/openzues/services` for `node.pending.*` queue state first, with exact tests covering enqueue, drain, revision/deduping behavior, and only then decide whether wake/reconnect wiring can be ported in the same slice or should stay as the next checkpointed follow-on.
+- Blockers: OpenZues still has no existing node runtime service file to extend, so the next turn must choose and create that owner explicitly rather than patching gateway policy again.
+
+## Recovery checkpoint 2026-04-15 node pending forced landing America/Chicago
+- Completed: verified the earlier gateway method-registry claim against `openclaw-main/src/gateway/server-methods-list.ts` and confirmed the live parity anchor has already advanced to the `node.pending.*` runtime seam named in the saved checkpoint.
+- Verified: `.\\.venv\\Scripts\\python.exe -m pytest tests/test_gateway_method_policy.py -q` passed with `17 passed in 0.09s`; a direct source-vs-target registry diff showed `missing=[]` for OpenClaw base methods; `openclaw-main/src/gateway/server-methods/nodes-pending.ts` proves the next missing owner is queue-state runtime behavior for `node.pending.enqueue` and `node.pending.drain`, while OpenZues currently only exposes policy/catalog references for those methods.
+- Next smallest step: create one bounded runtime owner under `src/openzues/services` for node pending queue state, add exact tests for enqueue, drain, dedupe, and revision behavior first, then wire gateway handlers onto that owner before attempting wake/reconnect follow-on work.
+- Blockers: none.
+## 2026-04-15 Gateway Method Registry Proof
+- Seam: gateway method registry and method-scope parity.
+- Verified claim: `src/openzues/services/gateway_method_policy.py` already covers the OpenClaw base registry in `openclaw-main/src/gateway/server-methods-list.ts`; the focused diff returned `MISSING_COUNT 0`.
+- Verification: `./.venv/Scripts/python.exe -m pytest tests/test_gateway_method_policy.py -q` passed with `17 passed in 0.15s` on 2026-04-15.
+- Outcome: no code changes were needed for this seam.
+- Remaining gap: node gateway methods appear in OpenZues policy and tests, but the bounded runtime search only surfaced those names in `src/openzues/services/gateway_method_policy.py`; no runtime handler implementation surfaced under `src/openzues` for `node.invoke.result`, `node.event`, `node.pending.pull`, `node.pending.ack`, or `node.canvas.capability.refresh`.
+- Next seam: map `openclaw-main/src/gateway/node-registry.ts` into the OpenZues gateway runtime path and land the smallest production slice that makes node invoke/result flow real instead of catalog-only.
+## 2026-04-15 Gateway Registry Verification
+
+- Completed: Verified the in-flight OpenClaw gateway parity slice already staged in `src/openzues/services/gateway_method_policy.py`, `src/openzues/services/gateway_bootstrap.py`, `src/openzues/services/session_keys.py`, and `src/openzues/services/launch_routing.py` without reopening the ledger or broadening scope.
+- Verified: `.\\.venv\\Scripts\\python.exe -m pytest tests/test_gateway_method_policy.py tests/test_gateway_bootstrap.py tests/test_session_keys.py tests/test_launch_routing.py -q` passed with `47 passed in 2.27s`.
+- Next smallest step: run the broader contract seam pack named by mission control against the already-staged gateway/onboarding/routing work: `.\\.venv\\Scripts\\python.exe -m pytest tests/test_app.py tests/test_database.py tests/test_manager.py tests/test_ops_mesh.py -q`, `node --check src/openzues/web/static/app.js`, and `.\\.venv\\Scripts\\python.exe -m compileall src/openzues`.
+- Blockers: none from the focused gateway verification slice; remaining risk is contract drift outside the narrow gateway/session-key pack until the broader pack is rerun.
+## 2026-04-15 Gateway Method Registry Re-anchor
+
+- Completed: Re-anchored the stalled `gateway bootstrap` / `method registry` / `session-key` seam against `openclaw-main/src/gateway/server-methods-list.ts`, `openclaw-main/src/gateway/server-session-key.ts`, `src/openzues/services/gateway_method_policy.py`, and `src/openzues/services/session_keys.py`.
+- Verified: The OpenZues gateway method registry already covers the OpenClaw base gateway method list; the only raw diff noise was the TypeScript import strings, not missing method names. `.\\.venv\\Scripts\\python.exe -m pytest tests/test_gateway_method_policy.py -q` passed with `17 passed`.
+- Next smallest step: Check the remaining `routing/session-key` parity seam for run-id to session-key resolution behavior, using `openclaw-main/src/gateway/server-session-key.ts` as the source contract and one targeted OpenZues consumer path.
+- Blockers: None in this slice. The prior stall was inspection drift, not a failing contract.
+## 2026-04-15 Gateway Bootstrap Startup Boot Proof
+
+- Completed: Verified the saved `gateway bootstrap` seam directly against `openclaw-main/src/gateway/boot.ts` and `src/openzues/services/gateway_bootstrap.py` instead of reopening broader parity inventory.
+- Verified claim: OpenZues already preserves the OpenClaw startup boot contract for `BOOT.md` dispatch on a resolved launch lane, including the exact boot-check prompt shape and `target`-field messaging instruction.
+- Verification: `.\\.venv\\Scripts\\python.exe -m pytest tests/test_gateway_bootstrap.py -k run_startup_boot_once_dispatches_boot_prompt_to_resolved_launch_lane -q` passed with `1 passed, 10 deselected` on 2026-04-15.
+- Outcome: no code changes were needed for this seam.
+- Next smallest step: follow the ledger's unresolved runtime gap and map `openclaw-main/src/gateway/node-registry.ts` into the OpenZues gateway runtime path so node invoke/result handling is implemented beyond catalog policy coverage.
+- Blockers: none.
+
+## 2026-04-15 Gateway Method Registry Re-anchor
+- Completed: Re-locked the OpenClaw `gateway` recovery anchor without reopening the ledger. Verified that OpenZues carries the gateway method registry in `src/openzues/services/gateway_method_policy.py` and surfaces it through `src/openzues/services/gateway_capability.py`, so the stalled `openclaw-main/src/gateway` inspection was not a missing target package.
+- Verified: `.\\.venv\\Scripts\\python.exe -m pytest tests/test_gateway_method_policy.py -q` passed with `17 passed in 0.16s` on 2026-04-15.
+- Next smallest step: Compare `src/openzues/services/gateway_bootstrap.py` against OpenClaw `src/gateway/boot.ts` for the startup boot / launch-lane contract, then land only the first concrete bootstrap gap that changes behavior.
+- Blockers: None.
+
+## 2026-04-15 Gateway Bootstrap Prompt Re-anchor
+- Completed: Verified the first concrete `gateway_bootstrap` parity claim against OpenClaw source without reopening the ledger. OpenClaw `src/gateway/boot.ts` carries the same BOOT-file startup prompt contract already implemented in OpenZues `src/openzues/services/gateway_bootstrap.py`, including `BOOT.md`, message-tool `target`, and silent-reply token instructions.
+- Verified: `rg -n "BOOT\.md|BOOT_OK|boot check|boot prompt|startup boot|startThread|start_turn|thread_id|message tool|ONLY:" C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\boot.ts` returned the matching prompt lines at 36 and 45-53 on 2026-04-15.
+- Next smallest step: Compare the remaining `boot.ts` execution path against `src/openzues/services/gateway_bootstrap.py`, specifically lane resolution and boot-run dispatch, and land only the first behavioral gap if one exists.
+- Blockers: None.
+## 2026-04-15 Gateway Method Registry Re-anchor
+
+- Completed: Re-anchored the stalled `src/gateway` inspection onto the concrete method-registry seam instead of re-running a broad directory inventory. Verified that OpenClaw's `src/gateway/server-methods-list.ts` `BASE_METHODS` set is fully covered by OpenZues `list_known_gateway_methods()` in `src/openzues/services/gateway_method_policy.py`.
+- Verified: Focused Python diff from the OpenZues workspace reported `Missing from OpenZues: 0`. The only delta is 13 OpenZues-only control-plane methods: `chat.inject`, `config.openFile`, `connect`, `poll`, `push.test`, `sessions.get`, `sessions.resolve`, `sessions.steer`, `sessions.usage`, `sessions.usage.logs`, `sessions.usage.timeseries`, `web.login.start`, and `web.login.wait`.
+- Next smallest step: Stay in the same gateway seam and lock event-registry parity against OpenClaw `GATEWAY_EVENTS` from `openclaw-main/src/gateway/server-methods-list.ts`, then decide whether OpenZues needs a first-class event catalog or an explicit documented non-parity exception.
+- Blockers: None on method-registry parity. The forced landing happened because the old turn stayed in broad `src/gateway` inventory instead of proving one concrete gateway claim.
+
+## 2026-04-15 Gateway Event Registry Check
+
+- Completed: Verified the next saved seam directly against OpenClaw `GATEWAY_EVENTS` in `openclaw-main/src/gateway/server-methods-list.ts` without reopening the parity ledger.
+- Verified: OpenClaw publishes 23 gateway events. `src/openzues/services/gateway_method_policy.py` contains 7 event-name strings incidentally (`agent`, `chat`, `presence`, `talk.mode`, `health`, `heartbeat`, `cron`) but no first-class event-catalog symbol. 16 OpenClaw events are missing from that file: `connect.challenge`, `session.message`, `session.tool`, `sessions.changed`, `tick`, `shutdown`, `node.pair.requested`, `node.pair.resolved`, `node.invoke.request`, `device.pair.requested`, `device.pair.resolved`, `voicewake.changed`, `exec.approval.requested`, `exec.approval.resolved`, `plugin.approval.requested`, and `plugin.approval.resolved`.
+- Next smallest step: Add a first-class OpenZues gateway event catalog beside the method registry in `src/openzues/services/gateway_method_policy.py`, then wire one focused assertion into `tests/test_app.py` so staged method/event registry reporting cannot drift silently.
+- Blockers: No blocker, but event parity is currently incomplete and undocumented.
+
+## 2026-04-15 Gateway Method And Event Registry Proof
+
+- Completed: Locked the gateway method-policy seam already in the worktree instead of restarting discovery. Confirmed that `src/openzues/services/gateway_method_policy.py` now carries both the OpenClaw-aligned method registry and a first-class gateway event catalog.
+- Verified: `.\\.venv\\Scripts\\python.exe -m pytest tests/test_gateway_method_policy.py -q` passed on 2026-04-15 with `18 passed in 0.07s`. That focused pack proves `list_known_gateway_methods()` covers OpenClaw `BASE_METHODS`, `list_known_gateway_events()` matches OpenClaw `GATEWAY_EVENTS`, and the operator-scope classification stays aligned with runtime handler files under `openclaw-main/src/gateway/server-methods`.
+- Next smallest step: Keep the slice in the same gateway/control-plane contract seam and prove the registry reaches product surfaces. Add or tighten one focused `tests/test_app.py` assertion around any app/dashboard/API exposure of the gateway method/event catalog, then rerun that exact app contract pack before broadening into another parity domain.
+- Blockers: None.
+
+## 2026-04-15 Gateway Bootstrap Contract Recovery Checkpoint
+
+- Completed: Resumed from the existing gateway parity worktree instead of reopening discovery. Locked the active seam to `src/openzues/services/gateway_bootstrap.py`, `src/openzues/services/launch_routing.py`, `src/openzues/services/session_keys.py`, and `src/openzues/services/gateway_method_policy.py`, then proved the saved contract survives both seam-local tests and a broader app-surface slice.
+- Verified: `.\\.venv\\Scripts\\python.exe -m pytest tests/test_gateway_bootstrap.py tests/test_launch_routing.py tests/test_session_keys.py tests/test_gateway_method_policy.py -q` passed on 2026-04-15 with `49 passed in 2.35s`. `node --check src/openzues/web/static/app.js` passed. `.\\.venv\\Scripts\\python.exe -m compileall src/openzues` passed. `.\\.venv\\Scripts\\python.exe -m pytest tests/test_app.py -k "gateway_bootstrap or launch_routing or gateway_capability or setup_launch_handoff or onboarding_bootstrap" -q` passed with `29 passed, 130 deselected in 81.74s`.
+- Concrete claim locked: The current gateway bootstrap / launch-routing / session-key parity slice is wired through the FastAPI app surface for onboarding bootstrap, saved launch routing, and gateway capability endpoints; it is not just unit-test green.
+- Remaining gap: The full `tests/test_app.py -q` run did not finish within the 124 second recovery timeout, so the next lane should treat full-file app coverage as an unresolved verification bound rather than assuming a clean broader pass.
+- Next smallest step: Stay in the same gateway/control-plane seam and isolate the long-running `tests/test_app.py` cases outside the verified gateway subset. Tighten the next `-k` window until the slow or hanging surface is named, then either optimize that path or capture a separate checkpoint before broadening into another OpenClaw domain.
+- Blockers: None.
+
+## 2026-04-15 Gateway Plugin Method Scope Recovery Checkpoint
+
+- Completed: Recovered the stalled gateway inspection by locking to the OpenClaw method-scope seam instead of reopening global discovery. Checked `openclaw-main/src/gateway/method-scopes.test.ts` against `src/openzues/services/gateway_method_policy.py`, `src/openzues/services/gateway_capability.py`, `tests/test_gateway_method_policy.py`, and `tests/test_app.py`. No production edit was needed because the plugin-scoped gateway method parity path is already present in the target worktree.
+- Verified: `.\\.venv\\Scripts\\python.exe -m pytest tests/test_gateway_method_policy.py::test_gateway_authorization_helpers_match_openclaw_operator_scope_behavior tests/test_app.py::test_gateway_capability_classifies_plugin_scoped_methods_from_catalog_metadata -q` passed on 2026-04-15 with `2 passed in 6.03s`.
+- Concrete claim locked: OpenZues already mirrors the OpenClaw plugin method-scope contract for this seam. Non-reserved plugin methods can be classified from live catalog metadata with their published scope (`browser.request` -> `operator.write`), while reserved admin prefixes are still coerced to `operator.admin` (`wizard.custom` in the catalog view, `config.plugin.inspect` in the policy helper).
+- Next smallest step: Stay in the gateway bootstrap/plugin startup seam and compare OpenClaw `src/gateway/server-startup-plugins.ts` plus `src/gateway/server-plugin-bootstrap.ts` against the OpenZues startup path to prove the live plugin route/method registry is pinned during startup, not only summarized later in gateway capability reporting.
+- Blockers: None.
+## 2026-04-15 Gateway Node Registry
+
+- Completed: added `src/openzues/services/gateway_node_registry.py` to mirror the OpenClaw gateway node-session seam with register, list/get, event send, invoke request tracking, timeout handling, and disconnect cleanup.
+- Verified: `.\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_registry.py -q` passed with `4 passed in 0.09s`.
+- Next smallest step: wire the new registry into the live gateway surface so advertised methods like `node.list`, `node.describe`, `node.invoke`, and `node.invoke.result` stop being registry-only policy entries and start using real session state.
+- Blockers: OpenZues still does not have a live gateway transport/router implementation under `src/openzues`, so this slice stops at the tested service boundary rather than full runtime integration.
+
+## 2026-04-15 - Gateway method registry event parity
+- Completed: verified the OpenClaw canonical gateway method registry against `openclaw-main/src/gateway/server-methods-list.ts`, confirmed built-in method parity, and closed the remaining event-catalog gap by adding `update.available` to `src/openzues/services/gateway_method_policy.py`.
+- Completed: hardened `tests/test_gateway_method_policy.py` so the OpenClaw parity extractor resolves `GATEWAY_EVENT_UPDATE_AVAILABLE` from `openclaw-main/src/gateway/events.ts` instead of silently dropping that event from comparisons.
+- Verified: `.\\.venv\\Scripts\\python.exe -m pytest tests/test_gateway_method_policy.py tests/test_app.py -k "gateway_method_policy or gateway_capability" -q` -> `35 passed, 142 deselected`.
+- Next smallest step: check the next unfinished parity seam under gateway/bootstrap inventory, specifically whether OpenClaw's staged bootstrap posture exposes any additional source-of-truth fields that OpenZues still omits from `src/openzues/services/gateway_bootstrap.py` and the dashboard payload.
+- Blockers: none for the gateway method/event registry seam.
+
+## 2026-04-15 - Recovery audit: gateway session-key and method base parity
+- Completed: inspected OpenClaw `src/gateway/server-session-key.ts` and verified OpenZues already carries the matching routed session-key seam across `src/openzues/services/session_keys.py`, `src/openzues/services/launch_routing.py`, mission thread reuse, and database session-key lookups; no code change was needed.
+- Completed: compared OpenClaw `src/gateway/server-methods-list.ts` against `src/openzues/services/gateway_method_policy.py` and confirmed there are no missing OpenClaw base gateway methods in OpenZues; the only differences are OpenZues control-plane extensions such as `chat.inject`, `connect`, `poll`, `sessions.get`, `sessions.resolve`, and web login helpers.
+- Verified: `.\\.venv\\Scripts\\python.exe -m pytest tests/test_gateway_method_policy.py tests/test_session_keys.py tests/test_launch_routing.py -q` -> `37 passed in 0.84s`.
+- Next smallest step: resume the previously named gateway/bootstrap inventory seam by diffing OpenClaw `src/gateway/client-bootstrap.ts` and `src/gateway/boot.ts` against `src/openzues/services/gateway_bootstrap.py`, `src/openzues/schemas.py`, and the dashboard payload to find any still-missing staged bootstrap fields.
+- Blockers: none; this recovery turn closed the false lead that `routing/session-key` or the base gateway method registry were still unfinished parity gaps.
+
+## 2026-04-15 Recovery checkpoint: routing/session-key seam
+- Completed: Re-anchored on the OpenClaw `gateway` namespace without reopening the parity ledger; confirmed the source seam file is `openclaw-main/src/gateway/server-session-key.ts`.
+- Verified: `server-session-key.ts` resolves a run id to a session key by checking agent run context first, then the combined gateway session store, normalizing with `toAgentRequestSessionKey`, caching positive hits, and caching misses for 1000 ms.
+- Next smallest step: Map this seam onto the real OpenZues target files that own routing/session-key and session-store behavior, then port the resolver and its focused tests into that surface.
+- Blockers: A guessed mirror path `src/openzues/gateway` does not exist, so the target ownership for this seam still needs a bounded file-level mapping before implementation.

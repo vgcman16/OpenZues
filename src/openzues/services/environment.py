@@ -11,6 +11,23 @@ from openzues.schemas import DiagnosticCheck, DiagnosticStatus, DiagnosticsView
 from openzues.services.codex_desktop import CodexDesktopService
 
 
+def _desktop_source_label(source_kind: str | None) -> str:
+    return {
+        "package": "packaged desktop runtime",
+        "session": "desktop session runtime",
+        "path": "PATH desktop runtime",
+    }.get(source_kind, "desktop runtime")
+
+
+def _paths_match(left: Path | None, right: Path | None) -> bool:
+    if left is None or right is None:
+        return False
+    try:
+        return left.resolve(strict=False) == right.resolve(strict=False)
+    except OSError:
+        return False
+
+
 @dataclass(slots=True)
 class CommandProbe:
     returncode: int | None
@@ -97,17 +114,23 @@ class EnvironmentService:
         codex_exe = shutil.which("codex")
         codex_probe = self._run(["codex", "--version"]) if codex_exe else None
         if codex_probe is None:
-            codex_status: DiagnosticStatus = "warn"
-            codex_detail = "Codex executable not found on PATH."
-            codex_action = (
-                "Use Desktop transport to stage a runnable Codex binary "
-                "from the local desktop install."
-                if desktop.source_path
-                else (
+            if desktop.source_path is not None:
+                codex_status = "info"
+                codex_detail = (
+                    "Codex executable is not on PATH, but Desktop transport can "
+                    "stage a runnable local Codex bridge."
+                )
+                codex_action = (
+                    "Use Desktop transport or Quick Connect to stage a runnable "
+                    "Codex binary from the local desktop install."
+                )
+            else:
+                codex_status = "warn"
+                codex_detail = "Codex executable not found on PATH."
+                codex_action = (
                     "Install or expose Codex CLI before using stdio transport, "
                     "or use WebSocket transport."
                 )
-            )
         elif codex_probe.returncode == 0:
             codex_status = "ok"
             codex_detail = codex_probe.stdout or codex_probe.stderr or "Codex CLI is available."
@@ -162,9 +185,12 @@ class EnvironmentService:
             desktop_value = None
         else:
             desktop_status = "ok"
-            desktop_detail = f"Found desktop runtime at {desktop.source_path}"
+            source_label = _desktop_source_label(desktop.source_kind)
+            desktop_detail = f"Found {source_label} at {desktop.source_path}"
+            if desktop.package_version:
+                desktop_detail += f" (package {desktop.package_version})"
             desktop_action = "Use Desktop transport or Quick Connect to attach the site to Codex."
-            desktop_value = desktop.session.app_server_version
+            desktop_value = desktop.package_version
         checks.append(
             DiagnosticCheck(
                 key="codex_desktop_install",
@@ -207,11 +233,17 @@ class EnvironmentService:
                 "or keep using WebSocket transport."
             )
         elif desktop.staged_path is None or not desktop.staged_ready:
+            bridge_source_label = {
+                "package": "packaged desktop runtime",
+                "session": "desktop session runtime",
+                "path": "PATH runtime",
+            }.get(desktop.source_kind, "desktop runtime")
             bridge_status = "info"
             bridge_detail = (
-                "OpenZues will stage a local runnable Codex binary on first desktop connection."
+                "OpenZues will stage a local runnable Codex binary from the "
+                f"{bridge_source_label} on first desktop connection."
             )
-            bridge_value = None
+            bridge_value = str(desktop.source_path)
             bridge_action = "Press Quick Connect in the site to create the bridge automatically."
         else:
             try:
@@ -246,9 +278,31 @@ class EnvironmentService:
             session_status = "ok" if desktop.session.initialized else "info"
             transport = desktop.session.transport or "unknown"
             version = desktop.session.app_server_version or "unknown"
+            spawned_detail = ""
+            if desktop.session.spawned_executable:
+                spawned_path = Path(desktop.session.spawned_executable)
+                if _paths_match(spawned_path, desktop.staged_path):
+                    spawned_detail = (
+                        "spawned the staged bridge "
+                        f"from the {_desktop_source_label(desktop.source_kind)} "
+                        f"at {desktop.session.spawned_executable}, "
+                    )
+                elif _paths_match(spawned_path, desktop.source_path):
+                    spawned_detail = (
+                        "spawned the "
+                        f"{_desktop_source_label(desktop.source_kind)} "
+                        f"directly at {desktop.session.spawned_executable}, "
+                    )
+                else:
+                    spawned_detail = f"spawned {desktop.session.spawned_executable}, "
+            initialization_detail = (
+                "initialized Codex CLI."
+                if desktop.session.initialized
+                else "did not finish Codex CLI initialization."
+            )
             session_detail = (
-                f"Last desktop session used {transport} transport and "
-                f"reported app-server {version}."
+                f"Last desktop session {spawned_detail}used {transport} transport and "
+                f"reported app-server {version}, and {initialization_detail}"
             )
             session_value = desktop.session.last_seen_at
             session_action = None

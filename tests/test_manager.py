@@ -123,6 +123,173 @@ def test_compact_event_payload_drops_empty_catalog_items() -> None:
     assert compact["data"] == [{"name": "Checks"}]
 
 
+def test_compact_event_payload_clips_command_execution_items() -> None:
+    long_command = "python -c \"" + ("print('openclaw parity seam') " * 20) + "\""
+    long_output = "gateway parity trace " * 80
+
+    compact = compact_event_payload(
+        "item/completed",
+        {
+            "item": {
+                "type": "commandExecution",
+                "id": "cmd_1",
+                "command": long_command,
+                "aggregatedOutput": long_output,
+                "status": "completed",
+                "commandActions": [
+                    {"type": "run", "command": long_command},
+                    {"type": "run", "command": "rg -n gateway src/openzues"},
+                    {"type": "run", "command": "pytest tests/test_gateway_bootstrap.py -q"},
+                    {"type": "run", "command": "python -m compileall src/openzues"},
+                ],
+            }
+        },
+    )
+
+    item = compact["item"]
+    assert item["command"].endswith("... [truncated]")
+    assert item["commandLength"] == len(long_command)
+    assert item["aggregatedOutput"].endswith("... [truncated]")
+    assert item["aggregatedOutputLength"] == len(long_output)
+    assert item["commandActionCount"] == 4
+    assert item["commandActionsTruncated"] is True
+    assert len(item["commandActions"]) == 3
+
+
+def test_compact_event_payload_clips_long_delta_events() -> None:
+    delta = "checkpoint detail " * 60
+
+    compact = compact_event_payload(
+        "item/commandExecution/outputDelta",
+        {
+            "threadId": "thread_1",
+            "turnId": "turn_1",
+            "itemId": "cmd_1",
+            "delta": delta,
+        },
+    )
+
+    assert compact["delta"].endswith("... [truncated]")
+    assert compact["deltaLength"] == len(delta)
+
+
+@pytest.mark.asyncio
+async def test_handle_event_updates_runtime_threads_without_scheduling_refresh(tmp_path) -> None:
+    database = Database(tmp_path / "manager.db")
+    await database.initialize()
+    manager = RuntimeManager(database, BroadcastHub())
+    runtime = InstanceRuntime(
+        instance_id=1,
+        name="Local Codex Desktop",
+        transport="desktop",
+        command=None,
+        args=None,
+        websocket_url=None,
+        cwd="C:/workspace",
+        auto_connect=False,
+        connected=True,
+    )
+    manager.instances[1] = runtime
+
+    scheduled: list[tuple[int, tuple[str, ...] | None]] = []
+
+    def capture_schedule(instance_id: int, methods=None) -> None:
+        scheduled.append((instance_id, methods))
+
+    manager._schedule_refresh_instance = capture_schedule  # type: ignore[method-assign]
+
+    await manager.handle_event(
+        1,
+        {
+            "method": "thread/started",
+            "threadId": "thread_live",
+            "params": {
+                "thread": {
+                    "id": "thread_live",
+                    "status": {"type": "idle"},
+                    "name": "Parity Thread",
+                    "updatedAt": "2026-04-14T21:35:07Z",
+                }
+            },
+        },
+    )
+    await manager.handle_event(
+        1,
+        {
+            "method": "turn/started",
+            "threadId": "thread_live",
+            "params": {
+                "threadId": "thread_live",
+                "turn": {"id": "turn_live", "status": "inProgress"},
+            },
+        },
+    )
+    await manager.handle_event(
+        1,
+        {
+            "method": "turn/completed",
+            "threadId": "thread_live",
+            "params": {
+                "threadId": "thread_live",
+                "turn": {"id": "turn_live", "status": "completed"},
+            },
+        },
+    )
+
+    assert runtime.threads == [
+        {
+            "id": "thread_live",
+            "name": "Parity Thread",
+            "updatedAt": "2026-04-14T21:35:07Z",
+            "status": {"type": "idle"},
+        }
+    ]
+    assert runtime.loaded_thread_ids == ["thread_live"]
+    assert scheduled == []
+
+
+@pytest.mark.asyncio
+async def test_handle_event_schedules_refresh_for_account_updates(tmp_path) -> None:
+    database = Database(tmp_path / "manager.db")
+    await database.initialize()
+    manager = RuntimeManager(database, BroadcastHub())
+    runtime = InstanceRuntime(
+        instance_id=1,
+        name="Local Codex Desktop",
+        transport="desktop",
+        command=None,
+        args=None,
+        websocket_url=None,
+        cwd="C:/workspace",
+        auto_connect=False,
+        connected=True,
+    )
+    manager.instances[1] = runtime
+
+    scheduled: list[tuple[int, tuple[str, ...] | None]] = []
+
+    def capture_schedule(instance_id: int, methods=None) -> None:
+        scheduled.append((instance_id, methods))
+
+    manager._schedule_refresh_instance = capture_schedule  # type: ignore[method-assign]
+
+    await manager.handle_event(
+        1,
+        {
+            "method": "account/updated",
+            "threadId": None,
+            "params": {
+                "account": {
+                    "type": "chatgpt",
+                    "email": "operator@example.com",
+                }
+            },
+        },
+    )
+
+    assert scheduled == [(1, ("account/read",))]
+
+
 class FakeInterruptClient:
     def __init__(
         self,
@@ -181,6 +348,21 @@ class FakeTurnClient:
         return {"data": [{"id": "thread_retry", "status": {"type": "idle"}}]}
 
 
+class FakeSuccessfulTurnClient:
+    async def start_turn(
+        self,
+        *,
+        thread_id: str,
+        text: str,
+        cwd: str | None,
+        model: str | None,
+        reasoning_effort: str | None,
+        collaboration_mode: str | None,
+    ) -> dict[str, dict[str, str]]:
+        del thread_id, text, cwd, model, reasoning_effort, collaboration_mode
+        return {"turn": {"id": "turn_ok"}}
+
+
 class FakeTimeoutTurnClient:
     def __init__(self) -> None:
         self.turn_attempts = 0
@@ -231,6 +413,33 @@ class FakeStartThreadRetryClient:
         return {"thread": {"id": "thread_retry_ok"}}
 
 
+class FakeImmediateStartThreadClient:
+    def __init__(self) -> None:
+        self.thread_list_calls = 0
+
+    async def start_thread(
+        self,
+        *,
+        model: str,
+        cwd: str | None,
+        reasoning_effort: str | None,
+        collaboration_mode: str | None,
+    ) -> dict[str, dict[str, str]]:
+        del model, cwd, reasoning_effort, collaboration_mode
+        return {"thread": {"id": "thread_live"}}
+
+    async def call(
+        self,
+        method: str,
+        params: dict | None = None,
+        timeout: float = 30.0,
+    ) -> dict[str, list[dict[str, object]]]:
+        del params, timeout
+        assert method == "thread/list"
+        self.thread_list_calls += 1
+        return {"data": [{"id": "thread_live", "status": {"type": "idle"}}]}
+
+
 class FakeStartThreadRecoveredClient:
     def __init__(self) -> None:
         self.start_attempts = 0
@@ -274,6 +483,12 @@ class FakeMcpStatusClient:
         self.calls.append((method, params))
         assert method == "mcpServerStatus/list"
         return {"data": self.payload}
+
+
+class FakeReviewClient:
+    async def start_review(self, *, thread_id: str) -> dict[str, str]:
+        del thread_id
+        return {"ok": "true"}
 
 
 class FakeRefreshClient:
@@ -489,7 +704,9 @@ async def test_start_turn_retries_after_thread_not_found(tmp_path) -> None:
         connected=True,
     )
     manager.instances[1] = runtime
-    manager._schedule_refresh_instance = lambda _instance_id: None  # type: ignore[method-assign]
+    manager._schedule_refresh_instance = (  # type: ignore[method-assign]
+        lambda _instance_id, methods=None: None
+    )
 
     result = await manager.start_turn(
         1,
@@ -504,7 +721,64 @@ async def test_start_turn_retries_after_thread_not_found(tmp_path) -> None:
     assert result == {"turn": {"id": "turn_retry_ok"}}
     assert client.turn_attempts == 2
     assert client.thread_list_calls >= 1
-    assert runtime.threads == [{"id": "thread_retry", "status": {"type": "idle"}}]
+    assert runtime.threads == [
+        {
+            "id": "thread_retry",
+            "status": {
+                "type": "active",
+                "turnId": "turn_retry_ok",
+                "activeTurnId": "turn_retry_ok",
+            },
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_start_turn_seeds_runtime_state_without_scheduling_refresh(tmp_path) -> None:
+    database = Database(tmp_path / "manager.db")
+    await database.initialize()
+    manager = RuntimeManager(database, BroadcastHub())
+    runtime = InstanceRuntime(
+        instance_id=1,
+        name="Local Codex Desktop",
+        transport="desktop",
+        command=None,
+        args=None,
+        websocket_url=None,
+        cwd="C:/workspace",
+        auto_connect=False,
+        client=FakeSuccessfulTurnClient(),  # type: ignore[arg-type]
+        connected=True,
+        threads=[{"id": "thread_live", "status": {"type": "idle"}}],
+    )
+    manager.instances[1] = runtime
+
+    scheduled: list[tuple[int, tuple[str, ...] | None]] = []
+
+    def capture_schedule(instance_id: int, methods=None) -> None:
+        scheduled.append((instance_id, methods))
+
+    manager._schedule_refresh_instance = capture_schedule  # type: ignore[method-assign]
+
+    result = await manager.start_turn(
+        1,
+        thread_id="thread_live",
+        text="Continue building.",
+        cwd="C:/workspace",
+        model=None,
+        reasoning_effort=None,
+        collaboration_mode=None,
+    )
+
+    assert result == {"turn": {"id": "turn_ok"}}
+    assert runtime.threads == [
+        {
+            "id": "thread_live",
+            "status": {"type": "active", "turnId": "turn_ok", "activeTurnId": "turn_ok"},
+        }
+    ]
+    assert runtime.loaded_thread_ids == ["thread_live"]
+    assert scheduled == []
 
 
 @pytest.mark.asyncio
@@ -526,7 +800,9 @@ async def test_start_turn_recovers_when_runtime_started_turn_after_timeout(tmp_p
         connected=True,
     )
     manager.instances[1] = runtime
-    manager._schedule_refresh_instance = lambda _instance_id: None  # type: ignore[method-assign]
+    manager._schedule_refresh_instance = (  # type: ignore[method-assign]
+        lambda _instance_id, methods=None: None
+    )
 
     await database.append_event(
         instance_id=1,
@@ -549,7 +825,64 @@ async def test_start_turn_recovers_when_runtime_started_turn_after_timeout(tmp_p
     assert result["recoveredFrom"] == "timeout"
     assert client.turn_attempts == 1
     assert client.thread_list_calls >= 1
-    assert runtime.threads == [{"id": "thread_timeout", "status": {"type": "active"}}]
+    assert runtime.threads == [
+        {
+            "id": "thread_timeout",
+            "status": {"type": "active", "turnId": "turn_late", "activeTurnId": "turn_late"},
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_start_turn_timeout_recovery_preserves_existing_runtime_threads(tmp_path) -> None:
+    database = Database(tmp_path / "manager.db")
+    await database.initialize()
+    manager = RuntimeManager(database, BroadcastHub())
+    client = FakeTimeoutTurnClient()
+    runtime = InstanceRuntime(
+        instance_id=1,
+        name="Local Codex Desktop",
+        transport="desktop",
+        command=None,
+        args=None,
+        websocket_url=None,
+        cwd="C:/workspace",
+        auto_connect=False,
+        client=client,  # type: ignore[arg-type]
+        connected=True,
+        threads=[{"id": "thread_main", "status": {"type": "idle"}}],
+    )
+    manager.instances[1] = runtime
+    manager._schedule_refresh_instance = (  # type: ignore[method-assign]
+        lambda _instance_id, methods=None: None
+    )
+
+    await database.append_event(
+        instance_id=1,
+        thread_id="thread_timeout",
+        method="turn/started",
+        payload={"threadId": "thread_timeout", "turn": {"id": "turn_late"}},
+    )
+
+    result = await manager.start_turn(
+        1,
+        thread_id="thread_timeout",
+        text="Continue building.",
+        cwd="C:/workspace",
+        model=None,
+        reasoning_effort=None,
+        collaboration_mode=None,
+    )
+
+    assert result["turn"]["id"] == "turn_late"
+    assert result["recoveredFrom"] == "timeout"
+    assert runtime.threads == [
+        {
+            "id": "thread_timeout",
+            "status": {"type": "active", "turnId": "turn_late", "activeTurnId": "turn_late"},
+        },
+        {"id": "thread_main", "status": {"type": "idle"}},
+    ]
 
 
 @pytest.mark.asyncio
@@ -573,7 +906,9 @@ async def test_start_thread_reconnects_and_retries_after_timeout(tmp_path) -> No
     manager.instances[1] = runtime
     manager.disconnect_instance = AsyncMock()  # type: ignore[method-assign]
     manager.connect_instance = AsyncMock(return_value=runtime)  # type: ignore[method-assign]
-    manager._schedule_refresh_instance = lambda _instance_id: None  # type: ignore[method-assign]
+    manager._schedule_refresh_instance = (  # type: ignore[method-assign]
+        lambda _instance_id, methods=None: None
+    )
 
     result = await manager.start_thread(
         1,
@@ -588,6 +923,91 @@ async def test_start_thread_reconnects_and_retries_after_timeout(tmp_path) -> No
     manager.disconnect_instance.assert_awaited_once_with(1)
     manager.connect_instance.assert_awaited_once_with(1)
     assert runtime.threads == [{"id": "thread_retry_ok", "status": {"type": "idle"}}]
+
+
+@pytest.mark.asyncio
+async def test_start_thread_marks_loaded_thread_without_scheduling_refresh(tmp_path) -> None:
+    database = Database(tmp_path / "manager.db")
+    await database.initialize()
+    manager = RuntimeManager(database, BroadcastHub())
+    client = FakeImmediateStartThreadClient()
+    runtime = InstanceRuntime(
+        instance_id=1,
+        name="Local Codex Desktop",
+        transport="desktop",
+        command=None,
+        args=None,
+        websocket_url=None,
+        cwd="C:/workspace",
+        auto_connect=False,
+        client=client,  # type: ignore[arg-type]
+        connected=True,
+    )
+    manager.instances[1] = runtime
+
+    scheduled: list[tuple[int, tuple[str, ...] | None]] = []
+
+    def capture_schedule(instance_id: int, methods=None) -> None:
+        scheduled.append((instance_id, methods))
+
+    manager._schedule_refresh_instance = capture_schedule  # type: ignore[method-assign]
+
+    result = await manager.start_thread(
+        1,
+        model="gpt-5.4",
+        cwd="C:/workspace",
+        reasoning_effort="high",
+        collaboration_mode=None,
+    )
+
+    assert result == {"thread": {"id": "thread_live"}}
+    assert client.thread_list_calls >= 1
+    assert runtime.threads == [{"id": "thread_live", "status": {"type": "idle"}}]
+    assert runtime.loaded_thread_ids == ["thread_live"]
+    assert scheduled == []
+
+
+@pytest.mark.asyncio
+async def test_start_thread_preserves_existing_runtime_threads_when_seeding_new_thread(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "manager.db")
+    await database.initialize()
+    manager = RuntimeManager(database, BroadcastHub())
+    client = FakeStartThreadRetryClient()
+    runtime = InstanceRuntime(
+        instance_id=1,
+        name="Local Codex Desktop",
+        transport="desktop",
+        command=None,
+        args=None,
+        websocket_url=None,
+        cwd="C:/workspace",
+        auto_connect=False,
+        client=client,  # type: ignore[arg-type]
+        connected=True,
+        threads=[{"id": "thread_main", "status": {"type": "active", "turnId": "turn_main"}}],
+    )
+    manager.instances[1] = runtime
+    manager.disconnect_instance = AsyncMock()  # type: ignore[method-assign]
+    manager.connect_instance = AsyncMock(return_value=runtime)  # type: ignore[method-assign]
+    manager._schedule_refresh_instance = (  # type: ignore[method-assign]
+        lambda _instance_id, methods=None: None
+    )
+
+    result = await manager.start_thread(
+        1,
+        model="gpt-5.4",
+        cwd="C:/workspace",
+        reasoning_effort="high",
+        collaboration_mode=None,
+    )
+
+    assert result == {"thread": {"id": "thread_retry_ok"}}
+    assert runtime.threads == [
+        {"id": "thread_main", "status": {"type": "active", "turnId": "turn_main"}},
+        {"id": "thread_retry_ok", "status": {"type": "idle"}},
+    ]
 
 
 @pytest.mark.asyncio
@@ -609,7 +1029,9 @@ async def test_start_thread_recovers_when_timeout_created_thread_anyway(tmp_path
         connected=True,
     )
     manager.instances[1] = runtime
-    manager._schedule_refresh_instance = lambda _instance_id: None  # type: ignore[method-assign]
+    manager._schedule_refresh_instance = (  # type: ignore[method-assign]
+        lambda _instance_id, methods=None: None
+    )
 
     result = await manager.start_thread(
         1,
@@ -624,6 +1046,84 @@ async def test_start_thread_recovers_when_timeout_created_thread_anyway(tmp_path
     assert client.start_attempts == 1
     assert client.thread_list_calls >= 1
     assert runtime.threads == [{"id": "thread_recovered", "status": {"type": "idle"}}]
+
+
+@pytest.mark.asyncio
+async def test_interrupt_turn_updates_runtime_state_without_scheduling_refresh(tmp_path) -> None:
+    database = Database(tmp_path / "manager.db")
+    await database.initialize()
+    manager = RuntimeManager(database, BroadcastHub())
+    client = FakeInterruptClient(
+        thread_list=[{"id": "thread_busy", "status": {"type": "active", "turnId": "turn_busy"}}]
+    )
+    runtime = InstanceRuntime(
+        instance_id=1,
+        name="Local Codex Desktop",
+        transport="desktop",
+        command=None,
+        args=None,
+        websocket_url=None,
+        cwd="C:/workspace",
+        auto_connect=False,
+        client=client,  # type: ignore[arg-type]
+        connected=True,
+        threads=[
+            {
+                "id": "thread_busy",
+                "status": {"type": "active", "turnId": "turn_busy", "activeTurnId": "turn_busy"},
+            }
+        ],
+    )
+    manager.instances[1] = runtime
+
+    scheduled: list[tuple[int, tuple[str, ...] | None]] = []
+
+    def capture_schedule(instance_id: int, methods=None) -> None:
+        scheduled.append((instance_id, methods))
+
+    manager._schedule_refresh_instance = capture_schedule  # type: ignore[method-assign]
+
+    result = await manager.interrupt_turn(1, "thread_busy")
+
+    assert result == {"ok": "true"}
+    assert runtime.threads == [{"id": "thread_busy", "status": {"type": "idle"}}]
+    assert runtime.loaded_thread_ids == ["thread_busy"]
+    assert scheduled == []
+
+
+@pytest.mark.asyncio
+async def test_start_review_marks_runtime_active_without_scheduling_refresh(tmp_path) -> None:
+    database = Database(tmp_path / "manager.db")
+    await database.initialize()
+    manager = RuntimeManager(database, BroadcastHub())
+    runtime = InstanceRuntime(
+        instance_id=1,
+        name="Local Codex Desktop",
+        transport="desktop",
+        command=None,
+        args=None,
+        websocket_url=None,
+        cwd="C:/workspace",
+        auto_connect=False,
+        client=FakeReviewClient(),  # type: ignore[arg-type]
+        connected=True,
+        threads=[{"id": "thread_review", "status": {"type": "idle"}}],
+    )
+    manager.instances[1] = runtime
+
+    scheduled: list[tuple[int, tuple[str, ...] | None]] = []
+
+    def capture_schedule(instance_id: int, methods=None) -> None:
+        scheduled.append((instance_id, methods))
+
+    manager._schedule_refresh_instance = capture_schedule  # type: ignore[method-assign]
+
+    result = await manager.start_review(1, "thread_review")
+
+    assert result == {"ok": "true"}
+    assert runtime.threads == [{"id": "thread_review", "status": {"type": "active"}}]
+    assert runtime.loaded_thread_ids == ["thread_review"]
+    assert scheduled == []
 
 
 @pytest.mark.asyncio
@@ -715,6 +1215,37 @@ async def test_refresh_instance_keeps_cached_catalogs_when_optional_reads_timeou
     assert refreshed.loaded_thread_ids == ["thread_live"]
     assert "app/list" in client.calls
     assert "plugin/list" in client.calls
+
+
+@pytest.mark.asyncio
+async def test_refresh_instance_can_target_thread_only_methods(tmp_path) -> None:
+    database = Database(tmp_path / "manager.db")
+    await database.initialize()
+    manager = RuntimeManager(database, BroadcastHub())
+    client = FakeRefreshClient()
+    runtime = InstanceRuntime(
+        instance_id=1,
+        name="Local Codex Desktop",
+        transport="desktop",
+        command=None,
+        args=None,
+        websocket_url=None,
+        cwd="C:/workspace",
+        auto_connect=False,
+        client=client,  # type: ignore[arg-type]
+        connected=True,
+        apps=[{"id": "cached_app", "name": "Cached App"}],
+        plugins=[{"name": "cached-plugin", "enabled": True}],
+    )
+    manager.instances[1] = runtime
+
+    refreshed = await manager.refresh_instance(1, methods=manager_module.THREAD_REFRESH_METHODS)
+
+    assert refreshed.threads == [{"id": "thread_live", "status": {"type": "active"}}]
+    assert refreshed.loaded_thread_ids == ["thread_live"]
+    assert refreshed.apps == [{"id": "cached_app", "name": "Cached App"}]
+    assert refreshed.plugins == [{"name": "cached-plugin", "enabled": True}]
+    assert client.calls == ["thread/list", "thread/loaded/list"]
 
 
 @pytest.mark.asyncio
@@ -832,8 +1363,12 @@ async def test_schedule_refresh_instance_coalesces_repeated_requests(
 
     call_count = 0
 
-    async def fake_refresh(instance_id: int) -> InstanceRuntime:
+    async def fake_refresh(
+        instance_id: int,
+        methods: tuple[str, ...] | None = None,
+    ) -> InstanceRuntime:
         nonlocal call_count
+        del methods
         assert instance_id == 1
         call_count += 1
         await asyncio.sleep(0.01)
@@ -851,6 +1386,51 @@ async def test_schedule_refresh_instance_coalesces_repeated_requests(
     assert call_count == 2
     assert runtime.refresh_task is None
     assert runtime.refresh_pending is False
+
+
+@pytest.mark.asyncio
+async def test_schedule_refresh_instance_merges_targeted_method_requests(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = Database(tmp_path / "manager.db")
+    await database.initialize()
+    manager = RuntimeManager(database, BroadcastHub())
+    monkeypatch.setattr(manager_module, "REFRESH_SCHEDULE_DEBOUNCE_SECONDS", 0.01)
+    runtime = InstanceRuntime(
+        instance_id=1,
+        name="Local Codex Desktop",
+        transport="desktop",
+        command=None,
+        args=None,
+        websocket_url=None,
+        cwd="C:/workspace",
+        auto_connect=False,
+        connected=True,
+    )
+    manager.instances[1] = runtime
+
+    calls: list[tuple[str, ...]] = []
+
+    async def fake_refresh(
+        instance_id: int,
+        methods: tuple[str, ...] | None = None,
+    ) -> InstanceRuntime:
+        assert instance_id == 1
+        calls.append(methods or ())
+        await asyncio.sleep(0.01)
+        return runtime
+
+    manager.refresh_instance = fake_refresh  # type: ignore[method-assign]
+
+    manager._schedule_refresh_instance(1, methods=manager_module.THREAD_REFRESH_METHODS)
+    manager._schedule_refresh_instance(1, methods=("account/read",))
+    await asyncio.sleep(0.05)
+
+    assert calls == [("account/read", "thread/list", "thread/loaded/list")]
+    assert runtime.refresh_task is None
+    assert runtime.refresh_pending is False
+    assert runtime.refresh_pending_methods == set()
 
 
 @pytest.mark.asyncio

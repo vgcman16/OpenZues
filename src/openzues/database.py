@@ -9,6 +9,8 @@ from typing import Any
 
 import aiosqlite
 
+from openzues.services.session_keys import session_key_lookup_aliases
+
 THREAD_EVENT_COMPACT_COMMAND_LIMIT = 4096
 THREAD_EVENT_COMPACT_DELTA_LIMIT = 2048
 THREAD_EVENT_COMPACT_TEXT_LIMIT = 2048
@@ -192,6 +194,8 @@ class Database:
                     last_route_instance_id INTEGER,
                     last_route_resolved_at TEXT,
                     default_cwd TEXT,
+                    bootstrap_roles_json TEXT NOT NULL DEFAULT '[]',
+                    bootstrap_scopes_json TEXT NOT NULL DEFAULT '[]',
                     model TEXT NOT NULL,
                     max_turns INTEGER,
                     use_builtin_agents INTEGER NOT NULL DEFAULT 1,
@@ -443,6 +447,18 @@ class Database:
             )
             await self._ensure_column(db, "gateway_bootstrap", "last_route_instance_id", "INTEGER")
             await self._ensure_column(db, "gateway_bootstrap", "last_route_resolved_at", "TEXT")
+            await self._ensure_column(
+                db,
+                "gateway_bootstrap",
+                "bootstrap_roles_json",
+                "TEXT NOT NULL DEFAULT '[]'",
+            )
+            await self._ensure_column(
+                db,
+                "gateway_bootstrap",
+                "bootstrap_scopes_json",
+                "TEXT NOT NULL DEFAULT '[]'",
+            )
             await self._ensure_column(
                 db, "gateway_bootstrap", "toolsets_json", "TEXT NOT NULL DEFAULT '[]'"
             )
@@ -943,10 +959,19 @@ class Database:
         async with aiosqlite.connect(self.path) as db:
             db.row_factory = aiosqlite.Row
             cursor = await db.execute("SELECT * FROM gateway_bootstrap WHERE id = 1")
-            row = await cursor.fetchone()
+            try:
+                row = await cursor.fetchone()
+            finally:
+                await cursor.close()
             if row is None:
                 return None
             item = dict(row)
+            item["bootstrap_roles"] = self._decode_json_list(
+                item.pop("bootstrap_roles_json", "[]")
+            )
+            item["bootstrap_scopes"] = self._decode_json_list(
+                item.pop("bootstrap_scopes_json", "[]")
+            )
             item["toolsets"] = self._decode_json_list(item.pop("toolsets_json", "[]"))
             return item
 
@@ -969,6 +994,8 @@ class Database:
         last_route_instance_id: int | None = None,
         last_route_resolved_at: str | None = None,
         default_cwd: str | None,
+        bootstrap_roles: list[str] | None = None,
+        bootstrap_scopes: list[str] | None = None,
         model: str,
         max_turns: int | None,
         use_builtin_agents: bool,
@@ -999,6 +1026,8 @@ class Database:
                     last_route_instance_id,
                     last_route_resolved_at,
                     default_cwd,
+                    bootstrap_roles_json,
+                    bootstrap_scopes_json,
                     model,
                     max_turns,
                     use_builtin_agents,
@@ -1015,7 +1044,8 @@ class Database:
                     updated_at
                 )
                 VALUES (
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                 )
                 ON CONFLICT(id) DO UPDATE SET
                     setup_mode = excluded.setup_mode,
@@ -1029,6 +1059,8 @@ class Database:
                     last_route_instance_id = excluded.last_route_instance_id,
                     last_route_resolved_at = excluded.last_route_resolved_at,
                     default_cwd = excluded.default_cwd,
+                    bootstrap_roles_json = excluded.bootstrap_roles_json,
+                    bootstrap_scopes_json = excluded.bootstrap_scopes_json,
                     model = excluded.model,
                     max_turns = excluded.max_turns,
                     use_builtin_agents = excluded.use_builtin_agents,
@@ -1056,6 +1088,8 @@ class Database:
                     last_route_instance_id,
                     last_route_resolved_at,
                     default_cwd,
+                    json.dumps(bootstrap_roles or []),
+                    json.dumps(bootstrap_scopes or []),
                     model,
                     max_turns,
                     int(use_builtin_agents),
@@ -1823,18 +1857,121 @@ class Database:
         instance_id: int | None = None,
         require_thread: bool = False,
     ) -> dict[str, Any] | None:
-        normalized = str(session_key or "").strip()
-        if not normalized:
+        aliases = session_key_lookup_aliases(session_key)
+        if not aliases:
             return None
+        placeholders = ", ".join("?" for _ in aliases)
         query = [
-            "SELECT * FROM missions WHERE session_key = ?",
+            f"SELECT * FROM missions WHERE LOWER(TRIM(session_key)) IN ({placeholders})",
         ]
-        params: list[Any] = [normalized]
+        params: list[Any] = list(aliases)
         if instance_id is not None:
             query.append("AND instance_id = ?")
             params.append(instance_id)
         if require_thread:
             query.append("AND thread_id IS NOT NULL AND TRIM(thread_id) <> ''")
+        query.extend(
+            [
+                "ORDER BY",
+                "CASE status",
+                "    WHEN 'active' THEN 0",
+                "    WHEN 'blocked' THEN 1",
+                "    WHEN 'paused' THEN 2",
+                "    WHEN 'failed' THEN 3",
+                "    WHEN 'completed' THEN 4",
+                "    ELSE 5",
+                "END,",
+                "updated_at DESC,",
+                "id DESC",
+                "LIMIT 1",
+            ]
+        )
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute("\n".join(query), params)
+            row = await cursor.fetchone()
+            if row is None:
+                return None
+            item = dict(row)
+            item["swarm"] = self._decode_json_object(item.pop("swarm_state_json", None))
+            item["toolsets"] = self._decode_json_list(item.pop("toolsets_json", "[]"))
+            item["conversation_target"] = self._decode_json_object(
+                item.pop("conversation_target_json", None)
+            )
+            return item
+
+    async def get_latest_thread_child_mission_by_parent_session_key(
+        self,
+        parent_session_key: str,
+        *,
+        instance_id: int | None = None,
+        require_thread: bool = False,
+    ) -> dict[str, Any] | None:
+        aliases = session_key_lookup_aliases(parent_session_key)
+        if not aliases:
+            return None
+        predicates = " OR ".join("LOWER(TRIM(session_key)) LIKE ?" for _ in aliases)
+        query = [f"SELECT * FROM missions WHERE ({predicates})"]
+        params: list[Any] = [f"{alias}:thread:%" for alias in aliases]
+        if instance_id is not None:
+            query.append("AND instance_id = ?")
+            params.append(instance_id)
+        if require_thread:
+            query.append("AND thread_id IS NOT NULL AND TRIM(thread_id) <> ''")
+        query.extend(
+            [
+                "ORDER BY",
+                "CASE status",
+                "    WHEN 'active' THEN 0",
+                "    WHEN 'blocked' THEN 1",
+                "    WHEN 'paused' THEN 2",
+                "    WHEN 'failed' THEN 3",
+                "    WHEN 'completed' THEN 4",
+                "    ELSE 5",
+                "END,",
+                "updated_at DESC,",
+                "id DESC",
+                "LIMIT 1",
+            ]
+        )
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute("\n".join(query), params)
+            row = await cursor.fetchone()
+            if row is None:
+                return None
+            item = dict(row)
+            item["swarm"] = self._decode_json_object(item.pop("swarm_state_json", None))
+            item["toolsets"] = self._decode_json_list(item.pop("toolsets_json", "[]"))
+            item["conversation_target"] = self._decode_json_object(
+                item.pop("conversation_target_json", None)
+            )
+            return item
+
+    async def get_latest_mission_by_run_id(
+        self,
+        run_id: str,
+        *,
+        instance_id: int | None = None,
+        require_session_key: bool = False,
+    ) -> dict[str, Any] | None:
+        normalized_run_id = str(run_id or "").strip()
+        if not normalized_run_id:
+            return None
+        query = [
+            "SELECT * FROM missions",
+            "WHERE CASE",
+            "    WHEN json_valid(swarm_state_json)",
+            "        THEN COALESCE(json_extract(swarm_state_json, '$.run_id'), '')",
+            "    ELSE ''",
+            "END = ?",
+        ]
+        params: list[Any] = [normalized_run_id]
+        if instance_id is not None:
+            query.append("AND instance_id = ?")
+            params.append(instance_id)
+        if require_session_key:
+            query.append("AND session_key IS NOT NULL AND TRIM(session_key) <> ''")
         query.extend(
             [
                 "ORDER BY",
@@ -2064,7 +2201,7 @@ class Database:
                         item_id_value = str(row["item_id"] or "").strip()
                         if item_id_value:
                             payload["itemId"] = item_id_value
-                        delta_value = str(row["delta"] or "").strip()
+                        delta_value = str(row["delta"] or "")
                         if delta_value:
                             payload["delta"] = delta_value
                         item_payload: dict[str, Any] = {}
@@ -2083,10 +2220,10 @@ class Database:
                         item_command = str(row["item_command"] or "").strip()
                         if item_command:
                             item_payload["command"] = item_command
-                        item_text = str(row["item_text"] or "").strip()
+                        item_text = str(row["item_text"] or "")
                         if item_text:
                             item_payload["text"] = item_text
-                        item_prompt = str(row["item_prompt"] or "").strip()
+                        item_prompt = str(row["item_prompt"] or "")
                         if item_prompt:
                             item_payload["prompt"] = item_prompt
                         if item_payload:

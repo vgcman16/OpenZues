@@ -8,6 +8,7 @@ import subprocess
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Literal
 
 PACKAGE_GLOB = "OpenAI.Codex_*__2p2nqsd0c76g0/app/resources/codex.exe"
 LOG_GLOB = "**/codex-desktop-*.log"
@@ -26,8 +27,10 @@ class DesktopSessionInfo:
 @dataclass(slots=True)
 class DesktopDiscovery:
     source_path: Path | None
+    source_kind: Literal["package", "session", "path"] | None
     staged_path: Path | None
     staged_ready: bool
+    package_version: str | None
     session: DesktopSessionInfo
 
 
@@ -69,29 +72,33 @@ class CodexDesktopService:
         self.sandbox_mode = sandbox_mode
 
     def discover(self) -> DesktopDiscovery:
-        source_path = self.find_source_executable()
+        source_path, source_kind = self.find_source_executable()
         staged_path = self._staged_path_for(source_path) if source_path is not None else None
         staged_ready = staged_path.exists() if staged_path is not None else False
         return DesktopDiscovery(
             source_path=source_path,
+            source_kind=source_kind,
             staged_path=staged_path,
             staged_ready=staged_ready,
+            package_version=self._resolve_package_version(source_path),
             session=self._discover_session(),
         )
 
-    def find_source_executable(self) -> Path | None:
+    def find_source_executable(
+        self,
+    ) -> tuple[Path | None, Literal["package", "session", "path"] | None]:
         package_candidate = self._package_executable_candidate()
         if package_candidate is not None:
-            return package_candidate
+            return package_candidate, "package"
         session_candidate = self._session_executable_candidate()
         if session_candidate is not None:
-            return session_candidate
+            return session_candidate, "session"
         which_candidate = shutil.which("codex")
         if which_candidate:
             which_path = Path(which_candidate)
             if which_path.is_file():
-                return which_path
-        return None
+                return which_path, "path"
+        return None, None
 
     def stage_executable(self, source_path: Path) -> Path:
         source_path = source_path.expanduser().resolve()
@@ -237,10 +244,21 @@ class CodexDesktopService:
         return subprocess.list2cmdline(args)
 
     def _package_version_key(self, package_name: str) -> tuple[int, ...]:
+        version = self._extract_package_version(package_name)
+        if version is None:
+            return ()
+        return tuple(int(part) for part in version.split("."))
+
+    def _resolve_package_version(self, source_path: Path | None) -> str | None:
+        if source_path is None:
+            return None
+        return self._extract_package_version(source_path.parents[2].name)
+
+    def _extract_package_version(self, package_name: str) -> str | None:
         match = re.search(r"OpenAI\.Codex_([0-9.]+)_", package_name)
         if not match:
-            return ()
-        return tuple(int(part) for part in match.group(1).split("."))
+            return None
+        return match.group(1)
 
     def _isoformat_mtime(self, path: Path) -> str:
         return datetime.fromtimestamp(path.stat().st_mtime, tz=UTC).isoformat()

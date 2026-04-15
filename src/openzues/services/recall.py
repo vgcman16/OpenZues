@@ -144,9 +144,10 @@ class RecallService:
         *,
         project_id: int | None = None,
         limit: int = 5,
+        missions: list[MissionView] | None = None,
     ) -> DashboardRecallView:
         bounded_limit = max(1, min(limit, 12))
-        missions = await self.missions.list_views()
+        mission_views = missions if missions is not None else await self.missions.list_views()
         query_text = (query or "").strip()
         preferred_memory_provider, _preferred_executor = await load_saved_runtime_preferences(
             self.database
@@ -154,7 +155,7 @@ class RecallService:
         preferred_memory_label = memory_provider_label(preferred_memory_provider)
         scoped = [
             mission
-            for mission in missions
+            for mission in mission_views
             if project_id is None or mission.project_id == project_id
         ]
         if not scoped:

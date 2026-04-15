@@ -14,12 +14,14 @@ from openzues.schemas import (
     GatewayCapabilityApprovalPostureView,
     GatewayCapabilityConnectedLaneHealthView,
     GatewayCapabilityDiagnosticsView,
+    GatewayCapabilityEventCatalogView,
     GatewayCapabilityInventoryItemView,
     GatewayCapabilityInventoryView,
     GatewayCapabilityLaneView,
     GatewayCapabilityLaunchPolicyView,
     GatewayCapabilityMemoryProofReferenceView,
     GatewayCapabilityMethodCatalogView,
+    GatewayCapabilityMethodScopeView,
     GatewayCapabilityView,
     InstanceView,
     IntegrationView,
@@ -36,6 +38,16 @@ from openzues.services.access import AccessService, build_access_posture
 from openzues.services.continuity import build_continuity_packet
 from openzues.services.environment import EnvironmentService
 from openzues.services.gateway_bootstrap import GatewayBootstrapService
+from openzues.services.gateway_method_policy import (
+    NODE_ROLE_GATEWAY_METHOD_SCOPE,
+    ORDERED_OPERATOR_SCOPES,
+    RESERVED_ADMIN_GATEWAY_METHOD_SCOPE,
+    classify_gateway_methods,
+    is_node_role_gateway_method,
+    is_reserved_admin_gateway_method,
+    list_known_gateway_events,
+    list_known_gateway_methods,
+)
 from openzues.services.manager import RuntimeManager
 from openzues.services.memory_protocol import (
     MEMPALACE_DIRECT_PROOF_MISSION_NAME,
@@ -160,6 +172,41 @@ def _catalog_names(value: Any) -> list[str]:
     return []
 
 
+def _catalog_method_scope_entries(value: Any) -> list[tuple[str, str | None]]:
+    entries: list[tuple[str, str | None]] = []
+    if isinstance(value, list):
+        for item in value:
+            if isinstance(item, str) and item.strip():
+                entries.append((item.strip(), None))
+                continue
+            if not isinstance(item, dict):
+                continue
+            name: str | None = None
+            for key in ("name", "id", "uri", "method", "title"):
+                raw = item.get(key)
+                if isinstance(raw, str) and raw.strip():
+                    name = raw.strip()
+                    break
+            if name is None:
+                continue
+            raw_scope = item.get("scope")
+            scope = raw_scope.strip() if isinstance(raw_scope, str) and raw_scope.strip() else None
+            entries.append((name, scope))
+        return entries
+    if isinstance(value, dict):
+        for key, raw_scope in value.items():
+            name = str(key).strip()
+            if not name:
+                continue
+            scope = (
+                raw_scope.strip()
+                if isinstance(raw_scope, str) and raw_scope.strip()
+                else None
+            )
+            entries.append((name, scope))
+    return entries
+
+
 def _build_mempalace_tool_proof(
     instance: InstanceView,
     status_entries: list[dict[str, Any]],
@@ -243,6 +290,7 @@ def _build_callable_method_catalog(
     connected_lane_names: set[str] = set()
     server_names: dict[str, str] = {}
     tool_names: dict[str, str] = {}
+    scoped_methods: dict[str, dict[str, str]] = {}
 
     for instance in instances:
         if not instance.connected:
@@ -253,23 +301,118 @@ def _build_callable_method_catalog(
             server_name = str(entry.get("name") or entry.get("source") or "MCP server").strip()
             if not server_name:
                 server_name = "MCP server"
-            names = _catalog_names(entry.get("tools"))
+            tool_entries = _catalog_method_scope_entries(entry.get("tools"))
+            names = [name for name, _scope in tool_entries]
             if not names:
                 continue
             connected_lane_names.add(instance.name)
             server_names.setdefault(server_name.lower(), server_name)
             for tool_name in names:
                 tool_names.setdefault(tool_name.lower(), tool_name)
+            plugin_method_scopes = {
+                name.lower(): scope
+                for name, scope in tool_entries
+                if scope is not None
+            }
+            for scope, methods in classify_gateway_methods(
+                names,
+                plugin_method_scopes=plugin_method_scopes,
+            ).items():
+                bucket = scoped_methods.setdefault(scope, {})
+                for method_name in methods:
+                    bucket.setdefault(method_name.lower(), method_name)
+            node_bucket = scoped_methods.setdefault(NODE_ROLE_GATEWAY_METHOD_SCOPE, {})
+            for method_name in names:
+                if is_node_role_gateway_method(method_name):
+                    node_bucket.setdefault(method_name.lower(), method_name)
 
     tools = sorted(tool_names.values(), key=str.lower)
     servers = sorted(server_names.values(), key=str.lower)
-    lane_count = len(connected_lane_names)
-    if tools:
-        headline = "Gateway callable methods are visible"
-        summary = (
-            f"{len(tools)} callable method(s) are visible across {len(servers)} MCP server "
-            f"catalog(s) on {lane_count} connected lane(s)."
+
+    def _scope_groups_for_methods(method_names: list[str]) -> tuple[
+        list[GatewayCapabilityMethodScopeView],
+        int,
+        list[str],
+    ]:
+        groups = [
+            GatewayCapabilityMethodScopeView(
+                scope=scope,
+                method_count=len(methods),
+                methods=methods,
+            )
+            for scope in ORDERED_OPERATOR_SCOPES
+            if (methods := sorted(scoped_methods.get(scope, {}).values(), key=str.lower))
+        ]
+        if node_methods := sorted(
+            scoped_methods.get(NODE_ROLE_GATEWAY_METHOD_SCOPE, {}).values(),
+            key=str.lower,
+        ):
+            groups.append(
+                GatewayCapabilityMethodScopeView(
+                    scope=NODE_ROLE_GATEWAY_METHOD_SCOPE,
+                    method_count=len(node_methods),
+                    methods=node_methods,
+                )
+            )
+        classified_count = sum(group.method_count for group in groups)
+        reserved_admin_group = next(
+            (
+                group
+                for group in groups
+                if group.scope == RESERVED_ADMIN_GATEWAY_METHOD_SCOPE
+            ),
+            None,
         )
+        reserved_methods = (
+            [
+                method
+                for method in reserved_admin_group.methods
+                if is_reserved_admin_gateway_method(method)
+            ]
+            if reserved_admin_group is not None
+            else []
+        )
+        return groups, classified_count, reserved_methods
+
+    scope_groups, classified_method_count, reserved_tools = _scope_groups_for_methods(tools)
+    lane_count = len(connected_lane_names)
+
+    if not tools:
+        tools = list(list_known_gateway_methods())
+        scoped_methods = {}
+        for scope, methods in classify_gateway_methods(tools).items():
+            bucket = scoped_methods.setdefault(scope, {})
+            for method_name in methods:
+                bucket.setdefault(method_name.lower(), method_name)
+        node_bucket = scoped_methods.setdefault(NODE_ROLE_GATEWAY_METHOD_SCOPE, {})
+        for method_name in tools:
+            if is_node_role_gateway_method(method_name):
+                node_bucket.setdefault(method_name.lower(), method_name)
+        scope_groups, classified_method_count, reserved_tools = _scope_groups_for_methods(tools)
+
+    if tools:
+        if server_names:
+            headline = "Gateway callable methods are visible"
+            summary = (
+                f"{len(tools)} callable method(s) are visible across {len(servers)} MCP server "
+                f"catalog(s) on {lane_count} connected lane(s)."
+            )
+        else:
+            headline = "Gateway method registry is staged"
+            summary = (
+                f"{len(tools)} built-in gateway method(s) are registered locally while "
+                "lane-published MCP catalogs are offline."
+            )
+        if scope_groups:
+            scope_summary = ", ".join(
+                f"{group.scope} {group.method_count}" for group in scope_groups
+            )
+            summary += f" Scope coverage: {scope_summary}."
+        if reserved_tools:
+            summary += (
+                f" {len(reserved_tools)} reserved admin method(s) require "
+                f"{RESERVED_ADMIN_GATEWAY_METHOD_SCOPE}."
+            )
     elif servers:
         headline = "Gateway callable methods are staged"
         summary = (
@@ -286,8 +429,28 @@ def _build_callable_method_catalog(
         tool_count=len(tools),
         server_count=len(servers),
         lane_count=lane_count,
+        classified_method_count=classified_method_count,
+        reserved_admin_method_count=len(reserved_tools),
+        reserved_admin_scope=(
+            RESERVED_ADMIN_GATEWAY_METHOD_SCOPE if reserved_tools else None
+        ),
         tools=tools,
         servers=servers,
+        reserved_admin_methods=reserved_tools,
+        scopes=scope_groups,
+    )
+
+
+def _build_gateway_event_catalog() -> GatewayCapabilityEventCatalogView:
+    events = list(list_known_gateway_events())
+    return GatewayCapabilityEventCatalogView(
+        headline="Gateway event registry is staged",
+        summary=(
+            f"{len(events)} built-in gateway event(s) are registered locally to mirror "
+            "the OpenClaw event surface while lane-published event catalogs are offline."
+        ),
+        event_count=len(events),
+        events=events,
     )
 
 
@@ -869,10 +1032,7 @@ class GatewayCapabilityService:
         task_blueprints_task = asyncio.create_task(self.ops_mesh.list_task_blueprint_views())
         projects_task = asyncio.create_task(self.database.list_projects())
 
-        instances = await instances_task
-        mcp_server_status_task = asyncio.create_task(
-            self._load_mcp_server_status_catalog(instances)
-        )
+        await instances_task
         gathered = await asyncio.gather(
             gateway_task,
             missions_task,
@@ -882,7 +1042,6 @@ class GatewayCapabilityService:
             integrations_task,
             task_blueprints_task,
             projects_task,
-            mcp_server_status_task,
         )
         gateway = cast(GatewayBootstrapView, gathered[0])
         missions = cast(list[MissionView], gathered[1])
@@ -892,10 +1051,8 @@ class GatewayCapabilityService:
         integrations = cast(list[IntegrationView], gathered[5])
         task_blueprints = cast(list[TaskBlueprintView], gathered[6])
         project_rows = cast(list[dict[str, Any]], gathered[7])
-        mcp_server_status_by_instance = cast(
-            dict[int, list[dict[str, Any]]],
-            gathered[8],
-        )
+        instances = await self.manager.list_views()
+        mcp_server_status_by_instance = await self._load_mcp_server_status_catalog(instances)
         access_posture = build_access_posture(teams, operators, remote_requests)
         projects = [_serialize_project(project) for project in project_rows]
         ops_view = build_ops_mesh(
@@ -1247,6 +1404,8 @@ class GatewayCapabilityService:
             for item in (runtime.mcp_server_status if runtime is not None else [])
             if isinstance(item, dict)
         ]
+        if cached:
+            return cached
         try:
             response = await asyncio.wait_for(
                 self.manager.list_mcp_server_status(instance_id, refresh=True),
@@ -1446,6 +1605,7 @@ class GatewayCapabilityService:
         tracked_count = int(integrations_inventory.tracked_count)
         observed_count = int(integrations_inventory.observed_count)
         method_catalog = _build_callable_method_catalog(instances, mcp_server_status_by_instance)
+        event_catalog = _build_gateway_event_catalog()
         tracked_memory_items = [
             item
             for item in integrations_inventory.items
@@ -1768,6 +1928,8 @@ class GatewayCapabilityService:
 
         if method_catalog.tool_count:
             summary = f"{summary} {method_catalog.summary}"
+        if event_catalog.event_count:
+            summary = f"{summary} {event_catalog.summary}"
 
         items.sort(key=lambda item: (item.kind, item.name.lower()))
         return GatewayCapabilityInventoryView(
@@ -1794,6 +1956,7 @@ class GatewayCapabilityService:
                 memory_proof_target.launch_label if memory_proof_target is not None else None
             ),
             method_catalog=method_catalog,
+            event_catalog=event_catalog,
             items=items,
         )
 
@@ -1892,6 +2055,10 @@ class GatewayCapabilityService:
         inventory: GatewayCapabilityInventoryView,
         approval_posture: GatewayCapabilityApprovalPostureView,
     ) -> SignalLevel:
+        offline_only = (
+            connected_lane_health.offline_count > 0
+            and connected_lane_health.connected_count == 0
+        )
         if gateway.status == "degraded" or diagnostics.fail_count:
             return "critical"
         if (
@@ -1900,7 +2067,7 @@ class GatewayCapabilityService:
             or inventory.memory_status == "warn"
             or approval_posture.approval_count
             or connected_lane_health.warning_count
-            or connected_lane_health.offline_count
+            or offline_only
             or diagnostics.warn_count
         ):
             return "warn"

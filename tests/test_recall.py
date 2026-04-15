@@ -188,6 +188,56 @@ async def test_recall_service_recent_returns_latest_items(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_recall_service_uses_preloaded_missions_when_provided(tmp_path, monkeypatch) -> None:
+    database = Database(tmp_path / "openzues.db")
+    await database.initialize()
+    project_id = await database.create_project(path=str(tmp_path), label="Recall Workspace")
+    mission_service = MissionService(database, _RecallManager(), BroadcastHub())
+    recall = RecallService(mission_service, database)
+
+    mission_id = await database.create_mission(
+        name="Preloaded Recall Slice",
+        objective="Leave a durable checkpoint that recall can reuse.",
+        status="completed",
+        instance_id=7,
+        project_id=project_id,
+        thread_id="thread-preloaded",
+        session_key="preloaded-session",
+        cwd=str(tmp_path),
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=2,
+        use_builtin_agents=False,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        toolsets=["memory"],
+    )
+    await database.update_mission(
+        mission_id,
+        last_checkpoint="Preloaded recall checkpoint captured.",
+    )
+    preloaded = await mission_service.list_views()
+
+    async def fail_list_views():  # type: ignore[no-untyped-def]
+        raise AssertionError("RecallService.search should not reload mission views here.")
+
+    monkeypatch.setattr(mission_service, "list_views", fail_list_views)
+
+    payload = await recall.search(limit=5, missions=preloaded)
+
+    assert payload.mode == "recent"
+    assert payload.items
+    assert payload.items[0].mission_id == mission_id
+
+
+@pytest.mark.asyncio
 async def test_recall_service_prefers_mempalace_when_profile_prefers_it(tmp_path) -> None:
     database = Database(tmp_path / "openzues.db")
     await database.initialize()

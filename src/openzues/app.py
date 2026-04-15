@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import re
 import sys
@@ -10,7 +11,8 @@ from datetime import UTC, datetime, timedelta
 from ipaddress import ip_address
 from pathlib import Path
 from time import perf_counter
-from typing import Any, Literal
+from types import SimpleNamespace
+from typing import Any, Literal, cast
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -18,12 +20,14 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from openzues import __version__
 from openzues.database import Database
 from openzues.logging_utils import configure_logging
 from openzues.schemas import (
     CommandCreate,
     ControlChatCreate,
     ControlChatResponse,
+    ControlUiBootstrapConfigView,
     DashboardAttentionQueueView,
     DashboardBriefView,
     DashboardContinuityPacketView,
@@ -52,15 +56,19 @@ from openzues.schemas import (
     HermesExecutorPreflightView,
     HermesRuntimeProfileUpdate,
     HermesRuntimeProfileView,
+    HermesToolPolicyView,
     HermesUpdateView,
     InstanceCreate,
     InstanceView,
     IntegrationCreate,
     IntegrationView,
     LaneSnapshotView,
+    MissionCheckpointView,
     MissionCreate,
+    MissionDelegationBriefView,
     MissionDraftView,
     MissionReflexRun,
+    MissionToolEvidenceView,
     MissionView,
     NotificationRouteCreate,
     NotificationRouteTestResultView,
@@ -105,7 +113,11 @@ from openzues.schemas import (
 from openzues.services.access import AccessService, AuthenticatedOperator, build_access_posture
 from openzues.services.codex_desktop import CodexDesktopService
 from openzues.services.continuity import build_continuity, build_continuity_packet
-from openzues.services.control_chat import ControlChatService
+from openzues.services.control_chat import (
+    ControlChatService,
+    plan_attention_queue,
+    plan_control_chat,
+)
 from openzues.services.control_plane import ControlPlaneLease
 from openzues.services.cortex import (
     build_cortex,
@@ -117,7 +129,13 @@ from openzues.services.dreams import build_dream_deck
 from openzues.services.ecc_catalog import configure_ecc_catalog
 from openzues.services.economy import build_economy
 from openzues.services.environment import EnvironmentService
-from openzues.services.followups import mission_followup_kind, mission_matches_payload
+from openzues.services.followups import (
+    mission_followup_kind,
+    mission_is_passive_queued_followup,
+    mission_matches_payload,
+    operator_blocked_missions,
+    operator_ready_handoff_missions,
+)
 from openzues.services.gateway_bootstrap import GatewayBootstrapService
 from openzues.services.gateway_capability import GatewayCapabilityService
 from openzues.services.github import GitHubService
@@ -149,8 +167,11 @@ from openzues.services.vault import VaultService
 from openzues.settings import Settings, settings
 
 configure_logging()
+logger = logging.getLogger(__name__)
 
 CHECKPOINT_HARDENER_COOLDOWN = timedelta(minutes=30)
+CONTROL_UI_BOOTSTRAP_CONFIG_PATH = "/__openclaw/control-ui-config.json"
+CONTROL_UI_ASSISTANT_AGENT_ID = "openzues"
 
 PLUGIN_DUPLICATE_SERVER_RE = re.compile(
     r"skipping duplicate plugin MCP server name.*?plugin\s*=\s*\"(?P<plugin>[^\"]+)\""
@@ -173,11 +194,128 @@ def _parse_timestamp(value: str | None) -> datetime | None:
         return None
 
 
+def _normalize_control_ui_base_path(root_path: str | None) -> str:
+    if not root_path or root_path == "/":
+        return ""
+    return root_path[:-1] if root_path.endswith("/") else root_path
+
+
 def _minutes_since(value: str | None) -> int | None:
     parsed = _parse_timestamp(value)
     if parsed is None:
         return None
     return max(0, int((datetime.now(UTC) - parsed).total_seconds() // 60))
+
+
+def _clip_dashboard_text(value: str | None, limit: int) -> str | None:
+    if value is None:
+        return None
+    text = " ".join(str(value).split())
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 3)].rstrip() + "..."
+
+
+def _dashboard_mission_stays_rich(mission: MissionView) -> bool:
+    return mission.status in {"active", "blocked"} or mission.in_progress
+
+
+def _compact_dashboard_checkpoints(
+    checkpoints: list[MissionCheckpointView],
+) -> list[MissionCheckpointView]:
+    return [
+        checkpoint.model_copy(
+            update={
+                "summary": _clip_dashboard_text(checkpoint.summary, 280) or checkpoint.summary,
+            }
+        )
+        for checkpoint in checkpoints[:2]
+    ]
+
+
+def _compact_dashboard_tool_policy(
+    tool_policy: HermesToolPolicyView | None,
+) -> HermesToolPolicyView | None:
+    if tool_policy is None:
+        return None
+    warnings = [
+        clipped
+        for clipped in (
+            _clip_dashboard_text(str(warning), 180) for warning in tool_policy.warnings[:1]
+        )
+        if clipped
+    ]
+    return tool_policy.model_copy(
+        update={
+            "summary": _clip_dashboard_text(tool_policy.summary, 220) or tool_policy.summary,
+            "warnings": warnings,
+        }
+    )
+
+
+def _compact_dashboard_tool_evidence(
+    tool_evidence: MissionToolEvidenceView,
+) -> MissionToolEvidenceView:
+    return tool_evidence.model_copy(
+        update={
+            "summary": _clip_dashboard_text(tool_evidence.summary, 220)
+            or tool_evidence.summary,
+            "items": [],
+        }
+    )
+
+
+def _compact_dashboard_delegation_brief(
+    delegation_brief: MissionDelegationBriefView,
+) -> MissionDelegationBriefView:
+    roles = [
+        role.model_copy(
+            update={
+                "objective": _clip_dashboard_text(role.objective, 160) or role.objective,
+                "ownership": _clip_dashboard_text(role.ownership, 140) or role.ownership,
+                "trigger": _clip_dashboard_text(role.trigger, 80),
+            }
+        )
+        for role in delegation_brief.roles[:2]
+    ]
+    return delegation_brief.model_copy(
+        update={
+            "summary": _clip_dashboard_text(delegation_brief.summary, 220)
+            or delegation_brief.summary,
+            "rationale": _clip_dashboard_text(delegation_brief.rationale, 220),
+            "roles": roles,
+        }
+    )
+
+
+def _compact_dashboard_mission(mission: MissionView) -> MissionView:
+    if _dashboard_mission_stays_rich(mission):
+        return mission
+    return mission.model_copy(
+        update={
+            "objective": _clip_dashboard_text(mission.objective, 280) or mission.objective,
+            "last_commentary": _clip_dashboard_text(mission.last_commentary, 320),
+            "commentary_summary": _clip_dashboard_text(mission.commentary_summary, 220),
+            "last_checkpoint": _clip_dashboard_text(mission.last_checkpoint, 420),
+            "charter_summary": _clip_dashboard_text(mission.charter_summary, 220),
+            "scope_drift_summary": _clip_dashboard_text(mission.scope_drift_summary, 220),
+            "charter_focus_terms": list(mission.charter_focus_terms[:4]),
+            "runtime_profile_summary": _clip_dashboard_text(
+                mission.runtime_profile_summary,
+                220,
+            ),
+            "tool_policy": _compact_dashboard_tool_policy(mission.tool_policy),
+            "tool_evidence": _compact_dashboard_tool_evidence(mission.tool_evidence),
+            "delegation_brief": _compact_dashboard_delegation_brief(
+                mission.delegation_brief
+            ),
+            "checkpoints": _compact_dashboard_checkpoints(mission.checkpoints),
+        }
+    )
+
+
+def _compact_dashboard_missions(missions: list[MissionView]) -> list[MissionView]:
+    return [_compact_dashboard_mission(mission) for mission in missions]
 
 
 def _mission_is_streaming(mission: MissionView) -> bool:
@@ -311,7 +449,7 @@ def build_brief(
     projects: list[ProjectView],
 ) -> DashboardBriefView:
     connected = sum(1 for instance in instances if instance.connected)
-    blocked = [mission for mission in missions if mission.status == "blocked"]
+    blocked = operator_blocked_missions(missions)
     active = [mission for mission in missions if mission.status == "active"]
     paused = [mission for mission in missions if mission.status == "paused"]
     focus = blocked[0] if blocked else active[0] if active else paused[0] if paused else None
@@ -367,7 +505,6 @@ def build_radar(
     gateway_capability: GatewayCapabilityView | None = None,
 ) -> DashboardRadarView:
     signals: list[DashboardSignalView] = []
-    ready_handoffs: list[MissionView] = []
     missions_by_instance: dict[int, list[MissionView]] = {}
     for mission in missions:
         missions_by_instance.setdefault(mission.instance_id, []).append(mission)
@@ -494,6 +631,8 @@ def build_radar(
             continue
 
         if mission.status == "blocked" and mission.phase == "queued":
+            if mission_is_passive_queued_followup(mission, missions):
+                continue
             add_signal(
                 f"mission-{mission.id}-queued",
                 lane="throughput",
@@ -606,9 +745,6 @@ def build_radar(
             )
             continue
 
-        if mission.status in {"paused", "completed"} and mission.last_checkpoint:
-            ready_handoffs.append(mission)
-
     idle_connected = [
         instance
         for instance in instances
@@ -656,6 +792,10 @@ def build_radar(
                 instance_id=instance.id,
             )
 
+    ready_handoffs = operator_ready_handoff_missions(
+        missions,
+        statuses={"paused", "completed"},
+    )
     ready_handoffs = sorted(
         ready_handoffs,
         key=lambda mission: (
@@ -999,18 +1139,8 @@ def build_launchpad(
             action_label="Load scout",
         )
 
-    checkpoint_missions = sorted(
-        [
-            mission
-            for mission in missions
-            if mission.last_checkpoint and mission.status in {"paused", "completed", "failed"}
-        ],
-        key=lambda mission: mission.updated_at,
-        reverse=True,
-    )
+    checkpoint_missions = operator_ready_handoff_missions(missions)
     for mission in checkpoint_missions[:3]:
-        if mission_followup_kind(mission) is not None:
-            continue
         target_instance = next(
             (
                 instance
@@ -1051,6 +1181,7 @@ def build_launchpad(
                         project_id=mission.project_id,
                         cwd=mission.cwd,
                         thread_id=mission.thread_id,
+                        session_key=mission.session_key,
                         model=mission.model,
                         reasoning_effort=mission.reasoning_effort,
                         collaboration_mode=mission.collaboration_mode,
@@ -1081,6 +1212,7 @@ def build_launchpad(
                 project_id=mission.project_id,
                 cwd=mission.cwd,
                 thread_id=mission.thread_id,
+                session_key=mission.session_key,
                 model=mission.model,
                 reasoning_effort=mission.reasoning_effort,
                 collaboration_mode=mission.collaboration_mode,
@@ -1318,6 +1450,67 @@ def build_launchpad(
     )
 
 
+def build_operator_status_payload(
+    dashboard: DashboardView | SimpleNamespace,
+) -> dict[str, object]:
+    active_count = sum(1 for mission in dashboard.missions if mission.status == "active")
+    blocked_count = len(operator_blocked_missions(dashboard.missions))
+    paused_count = sum(1 for mission in dashboard.missions if mission.status == "paused")
+    failed_count = sum(1 for mission in dashboard.missions if mission.status == "failed")
+    connected_count = sum(1 for instance in dashboard.instances if instance.connected)
+    typed_dashboard = cast(DashboardView, dashboard)
+    status_plan = plan_control_chat("status", typed_dashboard)
+    queue_plan = plan_attention_queue(typed_dashboard)
+    return {
+        "headline": dashboard.brief.headline,
+        "summary": dashboard.brief.summary,
+        "brief": dashboard.brief.model_dump(mode="json"),
+        "status_plan": {
+            "action_kind": status_plan.action_kind,
+            "reply": status_plan.reply,
+            "mission_id": status_plan.mission_id,
+            "opportunity_id": status_plan.opportunity_id,
+            "target_label": status_plan.target_label,
+            "mission_payload": (
+                status_plan.mission_payload.model_dump(mode="json")
+                if status_plan.mission_payload is not None
+                else None
+            ),
+        },
+        "mission_summary": {
+            "active_count": active_count,
+            "blocked_count": blocked_count,
+            "paused_count": paused_count,
+            "failed_count": failed_count,
+        },
+        "instance_summary": {
+            "connected_count": connected_count,
+            "total_count": len(dashboard.instances),
+        },
+        "gateway_capability": dashboard.gateway_capability.model_dump(mode="json"),
+        "radar": dashboard.radar.model_dump(mode="json"),
+        "launchpad": dashboard.launchpad.model_dump(mode="json"),
+        "queue_plan": (
+            {
+                "action_kind": queue_plan.action_kind,
+                "status": queue_plan.status,
+                "reply": queue_plan.reply,
+                "signal_id": queue_plan.signal_id,
+                "mission_id": queue_plan.mission_id,
+                "opportunity_id": queue_plan.opportunity_id,
+                "target_label": queue_plan.target_label,
+                "mission_payload": (
+                    queue_plan.mission_payload.model_dump(mode="json")
+                    if queue_plan.mission_payload is not None
+                    else None
+                ),
+            }
+            if queue_plan is not None
+            else None
+        ),
+    }
+
+
 def create_app(
     app_settings: Settings | None = None,
     *,
@@ -1497,26 +1690,48 @@ def create_app(
         app.state.control_plane_role = active_control_plane_lease.role
         app.state.control_plane_owner_pid = active_control_plane_lease.owner_pid
         app.state.control_plane_lock_path = str(active_control_plane_lease.path)
-        await active_manager.load(auto_connect=is_control_plane_owner)
-        if is_control_plane_owner:
-            await active_mission_service.start()
-            await active_ops_mesh_service.start()
-            await active_control_chat_service.start_attention_queue(
-                build_dashboard,
-                enabled=active_settings.attention_queue_enabled,
-                poll_interval_seconds=active_settings.attention_queue_poll_interval_seconds,
-            )
-            await active_hermes_platform_service.start()
-            await active_runtime_update_service.start()
-        yield
-        if is_control_plane_owner:
-            await active_runtime_update_service.close()
-            await active_hermes_platform_service.close()
-            await active_control_chat_service.close_attention_queue()
-            await active_ops_mesh_service.close()
-            await active_mission_service.close()
-        await active_manager.close()
-        active_control_plane_lease.release()
+        mission_started = False
+        ops_mesh_started = False
+        attention_queue_started = False
+        hermes_platform_started = False
+        runtime_update_started = False
+        try:
+            await active_manager.load(auto_connect=is_control_plane_owner)
+            if is_control_plane_owner:
+                boot_result = await active_gateway_bootstrap_service.run_startup_boot_once()
+                if boot_result.status == "failed":
+                    raise RuntimeError(
+                        boot_result.reason or "Gateway bootstrap startup boot failed."
+                    )
+                await active_mission_service.start()
+                mission_started = True
+                await active_ops_mesh_service.start()
+                ops_mesh_started = True
+                await active_control_chat_service.start_attention_queue(
+                    build_dashboard,
+                    enabled=active_settings.attention_queue_enabled,
+                    poll_interval_seconds=active_settings.attention_queue_poll_interval_seconds,
+                )
+                attention_queue_started = True
+                await active_hermes_platform_service.start()
+                hermes_platform_started = True
+                await active_runtime_update_service.start()
+                runtime_update_started = True
+            yield
+        finally:
+            if is_control_plane_owner:
+                if runtime_update_started:
+                    await active_runtime_update_service.close()
+                if hermes_platform_started:
+                    await active_hermes_platform_service.close()
+                if attention_queue_started:
+                    await active_control_chat_service.close_attention_queue()
+                if ops_mesh_started:
+                    await active_ops_mesh_service.close()
+                if mission_started:
+                    await active_mission_service.close()
+            await active_manager.close()
+            active_control_plane_lease.release()
 
     fastapi_app = FastAPI(title="OpenZues", lifespan=lifespan)
     fastapi_app.add_middleware(
@@ -1645,13 +1860,45 @@ def create_app(
     cache_operator_surfaces = app_settings is None
     dashboard_cache_ttl_seconds = 1.5 if cache_operator_surfaces else 0.0
     gateway_cache_ttl_seconds = 1.5 if cache_operator_surfaces else 0.0
-    gateway_cache_refresh_timeout_seconds = 0.35 if cache_operator_surfaces else 0.0
     dashboard_cache: DashboardView | None = None
     dashboard_cache_at = 0.0
     dashboard_cache_lock = asyncio.Lock()
+    status_cache: dict[str, object] | None = None
+    status_cache_at = 0.0
+    status_cache_lock = asyncio.Lock()
     gateway_cache: GatewayCapabilityView | None = None
     gateway_cache_at = 0.0
     gateway_cache_lock = asyncio.Lock()
+    gateway_cache_refresh_task: asyncio.Task[GatewayCapabilityView] | None = None
+
+    def _store_gateway_refresh_result(task: asyncio.Task[GatewayCapabilityView]) -> None:
+        nonlocal gateway_cache, gateway_cache_at, gateway_cache_refresh_task
+        if gateway_cache_refresh_task is task:
+            gateway_cache_refresh_task = None
+        try:
+            refreshed = task.result()
+        except asyncio.CancelledError:
+            return
+        except Exception:
+            logger.warning(
+                "Gateway capability background refresh failed; keeping cached posture.",
+                exc_info=True,
+            )
+            return
+        gateway_cache = refreshed
+        gateway_cache_at = perf_counter()
+
+    def _ensure_gateway_refresh_task() -> asyncio.Task[GatewayCapabilityView]:
+        nonlocal gateway_cache_refresh_task
+        if gateway_cache_refresh_task is not None:
+            return gateway_cache_refresh_task
+        task = asyncio.create_task(
+            active_gateway_capability_service.get_view(),
+            name="openzues-gateway-capability-refresh",
+        )
+        task.add_done_callback(_store_gateway_refresh_result)
+        gateway_cache_refresh_task = task
+        return task
 
     async def build_dashboard_events() -> list[EventView]:
         merged_events: dict[tuple[Any, ...], EventView] = {}
@@ -1685,7 +1932,7 @@ def create_app(
         return sorted(events, key=lambda item: item.created_at)
 
     async def build_gateway_capability() -> GatewayCapabilityView:
-        nonlocal gateway_cache, gateway_cache_at
+        nonlocal gateway_cache, gateway_cache_at, gateway_cache_refresh_task
         if not cache_operator_surfaces:
             return await active_gateway_capability_service.get_view()
         now = perf_counter()
@@ -1695,47 +1942,68 @@ def create_app(
             now = perf_counter()
             if gateway_cache is not None and (now - gateway_cache_at) <= gateway_cache_ttl_seconds:
                 return gateway_cache
-            if gateway_cache is not None:
-                try:
-                    gateway_cache = await asyncio.wait_for(
-                        active_gateway_capability_service.get_view(),
-                        timeout=gateway_cache_refresh_timeout_seconds,
-                    )
-                except asyncio.CancelledError:
-                    raise
-                except (TimeoutError, Exception):
-                    return gateway_cache
-            else:
-                gateway_cache = await active_gateway_capability_service.get_view()
-            gateway_cache_at = perf_counter()
+            if gateway_cache is None:
+                if gateway_cache_refresh_task is not None:
+                    gateway_cache = await gateway_cache_refresh_task
+                else:
+                    gateway_cache = await active_gateway_capability_service.get_view()
+                    gateway_cache_at = perf_counter()
+                return gateway_cache
+            if gateway_cache_refresh_task is None:
+                _ensure_gateway_refresh_task()
             return gateway_cache
 
     async def _build_dashboard_uncached() -> DashboardView:
-        project_rows = await active_database.list_projects()
-        playbook_rows = await active_database.list_playbooks()
+        (
+            project_rows,
+            playbook_rows,
+            task_blueprints,
+            vault_secrets,
+            integrations,
+            notification_routes,
+            outbound_deliveries,
+            skill_pins,
+            lane_snapshots,
+            teams,
+            operators,
+            remote_requests,
+            events,
+            _instances,
+            missions,
+            gateway_capability,
+            runtime_preferences,
+            gateway_bootstrap,
+        ) = await asyncio.gather(
+            active_database.list_projects(),
+            active_database.list_playbooks(),
+            active_ops_mesh_service.list_task_blueprint_views(),
+            active_ops_mesh_service.list_vault_secret_views(),
+            active_ops_mesh_service.list_integration_views(),
+            active_ops_mesh_service.list_notification_route_views(),
+            active_ops_mesh_service.list_outbound_delivery_views(),
+            active_ops_mesh_service.list_skill_pin_views(),
+            active_ops_mesh_service.list_lane_snapshot_views(),
+            active_access_service.list_team_views(),
+            active_access_service.list_operator_views(),
+            active_remote_ops_service.list_remote_request_views(),
+            build_dashboard_events(),
+            active_manager.list_views(),
+            active_mission_service.list_views(),
+            build_gateway_capability(),
+            load_saved_runtime_preferences(active_database),
+            active_gateway_bootstrap_service.get_view(),
+        )
+        instances = await active_manager.list_views()
         projects = [
-            ProjectView.model_validate(active_project_service.inspect(row)) for row in project_rows
+            ProjectView.model_validate(item)
+            for item in await asyncio.gather(
+                *(asyncio.to_thread(active_project_service.inspect, row) for row in project_rows)
+            )
         ]
         playbooks = [PlaybookView.model_validate(row) for row in playbook_rows]
-        task_blueprints = await active_ops_mesh_service.list_task_blueprint_views()
-        vault_secrets = await active_ops_mesh_service.list_vault_secret_views()
-        integrations = await active_ops_mesh_service.list_integration_views()
-        notification_routes = await active_ops_mesh_service.list_notification_route_views()
-        outbound_deliveries = await active_ops_mesh_service.list_outbound_delivery_views()
-        skill_pins = await active_ops_mesh_service.list_skill_pin_views()
-        lane_snapshots = await active_ops_mesh_service.list_lane_snapshot_views()
-        teams = await active_access_service.list_team_views()
-        operators = await active_access_service.list_operator_views()
-        remote_requests = await active_remote_ops_service.list_remote_request_views()
         access_posture = build_access_posture(teams, operators, remote_requests)
-        events = await build_dashboard_events()
-        instances = await active_manager.list_views()
-        missions = await active_mission_service.list_views()
         doctrines = build_doctrines(missions, projects)
-        gateway_capability = await build_gateway_capability()
-        preferred_memory_provider, preferred_executor = await load_saved_runtime_preferences(
-            active_database
-        )
+        preferred_memory_provider, preferred_executor = runtime_preferences
         economy = build_economy(missions, projects, task_blueprints, remote_requests)
         interference = build_interference(
             missions,
@@ -1744,6 +2012,7 @@ def create_app(
             remote_requests,
             gateway_capability=gateway_capability,
         )
+        dashboard_missions = _compact_dashboard_missions(missions)
         dashboard_view = DashboardView(
             brief=build_brief(instances, missions, projects),
             control_chat=empty_control_chat_view(),
@@ -1764,7 +2033,7 @@ def create_app(
                 gateway_capability=gateway_capability,
             ),
             gateway_capability=gateway_capability,
-            gateway_bootstrap=await active_gateway_bootstrap_service.get_view(),
+            gateway_bootstrap=gateway_bootstrap,
             ops_mesh=build_ops_mesh(
                 instances,
                 missions,
@@ -1792,7 +2061,7 @@ def create_app(
                 projects,
                 doctrines=doctrines,
             ),
-            recall=await active_recall_service.search(limit=6),
+            recall=await active_recall_service.search(limit=6, missions=missions),
             dream_deck=build_dream_deck(
                 instances,
                 missions,
@@ -1804,7 +2073,7 @@ def create_app(
             cortex=build_cortex(instances, missions, projects, doctrines=doctrines),
             reflex_deck=build_reflex_deck(instances, missions, projects, doctrines=doctrines),
             instances=instances,
-            missions=missions,
+            missions=dashboard_missions,
             projects=projects,
             playbooks=playbooks,
             task_blueprints=task_blueprints,
@@ -1847,9 +2116,148 @@ def create_app(
             dashboard_cache_at = perf_counter()
             return dashboard_cache
 
+    def _status_project_views(project_rows: list[dict[str, Any]]) -> list[ProjectView]:
+        projects: list[ProjectView] = []
+        for row in project_rows:
+            path = Path(str(row["path"])).expanduser()
+            projects.append(
+                ProjectView(
+                    id=int(row["id"]),
+                    path=str(path),
+                    label=str(row["label"]),
+                    exists=path.exists(),
+                    is_git_repo=(path / ".git").exists(),
+                )
+            )
+        return projects
+
+    def _status_suggested_action(mission: dict[str, Any]) -> str | None:
+        status = str(mission.get("status") or "").strip().lower()
+        phase = str(mission.get("phase") or "").strip().lower()
+        last_error = str(mission.get("last_error") or "").strip()
+        if status == "blocked" and phase == "approval":
+            return "Resolve the approval gate before letting this mission continue."
+        if status == "blocked" and phase == "queued":
+            return "Let the running lane clear, then resume this queued follow-on."
+        if status == "failed":
+            return "Inspect the failure and launch a tighter recovery pass."
+        if status == "paused" and str(mission.get("last_checkpoint") or "").strip():
+            return "Reload the saved checkpoint and continue from the next verified step."
+        if status == "active" and bool(mission.get("in_progress")):
+            return "Let the live run continue unless the lane stalls or requests approval."
+        if last_error:
+            return last_error
+        return None
+
+    def _status_mission_views(
+        mission_rows: list[dict[str, Any]],
+        *,
+        instances: list[InstanceView],
+        projects: list[ProjectView],
+    ) -> list[MissionView]:
+        instance_by_id = {instance.id: instance for instance in instances}
+        project_labels = {project.id: project.label for project in projects}
+        views: list[MissionView] = []
+        for mission in mission_rows:
+            instance = instance_by_id.get(int(mission["instance_id"]))
+            project_id = mission.get("project_id")
+            thread_id = str(mission.get("thread_id") or "").strip() or None
+            streaming = (
+                str(mission.get("status") or "").strip() == "active"
+                and bool(mission.get("in_progress"))
+            )
+            if thread_id:
+                telemetry_summary = (
+                    "Mission is actively running in the fast status snapshot."
+                    if streaming
+                    else "Fast status snapshot skipped deep thread telemetry for this mission."
+                )
+            else:
+                telemetry_summary = "Thread not created yet."
+            payload = {
+                **mission,
+                "instance_name": instance.name if instance is not None else None,
+                "project_label": (
+                    project_labels.get(int(project_id))
+                    if project_id is not None
+                    else None
+                ),
+                "suggested_action": _status_suggested_action(mission),
+                "live_telemetry": {
+                    "streaming": streaming,
+                    "thread_status": "active" if streaming else None,
+                    "summary": telemetry_summary,
+                },
+                "checkpoints": [],
+            }
+            views.append(MissionView.model_validate(payload))
+        return views
+
+    async def _build_status_uncached() -> dict[str, object]:
+        (
+            project_rows,
+            _instances,
+            mission_rows,
+            gateway_capability,
+            runtime_preferences,
+        ) = await asyncio.gather(
+            active_database.list_projects(),
+            active_manager.list_views(),
+            active_database.list_missions(),
+            build_gateway_capability(),
+            load_saved_runtime_preferences(active_database),
+        )
+        instances = await active_manager.list_views()
+        projects = _status_project_views(project_rows)
+        missions = _status_mission_views(mission_rows, instances=instances, projects=projects)
+        doctrines = build_doctrines(missions, projects)
+        preferred_memory_provider, preferred_executor = runtime_preferences
+        status_dashboard = SimpleNamespace(
+            brief=build_brief(instances, missions, projects),
+            instances=instances,
+            missions=missions,
+            launchpad=build_launchpad(
+                instances,
+                missions,
+                projects,
+                doctrines=doctrines,
+                gateway_capability=gateway_capability,
+                preferred_memory_provider=preferred_memory_provider,
+                preferred_executor=preferred_executor,
+            ),
+            radar=build_radar(
+                instances,
+                missions,
+                projects,
+                gateway_capability=gateway_capability,
+            ),
+            gateway_capability=gateway_capability,
+        )
+        return build_operator_status_payload(status_dashboard)
+
+    async def build_status() -> dict[str, object]:
+        nonlocal status_cache, status_cache_at
+        if not cache_operator_surfaces:
+            return await _build_status_uncached()
+        now = perf_counter()
+        if status_cache is not None and (now - status_cache_at) <= dashboard_cache_ttl_seconds:
+            return status_cache
+        async with status_cache_lock:
+            now = perf_counter()
+            if (
+                status_cache is not None
+                and (now - status_cache_at) <= dashboard_cache_ttl_seconds
+            ):
+                return status_cache
+            status_cache = await _build_status_uncached()
+            status_cache_at = perf_counter()
+            return status_cache
+
     @fastapi_app.middleware("http")
     async def guard_observer_mutations(request: Request, call_next):
-        nonlocal dashboard_cache, dashboard_cache_at, gateway_cache, gateway_cache_at
+        nonlocal dashboard_cache, dashboard_cache_at
+        nonlocal status_cache, status_cache_at
+        nonlocal gateway_cache, gateway_cache_at, gateway_cache_refresh_task
         is_mutating_api_request = (
             request.method in {"POST", "PUT", "PATCH", "DELETE"}
             and request.url.path.startswith("/api/")
@@ -1878,8 +2286,13 @@ def create_app(
             if is_mutating_api_request:
                 dashboard_cache = None
                 dashboard_cache_at = 0.0
+                status_cache = None
+                status_cache_at = 0.0
                 gateway_cache = None
                 gateway_cache_at = 0.0
+                if gateway_cache_refresh_task is not None:
+                    gateway_cache_refresh_task.cancel()
+                    gateway_cache_refresh_task = None
         return response
 
     async def require_remote_operator(
@@ -1928,6 +2341,29 @@ def create_app(
     async def favicon() -> RedirectResponse:
         return RedirectResponse(url="/static/favicon.svg", status_code=307)
 
+    @fastapi_app.get(
+        CONTROL_UI_BOOTSTRAP_CONFIG_PATH,
+        response_model=ControlUiBootstrapConfigView,
+        include_in_schema=False,
+    )
+    async def get_control_ui_bootstrap_config(request: Request) -> ControlUiBootstrapConfigView:
+        base_path = _normalize_control_ui_base_path(
+            cast(str | None, request.scope.get("root_path"))
+        )
+        assistant_avatar = (
+            f"{base_path}/static/favicon.svg" if base_path else "/static/favicon.svg"
+        )
+        return ControlUiBootstrapConfigView(
+            base_path=base_path,
+            assistant_name=active_settings.app_name,
+            assistant_avatar=assistant_avatar,
+            assistant_agent_id=CONTROL_UI_ASSISTANT_AGENT_ID,
+            server_version=__version__,
+            local_media_preview_roots=[],
+            embed_sandbox="scripts",
+            allow_external_embed_urls=False,
+        )
+
     @fastapi_app.get("/api/health")
     async def health() -> dict[str, Any]:
         return {
@@ -1941,6 +2377,10 @@ def create_app(
     @fastapi_app.get("/api/dashboard")
     async def dashboard() -> DashboardView:
         return await build_dashboard()
+
+    @fastapi_app.get("/api/status")
+    async def operator_status() -> dict[str, object]:
+        return await build_status()
 
     @fastapi_app.post("/api/control-chat")
     async def control_chat(payload: ControlChatCreate) -> ControlChatResponse:

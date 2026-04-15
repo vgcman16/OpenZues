@@ -23,6 +23,7 @@ from openzues.schemas import (
     TaskBlueprintView,
 )
 from openzues.services.access import AccessService
+from openzues.services.device_bootstrap_profile import normalize_device_bootstrap_profile
 from openzues.services.gateway_bootstrap import GatewayBootstrapService
 from openzues.services.manager import RuntimeManager
 from openzues.services.ops_mesh import OpsMeshService
@@ -193,6 +194,8 @@ class SetupService:
             "team_name": stored.get("team_name"),
             "operator_name": stored.get("operator_name"),
             "operator_email": stored.get("operator_email"),
+            "bootstrap_roles": None,
+            "bootstrap_scopes": None,
             "task_name": stored.get("task_name"),
             "cadence_minutes": int(stored.get("cadence_minutes") or 180),
             "model": stored.get("model") or "gpt-5.4",
@@ -205,6 +208,16 @@ class SetupService:
             "remote_probe": remote_probe,
             "updated_at": updated_at,
         }
+        bootstrap_roles, bootstrap_scopes = normalize_device_bootstrap_profile(
+            stored.get("bootstrap_roles")
+            if "bootstrap_roles" in stored
+            else gateway.bootstrap_roles,
+            stored.get("bootstrap_scopes")
+            if "bootstrap_scopes" in stored
+            else gateway.bootstrap_scopes,
+        )
+        payload["bootstrap_roles"] = bootstrap_roles
+        payload["bootstrap_scopes"] = bootstrap_scopes
         return SetupWizardSessionView.model_validate(payload)
 
     async def save_wizard_session(
@@ -229,6 +242,12 @@ class SetupService:
             flow = "advanced"
             merged["instance_mode"] = "existing"
         merged["flow"] = flow
+        bootstrap_roles, bootstrap_scopes = normalize_device_bootstrap_profile(
+            merged.get("bootstrap_roles"),
+            merged.get("bootstrap_scopes"),
+        )
+        merged["bootstrap_roles"] = bootstrap_roles
+        merged["bootstrap_scopes"] = bootstrap_scopes
         await self.database.upsert_setup_wizard_session(merged)
         return await self.get_wizard_session()
 

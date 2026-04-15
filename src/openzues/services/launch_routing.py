@@ -23,15 +23,24 @@ from openzues.services.hermes_runtime_profile import (
     load_saved_runtime_preferences,
 )
 from openzues.services.manager import RuntimeManager
+from openzues.services.session_keys import (
+    build_launch_session_key,
+    resolve_thread_parent_session_key,
+)
 
-_ROUTE_TOKEN_RE = re.compile(r"[^a-z0-9_-]+")
+_ROUTE_ACCOUNT_ID_RE = re.compile(r"[^a-z0-9_-]+")
 
 
-def _normalize_route_token(value: str | None) -> str | None:
+def _normalize_route_text(value: str | None) -> str | None:
     text = str(value or "").strip().lower()
+    return text or None
+
+
+def _normalize_route_account_id(value: str | None) -> str | None:
+    text = _normalize_route_text(value)
     if not text:
         return None
-    normalized = _ROUTE_TOKEN_RE.sub("-", text).strip("-_")
+    normalized = _ROUTE_ACCOUNT_ID_RE.sub("-", text).strip("-_")
     return normalized or None
 
 
@@ -45,11 +54,13 @@ def _normalize_conversation_target(
         if isinstance(target, ConversationTargetView)
         else ConversationTargetView.model_validate(target)
     )
-    channel = _normalize_route_token(raw.channel)
+    # Mirror OpenClaw routing: account ids are sanitized, but channel/peer ids
+    # stay lowercase while preserving punctuation that carries session identity.
+    channel = _normalize_route_text(raw.channel)
     if not channel:
         return None
-    account_id = _normalize_route_token(raw.account_id)
-    peer_id = _normalize_route_token(raw.peer_id)
+    account_id = _normalize_route_account_id(raw.account_id)
+    peer_id = _normalize_route_text(raw.peer_id)
     peer_kind = raw.peer_kind if peer_id else None
     summary_parts = [channel]
     if account_id:
@@ -226,6 +237,15 @@ class LaunchRoutingService:
             operator_id=operator_id,
             conversation_target=conversation_target,
         )
+        main_session_key = self._build_session_key(
+            mode=route_binding_mode,
+            preferred_instance_id=None,
+            task_id=task_id,
+            project_id=project_id,
+            operator_id=operator_id,
+            conversation_target=conversation_target,
+        )
+        last_route_policy = "main" if session_key == main_session_key else "session"
 
         warnings: list[str] = []
         matched_by: LaunchRouteMatch = "unavailable"
@@ -433,6 +453,13 @@ class LaunchRoutingService:
                     "while it remains available."
                 )
 
+        if resolved_instance is not None:
+            session_key = await self._preserve_reusable_thread_session_key(
+                session_key=session_key,
+                resolved_instance=resolved_instance,
+            )
+            last_route_policy = "main" if session_key == main_session_key else "session"
+
         route_last_resolved_at = (
             str(gateway.get("last_route_resolved_at"))
             if gateway is not None and gateway.get("last_route_resolved_at") is not None
@@ -466,6 +493,8 @@ class LaunchRoutingService:
             headline=headline,
             summary=summary,
             session_key=session_key,
+            main_session_key=main_session_key,
+            last_route_policy=last_route_policy,
             conversation_target=conversation_target,
             warnings=warnings,
             preferred_instance=_instance_resource(preferred_instance),
@@ -507,22 +536,37 @@ class LaunchRoutingService:
         operator_id: int | None,
         conversation_target: ConversationTargetView | None = None,
     ) -> str:
-        parts = ["launch", f"mode:{mode}"]
-        if task_id is not None:
-            parts.append(f"task:{task_id}")
-        if project_id is not None:
-            parts.append(f"project:{project_id}")
-        if operator_id is not None:
-            parts.append(f"operator:{operator_id}")
-        if mode in {"task_lane", "saved_lane"} and preferred_instance_id is not None:
-            parts.append(f"lane:{preferred_instance_id}")
-        if conversation_target is not None:
-            parts.append(f"channel:{conversation_target.channel}")
-            if conversation_target.account_id:
-                parts.append(f"account:{conversation_target.account_id}")
-            if conversation_target.peer_kind and conversation_target.peer_id:
-                parts.append(f"peer:{conversation_target.peer_kind}:{conversation_target.peer_id}")
-        return ":".join(parts)
+        return build_launch_session_key(
+            mode=mode,
+            preferred_instance_id=preferred_instance_id,
+            task_id=task_id,
+            project_id=project_id,
+            operator_id=operator_id,
+            conversation_target=conversation_target,
+        )
+
+    async def _preserve_reusable_thread_session_key(
+        self,
+        *,
+        session_key: str,
+        resolved_instance: InstanceView,
+    ) -> str:
+        latest = await self.database.get_latest_thread_child_mission_by_parent_session_key(
+            session_key,
+            instance_id=resolved_instance.id,
+            require_thread=True,
+        )
+        if latest is None:
+            return session_key
+        stored_session_key = str(latest.get("session_key") or "").strip()
+        if not stored_session_key:
+            return session_key
+        parent_session_key = resolve_thread_parent_session_key(stored_session_key)
+        if parent_session_key is None:
+            return session_key
+        if parent_session_key.strip().lower() != session_key.strip().lower():
+            return session_key
+        return stored_session_key
 
     async def _build_conversation_reuse(
         self,

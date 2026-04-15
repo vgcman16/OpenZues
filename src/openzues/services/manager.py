@@ -18,11 +18,37 @@ RuntimeListener = Callable[[int, dict[str, Any]], Awaitable[None]]
 
 CATALOG_SAMPLE_LIMIT = 8
 LOG_LINE_PREVIEW_LIMIT = 360
+EVENT_TEXT_PREVIEW_LIMIT = 360
+COMMAND_TEXT_PREVIEW_LIMIT = 240
 ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 LOG_TIMESTAMP_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z\s+")
 START_TURN_TIMEOUT_CONFIRM_SECONDS = 12.0
 REFRESH_TIMEOUT_BACKOFF_SECONDS = 30.0
 REFRESH_SCHEDULE_DEBOUNCE_SECONDS = 2.0
+FULL_REFRESH_METHODS = (
+    "account/read",
+    "model/list",
+    "collaborationMode/list",
+    "skills/list",
+    "app/list",
+    "plugin/list",
+    "mcpServerStatus/list",
+    "config/read",
+    "thread/list",
+    "thread/loaded/list",
+)
+THREAD_REFRESH_METHODS = ("thread/list", "thread/loaded/list")
+MCP_RUNTIME_REFRESH_METHODS = (
+    "skills/list",
+    "app/list",
+    "plugin/list",
+    "mcpServerStatus/list",
+    "config/read",
+)
+EVENT_REFRESH_METHODS: dict[str, tuple[str, ...]] = {
+    "account/updated": ("account/read",),
+    "mcpServer/oauthLogin/completed": MCP_RUNTIME_REFRESH_METHODS,
+}
 
 
 def _pick_fields(item: dict[str, Any], keys: tuple[str, ...]) -> dict[str, Any]:
@@ -104,6 +130,106 @@ def _summarize_threads(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return summarized
 
 
+def _upsert_thread_summary(
+    existing_threads: list[dict[str, Any]],
+    thread_summary: dict[str, Any],
+) -> list[dict[str, Any]]:
+    thread_id = thread_summary.get("id")
+    if not isinstance(thread_id, str):
+        return list(existing_threads)
+    updated_threads: list[dict[str, Any]] = []
+    replaced = False
+    for existing in existing_threads:
+        if existing.get("id") == thread_id:
+            updated_threads.append(thread_summary)
+            replaced = True
+        else:
+            updated_threads.append(existing)
+    if not replaced:
+        updated_threads.append(thread_summary)
+    return updated_threads
+
+
+def _merge_thread_summaries(
+    preferred_threads: list[dict[str, Any]],
+    fallback_threads: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    merged_threads = list(preferred_threads)
+    seen_ids = {
+        str(thread.get("id"))
+        for thread in preferred_threads
+        if isinstance(thread.get("id"), str)
+    }
+    for thread in fallback_threads:
+        thread_id = thread.get("id")
+        if not isinstance(thread_id, str) or thread_id in seen_ids:
+            continue
+        merged_threads.append(thread)
+        seen_ids.add(thread_id)
+    return merged_threads
+
+
+def _patch_thread_summary(
+    existing_threads: list[dict[str, Any]],
+    thread_id: str,
+    patch: dict[str, Any],
+) -> list[dict[str, Any]]:
+    existing = next(
+        (
+            thread
+            for thread in existing_threads
+            if isinstance(thread, dict) and thread.get("id") == thread_id
+        ),
+        None,
+    )
+    merged: dict[str, Any] = dict(existing) if isinstance(existing, dict) else {"id": thread_id}
+    for key, value in patch.items():
+        if key == "status" and isinstance(value, dict):
+            status = merged.get("status")
+            merged_status = dict(status) if isinstance(status, dict) else {}
+            merged_status.update(value)
+            merged["status"] = merged_status
+            continue
+        merged[key] = value
+    return _upsert_thread_summary(existing_threads, merged)
+
+
+def _add_loaded_thread_id(loaded_thread_ids: list[str], thread_id: str) -> list[str]:
+    ordered = [item for item in loaded_thread_ids if isinstance(item, str) and item != thread_id]
+    ordered.append(thread_id)
+    return ordered
+
+
+def _seed_runtime_thread_status(
+    runtime: InstanceRuntime,
+    thread_id: str,
+    *,
+    status_type: str,
+    turn_id: str | None = None,
+) -> None:
+    status_patch: dict[str, Any] = {"type": status_type}
+    if turn_id:
+        status_patch["turnId"] = turn_id
+        status_patch["activeTurnId"] = turn_id
+    runtime.threads = _patch_thread_summary(
+        runtime.threads,
+        thread_id,
+        {"status": status_patch},
+    )
+    status = next(
+        (
+            thread.get("status")
+            for thread in runtime.threads
+            if isinstance(thread, dict) and thread.get("id") == thread_id
+        ),
+        None,
+    )
+    if isinstance(status, dict) and not turn_id:
+        status.pop("turnId", None)
+        status.pop("activeTurnId", None)
+    runtime.loaded_thread_ids = _add_loaded_thread_id(runtime.loaded_thread_ids, thread_id)
+
+
 def _summarize_named_items(
     items: list[dict[str, Any]],
     *,
@@ -115,6 +241,80 @@ def _summarize_named_items(
 def _sanitize_log_line(line: str) -> str:
     cleaned = ANSI_ESCAPE_RE.sub("", line).strip()
     return LOG_TIMESTAMP_RE.sub("", cleaned)
+
+
+def _clip_event_text(text: str, *, limit: int) -> tuple[str, int | None]:
+    if len(text) <= limit:
+        return text, None
+    return f"{text[:limit]}... [truncated]", len(text)
+
+
+def _compact_command_actions(actions: Any) -> list[dict[str, Any]] | None:
+    if not isinstance(actions, list):
+        return None
+    compacted: list[dict[str, Any]] = []
+    for action in actions[:3]:
+        if not isinstance(action, dict):
+            continue
+        summary = _pick_fields(action, ("type", "command", "label", "path"))
+        command = summary.get("command")
+        if isinstance(command, str):
+            clipped, original_length = _clip_event_text(
+                command,
+                limit=COMMAND_TEXT_PREVIEW_LIMIT,
+            )
+            summary["command"] = clipped
+            if original_length is not None:
+                summary["commandLength"] = original_length
+        if summary:
+            compacted.append(summary)
+    return compacted
+
+
+def _compact_event_item(item: dict[str, Any]) -> dict[str, Any]:
+    compact_item = dict(item)
+    item_type = str(item.get("type") or "")
+    if item_type == "commandExecution":
+        command = item.get("command")
+        if isinstance(command, str):
+            clipped, original_length = _clip_event_text(
+                command,
+                limit=COMMAND_TEXT_PREVIEW_LIMIT,
+            )
+            compact_item["command"] = clipped
+            if original_length is not None:
+                compact_item["commandLength"] = original_length
+        aggregated_output = item.get("aggregatedOutput")
+        if isinstance(aggregated_output, str):
+            clipped, original_length = _clip_event_text(
+                aggregated_output,
+                limit=EVENT_TEXT_PREVIEW_LIMIT,
+            )
+            compact_item["aggregatedOutput"] = clipped
+            if original_length is not None:
+                compact_item["aggregatedOutputLength"] = original_length
+        compact_actions = _compact_command_actions(item.get("commandActions"))
+        if compact_actions is not None:
+            compact_item["commandActions"] = compact_actions
+            compact_item["commandActionCount"] = len(item.get("commandActions") or [])
+            compact_item["commandActionsTruncated"] = len(item.get("commandActions") or []) > len(
+                compact_actions
+            )
+        return compact_item
+
+    if item_type in {"agentMessage", "userMessage"}:
+        text = item.get("text")
+        if isinstance(text, str):
+            clipped, original_length = _clip_event_text(
+                text,
+                limit=EVENT_TEXT_PREVIEW_LIMIT,
+            )
+            compact_item["text"] = clipped
+            if original_length is not None:
+                compact_item["textLength"] = original_length
+        return compact_item
+
+    return compact_item
 
 
 def compact_event_payload(method: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -135,6 +335,26 @@ def compact_event_payload(method: str, payload: dict[str, Any]) -> dict[str, Any
 
     if method == "account/updated":
         compact["account"] = _summarize_account(payload.get("account"))
+        return compact
+
+    if method in {"item/started", "item/completed"}:
+        item = payload.get("item")
+        if isinstance(item, dict):
+            compact["item"] = _compact_event_item(item)
+        return compact
+
+    if method.endswith("/delta") or method.endswith("outputDelta"):
+        for field in ("delta", "text"):
+            value = payload.get(field)
+            if not isinstance(value, str):
+                continue
+            clipped, original_length = _clip_event_text(
+                value,
+                limit=EVENT_TEXT_PREVIEW_LIMIT,
+            )
+            compact[field] = clipped
+            if original_length is not None:
+                compact[f"{field}Length"] = original_length
         return compact
 
     data = payload.get("data")
@@ -176,6 +396,13 @@ def compact_event_payload(method: str, payload: dict[str, Any]) -> dict[str, Any
     return compact
 
 
+def _ordered_refresh_methods(
+    methods: set[str] | tuple[str, ...] | list[str] | None,
+) -> tuple[str, ...]:
+    requested = set(methods or FULL_REFRESH_METHODS)
+    return tuple(method for method in FULL_REFRESH_METHODS if method in requested)
+
+
 @dataclass(slots=True)
 class InstanceRuntime:
     instance_id: int
@@ -213,6 +440,7 @@ class InstanceRuntime:
     refresh_method_locks: dict[str, asyncio.Lock] = field(default_factory=dict)
     refresh_task: asyncio.Task[None] | None = None
     refresh_pending: bool = False
+    refresh_pending_methods: set[str] = field(default_factory=set)
 
     def view(self) -> InstanceView:
         return InstanceView(
@@ -554,95 +782,125 @@ class RuntimeManager:
             matching = await self.connect_instance(matching.instance_id)
         return matching
 
-    async def refresh_instance(self, instance_id: int) -> InstanceRuntime:
+    async def refresh_instance(
+        self,
+        instance_id: int,
+        methods: tuple[str, ...] | None = None,
+    ) -> InstanceRuntime:
         runtime = await self.get(instance_id)
         client = runtime.client
         if client is None or not runtime.connected:
             return runtime
-        account_payload = await self._safe_refresh_call(
-            runtime,
-            "account/read",
-            {"refreshToken": False},
-        )
-        if isinstance(account_payload, dict):
-            runtime.auth_state = _summarize_account(account_payload.get("account"))
-        model_payload = await self._safe_refresh_call(
-            runtime,
-            "model/list",
-            {"limit": 50, "includeHidden": False},
-        )
-        if isinstance(model_payload, dict):
-            raw_models = model_payload.get("data", [])
-            runtime.models = _summarize_models(
-                [item for item in raw_models if isinstance(item, dict)]
+        requested_methods = set(_ordered_refresh_methods(methods))
+
+        if "account/read" in requested_methods:
+            account_payload = await self._safe_refresh_call(
+                runtime,
+                "account/read",
+                {"refreshToken": False},
             )
-        mode_payload = await self._safe_refresh_call(runtime, "collaborationMode/list", {})
-        if isinstance(mode_payload, dict):
-            raw_modes = mode_payload.get("data", [])
-            runtime.collaboration_modes = _summarize_named_items(
-                [item for item in raw_modes if isinstance(item, dict)],
-                keys=("name", "mode", "model", "reasoning_effort"),
+            if isinstance(account_payload, dict):
+                runtime.auth_state = _summarize_account(account_payload.get("account"))
+
+        if "model/list" in requested_methods:
+            model_payload = await self._safe_refresh_call(
+                runtime,
+                "model/list",
+                {"limit": 50, "includeHidden": False},
             )
-        skills_params: dict[str, Any] = {"forceReload": False}
-        if runtime.cwd:
-            skills_params["cwds"] = [runtime.cwd]
-        skills_payload = await self._safe_refresh_call(runtime, "skills/list", skills_params)
-        if isinstance(skills_payload, dict):
-            raw_skills = skills_payload.get("data", [])
-            runtime.skills = _summarize_named_items(
-                [item for item in raw_skills if isinstance(item, dict)],
-                keys=("name", "description"),
-            )
-        apps_payload = await self._safe_refresh_call(runtime, "app/list", {"limit": 50})
-        if isinstance(apps_payload, dict):
-            raw_apps = apps_payload.get("data", [])
-            runtime.apps = _summarize_named_items(
-                [item for item in raw_apps if isinstance(item, dict)],
-                keys=("id", "name", "description", "isAccessible", "isEnabled"),
-            )
-        plugins_payload = await self._safe_refresh_call(runtime, "plugin/list", {})
-        if isinstance(plugins_payload, dict):
-            raw_plugins = plugins_payload.get("data", [])
-            runtime.plugins = _summarize_named_items(
-                [item for item in raw_plugins if isinstance(item, dict)],
-                keys=("name", "enabled"),
-            )
-        raw_mcp_servers = await self.list_mcp_server_status(instance_id, limit=50, refresh=True)
-        runtime.mcp_servers = _summarize_named_items(
-            [item for item in raw_mcp_servers if isinstance(item, dict)],
-            keys=("name", "status", "source", "authStatus"),
-        )
-        config_payload = await self._safe_refresh_call(
-            runtime,
-            "config/read",
-            {"includeLayers": False},
-        )
-        if isinstance(config_payload, dict):
-            raw_config = config_payload.get("config")
-            runtime.config = (
-                _pick_fields(
-                    raw_config,
-                    (
-                        "model",
-                        "model_reasoning_effort",
-                        "profile",
-                        "sandbox",
-                        "approvalPolicy",
-                        "approval_policy",
-                    ),
+            if isinstance(model_payload, dict):
+                raw_models = model_payload.get("data", [])
+                runtime.models = _summarize_models(
+                    [item for item in raw_models if isinstance(item, dict)]
                 )
-                if isinstance(raw_config, dict)
-                else None
+
+        if "collaborationMode/list" in requested_methods:
+            mode_payload = await self._safe_refresh_call(runtime, "collaborationMode/list", {})
+            if isinstance(mode_payload, dict):
+                raw_modes = mode_payload.get("data", [])
+                runtime.collaboration_modes = _summarize_named_items(
+                    [item for item in raw_modes if isinstance(item, dict)],
+                    keys=("name", "mode", "model", "reasoning_effort"),
+                )
+
+        if "skills/list" in requested_methods:
+            skills_params: dict[str, Any] = {"forceReload": False}
+            if runtime.cwd:
+                skills_params["cwds"] = [runtime.cwd]
+            skills_payload = await self._safe_refresh_call(runtime, "skills/list", skills_params)
+            if isinstance(skills_payload, dict):
+                raw_skills = skills_payload.get("data", [])
+                runtime.skills = _summarize_named_items(
+                    [item for item in raw_skills if isinstance(item, dict)],
+                    keys=("name", "description"),
+                )
+
+        if "app/list" in requested_methods:
+            apps_payload = await self._safe_refresh_call(runtime, "app/list", {"limit": 50})
+            if isinstance(apps_payload, dict):
+                raw_apps = apps_payload.get("data", [])
+                runtime.apps = _summarize_named_items(
+                    [item for item in raw_apps if isinstance(item, dict)],
+                    keys=("id", "name", "description", "isAccessible", "isEnabled"),
+                )
+
+        if "plugin/list" in requested_methods:
+            plugins_payload = await self._safe_refresh_call(runtime, "plugin/list", {})
+            if isinstance(plugins_payload, dict):
+                raw_plugins = plugins_payload.get("data", [])
+                runtime.plugins = _summarize_named_items(
+                    [item for item in raw_plugins if isinstance(item, dict)],
+                    keys=("name", "enabled"),
+                )
+
+        if "mcpServerStatus/list" in requested_methods:
+            raw_mcp_servers = await self.list_mcp_server_status(instance_id, limit=50, refresh=True)
+            runtime.mcp_servers = _summarize_named_items(
+                [item for item in raw_mcp_servers if isinstance(item, dict)],
+                keys=("name", "status", "source", "authStatus"),
             )
-        thread_payload = await self._safe_refresh_call(runtime, "thread/list", {"limit": 30})
-        if isinstance(thread_payload, dict):
-            raw_threads = thread_payload.get("data", [])
-            runtime.threads = _summarize_threads(
-                [item for item in raw_threads if isinstance(item, dict)]
+
+        if "config/read" in requested_methods:
+            config_payload = await self._safe_refresh_call(
+                runtime,
+                "config/read",
+                {"includeLayers": False},
             )
-        loaded_threads_payload = await self._safe_refresh_call(runtime, "thread/loaded/list", {})
-        if isinstance(loaded_threads_payload, dict):
-            runtime.loaded_thread_ids = loaded_threads_payload.get("threadIds", [])
+            if isinstance(config_payload, dict):
+                raw_config = config_payload.get("config")
+                runtime.config = (
+                    _pick_fields(
+                        raw_config,
+                        (
+                            "model",
+                            "model_reasoning_effort",
+                            "profile",
+                            "sandbox",
+                            "approvalPolicy",
+                            "approval_policy",
+                        ),
+                    )
+                    if isinstance(raw_config, dict)
+                    else None
+                )
+
+        if "thread/list" in requested_methods:
+            thread_payload = await self._safe_refresh_call(runtime, "thread/list", {"limit": 30})
+            if isinstance(thread_payload, dict):
+                raw_threads = thread_payload.get("data", [])
+                runtime.threads = _summarize_threads(
+                    [item for item in raw_threads if isinstance(item, dict)]
+                )
+
+        if "thread/loaded/list" in requested_methods:
+            loaded_threads_payload = await self._safe_refresh_call(
+                runtime,
+                "thread/loaded/list",
+                {},
+            )
+            if isinstance(loaded_threads_payload, dict):
+                runtime.loaded_thread_ids = loaded_threads_payload.get("threadIds", [])
+
         runtime.unresolved_requests = await self.database.list_unresolved_server_requests(
             instance_id
         )
@@ -714,10 +972,14 @@ class RuntimeManager:
             runtime.refresh_method_locks[method] = lock
         return lock
 
-    async def _refresh_instance_safely(self, instance_id: int) -> InstanceRuntime:
+    async def _refresh_instance_safely(
+        self,
+        instance_id: int,
+        methods: tuple[str, ...] | None = None,
+    ) -> InstanceRuntime:
         runtime = await self.get(instance_id)
         try:
-            return await self.refresh_instance(instance_id)
+            return await self.refresh_instance(instance_id, methods=methods)
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -729,7 +991,8 @@ class RuntimeManager:
             while True:
                 runtime = await self.get(instance_id)
                 runtime.refresh_pending = False
-                await self._refresh_instance_safely(instance_id)
+                scheduled_methods = self._consume_scheduled_refresh_methods(runtime)
+                await self._refresh_instance_safely(instance_id, methods=scheduled_methods)
                 runtime = await self.get(instance_id)
                 if not runtime.refresh_pending:
                     break
@@ -744,14 +1007,24 @@ class RuntimeManager:
                 final_runtime.refresh_task = None
                 final_runtime.refresh_pending = False
 
-    def _schedule_refresh_instance(self, instance_id: int) -> None:
+    def _schedule_refresh_instance(
+        self,
+        instance_id: int,
+        methods: tuple[str, ...] | None = None,
+    ) -> None:
         runtime = self.instances.get(instance_id)
         if runtime is None:
             return
         runtime.refresh_pending = True
+        runtime.refresh_pending_methods.update(_ordered_refresh_methods(methods))
         if runtime.refresh_task is not None and not runtime.refresh_task.done():
             return
         runtime.refresh_task = asyncio.create_task(self._drain_refresh_instance(instance_id))
+
+    def _consume_scheduled_refresh_methods(self, runtime: InstanceRuntime) -> tuple[str, ...]:
+        methods = _ordered_refresh_methods(runtime.refresh_pending_methods)
+        runtime.refresh_pending_methods.clear()
+        return methods
 
     def _cancel_refresh_task(self, runtime: InstanceRuntime) -> asyncio.Task[None] | None:
         task = runtime.refresh_task
@@ -762,6 +1035,7 @@ class RuntimeManager:
             active_task = None
         runtime.refresh_task = None
         runtime.refresh_pending = False
+        runtime.refresh_pending_methods.clear()
         return active_task
 
     async def _wait_for_thread_visibility(
@@ -777,6 +1051,7 @@ class RuntimeManager:
 
         loop = asyncio.get_running_loop()
         deadline = loop.time() + timeout_seconds
+        prior_threads = list(runtime.threads)
         while loop.time() < deadline:
             try:
                 raw_threads = (await client.call("thread/list", {"limit": 30})).get("data", [])
@@ -790,8 +1065,9 @@ class RuntimeManager:
                 await asyncio.sleep(0.4)
                 continue
 
-            runtime.threads = _summarize_threads(
-                [item for item in raw_threads if isinstance(item, dict)]
+            runtime.threads = _merge_thread_summaries(
+                _summarize_threads([item for item in raw_threads if isinstance(item, dict)]),
+                prior_threads,
             )
             if any(thread.get("id") == thread_id for thread in runtime.threads):
                 return True
@@ -811,8 +1087,9 @@ class RuntimeManager:
                 exc_info=True,
             )
             return
-        runtime.threads = _summarize_threads(
-            [item for item in raw_threads if isinstance(item, dict)]
+        runtime.threads = _merge_thread_summaries(
+            _summarize_threads([item for item in raw_threads if isinstance(item, dict)]),
+            runtime.threads,
         )
 
     async def start_thread(
@@ -860,7 +1137,11 @@ class RuntimeManager:
                     None,
                 )
                 if recovered_thread is not None:
-                    self._schedule_refresh_instance(instance_id)
+                    _seed_runtime_thread_status(
+                        runtime,
+                        recovered_thread,
+                        status_type="idle",
+                    )
                     return {
                         "thread": {"id": recovered_thread},
                         "threadId": recovered_thread,
@@ -884,9 +1165,12 @@ class RuntimeManager:
         elif isinstance(result, dict) and isinstance(result.get("threadId"), str):
             thread_id = result["threadId"]
         if thread_id is not None:
-            runtime.threads = [{"id": thread_id, "status": {"type": "idle"}}]
+            runtime.threads = _upsert_thread_summary(
+                runtime.threads,
+                {"id": thread_id, "status": {"type": "idle"}},
+            )
+            runtime.loaded_thread_ids = _add_loaded_thread_id(runtime.loaded_thread_ids, thread_id)
             await self._wait_for_thread_visibility(runtime, thread_id)
-        self._schedule_refresh_instance(instance_id)
         return result
 
     async def start_turn(
@@ -943,7 +1227,13 @@ class RuntimeManager:
         if result is None:
             assert last_error is not None
             raise last_error
-        self._schedule_refresh_instance(instance_id)
+        turn_id = extract_turn_id(result)
+        _seed_runtime_thread_status(
+            runtime,
+            thread_id,
+            status_type="active",
+            turn_id=turn_id,
+        )
         return result
 
     async def _confirm_timed_out_start_turn(
@@ -957,8 +1247,10 @@ class RuntimeManager:
         loop = asyncio.get_running_loop()
         deadline = loop.time() + timeout_seconds
         observed_active = False
+        prior_threads = list(runtime.threads)
         while loop.time() < deadline:
             await self._refresh_runtime_threads(runtime)
+            runtime.threads = _merge_thread_summaries(runtime.threads, prior_threads)
             turn_id = self._turn_id_from_runtime(runtime, thread_id)
             if turn_id is None:
                 turn_id = await self._turn_id_from_events(instance_id, thread_id)
@@ -1016,7 +1308,7 @@ class RuntimeManager:
             if "thread not found" in str(exc).lower():
                 return {"ok": False, "reason": "no_active_turn", "threadId": thread_id}
             raise
-        self._schedule_refresh_instance(instance_id)
+        _seed_runtime_thread_status(runtime, thread_id, status_type="idle")
         return result
 
     async def start_review(self, instance_id: int, thread_id: str) -> dict[str, Any]:
@@ -1024,7 +1316,7 @@ class RuntimeManager:
         if runtime.client is None:
             raise RuntimeError("Instance is not connected.")
         result = await runtime.client.start_review(thread_id=thread_id)
-        self._schedule_refresh_instance(instance_id)
+        _seed_runtime_thread_status(runtime, thread_id, status_type="active")
         return result
 
     async def exec_command(
@@ -1091,6 +1383,127 @@ class RuntimeManager:
             except Exception:
                 logger.exception("Runtime server request listener crashed")
 
+    def _apply_runtime_thread_event(
+        self,
+        runtime: InstanceRuntime,
+        method: str,
+        params: dict[str, Any],
+    ) -> None:
+        if method == "thread/started":
+            thread = params.get("thread")
+            if isinstance(thread, dict):
+                summaries = _summarize_threads([thread])
+                if summaries:
+                    summary = summaries[0]
+                    thread_id = summary.get("id")
+                    if isinstance(thread_id, str):
+                        runtime.threads = _upsert_thread_summary(runtime.threads, summary)
+                        runtime.loaded_thread_ids = _add_loaded_thread_id(
+                            runtime.loaded_thread_ids,
+                            thread_id,
+                        )
+            return
+
+        thread_id = params.get("threadId")
+        if not isinstance(thread_id, str) or not thread_id:
+            return
+
+        if method == "thread/archived":
+            runtime.loaded_thread_ids = [
+                item for item in runtime.loaded_thread_ids if item != thread_id
+            ]
+            runtime.threads = _patch_thread_summary(
+                runtime.threads,
+                thread_id,
+                {"status": {"type": "archived"}},
+            )
+            return
+
+        if method == "thread/unarchived":
+            runtime.loaded_thread_ids = _add_loaded_thread_id(runtime.loaded_thread_ids, thread_id)
+            runtime.threads = _patch_thread_summary(
+                runtime.threads,
+                thread_id,
+                {"status": {"type": "idle"}},
+            )
+            return
+
+        if method == "thread/name/updated":
+            patch: dict[str, Any] = {}
+            for key in ("name", "title"):
+                value = params.get(key)
+                if isinstance(value, str) and value.strip():
+                    patch[key] = value
+            if patch:
+                runtime.threads = _patch_thread_summary(runtime.threads, thread_id, patch)
+            return
+
+        if method == "thread/status/changed":
+            status = params.get("status")
+            if not isinstance(status, dict):
+                return
+            status_patch = _pick_fields(status, ("type", "turnId", "activeTurnId"))
+            status_type = status_patch.get("type")
+            if status_type != "active":
+                status_patch.pop("turnId", None)
+                status_patch.pop("activeTurnId", None)
+            runtime.threads = _patch_thread_summary(
+                runtime.threads,
+                thread_id,
+                {"status": status_patch},
+            )
+            runtime.loaded_thread_ids = _add_loaded_thread_id(runtime.loaded_thread_ids, thread_id)
+            return
+
+        if method == "turn/started":
+            turn = params.get("turn")
+            turn_id = None
+            if isinstance(turn, dict):
+                raw_turn_id = turn.get("id")
+                if isinstance(raw_turn_id, str) and raw_turn_id:
+                    turn_id = raw_turn_id
+            status_patch: dict[str, Any] = {"type": "active"}
+            if turn_id is not None:
+                status_patch["turnId"] = turn_id
+                status_patch["activeTurnId"] = turn_id
+            runtime.threads = _patch_thread_summary(
+                runtime.threads,
+                thread_id,
+                {"status": status_patch},
+            )
+            runtime.loaded_thread_ids = _add_loaded_thread_id(runtime.loaded_thread_ids, thread_id)
+            return
+
+        if method == "turn/completed":
+            turn = params.get("turn")
+            turn_status = None
+            if isinstance(turn, dict):
+                raw_status = turn.get("status")
+                if isinstance(raw_status, str) and raw_status:
+                    turn_status = raw_status
+            status_patch: dict[str, Any] = {}
+            if turn_status == "failed":
+                status_patch["type"] = "systemError"
+            elif turn_status:
+                status_patch["type"] = "idle"
+            runtime.threads = _patch_thread_summary(
+                runtime.threads,
+                thread_id,
+                {"status": status_patch},
+            )
+            status = next(
+                (
+                    thread.get("status")
+                    for thread in runtime.threads
+                    if isinstance(thread, dict) and thread.get("id") == thread_id
+                ),
+                None,
+            )
+            if isinstance(status, dict):
+                status.pop("turnId", None)
+                status.pop("activeTurnId", None)
+            runtime.loaded_thread_ids = _add_loaded_thread_id(runtime.loaded_thread_ids, thread_id)
+
     async def handle_event(self, instance_id: int, event: dict[str, Any]) -> None:
         compact_payload = compact_event_payload(event["method"], event["params"])
         await self.database.append_event(
@@ -1106,6 +1519,9 @@ class RuntimeManager:
             runtime.initialized = runtime.client.info.initialized
             runtime.pid = runtime.client.info.pid
             runtime.error = runtime.client.info.error
+        event_params = event.get("params")
+        if isinstance(event_params, dict):
+            self._apply_runtime_thread_event(runtime, event["method"], event_params)
         await self.hub.publish(
             {
                 "type": "codex_event",
@@ -1116,17 +1532,11 @@ class RuntimeManager:
                 "createdAt": runtime.last_event_at,
             }
         )
-        if event["method"] in {
-            "thread/started",
-            "thread/archived",
-            "thread/unarchived",
-            "thread/name/updated",
-            "thread/status/changed",
-            "turn/completed",
-            "account/updated",
-            "mcpServer/oauthLogin/completed",
-        }:
-            self._schedule_refresh_instance(instance_id)
+        if event["method"] in EVENT_REFRESH_METHODS:
+            self._schedule_refresh_instance(
+                instance_id,
+                methods=EVENT_REFRESH_METHODS.get(event["method"]),
+            )
         for listener in self.event_listeners:
             try:
                 await listener(instance_id, event)

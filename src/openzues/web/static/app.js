@@ -1712,6 +1712,8 @@ function renderLaunchRoute(route) {
   const preferredLabel = route.preferred_instance?.label || "No pinned lane";
   const conversationTargetSummary = route.conversation_target?.summary || "";
   const reuseSummary = route.conversation_reuse?.summary || "";
+  const mainSessionKey = route.main_session_key || route.session_key;
+  const showsDistinctMainSessionKey = mainSessionKey !== route.session_key;
   return `
     <article class="bootstrap-route">
       <div class="row">
@@ -1723,6 +1725,7 @@ function renderLaunchRoute(route) {
           ${pill(route.status, route.status === "ready" ? "ok" : route.status === "repair" ? "bad" : "warn")}
           ${pill(String(route.mode || "").replaceAll("_", " "))}
           ${pill(String(route.matched_by || "").replaceAll("_", " "))}
+          ${route.last_route_policy ? pill(`last-route ${String(route.last_route_policy).replaceAll("_", " ")}`) : ""}
         </div>
       </div>
       <p class="small-muted">${escapeHtml(route.summary)}</p>
@@ -1739,6 +1742,16 @@ function renderLaunchRoute(route) {
           <strong>Session key</strong>
           <p class="bootstrap-route-session">${escapeHtml(route.session_key)}</p>
         </div>
+        ${
+          showsDistinctMainSessionKey
+            ? `
+              <div class="chat-card">
+                <strong>Main session key</strong>
+                <p class="bootstrap-route-session">${escapeHtml(mainSessionKey)}</p>
+              </div>
+            `
+            : ""
+        }
       </div>
       ${
         conversationTargetSummary
@@ -1981,6 +1994,20 @@ function renderGatewayCapabilitySummary() {
                     methodCatalog.lane_count ? "ok" : "warn",
                   )}
                 </div>
+                ${
+                  Array.isArray(methodCatalog.scopes) && methodCatalog.scopes.length
+                    ? `
+                        <div class="pill-row">
+                          ${methodCatalog.scopes
+                            .slice(0, 6)
+                            .map((scopeGroup) =>
+                              pill(`${scopeGroup.scope} ${scopeGroup.method_count}`, "ok"),
+                            )
+                            .join("")}
+                        </div>
+                      `
+                    : ""
+                }
                 ${
                   Array.isArray(methodCatalog.tools) && methodCatalog.tools.length
                     ? `<div class="small-muted">${escapeHtml(clipText(methodCatalog.tools.join(", "), 180))}</div>`

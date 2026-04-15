@@ -30,8 +30,10 @@ def test_collect_demotes_windows_access_denied_when_desktop_bridge_exists(
 ) -> None:
     discovery = DesktopDiscovery(
         source_path=Path(r"C:\Program Files\WindowsApps\OpenAI.Codex\codex.exe"),
+        source_kind="package",
         staged_path=Path(r"C:\Users\skull\AppData\Local\OpenZues\runtime\codex.exe"),
         staged_ready=True,
+        package_version="26.406.3494.0",
         session=DesktopSessionInfo(
             log_path=Path(r"C:\Users\skull\AppData\Local\Codex\codex-desktop.log"),
             last_seen_at="2026-04-13T23:00:00Z",
@@ -73,6 +75,16 @@ def test_collect_demotes_windows_access_denied_when_desktop_bridge_exists(
 
     assert checks["codex_cli"].status == "info"
     assert "Desktop transport can stage a runnable local Codex bridge" in checks["codex_cli"].detail
+    assert checks["codex_desktop_install"].value == "26.406.3494.0"
+    assert "packaged desktop runtime" in checks["codex_desktop_install"].detail
+    assert "package 26.406.3494.0" in checks["codex_desktop_install"].detail
+    assert (
+        "spawned the staged bridge from the packaged desktop runtime at "
+        "C:\\Users\\skull\\AppData\\Local\\OpenZues\\runtime\\codex.exe"
+    ) in checks["codex_desktop_session"].detail
+    assert checks["codex_desktop_session"].detail.endswith(
+        "reported app-server 0.119.0-alpha.28, and initialized Codex CLI."
+    )
     assert checks["openai_api_key"].status == "info"
     assert "Desktop-authenticated Codex lanes can still operate without it" in checks[
         "openai_api_key"
@@ -84,8 +96,10 @@ def test_collect_demotes_windows_access_denied_when_desktop_bridge_exists(
 def test_collect_warns_when_codex_cli_is_missing_and_no_desktop_install(monkeypatch) -> None:
     discovery = DesktopDiscovery(
         source_path=None,
+        source_kind=None,
         staged_path=None,
         staged_ready=False,
+        package_version=None,
         session=DesktopSessionInfo(),
     )
     service = EnvironmentService(desktop_service=FakeDesktopService(discovery))
@@ -116,3 +130,100 @@ def test_collect_warns_when_codex_cli_is_missing_and_no_desktop_install(monkeypa
     assert checks["codex_cli"].status == "warn"
     assert checks["codex_cli"].detail == "Codex executable not found on PATH."
 
+
+def test_collect_demotes_missing_path_codex_when_desktop_install_exists(monkeypatch) -> None:
+    discovery = DesktopDiscovery(
+        source_path=Path(r"C:\Program Files\WindowsApps\OpenAI.Codex\codex.exe"),
+        source_kind="package",
+        staged_path=None,
+        staged_ready=False,
+        package_version="26.406.3494.0",
+        session=DesktopSessionInfo(),
+    )
+    service = EnvironmentService(desktop_service=FakeDesktopService(discovery))
+
+    def fake_which(command: str) -> str | None:
+        mapping = {
+            "python": r"C:\Python312\python.exe",
+            "git": r"C:\Program Files\Git\bin\git.exe",
+        }
+        return mapping.get(command)
+
+    def fake_run(args: list[str], timeout: int = 10) -> CommandProbe:
+        del timeout
+        if args[:2] == ["python", "--version"]:
+            return CommandProbe(returncode=0, stdout="Python 3.12.0", stderr="")
+        if args[:2] == ["git", "--version"]:
+            return CommandProbe(returncode=0, stdout="git version 2.49.0", stderr="")
+        if args[:3] == ["gh", "auth", "status"]:
+            return CommandProbe(returncode=1, stdout="", stderr="not logged in")
+        raise AssertionError(f"Unexpected probe: {args}")
+
+    monkeypatch.setattr("openzues.services.environment.shutil.which", fake_which)
+    monkeypatch.setattr(service, "_run", fake_run)
+
+    diagnostics = service.collect()
+    checks = {check.key: check for check in diagnostics.checks}
+
+    assert checks["codex_cli"].status == "info"
+    assert "Desktop transport can stage a runnable local Codex bridge" in checks[
+        "codex_cli"
+    ].detail
+    assert "Quick Connect" in str(checks["codex_cli"].action)
+    assert checks["codex_desktop_bridge"].status == "info"
+    assert "from the packaged desktop runtime" in checks["codex_desktop_bridge"].detail
+    assert checks["codex_desktop_bridge"].value == str(discovery.source_path)
+
+
+def test_collect_reports_uninitialized_desktop_session_state(monkeypatch) -> None:
+    discovery = DesktopDiscovery(
+        source_path=Path(r"C:\Program Files\WindowsApps\OpenAI.Codex\codex.exe"),
+        source_kind="package",
+        staged_path=Path(r"C:\Users\skull\AppData\Local\OpenZues\runtime\codex.exe"),
+        staged_ready=True,
+        package_version="26.406.3494.0",
+        session=DesktopSessionInfo(
+            log_path=Path(r"C:\Users\skull\AppData\Local\Codex\codex-desktop.log"),
+            last_seen_at="2026-04-13T23:00:00Z",
+            transport="stdio",
+            app_server_version="0.119.0-alpha.28",
+            initialized=False,
+            spawned_executable=r"C:\Users\skull\AppData\Local\OpenZues\runtime\codex.exe",
+        ),
+    )
+    service = EnvironmentService(desktop_service=FakeDesktopService(discovery))
+
+    def fake_which(command: str) -> str | None:
+        mapping = {
+            "python": r"C:\Python312\python.exe",
+            "git": r"C:\Program Files\Git\bin\git.exe",
+            "codex": r"C:\Users\skull\AppData\Local\Microsoft\WindowsApps\codex.exe",
+        }
+        return mapping.get(command)
+
+    def fake_run(args: list[str], timeout: int = 10) -> CommandProbe:
+        del timeout
+        if args[:2] == ["python", "--version"]:
+            return CommandProbe(returncode=0, stdout="Python 3.12.0", stderr="")
+        if args[:2] == ["git", "--version"]:
+            return CommandProbe(returncode=0, stdout="git version 2.49.0", stderr="")
+        if args[:2] == ["codex", "--version"]:
+            return CommandProbe(returncode=0, stdout="codex-cli 0.119.0-alpha.28", stderr="")
+        if args[:3] == ["gh", "auth", "status"]:
+            return CommandProbe(returncode=1, stdout="", stderr="not logged in")
+        raise AssertionError(f"Unexpected probe: {args}")
+
+    monkeypatch.setattr("openzues.services.environment.shutil.which", fake_which)
+    monkeypatch.setattr(service, "_run", fake_run)
+
+    diagnostics = service.collect()
+    checks = {check.key: check for check in diagnostics.checks}
+
+    assert checks["codex_desktop_session"].status == "info"
+    assert (
+        "spawned the staged bridge from the packaged desktop runtime at "
+        "C:\\Users\\skull\\AppData\\Local\\OpenZues\\runtime\\codex.exe"
+    ) in checks["codex_desktop_session"].detail
+    assert checks["codex_desktop_session"].detail.endswith(
+        "reported app-server 0.119.0-alpha.28, and did not finish Codex CLI initialization."
+    )

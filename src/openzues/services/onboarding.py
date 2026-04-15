@@ -16,6 +16,10 @@ from openzues.schemas import (
     VaultSecretCreate,
 )
 from openzues.services.access import AccessService
+from openzues.services.device_bootstrap_profile import (
+    default_device_bootstrap_profile,
+    normalize_device_bootstrap_profile,
+)
 from openzues.services.gateway_bootstrap import GatewayBootstrapService
 from openzues.services.manager import RuntimeManager
 from openzues.services.memory_protocol import (
@@ -81,6 +85,13 @@ class OnboardingService:
 
     async def bootstrap(self, payload: OnboardingBootstrapCreate) -> OnboardingBootstrapResultView:
         payload = self._apply_integration_presets(payload)
+        if payload.bootstrap_roles is None and payload.bootstrap_scopes is None:
+            bootstrap_roles, bootstrap_scopes = default_device_bootstrap_profile()
+        else:
+            bootstrap_roles, bootstrap_scopes = normalize_device_bootstrap_profile(
+                payload.bootstrap_roles,
+                payload.bootstrap_scopes,
+            )
         project_path = _normalize_path(payload.project_path)
         warnings: list[str] = []
         await self.setup.save_wizard_session(
@@ -96,6 +107,8 @@ class OnboardingService:
                 "team_name": payload.team_name,
                 "operator_name": payload.operator_name,
                 "operator_email": payload.operator_email,
+                "bootstrap_roles": bootstrap_roles,
+                "bootstrap_scopes": bootstrap_scopes,
                 "task_name": payload.task_name,
                 "cadence_minutes": payload.cadence_minutes,
                 "model": payload.model,
@@ -146,6 +159,8 @@ class OnboardingService:
             operator_id=operator.id,
             task_blueprint_id=task_blueprint.id,
             default_cwd=project_path,
+            bootstrap_roles=bootstrap_roles,
+            bootstrap_scopes=bootstrap_scopes,
             model=payload.model,
             max_turns=payload.max_turns,
             use_builtin_agents=payload.use_builtin_agents,

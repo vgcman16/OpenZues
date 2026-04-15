@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
 from openzues.database import Database
@@ -18,6 +19,11 @@ from openzues.schemas import (
     TeamView,
 )
 from openzues.services.access import AccessService
+from openzues.services.codex_rpc import extract_thread_id
+from openzues.services.device_bootstrap_profile import (
+    default_device_bootstrap_profile,
+    normalize_device_bootstrap_profile,
+)
 from openzues.services.hermes_runtime_profile import (
     executor_label,
     load_saved_runtime_preferences,
@@ -26,6 +32,9 @@ from openzues.services.hermes_runtime_profile import (
 from openzues.services.hermes_toolsets import build_hermes_tool_policy, infer_hermes_toolsets
 from openzues.services.launch_routing import LaunchRoutingService
 from openzues.services.manager import RuntimeManager
+
+BOOT_FILENAME = "BOOT.md"
+BOOT_SILENT_REPLY_TOKEN = "NO_REPLY"
 
 
 def _normalize_path(value: str | None) -> str | None:
@@ -61,6 +70,25 @@ def _resource_from_project(project: ProjectView | None) -> GatewayBootstrapResou
     return GatewayBootstrapResourceView(id=project.id, label=project.label, detail=detail)
 
 
+def _resource_from_integration(integration: dict | None) -> GatewayBootstrapResourceView | None:
+    if integration is None:
+        return None
+    detail_parts = [str(integration.get("kind") or "integration")]
+    base_url = str(integration.get("base_url") or "").strip()
+    if base_url:
+        detail_parts.append(base_url)
+    auth_scheme = str(integration.get("auth_scheme") or "").strip()
+    if auth_scheme:
+        detail_parts.append(auth_scheme)
+    if integration.get("vault_secret_id") or integration.get("secret_label"):
+        detail_parts.append("secret ready")
+    return GatewayBootstrapResourceView(
+        id=int(integration["id"]),
+        label=str(integration["name"]),
+        detail=" · ".join(detail_parts),
+    )
+
+
 def _resource_from_team(team: TeamView | None) -> GatewayBootstrapResourceView | None:
     if team is None:
         return None
@@ -92,6 +120,58 @@ def _resource_from_task(task: TaskBlueprintView | None) -> GatewayBootstrapResou
     return GatewayBootstrapResourceView(id=task.id, label=task.name, detail=detail)
 
 
+def _operator_ready_for_setup_mode(
+    operator: OperatorView | None,
+    *,
+    setup_mode: SetupMode,
+) -> bool:
+    if operator is None:
+        return False
+    if setup_mode == "remote":
+        return operator.has_api_key
+    return True
+
+
+@dataclass(slots=True)
+class GatewayBootstrapBootResult:
+    status: str
+    reason: str | None = None
+    thread_id: str | None = None
+
+
+def _build_boot_prompt(content: str) -> str:
+    return "\n".join(
+        [
+            "You are running a boot check. Follow BOOT.md instructions exactly.",
+            "",
+            "BOOT.md:",
+            content,
+            "",
+            (
+                "If BOOT.md asks you to send a message, use the message tool "
+                "(action=send with channel + target)."
+            ),
+            "Use the `target` field (not `to`) for message tool destinations.",
+            f"After sending with the message tool, reply with ONLY: {BOOT_SILENT_REPLY_TOKEN}.",
+            f"If nothing needs attention, reply with ONLY: {BOOT_SILENT_REPLY_TOKEN}.",
+        ]
+    )
+
+
+def _load_boot_file(workspace_dir: Path) -> tuple[str, str | None]:
+    boot_path = workspace_dir / BOOT_FILENAME
+    try:
+        content = boot_path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return "missing", None
+    except OSError as exc:
+        return "error", str(exc)
+    trimmed = content.strip()
+    if not trimmed:
+        return "empty", None
+    return "ok", trimmed
+
+
 class GatewayBootstrapService:
     def __init__(
         self,
@@ -105,11 +185,101 @@ class GatewayBootstrapService:
         self.access = access
         self.launch_routing = launch_routing
 
+    async def run_startup_boot_once(self) -> GatewayBootstrapBootResult:
+        row = await self.database.get_gateway_bootstrap()
+        if row is None:
+            return GatewayBootstrapBootResult(
+                status="skipped",
+                reason="Gateway bootstrap is not configured yet.",
+            )
+
+        workspace_dir = _normalize_path(row.get("default_cwd"))
+        if workspace_dir is None:
+            return GatewayBootstrapBootResult(
+                status="skipped",
+                reason="Gateway bootstrap does not have a saved workspace yet.",
+            )
+
+        boot_status, boot_content = _load_boot_file(Path(workspace_dir))
+        if boot_status == "missing":
+            return GatewayBootstrapBootResult(
+                status="skipped",
+                reason=f"{BOOT_FILENAME} is missing.",
+            )
+        if boot_status == "empty":
+            return GatewayBootstrapBootResult(status="skipped", reason=f"{BOOT_FILENAME} is empty.")
+        if boot_status == "error":
+            return GatewayBootstrapBootResult(
+                status="failed",
+                reason=f"Failed to read {BOOT_FILENAME}: {boot_content}",
+            )
+
+        launch_route = None
+        if self.launch_routing is not None:
+            task = None
+            task_id = row.get("task_blueprint_id")
+            if task_id is not None:
+                raw_task = await self.database.get_task_blueprint(int(task_id))
+                if raw_task is not None:
+                    task = TaskBlueprintView.model_validate(raw_task)
+            # Startup boot should refresh the saved route hint so workspace-affinity
+            # launches can stick to the last healthy lane after a successful boot.
+            launch_route = await self.launch_routing.describe(task=task, persist=True)
+
+        if launch_route is None or launch_route.resolved_instance is None:
+            return GatewayBootstrapBootResult(
+                status="skipped",
+                reason="Gateway bootstrap has no resolved launch lane for startup boot.",
+            )
+
+        instance_id = launch_route.resolved_instance.id
+        try:
+            thread_result = await self.manager.start_thread(
+                instance_id,
+                model=str(row.get("model") or "gpt-5.4"),
+                cwd=workspace_dir,
+                reasoning_effort=None,
+                collaboration_mode=None,
+            )
+            thread_id = extract_thread_id(thread_result)
+            if not thread_id:
+                return GatewayBootstrapBootResult(
+                    status="failed",
+                    reason="Startup boot did not return a thread id.",
+                )
+            await self.manager.start_turn(
+                instance_id,
+                thread_id=thread_id,
+                text=_build_boot_prompt(boot_content or ""),
+                cwd=workspace_dir,
+                model=None,
+                reasoning_effort=None,
+                collaboration_mode=None,
+            )
+        except Exception as exc:
+            return GatewayBootstrapBootResult(
+                status="failed",
+                reason=f"Startup boot failed: {exc}",
+            )
+
+        return GatewayBootstrapBootResult(status="ran", thread_id=thread_id)
+
     async def get_view(self, *, allow_backfill: bool = True) -> GatewayBootstrapView:
         row = await self.database.get_gateway_bootstrap()
         instances = {instance.id: instance for instance in await self.manager.list_views()}
         teams = {team.id: team for team in await self.access.list_team_views()}
         operators = {operator.id: operator for operator in await self.access.list_operator_views()}
+        integration_rows = [
+            integration
+            for integration in await self.database.list_integrations()
+            if bool(integration.get("enabled", 1))
+        ]
+        integrations_by_project: dict[int, list[dict]] = {}
+        for integration in integration_rows:
+            project_id = integration.get("project_id")
+            if project_id is None:
+                continue
+            integrations_by_project.setdefault(int(project_id), []).append(integration)
         projects = {
             int(project["id"]): ProjectView.model_validate(
                 {
@@ -134,6 +304,7 @@ class GatewayBootstrapService:
         }
 
         if row is None:
+            bootstrap_roles, bootstrap_scopes = default_device_bootstrap_profile()
             setup_footprint = await self.database.get_setup_footprint()
             if allow_backfill and setup_footprint is None:
                 if await self._backfill_from_existing(
@@ -149,7 +320,7 @@ class GatewayBootstrapService:
                 headline="Gateway bootstrap is not configured",
                 summary=(
                     "Run QuickStart once so OpenZues has a durable default lane, workspace, "
-                    "remote operator, and launch policy."
+                    "operator posture, and launch policy."
                 ),
                 warnings=["No gateway bootstrap profile has been saved yet."],
                 setup_mode="local",
@@ -157,10 +328,13 @@ class GatewayBootstrapService:
                 route_binding_mode="saved_lane",
                 instance=None,
                 project=None,
+                integration=None,
                 team=None,
                 operator=None,
                 task_blueprint=None,
                 default_cwd=None,
+                bootstrap_roles=bootstrap_roles,
+                bootstrap_scopes=bootstrap_scopes,
                 model="gpt-5.4",
                 max_turns=4,
                 use_builtin_agents=True,
@@ -190,6 +364,10 @@ class GatewayBootstrapService:
             setup_flow_value = "advanced" if setup_mode == "remote" else "quickstart"
         setup_flow: SetupFlow = "advanced" if setup_flow_value == "advanced" else "quickstart"
         route_binding_mode = self._resolve_route_binding_mode(row, setup_mode=setup_mode)
+        bootstrap_roles, bootstrap_scopes = normalize_device_bootstrap_profile(
+            row.get("bootstrap_roles"),
+            row.get("bootstrap_scopes"),
+        )
         instance = (
             instances.get(int(row["preferred_instance_id"]))
             if row["preferred_instance_id"]
@@ -198,6 +376,17 @@ class GatewayBootstrapService:
         project = (
             projects.get(int(row["preferred_project_id"])) if row["preferred_project_id"] else None
         )
+        integration_candidates = (
+            integrations_by_project.get(project.id, []) if project is not None else []
+        )
+        integration_candidates = sorted(
+            integration_candidates,
+            key=lambda item: (
+                not bool(str(item.get("base_url") or "").strip()),
+                str(item.get("name") or "").lower(),
+            ),
+        )
+        integration = integration_candidates[0] if integration_candidates else None
         team = teams.get(int(row["team_id"])) if row["team_id"] else None
         operator = operators.get(int(row["operator_id"])) if row["operator_id"] else None
         task = tasks.get(int(row["task_blueprint_id"])) if row["task_blueprint_id"] else None
@@ -215,6 +404,7 @@ class GatewayBootstrapService:
         tool_policy = build_hermes_tool_policy(toolsets, setup_mode=setup_mode)
         warnings: list[str] = []
         broken_references = False
+        operator_ready = _operator_ready_for_setup_mode(operator, setup_mode=setup_mode)
 
         if row["preferred_instance_id"] and instance is None:
             warnings.append("The saved default lane no longer exists.")
@@ -222,6 +412,11 @@ class GatewayBootstrapService:
         if row["preferred_project_id"] and project is None:
             warnings.append("The saved default workspace no longer exists.")
             broken_references = True
+        if project is not None and len(integration_candidates) > 1:
+            warnings.append(
+                "Multiple integrations are attached to the saved workspace; "
+                "showing the first enabled ingress record."
+            )
         if row["operator_id"] and operator is None:
             warnings.append("The saved default operator no longer exists.")
             broken_references = True
@@ -230,7 +425,7 @@ class GatewayBootstrapService:
             broken_references = True
         if instance is not None and not instance.connected:
             warnings.append("The default lane is saved, but it is not connected right now.")
-        if operator is not None and not operator.has_api_key:
+        if setup_mode == "remote" and operator is not None and not operator.has_api_key:
             warnings.append("The default remote operator does not have an active API key.")
         if setup_mode == "remote" and not instances:
             warnings.append(
@@ -240,15 +435,10 @@ class GatewayBootstrapService:
         if setup_mode == "remote":
             required_ready = [
                 project is not None,
-                operator is not None,
+                operator_ready,
                 task is not None,
             ]
-            launch_ready = (
-                all(required_ready)
-                and operator is not None
-                and operator.has_api_key
-                and bool(instances)
-            )
+            launch_ready = all(required_ready) and bool(instances)
         else:
             required_ready = [
                 instance is not None,
@@ -260,8 +450,6 @@ class GatewayBootstrapService:
                 all(required_ready)
                 and instance is not None
                 and instance.connected
-                and operator is not None
-                and operator.has_api_key
             )
         status: GatewayBootstrapStatus
         if broken_references and any(required_ready):
@@ -282,7 +470,7 @@ class GatewayBootstrapService:
             else:
                 headline = "Gateway bootstrap is launch-ready"
                 summary = (
-                    "The default lane, workspace, remote operator, and recurring task are aligned "
+                    "The default lane, workspace, operator, and recurring task are aligned "
                     "behind one saved launch policy."
                 )
         else:
@@ -296,8 +484,8 @@ class GatewayBootstrapService:
             else:
                 headline = "Gateway bootstrap is staged"
                 summary = (
-                    "OpenZues has a saved launch profile, but the lane connection or remote access "
-                    "still needs to be armed."
+                    "OpenZues has a saved launch profile, but the lane connection or saved launch "
+                    "defaults still need attention before the next run."
                 )
 
         preferred_memory_provider, preferred_executor = await load_saved_runtime_preferences(
@@ -323,10 +511,13 @@ class GatewayBootstrapService:
             route_binding_mode=route_binding_mode,
             instance=_resource_from_instance(instance),
             project=_resource_from_project(project),
+            integration=_resource_from_integration(integration),
             team=_resource_from_team(team),
             operator=_resource_from_operator(operator),
             task_blueprint=_resource_from_task(task),
             default_cwd=default_cwd,
+            bootstrap_roles=bootstrap_roles,
+            bootstrap_scopes=bootstrap_scopes,
             model=str(row["model"]),
             max_turns=int(row["max_turns"]) if row["max_turns"] is not None else None,
             use_builtin_agents=bool(row["use_builtin_agents"]),
@@ -353,6 +544,7 @@ class GatewayBootstrapService:
             team_id=team["id"] if team else None,
         )
         task = await self._validate_task(payload.task_blueprint_id)
+        existing_row = await self.database.get_gateway_bootstrap()
         setup_mode = payload.setup_mode
         setup_flow = payload.setup_flow
         if setup_mode == "remote":
@@ -382,19 +574,56 @@ class GatewayBootstrapService:
         if default_cwd is None and instance_id is not None:
             instance = await self.manager.get(instance_id)
             default_cwd = _normalize_path(instance.cwd)
+        if payload.bootstrap_roles is None and payload.bootstrap_scopes is None:
+            if existing_row is None:
+                bootstrap_roles, bootstrap_scopes = default_device_bootstrap_profile()
+            else:
+                bootstrap_roles, bootstrap_scopes = normalize_device_bootstrap_profile(
+                    existing_row.get("bootstrap_roles"),
+                    existing_row.get("bootstrap_scopes"),
+                )
+        else:
+            bootstrap_roles, bootstrap_scopes = normalize_device_bootstrap_profile(
+                payload.bootstrap_roles,
+                payload.bootstrap_scopes,
+            )
+
+        project_id = int(project["id"]) if project is not None else None
+        preserved_last_route_instance_id: int | None = None
+        preserved_last_route_resolved_at: str | None = None
+        if (
+            existing_row is not None
+            and route_binding_mode == "workspace_affinity"
+            and existing_row.get("route_binding_mode") == "workspace_affinity"
+            and existing_row.get("preferred_project_id") == project_id
+        ):
+            raw_last_route_instance_id = existing_row.get("last_route_instance_id")
+            preserved_last_route_instance_id = (
+                int(raw_last_route_instance_id)
+                if raw_last_route_instance_id is not None
+                else None
+            )
+            raw_last_route_resolved_at = existing_row.get("last_route_resolved_at")
+            preserved_last_route_resolved_at = (
+                str(raw_last_route_resolved_at)
+                if raw_last_route_resolved_at is not None
+                else None
+            )
 
         await self.database.upsert_gateway_bootstrap(
             setup_mode=setup_mode,
             setup_flow=setup_flow,
             route_binding_mode=route_binding_mode,
             preferred_instance_id=instance_id,
-            preferred_project_id=int(project["id"]) if project is not None else None,
+            preferred_project_id=project_id,
             team_id=int(team["id"]) if team is not None else None,
             operator_id=int(operator["id"]) if operator is not None else None,
             task_blueprint_id=int(task["id"]) if task is not None else None,
-            last_route_instance_id=None,
-            last_route_resolved_at=None,
+            last_route_instance_id=preserved_last_route_instance_id,
+            last_route_resolved_at=preserved_last_route_resolved_at,
             default_cwd=default_cwd,
+            bootstrap_roles=bootstrap_roles,
+            bootstrap_scopes=bootstrap_scopes,
             model=payload.model,
             max_turns=payload.max_turns,
             use_builtin_agents=payload.use_builtin_agents,
@@ -422,6 +651,8 @@ class GatewayBootstrapService:
         operator_id: int,
         task_blueprint_id: int,
         default_cwd: str | None,
+        bootstrap_roles: list[str] | None = None,
+        bootstrap_scopes: list[str] | None = None,
         model: str,
         max_turns: int | None,
         use_builtin_agents: bool,
@@ -446,6 +677,8 @@ class GatewayBootstrapService:
                 operator_id=operator_id,
                 task_blueprint_id=task_blueprint_id,
                 default_cwd=default_cwd,
+                bootstrap_roles=bootstrap_roles,
+                bootstrap_scopes=bootstrap_scopes,
                 model=model,
                 max_turns=max_turns,
                 use_builtin_agents=use_builtin_agents,
@@ -550,6 +783,8 @@ class GatewayBootstrapService:
         if instance is None or project is None or team is None:
             return False
 
+        bootstrap_roles, bootstrap_scopes = default_device_bootstrap_profile()
+
         await self.database.upsert_gateway_bootstrap(
             setup_mode="local",
             setup_flow="quickstart",
@@ -562,6 +797,8 @@ class GatewayBootstrapService:
             last_route_instance_id=None,
             last_route_resolved_at=None,
             default_cwd=_normalize_path(task.cwd) or project.path or instance.cwd,
+            bootstrap_roles=bootstrap_roles,
+            bootstrap_scopes=bootstrap_scopes,
             model=task.model,
             max_turns=task.max_turns,
             use_builtin_agents=task.use_builtin_agents,

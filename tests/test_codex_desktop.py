@@ -49,7 +49,9 @@ def test_discover_picks_latest_desktop_package_and_session(tmp_path) -> None:
     discovery = service.discover()
 
     assert discovery.source_path == latest_executable
+    assert discovery.source_kind == "package"
     assert discovery.staged_ready is False
+    assert discovery.package_version == "26.406.3494.0"
     assert discovery.session.transport == "stdio"
     assert discovery.session.app_server_version == "0.119.0-alpha.11"
     assert discovery.session.initialized is True

@@ -22,7 +22,12 @@ from openzues.schemas import (
     MissionCreate,
     MissionView,
 )
-from openzues.services.followups import mission_followup_kind, mission_matches_payload
+from openzues.services.followups import (
+    mission_followup_kind,
+    mission_matches_payload,
+    operator_blocked_missions,
+    operator_ready_handoff_missions,
+)
 from openzues.services.hub import BroadcastHub
 from openzues.services.manager import RuntimeManager
 from openzues.services.missions import MissionService
@@ -719,9 +724,7 @@ def plan_control_chat(prompt: str, dashboard: DashboardView) -> ControlChatPlan:
         for mission in _sort_missions(dashboard.missions)
         if mission.status == "active" and mission.in_progress
     ]
-    blocked = [
-        mission for mission in _sort_missions(dashboard.missions) if mission.status == "blocked"
-    ]
+    blocked = _sort_missions(operator_blocked_missions(dashboard.missions))
     paused = [
         mission for mission in _sort_missions(dashboard.missions) if mission.status == "paused"
     ]
@@ -734,8 +737,7 @@ def plan_control_chat(prompt: str, dashboard: DashboardView) -> ControlChatPlan:
     if _looks_like_status_request(normalized):
         ready_handoffs = sum(
             1
-            for mission in dashboard.missions
-            if mission.status in {"paused", "completed", "failed"} and mission.last_checkpoint
+            for mission in operator_ready_handoff_missions(dashboard.missions)
         )
         connected_lanes = sum(1 for instance in dashboard.instances if instance.connected)
         gateway_note = ""
