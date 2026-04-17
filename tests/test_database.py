@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import sqlite3
+
+import aiosqlite
 import pytest
 
 from openzues.database import (
@@ -270,6 +273,62 @@ async def test_thread_event_metrics_capture_recent_activity(tmp_path) -> None:
     assert metrics["last_event_at"] is not None
     assert metrics["recent_event_count_30s"] >= 2
     assert metrics["recent_event_count_5m"] >= 2
+
+
+@pytest.mark.asyncio
+async def test_append_event_retries_transient_locked_database(tmp_path, monkeypatch) -> None:
+    database = Database(tmp_path / "test.db")
+    await database.initialize()
+
+    attempts = {"locked": 0}
+    real_connect = aiosqlite.connect
+
+    class FlakyConnection:
+        def __init__(self, inner) -> None:
+            self._inner = inner
+            self._db = None
+
+        async def __aenter__(self):
+            self._db = await self._inner.__aenter__()
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return await self._inner.__aexit__(exc_type, exc, tb)
+
+        async def execute(self, sql, parameters=()):
+            if "INSERT INTO events" in sql and attempts["locked"] == 0:
+                attempts["locked"] += 1
+                raise sqlite3.OperationalError("database is locked")
+            assert self._db is not None
+            return await self._db.execute(sql, parameters)
+
+        async def commit(self):
+            assert self._db is not None
+            return await self._db.commit()
+
+        def __getattr__(self, name: str):
+            assert self._db is not None
+            return getattr(self._db, name)
+
+    def flaky_connect(*args, **kwargs):
+        return FlakyConnection(real_connect(*args, **kwargs))
+
+    monkeypatch.setattr("openzues.database.aiosqlite.connect", flaky_connect)
+
+    event_id = await database.append_event(
+        instance_id=1,
+        thread_id="thread_retry",
+        method="thread/started",
+        payload={"ok": True},
+    )
+    monkeypatch.setattr("openzues.database.aiosqlite.connect", real_connect)
+    events = await database.list_events()
+
+    assert event_id > 0
+    assert attempts["locked"] == 1
+    assert len(events) == 1
+    assert events[0]["thread_id"] == "thread_retry"
+    assert events[0]["payload"]["ok"] is True
 
 
 @pytest.mark.asyncio

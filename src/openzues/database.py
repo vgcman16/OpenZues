@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import sqlite3
 from collections.abc import Sequence
@@ -15,6 +16,9 @@ THREAD_EVENT_COMPACT_COMMAND_LIMIT = 4096
 THREAD_EVENT_COMPACT_DELTA_LIMIT = 2048
 THREAD_EVENT_COMPACT_TEXT_LIMIT = 2048
 THREAD_EVENT_COMPACT_PROMPT_LIMIT = 1024
+APPEND_EVENT_BUSY_TIMEOUT_SECONDS = 30.0
+APPEND_EVENT_LOCK_RETRY_ATTEMPTS = 5
+APPEND_EVENT_LOCK_RETRY_BASE_DELAY_SECONDS = 0.05
 
 
 def utcnow() -> str:
@@ -150,6 +154,46 @@ class Database:
                     created_at TEXT NOT NULL,
                     resolved_at TEXT,
                     UNIQUE(instance_id, request_id)
+                );
+                CREATE TABLE IF NOT EXISTS gateway_node_pairing_requests (
+                    request_id TEXT PRIMARY KEY,
+                    node_id TEXT NOT NULL,
+                    display_name TEXT,
+                    platform TEXT,
+                    version TEXT,
+                    core_version TEXT,
+                    ui_version TEXT,
+                    device_family TEXT,
+                    model_identifier TEXT,
+                    caps_json TEXT NOT NULL DEFAULT '[]',
+                    commands_json TEXT NOT NULL DEFAULT '[]',
+                    remote_ip TEXT,
+                    silent INTEGER NOT NULL DEFAULT 0,
+                    requested_at_ms INTEGER NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_gateway_node_pairing_requests_node
+                    ON gateway_node_pairing_requests(node_id);
+                CREATE TABLE IF NOT EXISTS gateway_node_paired_nodes (
+                    node_id TEXT PRIMARY KEY,
+                    token TEXT NOT NULL,
+                    display_name TEXT,
+                    platform TEXT,
+                    version TEXT,
+                    core_version TEXT,
+                    ui_version TEXT,
+                    device_family TEXT,
+                    model_identifier TEXT,
+                    caps_json TEXT NOT NULL DEFAULT '[]',
+                    commands_json TEXT NOT NULL DEFAULT '[]',
+                    permissions_json TEXT,
+                    remote_ip TEXT,
+                    created_at_ms INTEGER NOT NULL,
+                    approved_at_ms INTEGER NOT NULL,
+                    last_connected_at_ms INTEGER,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
                 );
                 CREATE TABLE IF NOT EXISTS playbooks (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -573,6 +617,373 @@ class Database:
             cursor = await db.execute("SELECT * FROM instances WHERE id = ?", (instance_id,))
             row = await cursor.fetchone()
             return dict(row) if row else None
+
+    async def update_instance_auto_connect(self, instance_id: int, *, auto_connect: bool) -> None:
+        now = utcnow()
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute(
+                """
+                UPDATE instances
+                SET auto_connect = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (int(auto_connect), now, instance_id),
+            )
+            await db.commit()
+
+    @staticmethod
+    def _gateway_node_pairing_request_row(row: aiosqlite.Row | dict[str, Any]) -> dict[str, Any]:
+        payload = dict(row)
+        return {
+            "request_id": str(payload["request_id"]),
+            "node_id": str(payload["node_id"]),
+            "display_name": payload["display_name"],
+            "platform": payload["platform"],
+            "version": payload["version"],
+            "core_version": payload["core_version"],
+            "ui_version": payload["ui_version"],
+            "device_family": payload["device_family"],
+            "model_identifier": payload["model_identifier"],
+            "caps": Database._decode_json_list(payload.get("caps_json")),
+            "commands": Database._decode_json_list(payload.get("commands_json")),
+            "remote_ip": payload["remote_ip"],
+            "silent": bool(payload["silent"]),
+            "requested_at_ms": int(payload["requested_at_ms"]),
+            "created_at": payload["created_at"],
+            "updated_at": payload["updated_at"],
+        }
+
+    async def list_gateway_node_pairing_requests(self) -> list[dict[str, Any]]:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            rows = await db.execute_fetchall(
+                """
+                SELECT *
+                FROM gateway_node_pairing_requests
+                ORDER BY requested_at_ms DESC, request_id ASC
+                """
+            )
+            return [self._gateway_node_pairing_request_row(row) for row in rows]
+
+    async def get_gateway_node_pairing_request(self, request_id: str) -> dict[str, Any] | None:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT * FROM gateway_node_pairing_requests WHERE request_id = ?",
+                (request_id,),
+            )
+            row = await cursor.fetchone()
+            return self._gateway_node_pairing_request_row(row) if row else None
+
+    async def upsert_gateway_node_pairing_request(
+        self,
+        *,
+        node_id: str,
+        display_name: str | None,
+        platform: str | None,
+        version: str | None,
+        core_version: str | None,
+        ui_version: str | None,
+        device_family: str | None,
+        model_identifier: str | None,
+        caps: Sequence[str],
+        commands: Sequence[str],
+        remote_ip: str | None,
+        silent: bool | None,
+        requested_at_ms: int,
+        request_id: str,
+    ) -> tuple[dict[str, Any], bool]:
+        now = utcnow()
+        caps_json = json.dumps(list(caps))
+        commands_json = json.dumps(list(commands))
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            existing_cursor = await db.execute(
+                """
+                SELECT *
+                FROM gateway_node_pairing_requests
+                WHERE node_id = ?
+                ORDER BY requested_at_ms DESC, request_id ASC
+                LIMIT 1
+                """,
+                (node_id,),
+            )
+            existing = await existing_cursor.fetchone()
+            created = existing is None
+            persisted_request_id = request_id if existing is None else str(existing["request_id"])
+            if created:
+                await db.execute(
+                    """
+                    INSERT INTO gateway_node_pairing_requests (
+                        request_id,
+                        node_id,
+                        display_name,
+                        platform,
+                        version,
+                        core_version,
+                        ui_version,
+                        device_family,
+                        model_identifier,
+                        caps_json,
+                        commands_json,
+                        remote_ip,
+                        silent,
+                        requested_at_ms,
+                        created_at,
+                        updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        persisted_request_id,
+                        node_id,
+                        display_name,
+                        platform,
+                        version,
+                        core_version,
+                        ui_version,
+                        device_family,
+                        model_identifier,
+                        caps_json,
+                        commands_json,
+                        remote_ip,
+                        int(bool(silent)),
+                        requested_at_ms,
+                        now,
+                        now,
+                    ),
+                )
+            else:
+                await db.execute(
+                    """
+                    UPDATE gateway_node_pairing_requests
+                    SET display_name = ?,
+                        platform = ?,
+                        version = ?,
+                        core_version = ?,
+                        ui_version = ?,
+                        device_family = ?,
+                        model_identifier = ?,
+                        caps_json = ?,
+                        commands_json = ?,
+                        remote_ip = ?,
+                        silent = ?,
+                        requested_at_ms = ?,
+                        updated_at = ?
+                    WHERE request_id = ?
+                    """,
+                    (
+                        display_name,
+                        platform,
+                        version,
+                        core_version,
+                        ui_version,
+                        device_family,
+                        model_identifier,
+                        caps_json,
+                        commands_json,
+                        remote_ip,
+                        int(bool(silent)),
+                        requested_at_ms,
+                        now,
+                        persisted_request_id,
+                    ),
+                )
+            await db.commit()
+            stored_cursor = await db.execute(
+                "SELECT * FROM gateway_node_pairing_requests WHERE request_id = ?",
+                (persisted_request_id,),
+            )
+            stored = await stored_cursor.fetchone()
+            if stored is None:
+                raise RuntimeError("Failed to persist gateway node pairing request.")
+            return self._gateway_node_pairing_request_row(stored), created
+
+    async def delete_gateway_node_pairing_request(
+        self,
+        request_id: str,
+    ) -> dict[str, Any] | None:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            existing_cursor = await db.execute(
+                "SELECT * FROM gateway_node_pairing_requests WHERE request_id = ?",
+                (request_id,),
+            )
+            existing = await existing_cursor.fetchone()
+            if existing is None:
+                return None
+            await db.execute(
+                "DELETE FROM gateway_node_pairing_requests WHERE request_id = ?",
+                (request_id,),
+            )
+            await db.commit()
+            return self._gateway_node_pairing_request_row(existing)
+
+    @staticmethod
+    def _gateway_node_paired_node_row(row: aiosqlite.Row | dict[str, Any]) -> dict[str, Any]:
+        payload = dict(row)
+        return {
+            "node_id": str(payload["node_id"]),
+            "token": str(payload["token"]),
+            "display_name": payload["display_name"],
+            "platform": payload["platform"],
+            "version": payload["version"],
+            "core_version": payload["core_version"],
+            "ui_version": payload["ui_version"],
+            "device_family": payload["device_family"],
+            "model_identifier": payload["model_identifier"],
+            "caps": Database._decode_json_list(payload.get("caps_json")),
+            "commands": Database._decode_json_list(payload.get("commands_json")),
+            "permissions": Database._decode_json_object(payload.get("permissions_json")),
+            "remote_ip": payload["remote_ip"],
+            "created_at_ms": int(payload["created_at_ms"]),
+            "approved_at_ms": int(payload["approved_at_ms"]),
+            "last_connected_at_ms": (
+                int(payload["last_connected_at_ms"])
+                if payload["last_connected_at_ms"] is not None
+                else None
+            ),
+            "created_at": payload["created_at"],
+            "updated_at": payload["updated_at"],
+        }
+
+    async def list_gateway_node_paired_nodes(self) -> list[dict[str, Any]]:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            rows = await db.execute_fetchall(
+                """
+                SELECT *
+                FROM gateway_node_paired_nodes
+                ORDER BY approved_at_ms DESC, node_id ASC
+                """
+            )
+            return [self._gateway_node_paired_node_row(row) for row in rows]
+
+    async def get_gateway_node_paired_node(self, node_id: str) -> dict[str, Any] | None:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT * FROM gateway_node_paired_nodes WHERE node_id = ?",
+                (node_id,),
+            )
+            row = await cursor.fetchone()
+            return self._gateway_node_paired_node_row(row) if row else None
+
+    async def upsert_gateway_node_paired_node(
+        self,
+        *,
+        node_id: str,
+        token: str,
+        display_name: str | None,
+        platform: str | None,
+        version: str | None,
+        core_version: str | None,
+        ui_version: str | None,
+        device_family: str | None,
+        model_identifier: str | None,
+        caps: Sequence[str],
+        commands: Sequence[str],
+        permissions: dict[str, bool] | None,
+        remote_ip: str | None,
+        created_at_ms: int,
+        approved_at_ms: int,
+        last_connected_at_ms: int | None,
+    ) -> dict[str, Any]:
+        now = utcnow()
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute(
+                """
+                INSERT INTO gateway_node_paired_nodes (
+                    node_id,
+                    token,
+                    display_name,
+                    platform,
+                    version,
+                    core_version,
+                    ui_version,
+                    device_family,
+                    model_identifier,
+                    caps_json,
+                    commands_json,
+                    permissions_json,
+                    remote_ip,
+                    created_at_ms,
+                    approved_at_ms,
+                    last_connected_at_ms,
+                    created_at,
+                    updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(node_id) DO UPDATE SET
+                    token = excluded.token,
+                    display_name = excluded.display_name,
+                    platform = excluded.platform,
+                    version = excluded.version,
+                    core_version = excluded.core_version,
+                    ui_version = excluded.ui_version,
+                    device_family = excluded.device_family,
+                    model_identifier = excluded.model_identifier,
+                    caps_json = excluded.caps_json,
+                    commands_json = excluded.commands_json,
+                    permissions_json = excluded.permissions_json,
+                    remote_ip = excluded.remote_ip,
+                    created_at_ms = excluded.created_at_ms,
+                    approved_at_ms = excluded.approved_at_ms,
+                    last_connected_at_ms = excluded.last_connected_at_ms,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    node_id,
+                    token,
+                    display_name,
+                    platform,
+                    version,
+                    core_version,
+                    ui_version,
+                    device_family,
+                    model_identifier,
+                    json.dumps(list(caps)),
+                    json.dumps(list(commands)),
+                    json.dumps(permissions) if permissions is not None else None,
+                    remote_ip,
+                    created_at_ms,
+                    approved_at_ms,
+                    last_connected_at_ms,
+                    now,
+                    now,
+                ),
+            )
+            await db.commit()
+        stored = await self.get_gateway_node_paired_node(node_id)
+        if stored is None:
+            raise RuntimeError("Failed to persist gateway node paired node.")
+        return stored
+
+    async def update_gateway_node_paired_node_display_name(
+        self,
+        node_id: str,
+        display_name: str,
+    ) -> dict[str, Any] | None:
+        now = utcnow()
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT * FROM gateway_node_paired_nodes WHERE node_id = ?",
+                (node_id,),
+            )
+            existing = await cursor.fetchone()
+            if existing is None:
+                return None
+            await db.execute(
+                """
+                UPDATE gateway_node_paired_nodes
+                SET display_name = ?, updated_at = ?
+                WHERE node_id = ?
+                """,
+                (display_name, now, node_id),
+            )
+            await db.commit()
+        return await self.get_gateway_node_paired_node(node_id)
 
     async def delete_instance(self, instance_id: int) -> None:
         async with aiosqlite.connect(self.path) as db:
@@ -1231,17 +1642,21 @@ class Database:
     async def list_notification_routes(self) -> list[dict[str, Any]]:
         async with aiosqlite.connect(self.path) as db:
             db.row_factory = aiosqlite.Row
-            rows = await db.execute_fetchall("SELECT * FROM notification_routes ORDER BY id ASC")
-            output = []
-            for row in rows:
-                item = dict(row)
-                item["events"] = json.loads(item.pop("events_json"))
-                conversation_target = item.pop("conversation_target_json", None)
-                item["conversation_target"] = (
-                    json.loads(conversation_target) if conversation_target else None
-                )
-                output.append(item)
-            return output
+            cursor = await db.execute("SELECT * FROM notification_routes ORDER BY id ASC")
+            try:
+                rows = await cursor.fetchall()
+                output = []
+                for row in rows:
+                    item = dict(row)
+                    item["events"] = json.loads(item.pop("events_json"))
+                    conversation_target = item.pop("conversation_target_json", None)
+                    item["conversation_target"] = (
+                        json.loads(conversation_target) if conversation_target else None
+                    )
+                    output.append(item)
+                return output
+            finally:
+                await cursor.close()
 
     async def create_notification_route(
         self,
@@ -1289,9 +1704,12 @@ class Database:
                     now,
                 ),
             )
-            await db.commit()
-            assert cursor.lastrowid is not None
-            return int(cursor.lastrowid)
+            try:
+                await db.commit()
+                assert cursor.lastrowid is not None
+                return int(cursor.lastrowid)
+            finally:
+                await cursor.close()
 
     async def update_notification_route(self, route_id: int, **fields: Any) -> None:
         if "events" in fields:
@@ -1335,22 +1753,28 @@ class Database:
         params.append(limit)
         async with aiosqlite.connect(self.path) as db:
             db.row_factory = aiosqlite.Row
-            rows = await db.execute_fetchall(
+            cursor = await db.execute(
                 f"SELECT * FROM outbound_deliveries {where} ORDER BY id {order} LIMIT ?",
                 params,
             )
-            output: list[dict[str, Any]] = []
-            for row in rows:
-                item = dict(row)
-                item["conversation_target"] = self._decode_json_object(
-                    item.pop("conversation_target_json", None)
-                )
-                item["route_scope"] = self._decode_json_object(item.pop("route_scope_json", None))
-                item["event_payload"] = self._decode_json_object(
-                    item.pop("event_payload_json", None)
-                )
-                output.append(item)
-            return output
+            try:
+                rows = await cursor.fetchall()
+                output: list[dict[str, Any]] = []
+                for row in rows:
+                    item = dict(row)
+                    item["conversation_target"] = self._decode_json_object(
+                        item.pop("conversation_target_json", None)
+                    )
+                    item["route_scope"] = self._decode_json_object(
+                        item.pop("route_scope_json", None)
+                    )
+                    item["event_payload"] = self._decode_json_object(
+                        item.pop("event_payload_json", None)
+                    )
+                    output.append(item)
+                return output
+            finally:
+                await cursor.close()
 
     async def get_outbound_delivery(self, delivery_id: int) -> dict[str, Any] | None:
         async with aiosqlite.connect(self.path) as db:
@@ -1359,16 +1783,21 @@ class Database:
                 "SELECT * FROM outbound_deliveries WHERE id = ?",
                 (delivery_id,),
             )
-            row = await cursor.fetchone()
-            if row is None:
-                return None
-            item = dict(row)
-            item["conversation_target"] = self._decode_json_object(
-                item.pop("conversation_target_json", None)
-            )
-            item["route_scope"] = self._decode_json_object(item.pop("route_scope_json", None))
-            item["event_payload"] = self._decode_json_object(item.pop("event_payload_json", None))
-            return item
+            try:
+                row = await cursor.fetchone()
+                if row is None:
+                    return None
+                item = dict(row)
+                item["conversation_target"] = self._decode_json_object(
+                    item.pop("conversation_target_json", None)
+                )
+                item["route_scope"] = self._decode_json_object(item.pop("route_scope_json", None))
+                item["event_payload"] = self._decode_json_object(
+                    item.pop("event_payload_json", None)
+                )
+                return item
+            finally:
+                await cursor.close()
 
     async def create_outbound_delivery(
         self,
@@ -1437,9 +1866,12 @@ class Database:
                     now,
                 ),
             )
-            await db.commit()
-            assert cursor.lastrowid is not None
-            return int(cursor.lastrowid)
+            try:
+                await db.commit()
+                assert cursor.lastrowid is not None
+                return int(cursor.lastrowid)
+            finally:
+                await cursor.close()
 
     async def update_outbound_delivery(self, delivery_id: int, **fields: Any) -> None:
         if "conversation_target" in fields:
@@ -1948,6 +2380,46 @@ class Database:
             )
             return item
 
+    async def list_thread_child_missions_by_parent_session_key(
+        self,
+        parent_session_key: str,
+        *,
+        instance_id: int | None = None,
+        require_thread: bool = False,
+    ) -> list[dict[str, Any]]:
+        aliases = session_key_lookup_aliases(parent_session_key)
+        if not aliases:
+            return []
+        predicates = " OR ".join("LOWER(TRIM(session_key)) LIKE ?" for _ in aliases)
+        query = [f"SELECT * FROM missions WHERE ({predicates})"]
+        params: list[Any] = [f"{alias}:thread:%" for alias in aliases]
+        if instance_id is not None:
+            query.append("AND instance_id = ?")
+            params.append(instance_id)
+        if require_thread:
+            query.append("AND thread_id IS NOT NULL AND TRIM(thread_id) <> ''")
+        query.extend(
+            [
+                "ORDER BY",
+                "updated_at DESC,",
+                "id DESC",
+            ]
+        )
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute("\n".join(query), params)
+            rows = await cursor.fetchall()
+            items: list[dict[str, Any]] = []
+            for row in rows:
+                item = dict(row)
+                item["swarm"] = self._decode_json_object(item.pop("swarm_state_json", None))
+                item["toolsets"] = self._decode_json_list(item.pop("toolsets_json", "[]"))
+                item["conversation_target"] = self._decode_json_object(
+                    item.pop("conversation_target_json", None)
+                )
+                items.append(item)
+            return items
+
     async def get_latest_mission_by_run_id(
         self,
         run_id: str,
@@ -2089,17 +2561,37 @@ class Database:
         payload: dict[str, Any],
     ) -> int:
         now = utcnow()
-        async with aiosqlite.connect(self.path) as db:
-            cursor = await db.execute(
-                """
-                INSERT INTO events (instance_id, thread_id, method, payload_json, created_at)
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                (instance_id, thread_id, method, json.dumps(payload), now),
-            )
-            await db.commit()
-            assert cursor.lastrowid is not None
-            return int(cursor.lastrowid)
+        for attempt in range(APPEND_EVENT_LOCK_RETRY_ATTEMPTS):
+            try:
+                async with aiosqlite.connect(
+                    self.path,
+                    timeout=APPEND_EVENT_BUSY_TIMEOUT_SECONDS,
+                ) as db:
+                    cursor = await db.execute(
+                        """
+                        INSERT INTO events (
+                            instance_id,
+                            thread_id,
+                            method,
+                            payload_json,
+                            created_at
+                        )
+                        VALUES (?, ?, ?, ?, ?)
+                        """,
+                        (instance_id, thread_id, method, json.dumps(payload), now),
+                    )
+                    await db.commit()
+                    assert cursor.lastrowid is not None
+                    return int(cursor.lastrowid)
+            except sqlite3.OperationalError as exc:
+                if "locked" not in str(exc).lower():
+                    raise
+                if attempt + 1 >= APPEND_EVENT_LOCK_RETRY_ATTEMPTS:
+                    raise
+                await asyncio.sleep(
+                    APPEND_EVENT_LOCK_RETRY_BASE_DELAY_SECONDS * (attempt + 1)
+                )
+        raise RuntimeError("append_event exhausted all retry attempts without raising.")
 
     async def list_events(self, limit: int = 200) -> list[dict[str, Any]]:
         async with aiosqlite.connect(self.path) as db:
@@ -2114,6 +2606,27 @@ class Database:
                 item["payload"] = json.loads(item.pop("payload_json"))
                 output.append(item)
             return list(reversed(output))
+
+    async def get_latest_node_event(self, *, event_name: str) -> dict[str, Any] | None:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                """
+                SELECT *
+                FROM events
+                WHERE method = 'node.event'
+                  AND json_extract(payload_json, '$.event') = ?
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (event_name,),
+            )
+            row = await cursor.fetchone()
+            if row is None:
+                return None
+            item = dict(row)
+            item["payload"] = json.loads(item.pop("payload_json"))
+            return item
 
     async def list_thread_events(
         self,

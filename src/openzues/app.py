@@ -16,7 +16,7 @@ from typing import Any, Literal, cast
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -24,6 +24,7 @@ from openzues import __version__
 from openzues.database import Database
 from openzues.logging_utils import configure_logging
 from openzues.schemas import (
+    BrowserPostureView,
     CommandCreate,
     ControlChatCreate,
     ControlChatResponse,
@@ -51,6 +52,13 @@ from openzues.schemas import (
     GatewayBootstrapView,
     GatewayCapabilityView,
     GatewayMemoryProofRun,
+    GatewayMethodCallRequest,
+    GatewayNodePendingActionAckRequest,
+    GatewayNodePendingActionAckView,
+    GatewayNodePendingActionPullView,
+    GatewayNodePendingWorkDrainView,
+    GatewayNodePendingWorkEnqueueRequest,
+    GatewayNodePendingWorkEnqueueView,
     HermesDoctorView,
     HermesExecutorArmResultView,
     HermesExecutorPreflightView,
@@ -110,7 +118,13 @@ from openzues.schemas import (
     VaultSecretView,
     WorkspaceShellArmRequest,
 )
-from openzues.services.access import AccessService, AuthenticatedOperator, build_access_posture
+from openzues.services.access import (
+    AccessService,
+    AuthenticatedOperator,
+    build_access_posture,
+    resolve_gateway_method_scopes_for_role,
+)
+from openzues.services.browser_posture import build_browser_posture
 from openzues.services.codex_desktop import CodexDesktopService
 from openzues.services.continuity import build_continuity, build_continuity_packet
 from openzues.services.control_chat import (
@@ -138,6 +152,19 @@ from openzues.services.followups import (
 )
 from openzues.services.gateway_bootstrap import GatewayBootstrapService
 from openzues.services.gateway_capability import GatewayCapabilityService
+from openzues.services.gateway_channels import GatewayChannelsService
+from openzues.services.gateway_config import GatewayConfigService
+from openzues.services.gateway_health import GatewayHealthService
+from openzues.services.gateway_identity import GatewayIdentityService
+from openzues.services.gateway_models import GatewayModelsService
+from openzues.services.gateway_node_methods import (
+    GatewayNodeMethodError,
+    GatewayNodeMethodRequester,
+    GatewayNodeMethodService,
+)
+from openzues.services.gateway_node_pairing import GatewayNodePairingService
+from openzues.services.gateway_node_service import GatewayNodeService
+from openzues.services.gateway_voicewake import GatewayVoiceWakeService
 from openzues.services.github import GitHubService
 from openzues.services.hermes_platform import HermesPlatformService
 from openzues.services.hermes_runtime_profile import (
@@ -235,19 +262,32 @@ def _compact_dashboard_checkpoints(
 
 def _compact_dashboard_tool_policy(
     tool_policy: HermesToolPolicyView | None,
+    *,
+    minimal: bool = False,
 ) -> HermesToolPolicyView | None:
     if tool_policy is None:
         return None
     warnings = [
         clipped
         for clipped in (
-            _clip_dashboard_text(str(warning), 180) for warning in tool_policy.warnings[:1]
+            _clip_dashboard_text(str(warning), 180 if not minimal else 120)
+            for warning in tool_policy.warnings[: 1 if not minimal else 0]
         )
         if clipped
     ]
     return tool_policy.model_copy(
         update={
-            "summary": _clip_dashboard_text(tool_policy.summary, 220) or tool_policy.summary,
+            "toolsets": list(tool_policy.toolsets[: (4 if not minimal else 2)]),
+            "capability_families": list(
+                tool_policy.capability_families[: (4 if not minimal else 2)]
+            ),
+            "headline": _clip_dashboard_text(tool_policy.headline, 180)
+            or tool_policy.headline,
+            "summary": _clip_dashboard_text(
+                tool_policy.summary,
+                220 if not minimal else 140,
+            )
+            or tool_policy.summary,
             "warnings": warnings,
         }
     )
@@ -255,10 +295,24 @@ def _compact_dashboard_tool_policy(
 
 def _compact_dashboard_tool_evidence(
     tool_evidence: MissionToolEvidenceView,
+    *,
+    minimal: bool = False,
 ) -> MissionToolEvidenceView:
     return tool_evidence.model_copy(
         update={
-            "summary": _clip_dashboard_text(tool_evidence.summary, 220)
+            "expected_toolsets": list(
+                tool_evidence.expected_toolsets[: (4 if not minimal else 2)]
+            ),
+            "observed_toolsets": list(
+                tool_evidence.observed_toolsets[: (4 if not minimal else 2)]
+            ),
+            "unproven_toolsets": list(
+                tool_evidence.unproven_toolsets[: (4 if not minimal else 2)]
+            ),
+            "summary": _clip_dashboard_text(
+                tool_evidence.summary,
+                220 if not minimal else 140,
+            )
             or tool_evidence.summary,
             "items": [],
         }
@@ -267,6 +321,8 @@ def _compact_dashboard_tool_evidence(
 
 def _compact_dashboard_delegation_brief(
     delegation_brief: MissionDelegationBriefView,
+    *,
+    minimal: bool = False,
 ) -> MissionDelegationBriefView:
     roles = [
         role.model_copy(
@@ -276,13 +332,19 @@ def _compact_dashboard_delegation_brief(
                 "trigger": _clip_dashboard_text(role.trigger, 80),
             }
         )
-        for role in delegation_brief.roles[:2]
+        for role in delegation_brief.roles[: (2 if not minimal else 0)]
     ]
     return delegation_brief.model_copy(
         update={
-            "summary": _clip_dashboard_text(delegation_brief.summary, 220)
+            "summary": _clip_dashboard_text(
+                delegation_brief.summary,
+                220 if not minimal else 140,
+            )
             or delegation_brief.summary,
-            "rationale": _clip_dashboard_text(delegation_brief.rationale, 220),
+            "rationale": _clip_dashboard_text(
+                delegation_brief.rationale,
+                220 if not minimal else 140,
+            ),
             "roles": roles,
         }
     )
@@ -293,23 +355,46 @@ def _compact_dashboard_mission(mission: MissionView) -> MissionView:
         return mission
     return mission.model_copy(
         update={
-            "objective": _clip_dashboard_text(mission.objective, 280) or mission.objective,
-            "last_commentary": _clip_dashboard_text(mission.last_commentary, 320),
-            "commentary_summary": _clip_dashboard_text(mission.commentary_summary, 220),
-            "last_checkpoint": _clip_dashboard_text(mission.last_checkpoint, 420),
-            "charter_summary": _clip_dashboard_text(mission.charter_summary, 220),
-            "scope_drift_summary": _clip_dashboard_text(mission.scope_drift_summary, 220),
-            "charter_focus_terms": list(mission.charter_focus_terms[:4]),
+            "conversation_target": None,
+            "session_key": None,
+            "swarm": None,
+            "toolsets": list(mission.toolsets[:3]),
+            "current_command": None,
+            "objective": _clip_dashboard_text(mission.objective, 180) or mission.objective,
+            "last_commentary": _clip_dashboard_text(mission.last_commentary, 180),
+            "commentary_summary": _clip_dashboard_text(mission.commentary_summary, 140),
+            "last_checkpoint": _clip_dashboard_text(mission.last_checkpoint, 220),
+            "charter_summary": _clip_dashboard_text(mission.charter_summary, 160),
+            "scope_drift_summary": _clip_dashboard_text(mission.scope_drift_summary, 140),
+            "charter_focus_terms": list(mission.charter_focus_terms[:2]),
             "runtime_profile_summary": _clip_dashboard_text(
                 mission.runtime_profile_summary,
-                220,
+                140,
             ),
-            "tool_policy": _compact_dashboard_tool_policy(mission.tool_policy),
-            "tool_evidence": _compact_dashboard_tool_evidence(mission.tool_evidence),
+            "tool_policy": _compact_dashboard_tool_policy(
+                mission.tool_policy,
+                minimal=True,
+            ),
+            "tool_evidence": _compact_dashboard_tool_evidence(
+                mission.tool_evidence,
+                minimal=True,
+            ),
             "delegation_brief": _compact_dashboard_delegation_brief(
-                mission.delegation_brief
+                mission.delegation_brief,
+                minimal=True,
             ),
-            "checkpoints": _compact_dashboard_checkpoints(mission.checkpoints),
+            "live_telemetry": mission.live_telemetry.model_copy(
+                update={
+                    "summary": _clip_dashboard_text(mission.live_telemetry.summary, 120)
+                    or mission.live_telemetry.summary,
+                    "last_thread_event_at": None,
+                    "recent_event_count_30s": 0,
+                    "recent_event_count_5m": 0,
+                    "recent_output_delta_count_30s": 0,
+                    "recent_turn_activity_count_30s": 0,
+                }
+            ),
+            "checkpoints": _compact_dashboard_checkpoints(mission.checkpoints[:1]),
         }
     )
 
@@ -447,6 +532,8 @@ def build_brief(
     instances: list[InstanceView],
     missions: list[MissionView],
     projects: list[ProjectView],
+    *,
+    browser_posture: BrowserPostureView | None = None,
 ) -> DashboardBriefView:
     connected = sum(1 for instance in instances if instance.connected)
     blocked = operator_blocked_missions(missions)
@@ -465,6 +552,16 @@ def build_brief(
         next_actions.append("Register a project so missions can target a real workspace.")
     if not missions:
         next_actions.append("Launch a mission from a preset to start a durable build loop.")
+    if browser_posture is not None and browser_posture.status != "ready":
+        browser_action = str(browser_posture.recommended_action or "").strip()
+        if browser_action:
+            if browser_action in next_actions:
+                next_actions.remove(browser_action)
+            if browser_posture.status == "warn":
+                insert_at = 1 if focus is not None and next_actions else 0
+                next_actions.insert(min(insert_at, len(next_actions)), browser_action)
+            else:
+                next_actions.append(browser_action)
 
     status: Literal["idle", "active", "blocked", "mixed"]
     if blocked:
@@ -483,6 +580,8 @@ def build_brief(
         summary = (
             "Launch a mission, start a thread manually, or prepare the workspace for the next run."
         )
+        if browser_posture is not None and browser_posture.status == "warn":
+            summary += " Browser-led verification still needs attention."
     else:
         status = "mixed"
         headline = "OpenZues is ready to reconnect"
@@ -502,6 +601,7 @@ def build_radar(
     missions: list[MissionView],
     projects: list[ProjectView],
     *,
+    browser_posture: BrowserPostureView | None = None,
     gateway_capability: GatewayCapabilityView | None = None,
 ) -> DashboardRadarView:
     signals: list[DashboardSignalView] = []
@@ -580,6 +680,16 @@ def build_radar(
             title=gateway_capability.headline,
             detail=gateway_capability.summary,
             action=_gateway_planning_action(gateway_capability),
+        )
+
+    if browser_posture is not None and browser_posture.status == "warn":
+        add_signal(
+            "browser/posture",
+            lane="reliability",
+            level="warn",
+            title=browser_posture.headline,
+            detail=browser_posture.summary,
+            action=browser_posture.recommended_action,
         )
 
     for mission in missions:
@@ -1450,6 +1560,10 @@ def build_launchpad(
     )
 
 
+def _control_plane_url(app_settings: Settings) -> str:
+    return f"http://{app_settings.host}:{app_settings.port}"
+
+
 def build_operator_status_payload(
     dashboard: DashboardView | SimpleNamespace,
 ) -> dict[str, object]:
@@ -1487,6 +1601,11 @@ def build_operator_status_payload(
             "connected_count": connected_count,
             "total_count": len(dashboard.instances),
         },
+        "browser_posture": (
+            dashboard.browser_posture.model_dump(mode="json")
+            if getattr(dashboard, "browser_posture", None) is not None
+            else None
+        ),
         "gateway_capability": dashboard.gateway_capability.model_dump(mode="json"),
         "radar": dashboard.radar.model_dump(mode="json"),
         "launchpad": dashboard.launchpad.model_dump(mode="json"),
@@ -1526,12 +1645,15 @@ def create_app(
     vault_service: VaultService | None = None,
     access_service: AccessService | None = None,
     gateway_capability_service: GatewayCapabilityService | None = None,
+    gateway_node_service: GatewayNodeService | None = None,
+    gateway_node_method_service: GatewayNodeMethodService | None = None,
     gateway_bootstrap_service: GatewayBootstrapService | None = None,
     remote_ops_service: RemoteOpsService | None = None,
     control_chat_service: ControlChatService | None = None,
     control_plane_lease: ControlPlaneLease | None = None,
 ) -> FastAPI:
     active_settings = app_settings or settings
+    app_started_at = perf_counter()
     configure_hermes_skill_catalog(active_settings.hermes_source_path)
     configure_ecc_catalog(active_settings.ecc_source_path)
     active_database = database or Database(active_settings.effective_db_path)
@@ -1557,6 +1679,50 @@ def create_app(
     active_launch_routing_service = LaunchRoutingService(
         active_database,
         active_manager,
+    )
+    active_gateway_node_pairing_service = GatewayNodePairingService(active_database)
+    active_gateway_identity_service = GatewayIdentityService(active_settings.data_dir)
+    active_gateway_voicewake_service = GatewayVoiceWakeService(active_settings.data_dir)
+    active_gateway_config_service = GatewayConfigService(
+        assistant_name=active_settings.app_name,
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id=CONTROL_UI_ASSISTANT_AGENT_ID,
+        server_version=__version__,
+        local_media_preview_roots=[],
+        embed_sandbox="scripts",
+        allow_external_embed_urls=False,
+    )
+
+    async def list_gateway_notification_route_views() -> list[NotificationRouteView]:
+        return await active_ops_mesh_service.list_notification_route_views()
+
+    active_gateway_channels_service = GatewayChannelsService(
+        list_notification_route_views=list_gateway_notification_route_views
+    )
+    active_gateway_health_service = GatewayHealthService(
+        control_plane_role=lambda: fastapi_app.state.control_plane_role,
+        owner_pid=lambda: fastapi_app.state.control_plane_owner_pid,
+        lock_path=lambda: fastapi_app.state.control_plane_lock_path,
+        runtime_update_snapshot=lambda: active_runtime_update_service.snapshot(),
+    )
+    active_gateway_node_service = gateway_node_service or GatewayNodeService(
+        active_manager,
+        pairing_service=active_gateway_node_pairing_service,
+        voicewake_service=active_gateway_voicewake_service,
+    )
+    active_gateway_node_method_service = gateway_node_method_service or GatewayNodeMethodService(
+        active_gateway_node_service.registry,
+        database=active_database,
+        hub=active_hub,
+        pairing_service=active_gateway_node_pairing_service,
+        channels_service=active_gateway_channels_service,
+        config_service=active_gateway_config_service,
+        health_service=active_gateway_health_service,
+        gateway_identity_service=active_gateway_identity_service,
+        models_service=GatewayModelsService(list_instance_views=active_manager.list_views),
+        voicewake_service=active_gateway_voicewake_service,
+        sync=active_gateway_node_service.sync,
+        wake_node=active_gateway_node_service.wake_node,
     )
     active_gateway_bootstrap_service = gateway_bootstrap_service or GatewayBootstrapService(
         active_database,
@@ -1751,10 +1917,13 @@ def create_app(
     fastapi_app.state.control_chat_service = active_control_chat_service
     fastapi_app.state.onboarding_service = active_onboarding_service
     fastapi_app.state.gateway_capability_service = active_gateway_capability_service
+    fastapi_app.state.gateway_node_service = active_gateway_node_service
+    fastapi_app.state.gateway_node_method_service = active_gateway_node_method_service
     fastapi_app.state.recall_service = active_recall_service
     fastapi_app.state.hermes_platform_service = active_hermes_platform_service
     fastapi_app.state.gateway_bootstrap_service = active_gateway_bootstrap_service
     fastapi_app.state.setup_service = active_setup_service
+    fastapi_app.state.access_service = active_access_service
     fastapi_app.state.control_plane_role = "leader"
     fastapi_app.state.control_plane_owner_pid = None
     fastapi_app.state.control_plane_lock_path = str(active_control_plane_lease.path)
@@ -2004,6 +2173,11 @@ def create_app(
         access_posture = build_access_posture(teams, operators, remote_requests)
         doctrines = build_doctrines(missions, projects)
         preferred_memory_provider, preferred_executor = runtime_preferences
+        browser_posture = build_browser_posture(
+            control_plane_url=_control_plane_url(active_settings),
+            gateway_bootstrap=gateway_bootstrap,
+            gateway_capability=gateway_capability,
+        )
         economy = build_economy(missions, projects, task_blueprints, remote_requests)
         interference = build_interference(
             missions,
@@ -2014,7 +2188,12 @@ def create_app(
         )
         dashboard_missions = _compact_dashboard_missions(missions)
         dashboard_view = DashboardView(
-            brief=build_brief(instances, missions, projects),
+            brief=build_brief(
+                instances,
+                missions,
+                projects,
+                browser_posture=browser_posture,
+            ),
             control_chat=empty_control_chat_view(),
             attention_queue=empty_attention_queue_view(),
             launchpad=build_launchpad(
@@ -2030,8 +2209,10 @@ def create_app(
                 instances,
                 missions,
                 projects,
+                browser_posture=browser_posture,
                 gateway_capability=gateway_capability,
             ),
+            browser_posture=browser_posture,
             gateway_capability=gateway_capability,
             gateway_bootstrap=gateway_bootstrap,
             ops_mesh=build_ops_mesh(
@@ -2199,12 +2380,14 @@ def create_app(
             _instances,
             mission_rows,
             gateway_capability,
+            gateway_bootstrap,
             runtime_preferences,
         ) = await asyncio.gather(
             active_database.list_projects(),
             active_manager.list_views(),
             active_database.list_missions(),
             build_gateway_capability(),
+            active_gateway_bootstrap_service.get_view(),
             load_saved_runtime_preferences(active_database),
         )
         instances = await active_manager.list_views()
@@ -2212,8 +2395,18 @@ def create_app(
         missions = _status_mission_views(mission_rows, instances=instances, projects=projects)
         doctrines = build_doctrines(missions, projects)
         preferred_memory_provider, preferred_executor = runtime_preferences
+        browser_posture = build_browser_posture(
+            control_plane_url=_control_plane_url(active_settings),
+            gateway_bootstrap=gateway_bootstrap,
+            gateway_capability=gateway_capability,
+        )
         status_dashboard = SimpleNamespace(
-            brief=build_brief(instances, missions, projects),
+            brief=build_brief(
+                instances,
+                missions,
+                projects,
+                browser_posture=browser_posture,
+            ),
             instances=instances,
             missions=missions,
             launchpad=build_launchpad(
@@ -2229,9 +2422,12 @@ def create_app(
                 instances,
                 missions,
                 projects,
+                browser_posture=browser_posture,
                 gateway_capability=gateway_capability,
             ),
+            browser_posture=browser_posture,
             gateway_capability=gateway_capability,
+            gateway_bootstrap=gateway_bootstrap,
         )
         return build_operator_status_payload(status_dashboard)
 
@@ -2321,6 +2517,91 @@ def create_app(
             return
         await require_remote_operator(request, permission)
 
+    async def resolve_gateway_node_method_requester(
+        request: Request,
+    ) -> GatewayNodeMethodRequester:
+        host = request.client.host if request.client is not None else None
+        if _is_loopback_host(host):
+            return GatewayNodeMethodRequester()
+        auth = await require_remote_operator(request, "dashboard.read")
+        return GatewayNodeMethodRequester(
+            caller_scopes=resolve_gateway_method_scopes_for_role(auth.operator.role)
+        )
+
+    def extract_gateway_node_token(headers: dict[str, str]) -> str | None:
+        authorization = headers.get("authorization") or headers.get("Authorization")
+        if authorization:
+            prefix = "bearer "
+            if authorization.lower().startswith(prefix):
+                candidate = authorization[len(prefix) :].strip()
+                if candidate:
+                    return candidate
+        return headers.get("x-openzues-node-token") or headers.get("X-OpenZues-Node-Token")
+
+    async def resolve_scoped_gateway_node_requester(
+        request: Request,
+        node_id: str,
+    ) -> GatewayNodeMethodRequester:
+        host = request.client.host if request.client is not None else None
+        if _is_loopback_host(host):
+            return GatewayNodeMethodRequester(node_id=node_id)
+        token = extract_gateway_node_token(dict(request.headers))
+        if not token:
+            raise HTTPException(
+                status_code=401,
+                detail=(
+                    "Remote node control requires a node token via Authorization: "
+                    "Bearer <token> or X-OpenZues-Node-Token."
+                ),
+            )
+        verification = await active_gateway_node_pairing_service.verify(node_id, token)
+        if verification.get("ok") is not True:
+            raise HTTPException(status_code=401, detail="Unknown node token.")
+        return GatewayNodeMethodRequester(node_id=node_id)
+
+    def build_readiness_payload() -> dict[str, Any]:
+        ready = fastapi_app.state.control_plane_role == "leader"
+        return {
+            "ready": ready,
+            "failing": [] if ready else ["control-plane"],
+            "uptimeMs": max(0, round((perf_counter() - app_started_at) * 1000)),
+        }
+
+    async def can_reveal_readiness_details(request: Request) -> bool:
+        host = request.client.host if request.client is not None else None
+        if _is_loopback_host(host):
+            return True
+        api_key = active_access_service.extract_api_key(dict(request.headers))
+        if not api_key:
+            return False
+        try:
+            await active_access_service.authenticate_api_key(api_key, permission="dashboard.read")
+        except (PermissionError, ValueError):
+            return False
+        return True
+
+    async def readiness_response(request: Request) -> Response:
+        readiness = build_readiness_payload()
+        status_code = 200 if readiness["ready"] else 503
+        if request.method == "HEAD":
+            return Response(status_code=status_code)
+        content = readiness if await can_reveal_readiness_details(request) else {
+            "ready": readiness["ready"]
+        }
+        return JSONResponse(status_code=status_code, content=content)
+
+    @fastapi_app.get("/healthz", include_in_schema=False)
+    async def healthz() -> dict[str, object]:
+        return {"ok": True, "status": "live"}
+
+    @fastapi_app.get("/ready", include_in_schema=False)
+    async def ready(request: Request) -> Response:
+        return await readiness_response(request)
+
+    @fastapi_app.api_route("/readyz", methods=["GET", "HEAD"], include_in_schema=False)
+    async def readyz(request: Request) -> Response:
+        return await readiness_response(request)
+
     @fastapi_app.get("/", response_class=HTMLResponse)
     async def index(request: Request) -> HTMLResponse:
         asset_version = max(
@@ -2350,19 +2631,19 @@ def create_app(
         base_path = _normalize_control_ui_base_path(
             cast(str | None, request.scope.get("root_path"))
         )
-        assistant_avatar = (
-            f"{base_path}/static/favicon.svg" if base_path else "/static/favicon.svg"
-        )
-        return ControlUiBootstrapConfigView(
+        config_service = GatewayConfigService(
             base_path=base_path,
             assistant_name=active_settings.app_name,
-            assistant_avatar=assistant_avatar,
+            assistant_avatar=(
+                f"{base_path}/static/favicon.svg" if base_path else "/static/favicon.svg"
+            ),
             assistant_agent_id=CONTROL_UI_ASSISTANT_AGENT_ID,
             server_version=__version__,
             local_media_preview_roots=[],
             embed_sandbox="scripts",
             allow_external_embed_urls=False,
         )
+        return ControlUiBootstrapConfigView.model_validate(config_service.build_snapshot())
 
     @fastapi_app.get("/api/health")
     async def health() -> dict[str, Any]:
@@ -2791,6 +3072,112 @@ def create_app(
     @fastapi_app.get("/api/gateway/capability", response_model=GatewayCapabilityView)
     async def get_gateway_capability() -> GatewayCapabilityView:
         return await build_gateway_capability()
+
+    @fastapi_app.get("/api/gateway/nodes")
+    async def get_gateway_nodes() -> dict[str, Any]:
+        return (await active_gateway_node_service.get_catalog_view()).model_dump(
+            mode="json",
+            by_alias=True,
+        )
+
+    @fastapi_app.get("/api/gateway/nodes/{node_id}")
+    async def get_gateway_node(node_id: str) -> dict[str, Any]:
+        node = await active_gateway_node_service.get_node_view(node_id)
+        if node is None:
+            raise HTTPException(status_code=404, detail=f"Unknown node {node_id}")
+        return node.model_dump(mode="json", by_alias=True)
+
+    @fastapi_app.get(
+        "/api/gateway/nodes/{node_id}/pending-actions",
+        response_model=GatewayNodePendingActionPullView,
+    )
+    async def get_gateway_node_pending_actions(node_id: str) -> GatewayNodePendingActionPullView:
+        try:
+            return await active_gateway_node_service.get_pending_action_view(node_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=f"Unknown node {node_id}") from exc
+
+    @fastapi_app.post(
+        "/api/gateway/nodes/{node_id}/pending-actions/ack",
+        response_model=GatewayNodePendingActionAckView,
+    )
+    async def ack_gateway_node_pending_actions(
+        node_id: str,
+        payload: GatewayNodePendingActionAckRequest,
+    ) -> GatewayNodePendingActionAckView:
+        try:
+            return await active_gateway_node_service.ack_pending_actions(node_id, payload.ids)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=f"Unknown node {node_id}") from exc
+
+    @fastapi_app.get(
+        "/api/gateway/nodes/{node_id}/pending-work",
+        response_model=GatewayNodePendingWorkDrainView,
+    )
+    async def get_gateway_node_pending_work(
+        node_id: str,
+        max_items: int | None = None,
+    ) -> GatewayNodePendingWorkDrainView:
+        try:
+            return await active_gateway_node_service.get_pending_work_view(
+                node_id,
+                max_items=max_items,
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=f"Unknown node {node_id}") from exc
+
+    @fastapi_app.post(
+        "/api/gateway/nodes/{node_id}/pending-work",
+        response_model=GatewayNodePendingWorkEnqueueView,
+    )
+    async def enqueue_gateway_node_pending_work(
+        node_id: str,
+        payload: GatewayNodePendingWorkEnqueueRequest,
+    ) -> GatewayNodePendingWorkEnqueueView:
+        try:
+            return await active_gateway_node_service.enqueue_pending_work(
+                node_id,
+                work_type=payload.type,
+                priority=payload.priority,
+                expires_in_ms=payload.expires_in_ms,
+                payload=payload.payload,
+                wake=payload.wake,
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=f"Unknown node {node_id}") from exc
+
+    @fastapi_app.post("/api/gateway/node-methods/call")
+    async def call_gateway_node_method(
+        request: Request,
+        payload: GatewayMethodCallRequest,
+    ) -> dict[str, Any]:
+        try:
+            return await active_gateway_node_method_service.call(
+                payload.method,
+                payload.params,
+                requester=await resolve_gateway_node_method_requester(request),
+            )
+        except GatewayNodeMethodError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @fastapi_app.post("/api/gateway/nodes/{node_id}/method-call")
+    async def call_gateway_node_method_as_node(
+        request: Request,
+        node_id: str,
+        payload: GatewayMethodCallRequest,
+    ) -> dict[str, Any]:
+        try:
+            return await active_gateway_node_method_service.call(
+                payload.method,
+                payload.params,
+                requester=await resolve_scoped_gateway_node_requester(request, node_id),
+            )
+        except GatewayNodeMethodError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @fastapi_app.post("/api/gateway/memory/prove", response_model=MissionView)
     async def run_gateway_memory_proof(

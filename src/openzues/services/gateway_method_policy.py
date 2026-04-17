@@ -3,6 +3,11 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 
+from openzues.schemas import (
+    GatewayCapabilityMethodCatalogView,
+    GatewayCapabilityMethodScopeView,
+)
+
 ADMIN_GATEWAY_METHOD_SCOPE = "operator.admin"
 READ_GATEWAY_METHOD_SCOPE = "operator.read"
 WRITE_GATEWAY_METHOD_SCOPE = "operator.write"
@@ -358,6 +363,62 @@ def list_known_gateway_events() -> tuple[str, ...]:
     return tuple(ordered_events)
 
 
+def build_known_gateway_method_catalog() -> GatewayCapabilityMethodCatalogView:
+    tools = list(list_known_gateway_methods())
+    classified_methods = classify_gateway_methods(tools)
+    scope_groups = [
+        GatewayCapabilityMethodScopeView(
+            scope=scope,
+            method_count=len(methods),
+            methods=methods,
+        )
+        for scope in ORDERED_OPERATOR_SCOPES
+        if (methods := classified_methods.get(scope))
+    ]
+    if node_methods := sorted(
+        (method for method in tools if is_node_role_gateway_method(method)),
+        key=str.lower,
+    ):
+        scope_groups.append(
+            GatewayCapabilityMethodScopeView(
+                scope=NODE_ROLE_GATEWAY_METHOD_SCOPE,
+                method_count=len(node_methods),
+                methods=node_methods,
+            )
+        )
+    reserved_tools = [method for method in tools if is_reserved_admin_gateway_method(method)]
+    summary = (
+        f"{len(tools)} built-in gateway method(s) are registered locally while "
+        "lane-published MCP catalogs are offline."
+    )
+    if scope_groups:
+        scope_summary = ", ".join(
+            f"{group.scope} {group.method_count}" for group in scope_groups
+        )
+        summary += f" Scope coverage: {scope_summary}."
+    if reserved_tools:
+        summary += (
+            f" {len(reserved_tools)} reserved admin method(s) require "
+            f"{RESERVED_ADMIN_GATEWAY_METHOD_SCOPE}."
+        )
+    return GatewayCapabilityMethodCatalogView(
+        headline="Gateway method registry is staged",
+        summary=summary,
+        tool_count=len(tools),
+        server_count=0,
+        lane_count=0,
+        classified_method_count=sum(group.method_count for group in scope_groups),
+        reserved_admin_method_count=len(reserved_tools),
+        reserved_admin_scope=(
+            RESERVED_ADMIN_GATEWAY_METHOD_SCOPE if reserved_tools else None
+        ),
+        tools=tools,
+        servers=[],
+        reserved_admin_methods=reserved_tools,
+        scopes=scope_groups,
+    )
+
+
 def authorize_operator_scopes_for_method(
     method: str,
     scopes: Iterable[str],
@@ -371,7 +432,10 @@ def authorize_operator_scopes_for_method(
         or ADMIN_GATEWAY_METHOD_SCOPE
     )
     if required_scope == READ_GATEWAY_METHOD_SCOPE:
-        if READ_GATEWAY_METHOD_SCOPE in normalized_scopes or WRITE_GATEWAY_METHOD_SCOPE in normalized_scopes:
+        if (
+            READ_GATEWAY_METHOD_SCOPE in normalized_scopes
+            or WRITE_GATEWAY_METHOD_SCOPE in normalized_scopes
+        ):
             return GatewayMethodAuthorization(allowed=True)
         return GatewayMethodAuthorization(
             allowed=False,

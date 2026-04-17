@@ -343,6 +343,10 @@ _SPEC_BY_NAME = {spec.name: spec for spec in _SPECS}
 _ALIASES = {alias: spec.name for spec in _SPECS for alias in spec.aliases}
 
 
+def iter_hermes_toolset_specs() -> tuple[HermesToolsetSpec, ...]:
+    return _SPECS
+
+
 def _dedupe(values: Iterable[str]) -> list[str]:
     seen: set[str] = set()
     ordered: list[str] = []

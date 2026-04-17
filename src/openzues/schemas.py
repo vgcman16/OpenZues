@@ -721,7 +721,7 @@ class GatewayCapabilityConnectedLaneHealthView(BaseModel):
 
 
 class GatewayCapabilityInventoryItemView(BaseModel):
-    kind: Literal["app", "plugin", "mcp_server"]
+    kind: Literal["app", "plugin", "mcp_server", "service"]
     name: str
     ready_lane_count: int = 0
     total_lane_count: int = 0
@@ -771,12 +771,167 @@ class GatewayCapabilityEventCatalogView(BaseModel):
     events: list[str] = Field(default_factory=list)
 
 
+class GatewayCapabilityKnownNodeView(BaseModel):
+    node_id: str
+    display_name: str | None = None
+    platform: str | None = None
+    version: str | None = None
+    core_version: str | None = None
+    ui_version: str | None = None
+    client_id: str | None = None
+    client_mode: str | None = None
+    remote_ip: str | None = None
+    device_family: str | None = None
+    model_identifier: str | None = None
+    path_env: str | None = None
+    caps: list[str] = Field(default_factory=list)
+    commands: list[str] = Field(default_factory=list)
+    permissions: dict[str, bool] | None = None
+    paired: bool = False
+    connected: bool = True
+    connected_at_ms: int | None = None
+    approved_at_ms: int | None = None
+
+
+class GatewayCapabilityNodeCatalogView(BaseModel):
+    headline: str
+    summary: str
+    node_count: int = 0
+    connected_count: int = 0
+    paired_count: int = 0
+    nodes: list[GatewayCapabilityKnownNodeView] = Field(default_factory=list)
+
+
+class GatewayMethodCallRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    method: str
+    params: dict[str, Any] = Field(default_factory=dict)
+
+
+class GatewayNodePendingActionView(BaseModel):
+    id: str
+    command: str
+    params_json: str | None = Field(default=None, alias="paramsJSON")
+    enqueued_at_ms: int = Field(alias="enqueuedAtMs")
+
+
+class GatewayNodePendingActionPullView(BaseModel):
+    node_id: str = Field(alias="nodeId")
+    actions: list[GatewayNodePendingActionView] = Field(default_factory=list)
+
+
+class GatewayNodePendingActionAckRequest(BaseModel):
+    ids: list[str] = Field(default_factory=list)
+
+
+class GatewayNodePendingActionAckView(BaseModel):
+    node_id: str = Field(alias="nodeId")
+    acked_ids: list[str] = Field(default_factory=list, alias="ackedIds")
+    remaining_count: int = Field(default=0, alias="remainingCount")
+
+
+GatewayNodePendingWorkType = Literal["status.request", "location.request"]
+GatewayNodePendingWorkPriority = Literal["default", "normal", "high"]
+
+
+class GatewayNodePendingWorkItemView(BaseModel):
+    id: str
+    type: GatewayNodePendingWorkType
+    priority: GatewayNodePendingWorkPriority
+    created_at_ms: int = Field(alias="createdAtMs")
+    expires_at_ms: int | None = Field(default=None, alias="expiresAtMs")
+    payload: dict[str, Any] | None = None
+
+
+class GatewayNodePendingWorkDrainView(BaseModel):
+    node_id: str = Field(alias="nodeId")
+    revision: int = 0
+    items: list[GatewayNodePendingWorkItemView] = Field(default_factory=list)
+    has_more: bool = Field(default=False, alias="hasMore")
+
+
+class GatewayNodePendingWorkEnqueueRequest(BaseModel):
+    type: GatewayNodePendingWorkType
+    priority: GatewayNodePendingWorkPriority | None = None
+    expires_in_ms: int | None = Field(default=None, alias="expiresInMs")
+    payload: dict[str, Any] | None = None
+    wake: bool | None = None
+
+
+class GatewayNodePendingWorkEnqueueView(BaseModel):
+    node_id: str = Field(alias="nodeId")
+    revision: int = 0
+    queued: GatewayNodePendingWorkItemView
+    wake_triggered: bool = Field(default=False, alias="wakeTriggered")
+
+
+class GatewayCapabilityBrowserLaneView(BaseModel):
+    instance_id: int
+    instance_name: str
+    connected: bool = False
+    level: SignalLevel = "info"
+    ready: bool = False
+    method_count: int = 0
+    service_count: int = 0
+    methods: list[str] = Field(default_factory=list)
+    services: list[str] = Field(default_factory=list)
+    plugins: list[str] = Field(default_factory=list)
+    servers: list[str] = Field(default_factory=list)
+    summary: str
+
+
+class GatewayCapabilityBrowserRuntimeView(BaseModel):
+    headline: str
+    summary: str
+    status: SignalLevel = "info"
+    lane_count: int = 0
+    connected_lane_count: int = 0
+    ready_lane_count: int = 0
+    method_count: int = 0
+    service_count: int = 0
+    plugin_count: int = 0
+    server_count: int = 0
+    methods: list[str] = Field(default_factory=list)
+    services: list[str] = Field(default_factory=list)
+    plugins: list[str] = Field(default_factory=list)
+    servers: list[str] = Field(default_factory=list)
+    recommended_action: str | None = None
+    lanes: list[GatewayCapabilityBrowserLaneView] = Field(default_factory=list)
+
+
+class BrowserToolStatusView(BaseModel):
+    available: bool
+    command: str | None = None
+    summary: str
+
+
+class BrowserSurfaceSummaryView(BaseModel):
+    status: str
+    headline: str
+    summary: str
+
+
+class BrowserPostureView(BaseModel):
+    status: SignalLevel = "info"
+    headline: str
+    summary: str
+    control_plane_url: str
+    local_agent_browser: BrowserToolStatusView
+    saved_launch: BrowserSurfaceSummaryView | None = None
+    saved_launch_browser_runtime: GatewayCapabilityBrowserRuntimeView | None = None
+    live_gateway: BrowserSurfaceSummaryView | None = None
+    live_gateway_browser_runtime: GatewayCapabilityBrowserRuntimeView | None = None
+    recommended_action: str | None = None
+
+
 class GatewayCapabilityInventoryView(BaseModel):
     headline: str
     summary: str
     app_count: int = 0
     plugin_count: int = 0
     mcp_server_count: int = 0
+    service_count: int = 0
     tracked_ready_count: int = 0
     tracked_gap_count: int = 0
     tracked_count: int = 0
@@ -792,6 +947,8 @@ class GatewayCapabilityInventoryView(BaseModel):
     memory_proof_launch_label: str | None = None
     method_catalog: GatewayCapabilityMethodCatalogView | None = None
     event_catalog: GatewayCapabilityEventCatalogView | None = None
+    node_catalog: GatewayCapabilityNodeCatalogView | None = None
+    browser_runtime: GatewayCapabilityBrowserRuntimeView | None = None
     items: list[GatewayCapabilityInventoryItemView] = Field(default_factory=list)
 
 
@@ -1319,12 +1476,17 @@ class GatewayBootstrapRuntimeInventoryView(BaseModel):
     app_count: int = 0
     plugin_count: int = 0
     mcp_server_count: int = 0
+    service_count: int = 0
     base_method_count: int = 0
+    resolved_method_count: int = 0
     app_names: list[str] = Field(default_factory=list)
     plugin_names: list[str] = Field(default_factory=list)
     mcp_server_names: list[str] = Field(default_factory=list)
+    service_names: list[str] = Field(default_factory=list)
     base_methods: list[str] = Field(default_factory=list)
+    resolved_methods: list[str] = Field(default_factory=list)
     method_catalog: GatewayCapabilityMethodCatalogView | None = None
+    browser_runtime: GatewayCapabilityBrowserRuntimeView | None = None
 
 
 class ConversationTargetView(BaseModel):
@@ -2308,6 +2470,7 @@ class DashboardView(BaseModel):
     attention_queue: DashboardAttentionQueueView
     launchpad: DashboardLaunchpadView
     radar: DashboardRadarView
+    browser_posture: BrowserPostureView | None = None
     gateway_capability: GatewayCapabilityView
     gateway_bootstrap: GatewayBootstrapView
     ops_mesh: DashboardOpsMeshView
