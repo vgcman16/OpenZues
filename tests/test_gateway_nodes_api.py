@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 import shutil
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -20,7 +21,9 @@ from openzues.services.gateway_node_registry import (
 from openzues.services.gateway_node_service import GatewayNodeService
 from openzues.services.gateway_voicewake import GatewayVoiceWakeService
 from openzues.services.hermes_skills import configure_hermes_skill_catalog
+from openzues.services.hub import BroadcastHub
 from openzues.services.manager import InstanceRuntime
+from openzues.services.session_keys import build_launch_session_key, resolve_thread_session_keys
 from openzues.settings import Settings
 
 
@@ -77,6 +80,28 @@ class _FakeManager:
 
     async def list_views(self) -> list[SimpleNamespace]:
         return self._instances
+
+
+class _FakeOpsMeshService:
+    def __init__(self) -> None:
+        self.calls: list[tuple[int, str]] = []
+        self.deleted_task_ids: list[int] = []
+
+    async def run_task_blueprint_now(self, task_id: int, *, trigger: str = "manual") -> object:
+        self.calls.append((task_id, trigger))
+        return SimpleNamespace(id=52)
+
+    async def delete_task_blueprint(self, task_id: int) -> None:
+        self.deleted_task_ids.append(task_id)
+
+    async def list_notification_route_views(self) -> list[object]:
+        return []
+
+    async def handle_mission_event(self, event_type: str, event: dict[str, object]) -> None:
+        del event_type, event
+
+    async def close(self) -> None:
+        return None
 
 
 def _register_known_live_node(
@@ -1458,12 +1483,14 @@ def test_gateway_node_method_call_endpoint_supports_chat_history() -> None:
             database.append_control_chat_message(
                 role="user",
                 content="Need the latest parity checkpoint.",
+                session_key="openzues:thread:demo",
             )
         )
         asyncio.run(
             database.append_control_chat_message(
                 role="assistant",
                 content="The status bridge is landed and verified.",
+                session_key="openzues:thread:demo",
             )
         )
         response = client.post(
@@ -1525,6 +1552,2432 @@ def test_gateway_node_method_call_endpoint_supports_chat_send() -> None:
     assert response.json() == {"runId": "run-chat-send-1", "status": "ok"}
     assert [message["role"] for message in messages[-2:]] == ["user", "assistant"]
     assert messages[-2]["content"] == "status"
+    assert [message["session_key"] for message in messages[-2:]] == [
+        "openzues:thread:demo",
+        "openzues:thread:demo",
+    ]
+
+
+def test_gateway_node_method_call_endpoint_supports_sessions_send() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-send-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.send",
+                "params": {
+                    "key": "openzues:thread:demo",
+                    "message": "status",
+                    "thinking": "low",
+                    "timeoutMs": 30_000,
+                    "idempotencyKey": "run-session-send-1",
+                },
+            },
+        )
+        messages = asyncio.run(client.app.state.database.list_control_chat_messages())
+
+    assert response.status_code == 200
+    assert response.json() == {"runId": "run-session-send-1", "status": "ok"}
+    assert [message["role"] for message in messages[-2:]] == ["user", "assistant"]
+    assert messages[-2]["content"] == "status"
+    assert [message["session_key"] for message in messages[-2:]] == [
+        "openzues:thread:demo",
+        "openzues:thread:demo",
+    ]
+
+
+def test_gateway_node_method_call_endpoint_sessions_steer_interrupts_tracked_runtime(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-steer-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        
+        async def fake_interrupt_turn(instance_id: int, thread_id: str) -> dict[str, object]:
+            return {"ok": True, "instanceId": instance_id, "threadId": thread_id}
+
+        monkeypatch.setattr(client.app.state.manager, "interrupt_turn", fake_interrupt_turn)
+        send_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.send",
+                "params": {
+                    "key": "openzues:thread:demo",
+                    "message": "status",
+                    "idempotencyKey": "run-session-send-1",
+                },
+            },
+        )
+        assert send_response.status_code == 200
+        asyncio.run(
+            client.app.state.database.create_mission(
+                name="Gateway Steer Loop",
+                objective="Interrupt then continue the live control chat thread.",
+                status="active",
+                instance_id=7,
+                project_id=None,
+                thread_id="thread-steer-1",
+                session_key="openzues:thread:demo",
+                cwd=str(tmp_path),
+                model="gpt-5.4",
+                reasoning_effort=None,
+                collaboration_mode=None,
+                max_turns=None,
+                use_builtin_agents=False,
+                run_verification=False,
+                auto_commit=False,
+                pause_on_approval=True,
+                allow_auto_reflexes=True,
+                auto_recover=True,
+                auto_recover_limit=2,
+                reflex_cooldown_seconds=900,
+                allow_failover=True,
+            )
+        )
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.steer",
+                "params": {
+                    "key": "openzues:thread:demo",
+                    "message": "redirect",
+                    "idempotencyKey": "run-session-steer-1",
+                },
+            },
+        )
+        messages = asyncio.run(client.app.state.database.list_control_chat_messages())
+
+    assert response.status_code == 200
+    assert response.json() == {"runId": "run-session-steer-1", "status": "ok"}
+    assert [message["role"] for message in messages[-4:]] == [
+        "user",
+        "assistant",
+        "user",
+        "assistant",
+    ]
+    assert messages[-2]["content"] == "redirect"
+
+
+def test_gateway_node_method_call_endpoint_sessions_abort_interrupts_tracked_runtime(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-abort-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        
+        async def fake_interrupt_turn(instance_id: int, thread_id: str) -> dict[str, object]:
+            return {"ok": True, "instanceId": instance_id, "threadId": thread_id}
+
+        monkeypatch.setattr(client.app.state.manager, "interrupt_turn", fake_interrupt_turn)
+        send_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.send",
+                "params": {
+                    "key": "openzues:thread:demo",
+                    "message": "status",
+                    "idempotencyKey": "run-session-send-1",
+                },
+            },
+        )
+        assert send_response.status_code == 200
+        asyncio.run(
+            client.app.state.database.create_mission(
+                name="Gateway Abort Loop",
+                objective="Interrupt the live control chat thread.",
+                status="active",
+                instance_id=7,
+                project_id=None,
+                thread_id="thread-abort-1",
+                session_key="openzues:thread:demo",
+                cwd=str(tmp_path),
+                model="gpt-5.4",
+                reasoning_effort=None,
+                collaboration_mode=None,
+                max_turns=None,
+                use_builtin_agents=False,
+                run_verification=False,
+                auto_commit=False,
+                pause_on_approval=True,
+                allow_auto_reflexes=True,
+                auto_recover=True,
+                auto_recover_limit=2,
+                reflex_cooldown_seconds=900,
+                allow_failover=True,
+            )
+        )
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.abort",
+                "params": {
+                    "key": "openzues:thread:demo",
+                    "runId": "run-session-send-1",
+                },
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True,
+        "abortedRunId": "run-session-send-1",
+        "status": "aborted",
+    }
+
+
+def test_gateway_node_method_call_endpoint_publishes_sessions_changed_after_sessions_abort(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-abort-event-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+
+    class _RecordingBroadcastHub(BroadcastHub):
+        def __init__(self) -> None:
+            super().__init__()
+            self.published_events: list[dict[str, object]] = []
+
+        async def publish(self, event: dict[str, object]) -> None:
+            self.published_events.append(dict(event))
+            await super().publish(event)
+
+    hub = _RecordingBroadcastHub()
+    app = create_app(app_settings, hub=hub)
+    main_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+    )
+    session_key = resolve_thread_session_keys(
+        base_session_key=main_session_key,
+        thread_id="thread-abort-event-1",
+    ).session_key
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+
+        async def fake_interrupt_turn(instance_id: int, thread_id: str) -> dict[str, object]:
+            return {"ok": True, "instanceId": instance_id, "threadId": thread_id}
+
+        monkeypatch.setattr(client.app.state.manager, "interrupt_turn", fake_interrupt_turn)
+        send_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.send",
+                "params": {
+                    "key": session_key,
+                    "message": "status",
+                    "idempotencyKey": "run-session-send-1",
+                },
+            },
+        )
+        assert send_response.status_code == 200
+        asyncio.run(
+            client.app.state.database.create_mission(
+                name="Gateway Abort Event Loop",
+                objective="Interrupt the live control chat thread.",
+                status="active",
+                instance_id=7,
+                project_id=None,
+                thread_id="thread-abort-event-1",
+                session_key=session_key,
+                cwd=str(tmp_path),
+                model="gpt-5.4",
+                reasoning_effort=None,
+                collaboration_mode=None,
+                max_turns=None,
+                use_builtin_agents=False,
+                run_verification=False,
+                auto_commit=False,
+                pause_on_approval=True,
+                allow_auto_reflexes=True,
+                auto_recover=True,
+                auto_recover_limit=2,
+                reflex_cooldown_seconds=900,
+                allow_failover=True,
+            )
+        )
+
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.abort",
+                "params": {
+                    "key": session_key,
+                    "runId": "run-session-send-1",
+                },
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True,
+        "abortedRunId": "run-session-send-1",
+        "status": "aborted",
+    }
+    sessions_changed = [
+        event
+        for event in hub.published_events
+        if event.get("type") == "gateway_event" and event.get("event") == "sessions.changed"
+    ]
+    abort_events = [
+        event
+        for event in sessions_changed
+        if isinstance(event.get("payload"), dict) and event["payload"].get("reason") == "abort"
+    ]
+    assert len(abort_events) == 1
+    assert abort_events[0] == {
+        "type": "gateway_event",
+        "event": "sessions.changed",
+        "payload": {
+            "sessionKey": session_key,
+            "reason": "abort",
+            "ts": abort_events[0]["payload"]["ts"],
+            "updatedAt": abort_events[0]["payload"]["updatedAt"],
+            "sessionId": "thread-abort-event-1",
+            "kind": "thread",
+            "subject": "Interrupt the live control chat thread.",
+            "displayName": "OpenZues Control Chat Thread",
+            "systemSent": None,
+            "abortedLastRun": None,
+            "thinkingLevel": None,
+            "verboseLevel": None,
+            "inputTokens": None,
+            "outputTokens": None,
+            "totalTokens": None,
+            "contextTokens": None,
+            "modelProvider": "openai",
+            "model": "gpt-5.4",
+            "space": None,
+        },
+        "createdAt": abort_events[0]["createdAt"],
+    }
+    assert isinstance(abort_events[0]["createdAt"], str)
+    assert isinstance(abort_events[0]["payload"]["ts"], int)
+    assert isinstance(abort_events[0]["payload"]["updatedAt"], int)
+
+
+def test_gateway_node_method_call_endpoint_publishes_session_message_events_after_sessions_send(
+    tmp_path,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-session-message-event-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+
+    class _RecordingBroadcastHub(BroadcastHub):
+        def __init__(self) -> None:
+            super().__init__()
+            self.published_events: list[dict[str, object]] = []
+
+        async def publish(self, event: dict[str, object]) -> None:
+            self.published_events.append(dict(event))
+            await super().publish(event)
+
+    hub = _RecordingBroadcastHub()
+    app = create_app(app_settings, hub=hub)
+    main_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+    )
+    session_key = resolve_thread_session_keys(
+        base_session_key=main_session_key,
+        thread_id="thread-session-message-1",
+    ).session_key
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        asyncio.run(
+            client.app.state.database.create_mission(
+                name="Gateway Session Message Loop",
+                objective="Inspect gateway transcript parity.",
+                status="active",
+                instance_id=7,
+                project_id=None,
+                thread_id="thread-session-message-1",
+                session_key=session_key,
+                cwd=str(tmp_path),
+                model="gpt-5.4",
+                reasoning_effort=None,
+                collaboration_mode=None,
+                max_turns=None,
+                use_builtin_agents=False,
+                run_verification=False,
+                auto_commit=False,
+                pause_on_approval=True,
+                allow_auto_reflexes=True,
+                auto_recover=True,
+                auto_recover_limit=2,
+                reflex_cooldown_seconds=900,
+                allow_failover=True,
+            )
+        )
+
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.send",
+                "params": {
+                    "key": session_key,
+                    "message": "status",
+                    "idempotencyKey": "run-session-message-1",
+                },
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {"runId": "run-session-message-1", "status": "ok"}
+    session_message_events = [
+        event
+        for event in hub.published_events
+        if event.get("type") == "gateway_event" and event.get("event") == "session.message"
+    ]
+    assert len(session_message_events) == 2
+
+    user_events = [
+        event
+        for event in session_message_events
+        if isinstance(event.get("payload"), dict)
+        and isinstance(event["payload"].get("message"), dict)
+        and event["payload"]["message"].get("role") == "user"
+    ]
+    assert len(user_events) == 1
+    assert user_events[0]["type"] == "gateway_event"
+    assert user_events[0]["event"] == "session.message"
+    user_payload = user_events[0]["payload"]
+    assert user_payload["sessionKey"] == session_key
+    assert user_payload["messageId"] == "1"
+    assert user_payload["messageSeq"] == 1
+    assert user_payload["sessionId"] == "thread-session-message-1"
+    assert user_payload["kind"] == "thread"
+    assert user_payload["subject"] == "Inspect gateway transcript parity."
+    assert user_payload["displayName"] == "OpenZues Control Chat Thread"
+    assert user_payload["modelProvider"] == "openai"
+    assert user_payload["model"] == "gpt-5.4"
+    assert user_payload["message"] == {
+        "id": "1",
+        "role": "user",
+        "content": [{"type": "text", "text": "status"}],
+    }
+    assert isinstance(user_events[0]["createdAt"], str)
+    assert isinstance(user_payload["updatedAt"], int)
+
+    assistant_events = [
+        event
+        for event in session_message_events
+        if isinstance(event.get("payload"), dict)
+        and isinstance(event["payload"].get("message"), dict)
+        and event["payload"]["message"].get("role") == "assistant"
+    ]
+    assert len(assistant_events) == 1
+    assistant_payload = assistant_events[0]["payload"]
+    assert assistant_payload["sessionKey"] == session_key
+    assert assistant_payload["messageId"] == "2"
+    assert assistant_payload["messageSeq"] == 2
+    assert assistant_payload["sessionId"] == "thread-session-message-1"
+    assert assistant_payload["kind"] == "thread"
+    assert assistant_payload["subject"] == "Inspect gateway transcript parity."
+    assert assistant_payload["displayName"] == "OpenZues Control Chat Thread"
+    assert assistant_payload["modelProvider"] == "openai"
+    assert assistant_payload["model"] == "gpt-5.4"
+    assert assistant_payload["message"]["id"] == "2"
+    assert assistant_payload["message"]["role"] == "assistant"
+    assert isinstance(assistant_payload["message"]["content"], list)
+    assert assistant_payload["message"]["content"]
+    assert isinstance(assistant_events[0]["createdAt"], str)
+    assert isinstance(assistant_payload["updatedAt"], int)
+
+
+def test_gateway_node_method_call_endpoint_publishes_phase_message_changed_after_sessions_send(
+    tmp_path,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-session-message-phase-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+
+    class _RecordingBroadcastHub(BroadcastHub):
+        def __init__(self) -> None:
+            super().__init__()
+            self.published_events: list[dict[str, object]] = []
+
+        async def publish(self, event: dict[str, object]) -> None:
+            self.published_events.append(dict(event))
+            await super().publish(event)
+
+    hub = _RecordingBroadcastHub()
+    app = create_app(app_settings, hub=hub)
+    main_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+    )
+    session_key = resolve_thread_session_keys(
+        base_session_key=main_session_key,
+        thread_id="thread-message-phase-1",
+    ).session_key
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        asyncio.run(
+            client.app.state.database.create_mission(
+                name="Gateway Message Phase Loop",
+                objective="Track transcript-phase session changes.",
+                status="active",
+                instance_id=7,
+                project_id=None,
+                thread_id="thread-message-phase-1",
+                session_key=session_key,
+                cwd=str(tmp_path),
+                model="gpt-5.4",
+                reasoning_effort=None,
+                collaboration_mode=None,
+                max_turns=None,
+                use_builtin_agents=False,
+                run_verification=False,
+                auto_commit=False,
+                pause_on_approval=True,
+                allow_auto_reflexes=True,
+                auto_recover=True,
+                auto_recover_limit=2,
+                reflex_cooldown_seconds=900,
+                allow_failover=True,
+            )
+        )
+
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.send",
+                "params": {
+                    "key": session_key,
+                    "message": "status",
+                    "idempotencyKey": "run-message-phase-1",
+                },
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {"runId": "run-message-phase-1", "status": "ok"}
+    sessions_changed = [
+        event
+        for event in hub.published_events
+        if event.get("type") == "gateway_event" and event.get("event") == "sessions.changed"
+    ]
+    message_phase_events = [
+        event
+        for event in sessions_changed
+        if isinstance(event.get("payload"), dict) and event["payload"].get("phase") == "message"
+    ]
+    assert len(message_phase_events) == 2
+
+    first_payload = message_phase_events[0]["payload"]
+    assert first_payload == {
+        "sessionKey": session_key,
+        "phase": "message",
+        "ts": first_payload["ts"],
+        "messageId": "1",
+        "messageSeq": 1,
+        "updatedAt": first_payload["updatedAt"],
+        "sessionId": "thread-message-phase-1",
+        "kind": "thread",
+        "subject": "Track transcript-phase session changes.",
+        "displayName": "OpenZues Control Chat Thread",
+        "systemSent": None,
+        "abortedLastRun": None,
+        "thinkingLevel": None,
+        "verboseLevel": None,
+        "inputTokens": None,
+        "outputTokens": None,
+        "totalTokens": None,
+        "contextTokens": None,
+        "modelProvider": "openai",
+        "model": "gpt-5.4",
+        "space": None,
+    }
+    assert isinstance(first_payload["ts"], int)
+    assert isinstance(first_payload["updatedAt"], int)
+
+    second_payload = message_phase_events[1]["payload"]
+    assert second_payload["sessionKey"] == session_key
+    assert second_payload["phase"] == "message"
+    assert second_payload["messageId"] == "2"
+    assert second_payload["messageSeq"] == 2
+    assert second_payload["sessionId"] == "thread-message-phase-1"
+    assert second_payload["kind"] == "thread"
+    assert second_payload["subject"] == "Track transcript-phase session changes."
+    assert second_payload["displayName"] == "OpenZues Control Chat Thread"
+    assert second_payload["modelProvider"] == "openai"
+    assert second_payload["model"] == "gpt-5.4"
+    assert isinstance(second_payload["ts"], int)
+    assert isinstance(second_payload["updatedAt"], int)
+
+
+def test_gateway_node_method_call_endpoint_sessions_usage_fails_explicitly_when_unwired() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-usage-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.usage",
+                "params": {
+                    "key": "openzues:thread:demo",
+                    "startDate": "2026-04-01",
+                    "endDate": "2026-04-18",
+                    "mode": "specific",
+                    "utcOffset": "UTC-5",
+                    "limit": 50,
+                    "includeContextWeight": False,
+                },
+            },
+        )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == (
+        "sessions.usage is unavailable until session usage analytics are wired"
+    )
+
+
+def test_gateway_node_method_call_endpoint_sessions_reset_clears_transcript() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-reset-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+
+    class _RecordingBroadcastHub(BroadcastHub):
+        def __init__(self) -> None:
+            super().__init__()
+            self.published_events: list[dict[str, object]] = []
+
+        async def publish(self, event: dict[str, object]) -> None:
+            self.published_events.append(dict(event))
+            await super().publish(event)
+
+    hub = _RecordingBroadcastHub()
+    app = create_app(app_settings, hub=hub)
+    main_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+    )
+    session_key = resolve_thread_session_keys(
+        base_session_key=main_session_key,
+        thread_id="thread-reset-api",
+    ).session_key
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        database = client.app.state.database
+        asyncio.run(
+            database.upsert_gateway_session_metadata(
+                session_key=session_key,
+                metadata={"label": "Parity Reset Session"},
+            )
+        )
+        asyncio.run(
+            database.append_control_chat_message(
+                role="user",
+                content="Please clear this API transcript.",
+                session_key=session_key,
+            )
+        )
+        asyncio.run(
+            database.append_control_chat_message(
+                role="assistant",
+                content="The API transcript is still present before reset.",
+                session_key=session_key,
+            )
+        )
+        other_session_key = resolve_thread_session_keys(
+            base_session_key=main_session_key,
+            thread_id="thread-other-api",
+        ).session_key
+        asyncio.run(
+            database.append_control_chat_message(
+                role="assistant",
+                content="Noise from another API session.",
+                session_key=other_session_key,
+            )
+        )
+
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.reset",
+                "params": {
+                    "key": session_key,
+                    "reason": "reset",
+                },
+            },
+        )
+        history_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "chat.history",
+                "params": {"sessionKey": session_key, "limit": 10},
+            },
+        )
+        messages_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.get",
+                "params": {"sessionKey": session_key, "limit": 10},
+            },
+        )
+        list_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.list",
+                "params": {"includeGlobal": True, "includeUnknown": False, "limit": 10},
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["key"] == session_key
+    assert payload["entry"]["key"] == session_key
+    assert payload["entry"]["kind"] == "thread"
+    assert payload["entry"]["sessionId"] == "thread-reset-api"
+    assert payload["entry"]["label"] == "Parity Reset Session"
+    assert isinstance(payload["entry"]["updatedAt"], int)
+    assert payload["entry"]["updatedAt"] > 0
+
+    assert history_response.status_code == 200
+    assert history_response.json()["messages"] == []
+
+    assert messages_response.status_code == 200
+    assert messages_response.json() == {"messages": []}
+
+    assert list_response.status_code == 200
+    assert [session["key"] for session in list_response.json()["sessions"]] == [
+        main_session_key,
+        session_key,
+    ]
+
+    sessions_changed = [
+        event
+        for event in hub.published_events
+        if event.get("type") == "gateway_event" and event.get("event") == "sessions.changed"
+    ]
+    reset_events = [
+        event
+        for event in sessions_changed
+        if isinstance(event.get("payload"), dict)
+        and event["payload"].get("sessionKey") == session_key
+        and isinstance(event["payload"].get("reason"), str)
+    ]
+    assert [event["payload"]["reason"] for event in reset_events] == ["reset"]
+
+
+def test_gateway_node_method_call_endpoint_sessions_delete_removes_metadata_session() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-delete-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+
+    class _RecordingBroadcastHub(BroadcastHub):
+        def __init__(self) -> None:
+            super().__init__()
+            self.published_events: list[dict[str, object]] = []
+
+        async def publish(self, event: dict[str, object]) -> None:
+            self.published_events.append(dict(event))
+            await super().publish(event)
+
+    hub = _RecordingBroadcastHub()
+    app = create_app(app_settings, hub=hub)
+    main_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+    )
+    session_key = resolve_thread_session_keys(
+        base_session_key=main_session_key,
+        thread_id="thread-delete-api",
+    ).session_key
+    other_session_key = resolve_thread_session_keys(
+        base_session_key=main_session_key,
+        thread_id="thread-other-api",
+    ).session_key
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        database = client.app.state.database
+        asyncio.run(
+            database.upsert_gateway_session_metadata(
+                session_key=session_key,
+                metadata={"label": "Parity Delete Session"},
+            )
+        )
+        asyncio.run(
+            database.append_control_chat_message(
+                role="user",
+                content="Please delete this API transcript.",
+                session_key=session_key,
+            )
+        )
+        asyncio.run(
+            database.append_control_chat_message(
+                role="assistant",
+                content="The API transcript is still present before delete.",
+                session_key=session_key,
+            )
+        )
+        asyncio.run(
+            database.append_control_chat_message(
+                role="assistant",
+                content="Noise from another API session.",
+                session_key=other_session_key,
+            )
+        )
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.delete",
+                "params": {"key": session_key},
+            },
+        )
+        history_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "chat.history",
+                "params": {"sessionKey": session_key, "limit": 10},
+            },
+        )
+        messages_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.get",
+                "params": {"sessionKey": session_key, "limit": 10},
+            },
+        )
+        list_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.list",
+                "params": {"includeGlobal": True, "includeUnknown": False, "limit": 10},
+            },
+        )
+        resolve_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={"method": "sessions.resolve", "params": {"key": session_key}},
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True,
+        "key": session_key,
+        "deleted": True,
+        "archived": [],
+    }
+
+    assert history_response.status_code == 200
+    assert history_response.json()["messages"] == []
+
+    assert messages_response.status_code == 200
+    assert messages_response.json() == {"messages": []}
+
+    assert list_response.status_code == 200
+    assert [session["key"] for session in list_response.json()["sessions"]] == [main_session_key]
+
+    assert resolve_response.status_code == 400
+    assert resolve_response.json()["detail"] == "unknown session key"
+
+    sessions_changed = [
+        event
+        for event in hub.published_events
+        if event.get("type") == "gateway_event" and event.get("event") == "sessions.changed"
+    ]
+    delete_events = [
+        event
+        for event in sessions_changed
+        if isinstance(event.get("payload"), dict)
+        and event["payload"].get("sessionKey") == session_key
+        and isinstance(event["payload"].get("reason"), str)
+    ]
+    assert [event["payload"]["reason"] for event in delete_events] == ["delete"]
+
+
+def test_gateway_node_method_call_endpoint_sessions_compact_fails_explicitly_when_unwired() -> (
+    None
+):
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-compact-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.compact",
+                "params": {
+                    "key": "openzues:thread:demo",
+                    "maxLines": 200,
+                },
+            },
+        )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == (
+        "sessions.compact is unavailable until control chat compaction is wired"
+    )
+
+
+def test_sessions_compaction_restore_api_is_explicitly_unavailable(
+) -> (
+    None
+):
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-compaction-restore-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.compaction.restore",
+                "params": {
+                    "key": "openzues:thread:demo",
+                    "checkpointId": "checkpoint-001",
+                },
+            },
+        )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == (
+        "sessions.compaction.restore is unavailable until control chat compaction restore is wired"
+    )
+
+
+def test_gateway_node_method_call_endpoint_sessions_compaction_list_fails_explicitly_when_unwired(
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-compaction-list-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.compaction.list",
+                "params": {"key": "openzues:thread:demo"},
+            },
+        )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == (
+        "sessions.compaction.list is unavailable until control chat compaction "
+        "checkpoints are wired"
+    )
+
+
+def test_gateway_node_method_call_endpoint_sessions_compaction_get_fails_explicitly_when_unwired(
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-compaction-get-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.compaction.get",
+                "params": {
+                    "key": "openzues:thread:demo",
+                    "checkpointId": "checkpoint-001",
+                },
+            },
+        )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == (
+        "sessions.compaction.get is unavailable until control chat compaction checkpoints are wired"
+    )
+
+
+def test_gateway_node_method_call_endpoint_sessions_compaction_branch_fails_explicitly_when_unwired(
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-compaction-branch-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.compaction.branch",
+                "params": {
+                    "key": "openzues:thread:demo",
+                    "checkpointId": "checkpoint-001",
+                },
+            },
+        )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == (
+        "sessions.compaction.branch is unavailable until control chat compaction branching is wired"
+    )
+
+
+def test_gateway_node_method_call_endpoint_sessions_preview_returns_current_session_items() -> (
+    None
+):
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-preview-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+    session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+    )
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        asyncio.run(
+            client.app.state.database.append_control_chat_message(
+                role="user",
+                content="Ship parity.",
+                mission_id=None,
+                session_key=session_key,
+            )
+        )
+        asyncio.run(
+            client.app.state.database.append_control_chat_message(
+                role="assistant",
+                content="Preview ready.",
+                mission_id=None,
+                session_key=session_key,
+            )
+        )
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.preview",
+                "params": {
+                    "keys": [session_key, "openzues:thread:missing"],
+                    "limit": 12,
+                    "maxChars": 240,
+                },
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert isinstance(payload["ts"], int)
+    assert payload["previews"] == [
+        {
+            "key": session_key,
+            "status": "ok",
+            "items": [
+                {"role": "user", "text": "Ship parity."},
+                {"role": "assistant", "text": "Preview ready."},
+            ],
+        },
+        {
+            "key": "openzues:thread:missing",
+            "status": "missing",
+            "items": [],
+        },
+    ]
+
+
+def test_sessions_messages_subscribe_api_returns_stateless_ack_without_connection_context() -> (
+    None
+):
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-messages-subscribe-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.messages.subscribe",
+                "params": {"key": "  MAIN  "},
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {"subscribed": False, "key": "agent:main:main"}
+
+
+def test_sessions_messages_unsubscribe_api_returns_stateless_ack_without_connection_context() -> (
+    None
+):
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-messages-unsubscribe-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.messages.unsubscribe",
+                "params": {"key": "  MAIN  "},
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {"subscribed": False, "key": "agent:main:main"}
+
+
+def test_sessions_subscribe_api_returns_stateless_ack_without_connection_context() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-subscribe-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={"method": "sessions.subscribe", "params": {}},
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {"subscribed": False}
+
+
+def test_sessions_unsubscribe_api_returns_stateless_ack_without_connection_context() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-unsubscribe-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={"method": "sessions.unsubscribe", "params": {}},
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {"subscribed": False}
+
+
+def test_sessions_create_api_registers_session_and_sends_initial_message() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-create-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+
+    class _RecordingBroadcastHub(BroadcastHub):
+        def __init__(self) -> None:
+            super().__init__()
+            self.published_events: list[dict[str, object]] = []
+
+        async def publish(self, event: dict[str, object]) -> None:
+            self.published_events.append(dict(event))
+            await super().publish(event)
+
+    hub = _RecordingBroadcastHub()
+    app = create_app(app_settings, hub=hub)
+    main_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+    )
+    created_session_key = resolve_thread_session_keys(
+        base_session_key=main_session_key,
+        thread_id="thread-created-api",
+    ).session_key
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.create",
+                "params": {
+                    "key": created_session_key,
+                    "label": "Parity Session",
+                    "model": "gpt-5.4-mini",
+                    "parentSessionKey": main_session_key,
+                    "message": "Ship parity.",
+                },
+            },
+        )
+        list_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.list",
+                "params": {"includeGlobal": True, "includeUnknown": False, "limit": 10},
+            },
+        )
+        history_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "chat.history",
+                "params": {"sessionKey": created_session_key, "limit": 5},
+            },
+        )
+        resolve_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.resolve",
+                "params": {"key": created_session_key},
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["key"] == created_session_key
+    assert payload["sessionId"] == "thread-created-api"
+    assert payload["runStarted"] is True
+    assert payload["status"] == "ok"
+    assert isinstance(payload["runId"], str)
+    assert payload["entry"]["key"] == created_session_key
+    assert payload["entry"]["kind"] == "thread"
+    assert payload["entry"]["displayName"] == "OpenZues Control Chat Thread"
+    assert payload["entry"]["sessionId"] == "thread-created-api"
+    assert payload["entry"]["modelProvider"] == "openai"
+    assert payload["entry"]["model"] == "gpt-5.4-mini"
+    assert payload["entry"]["label"] == "Parity Session"
+    assert payload["entry"]["parentSessionKey"] == main_session_key
+    assert isinstance(payload["entry"]["updatedAt"], int)
+    assert payload["entry"]["updatedAt"] > 0
+
+    assert list_response.status_code == 200
+    list_payload = list_response.json()
+    assert [session["key"] for session in list_payload["sessions"]] == [
+        main_session_key,
+        created_session_key,
+    ]
+
+    assert history_response.status_code == 200
+    history_messages = history_response.json()["messages"]
+    assert history_messages[0] == {
+        "role": "user",
+        "content": [{"type": "text", "text": "Ship parity."}],
+    }
+    assert history_messages[1]["role"] == "assistant"
+    assert isinstance(history_messages[1]["content"], list)
+    assert history_messages[1]["content"]
+    assert history_messages[1]["content"][0]["type"] == "text"
+    assert isinstance(history_messages[1]["content"][0]["text"], str)
+    assert history_messages[1]["content"][0]["text"]
+
+    assert resolve_response.status_code == 200
+    assert resolve_response.json() == {"ok": True, "key": created_session_key}
+
+    sessions_changed = [
+        event
+        for event in hub.published_events
+        if event.get("type") == "gateway_event" and event.get("event") == "sessions.changed"
+    ]
+    create_send_events = [
+        event
+        for event in sessions_changed
+        if isinstance(event.get("payload"), dict)
+        and event["payload"].get("sessionKey") == created_session_key
+        and isinstance(event["payload"].get("reason"), str)
+    ]
+    assert [event["payload"]["reason"] for event in create_send_events] == ["create", "send"]
+
+
+def test_sessions_patch_api_persists_current_session_metadata_and_surfaces_it() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-patch-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+    current_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+    )
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        asyncio.run(
+            client.app.state.database.append_control_chat_message(
+                role="assistant",
+                content="Patch the live control chat session.",
+                session_key=current_session_key,
+            )
+        )
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.patch",
+                "params": {
+                    "key": current_session_key,
+                    "label": "Parity Session",
+                    "thinkingLevel": "low",
+                    "fastMode": True,
+                    "verboseLevel": "high",
+                    "responseUsage": "tokens",
+                    "model": "gpt-5.4-mini",
+                },
+            },
+        )
+        sessions_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.list",
+                "params": {"includeGlobal": True, "includeUnknown": False, "limit": 10},
+            },
+        )
+        history_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "chat.history",
+                "params": {"sessionKey": current_session_key, "limit": 5},
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["ok"] is True
+    assert response.json()["path"] == str(app_settings.db_path)
+    assert response.json()["key"] == current_session_key
+    assert response.json()["resolved"] == {"modelProvider": "openai", "model": "gpt-5.4-mini"}
+    assert response.json()["entry"]["label"] == "Parity Session"
+    assert response.json()["entry"]["thinkingLevel"] == "low"
+    assert response.json()["entry"]["fastMode"] is True
+    assert response.json()["entry"]["verboseLevel"] == "high"
+    assert response.json()["entry"]["responseUsage"] == "tokens"
+    assert response.json()["entry"]["model"] == "gpt-5.4-mini"
+
+    assert sessions_response.status_code == 200
+    assert sessions_response.json()["sessions"] == [
+        {
+            "key": current_session_key,
+            "kind": "global",
+            "displayName": "OpenZues Control Chat",
+            "surface": "control-chat",
+            "subject": "Operator control chat",
+            "room": None,
+            "space": None,
+            "updatedAt": sessions_response.json()["sessions"][0]["updatedAt"],
+            "sessionId": None,
+            "systemSent": None,
+            "abortedLastRun": None,
+            "thinkingLevel": "low",
+            "fastMode": True,
+            "verboseLevel": "high",
+            "inputTokens": None,
+            "outputTokens": None,
+            "totalTokens": None,
+            "modelProvider": "openai",
+            "model": "gpt-5.4-mini",
+            "contextTokens": None,
+            "label": "Parity Session",
+            "responseUsage": "tokens",
+        }
+    ]
+
+    assert history_response.status_code == 200
+    assert history_response.json()["thinkingLevel"] == "low"
+    assert history_response.json()["fastMode"] is True
+    assert history_response.json()["verboseLevel"] == "high"
+
+
+def test_gateway_node_method_call_endpoint_sessions_usage_timeseries_fails_explicitly_when_unwired(
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-usage-timeseries-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.usage.timeseries",
+                "params": {"key": "openzues:thread:demo"},
+            },
+        )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == (
+        "sessions.usage.timeseries is unavailable until session usage analytics are wired"
+    )
+
+
+def test_gateway_node_method_call_endpoint_sessions_usage_logs_fails_explicitly_when_unwired(
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-usage-logs-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.usage.logs",
+                "params": {"key": "openzues:thread:demo", "limit": 200},
+            },
+        )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == (
+        "sessions.usage.logs is unavailable until session usage analytics are wired"
+    )
+
+
+def test_gateway_node_method_call_endpoint_chat_abort_interrupts_tracked_runtime(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-chat-abort-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        
+        async def fake_interrupt_turn(instance_id: int, thread_id: str) -> dict[str, object]:
+            return {"ok": True, "instanceId": instance_id, "threadId": thread_id}
+
+        monkeypatch.setattr(client.app.state.manager, "interrupt_turn", fake_interrupt_turn)
+        send_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "chat.send",
+                "params": {
+                    "sessionKey": "openzues:thread:demo",
+                    "message": "status",
+                    "idempotencyKey": "run-chat-send-1",
+                },
+            },
+        )
+        assert send_response.status_code == 200
+        asyncio.run(
+            client.app.state.database.create_mission(
+                name="Gateway Chat Abort Loop",
+                objective="Interrupt the live control chat thread.",
+                status="active",
+                instance_id=7,
+                project_id=None,
+                thread_id="thread-chat-abort-1",
+                session_key="openzues:thread:demo",
+                cwd=str(tmp_path),
+                model="gpt-5.4",
+                reasoning_effort=None,
+                collaboration_mode=None,
+                max_turns=None,
+                use_builtin_agents=False,
+                run_verification=False,
+                auto_commit=False,
+                pause_on_approval=True,
+                allow_auto_reflexes=True,
+                auto_recover=True,
+                auto_recover_limit=2,
+                reflex_cooldown_seconds=900,
+                allow_failover=True,
+            )
+        )
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "chat.abort",
+                "params": {
+                    "sessionKey": "openzues:thread:demo",
+                    "runId": "run-chat-send-1",
+                },
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True,
+        "aborted": True,
+        "runIds": ["run-chat-send-1"],
+    }
+
+
+def test_gateway_node_method_call_endpoint_supports_cron_list() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-list-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        database = client.app.state.database
+        scheduled_id = asyncio.run(
+            database.create_task_blueprint(
+                name="Archive Sweep",
+                summary="Keep the release lane tidy.",
+                project_id=None,
+                instance_id=None,
+                cadence_minutes=120,
+                enabled=False,
+                payload={
+                    "objective_template": "Archive the old release artifacts.",
+                    "conversation_target": None,
+                    "run_until_complete": False,
+                    "continuation_cooldown_minutes": 10,
+                    "completion_marker": None,
+                    "cwd": None,
+                    "model": "gpt-5.4",
+                    "reasoning_effort": None,
+                    "collaboration_mode": None,
+                    "max_turns": None,
+                    "use_builtin_agents": True,
+                    "run_verification": True,
+                    "auto_commit": False,
+                    "pause_on_approval": True,
+                    "allow_auto_reflexes": True,
+                    "auto_recover": True,
+                    "auto_recover_limit": 2,
+                    "reflex_cooldown_seconds": 900,
+                    "allow_failover": True,
+                    "toolsets": [],
+                    "enabled": True,
+                },
+            )
+        )
+        asyncio.run(
+            database.update_task_blueprint_payload(
+                scheduled_id,
+                last_launched_at="2026-04-18T03:00:00Z",
+                last_status="failed",
+                last_result_summary="Archive webhook target was unavailable.",
+            )
+        )
+        asyncio.run(
+            database.create_task_blueprint(
+                name="Manual Repair",
+                summary="Manual-only work should not appear in cron.list.",
+                project_id=None,
+                instance_id=None,
+                cadence_minutes=None,
+                enabled=True,
+                payload={
+                    "objective_template": "Repair the queue drift.",
+                    "conversation_target": None,
+                    "run_until_complete": False,
+                    "continuation_cooldown_minutes": 10,
+                    "completion_marker": None,
+                    "cwd": None,
+                    "model": "gpt-5.4",
+                    "reasoning_effort": None,
+                    "collaboration_mode": None,
+                    "max_turns": None,
+                    "use_builtin_agents": True,
+                    "run_verification": True,
+                    "auto_commit": False,
+                    "pause_on_approval": True,
+                    "allow_auto_reflexes": True,
+                    "auto_recover": True,
+                    "auto_recover_limit": 2,
+                    "reflex_cooldown_seconds": 900,
+                    "allow_failover": True,
+                    "toolsets": [],
+                    "enabled": True,
+                },
+            )
+        )
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "cron.list",
+                "params": {
+                    "enabled": "disabled",
+                    "query": "archive",
+                    "limit": 10,
+                    "sortBy": "updatedAtMs",
+                    "sortDir": "desc",
+                },
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total"] == 1
+    assert payload["jobs"][0]["id"] == f"task-blueprint:{scheduled_id}"
+    assert payload["jobs"][0]["name"] == "Archive Sweep"
+    assert payload["jobs"][0]["enabled"] is False
+    assert payload["jobs"][0]["schedule"] == {"kind": "every", "everyMs": 7_200_000}
+    assert payload["jobs"][0]["state"]["lastRunStatus"] == "error"
+    assert payload["jobs"][0]["state"]["lastStatus"] == "error"
+    assert payload["jobs"][0]["state"]["lastError"] == "Archive webhook target was unavailable."
+
+
+def test_gateway_node_method_call_endpoint_supports_cron_status() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-status-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        database = client.app.state.database
+        enabled_id = asyncio.run(
+            database.create_task_blueprint(
+                name="Wake Status",
+                summary="Track the next scheduler wake.",
+                project_id=None,
+                instance_id=None,
+                cadence_minutes=15,
+                enabled=True,
+                payload={
+                    "objective_template": "Track the next scheduler wake.",
+                    "conversation_target": None,
+                    "run_until_complete": False,
+                    "continuation_cooldown_minutes": 10,
+                    "completion_marker": None,
+                    "cwd": None,
+                    "model": "gpt-5.4",
+                    "reasoning_effort": None,
+                    "collaboration_mode": None,
+                    "max_turns": None,
+                    "use_builtin_agents": True,
+                    "run_verification": True,
+                    "auto_commit": False,
+                    "pause_on_approval": True,
+                    "allow_auto_reflexes": True,
+                    "auto_recover": True,
+                    "auto_recover_limit": 2,
+                    "reflex_cooldown_seconds": 900,
+                    "allow_failover": True,
+                    "toolsets": [],
+                    "enabled": True,
+                },
+            )
+        )
+        asyncio.run(
+            database.update_task_blueprint_payload(
+                enabled_id,
+                last_launched_at="2026-04-18T03:00:00Z",
+                last_status="completed",
+                last_result_summary="Wake status heartbeat completed.",
+            )
+        )
+        asyncio.run(
+            database.create_task_blueprint(
+                name="Disabled Sweep",
+                summary="Still counts as a stored cadence job.",
+                project_id=None,
+                instance_id=None,
+                cadence_minutes=120,
+                enabled=False,
+                payload={
+                    "objective_template": "Sweep disabled backlog.",
+                    "conversation_target": None,
+                    "run_until_complete": False,
+                    "continuation_cooldown_minutes": 10,
+                    "completion_marker": None,
+                    "cwd": None,
+                    "model": "gpt-5.4",
+                    "reasoning_effort": None,
+                    "collaboration_mode": None,
+                    "max_turns": None,
+                    "use_builtin_agents": True,
+                    "run_verification": True,
+                    "auto_commit": False,
+                    "pause_on_approval": True,
+                    "allow_auto_reflexes": True,
+                    "auto_recover": True,
+                    "auto_recover_limit": 2,
+                    "reflex_cooldown_seconds": 900,
+                    "allow_failover": True,
+                    "toolsets": [],
+                    "enabled": True,
+                },
+            )
+        )
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={"method": "cron.status", "params": {}},
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "enabled": True,
+        "storePath": str(app_settings.db_path),
+        "jobs": 2,
+        "nextWakeAtMs": int(datetime(2026, 4, 18, 3, 15, tzinfo=UTC).timestamp() * 1000),
+    }
+
+
+def test_gateway_node_method_call_endpoint_supports_cron_runs_scope_all() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-runs-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        database = client.app.state.database
+        ship_task_id = asyncio.run(
+            database.create_task_blueprint(
+                name="Nightly Ship",
+                summary="Ship the next verified slice.",
+                project_id=None,
+                instance_id=None,
+                cadence_minutes=60,
+                enabled=True,
+                payload={
+                    "objective_template": "Ship the next verified slice.",
+                    "conversation_target": None,
+                    "run_until_complete": False,
+                    "continuation_cooldown_minutes": 10,
+                    "completion_marker": None,
+                    "cwd": None,
+                    "model": "gpt-5.4",
+                    "reasoning_effort": None,
+                    "collaboration_mode": None,
+                    "max_turns": None,
+                    "use_builtin_agents": True,
+                    "run_verification": True,
+                    "auto_commit": False,
+                    "pause_on_approval": True,
+                    "allow_auto_reflexes": True,
+                    "auto_recover": True,
+                    "auto_recover_limit": 2,
+                    "reflex_cooldown_seconds": 900,
+                    "allow_failover": True,
+                    "toolsets": [],
+                    "enabled": True,
+                },
+            )
+        )
+        archive_task_id = asyncio.run(
+            database.create_task_blueprint(
+                name="Archive Sweep",
+                summary="Sweep the release lane.",
+                project_id=None,
+                instance_id=None,
+                cadence_minutes=30,
+                enabled=True,
+                payload={
+                    "objective_template": "Sweep the release lane.",
+                    "conversation_target": None,
+                    "run_until_complete": False,
+                    "continuation_cooldown_minutes": 10,
+                    "completion_marker": None,
+                    "cwd": None,
+                    "model": "gpt-5.4",
+                    "reasoning_effort": None,
+                    "collaboration_mode": None,
+                    "max_turns": None,
+                    "use_builtin_agents": True,
+                    "run_verification": True,
+                    "auto_commit": False,
+                    "pause_on_approval": True,
+                    "allow_auto_reflexes": True,
+                    "auto_recover": True,
+                    "auto_recover_limit": 2,
+                    "reflex_cooldown_seconds": 900,
+                    "allow_failover": True,
+                    "toolsets": [],
+                    "enabled": True,
+                },
+            )
+        )
+        ship_mission_id = asyncio.run(
+            database.create_mission(
+                name="Nightly Ship Run",
+                objective="Ship the next verified slice.",
+                status="completed",
+                instance_id=7,
+                project_id=None,
+                task_blueprint_id=ship_task_id,
+                thread_id="thread-ship-ok",
+                session_key="launch:mode:workspace_affinity",
+                conversation_target=None,
+                cwd="C:/workspace",
+                model="gpt-5.4",
+                reasoning_effort=None,
+                collaboration_mode=None,
+                max_turns=None,
+                use_builtin_agents=True,
+                run_verification=True,
+                auto_commit=False,
+                pause_on_approval=True,
+                allow_auto_reflexes=True,
+                auto_recover=True,
+                auto_recover_limit=2,
+                reflex_cooldown_seconds=900,
+                allow_failover=True,
+                toolsets=[],
+            )
+        )
+        asyncio.run(
+            database.update_mission(
+                ship_mission_id,
+                last_checkpoint="Nightly ship landed.",
+            )
+        )
+        archive_mission_id = asyncio.run(
+            database.create_mission(
+                name="Archive Sweep Run",
+                objective="Sweep the release lane.",
+                status="failed",
+                instance_id=7,
+                project_id=None,
+                task_blueprint_id=archive_task_id,
+                thread_id="thread-archive-error",
+                session_key="launch:mode:workspace_affinity",
+                conversation_target=None,
+                cwd="C:/workspace",
+                model="gpt-5.4",
+                reasoning_effort=None,
+                collaboration_mode=None,
+                max_turns=None,
+                use_builtin_agents=True,
+                run_verification=True,
+                auto_commit=False,
+                pause_on_approval=True,
+                allow_auto_reflexes=True,
+                auto_recover=True,
+                auto_recover_limit=2,
+                reflex_cooldown_seconds=900,
+                allow_failover=True,
+                toolsets=[],
+            )
+        )
+        asyncio.run(
+            database.update_mission(
+                archive_mission_id,
+                last_error="Archive webhook target was unavailable.",
+            )
+        )
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "cron.runs",
+                "params": {
+                    "scope": "all",
+                    "statuses": ["ok"],
+                    "query": "nightly",
+                    "limit": 10,
+                    "sortDir": "desc",
+                },
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total"] == 1
+    assert payload["offset"] == 0
+    assert payload["limit"] == 10
+    assert payload["hasMore"] is False
+    assert payload["nextOffset"] is None
+    entry = payload["entries"][0]
+    assert entry["jobId"] == f"task-blueprint:{ship_task_id}"
+    assert entry["jobName"] == "Nightly Ship"
+    assert entry["status"] == "ok"
+    assert entry["summary"] == "Nightly ship landed."
+    assert entry["deliveryStatus"] == "not-requested"
+
+
+def test_gateway_node_method_call_endpoint_supports_cron_run_force() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-run-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    fake_ops_mesh = _FakeOpsMeshService()
+    app = create_app(app_settings, ops_mesh_service=fake_ops_mesh)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        database = client.app.state.database
+        task_id = asyncio.run(
+            database.create_task_blueprint(
+                name="Nightly Ship",
+                summary="Ship the next verified slice.",
+                project_id=None,
+                instance_id=None,
+                cadence_minutes=60,
+                enabled=True,
+                payload={
+                    "objective_template": "Ship the next verified slice.",
+                    "conversation_target": None,
+                    "run_until_complete": False,
+                    "continuation_cooldown_minutes": 10,
+                    "completion_marker": None,
+                    "cwd": None,
+                    "model": "gpt-5.4",
+                    "reasoning_effort": None,
+                    "collaboration_mode": None,
+                    "max_turns": None,
+                    "use_builtin_agents": True,
+                    "run_verification": True,
+                    "auto_commit": False,
+                    "pause_on_approval": True,
+                    "allow_auto_reflexes": True,
+                    "auto_recover": True,
+                    "auto_recover_limit": 2,
+                    "reflex_cooldown_seconds": 900,
+                    "allow_failover": True,
+                    "toolsets": [],
+                    "enabled": True,
+                },
+            )
+        )
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "cron.run",
+                "params": {"id": f"task-blueprint:{task_id}", "mode": "force"},
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True, "enqueued": True, "runId": "mission:52"}
+    assert fake_ops_mesh.calls == [(task_id, "gateway-cron:force")]
+
+
+def test_gateway_node_method_call_endpoint_supports_cron_remove() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-remove-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        database = client.app.state.database
+        task_id = asyncio.run(
+            database.create_task_blueprint(
+                name="Nightly Ship",
+                summary="Ship the next verified slice.",
+                project_id=None,
+                instance_id=None,
+                cadence_minutes=60,
+                enabled=True,
+                payload={
+                    "objective_template": "Ship the next verified slice.",
+                    "conversation_target": None,
+                    "run_until_complete": False,
+                    "continuation_cooldown_minutes": 10,
+                    "completion_marker": None,
+                    "cwd": None,
+                    "model": "gpt-5.4",
+                    "reasoning_effort": None,
+                    "collaboration_mode": None,
+                    "max_turns": None,
+                    "use_builtin_agents": True,
+                    "run_verification": True,
+                    "auto_commit": False,
+                    "pause_on_approval": True,
+                    "allow_auto_reflexes": True,
+                    "auto_recover": True,
+                    "auto_recover_limit": 2,
+                    "reflex_cooldown_seconds": 900,
+                    "allow_failover": True,
+                    "toolsets": [],
+                    "enabled": True,
+                },
+            )
+        )
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "cron.remove",
+                "params": {"id": f"task-blueprint:{task_id}"},
+            },
+        )
+        remaining = asyncio.run(database.get_task_blueprint(task_id))
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True, "removed": True}
+    assert remaining is None
+
+
+def test_gateway_node_method_call_endpoint_supports_cron_add() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-add-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "cron.add",
+                "params": {
+                    "name": "Nightly Ship",
+                    "description": "Ship the next verified slice.",
+                    "enabled": True,
+                    "schedule": {"kind": "every", "everyMs": 3_600_000},
+                    "sessionTarget": "main",
+                    "wakeMode": "now",
+                    "payload": {
+                        "kind": "agentTurn",
+                        "message": "Ship the next verified slice.",
+                        "model": "gpt-5.4",
+                    },
+                },
+            },
+        )
+        list_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "cron.list",
+                "params": {"includeDisabled": True},
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert str(payload["id"]).startswith("task-blueprint:")
+    assert payload["name"] == "Nightly Ship"
+    assert payload["description"] == "Ship the next verified slice."
+    assert payload["schedule"] == {"kind": "every", "everyMs": 3_600_000}
+    assert payload["sessionTarget"] == "main"
+    assert payload["wakeMode"] == "now"
+    assert payload["payload"] == {
+        "kind": "agentTurn",
+        "message": "Ship the next verified slice.",
+        "model": "gpt-5.4",
+    }
+    assert list_response.status_code == 200
+    jobs = list_response.json()["jobs"]
+    assert len(jobs) == 1
+    assert jobs[0]["id"] == payload["id"]
+    assert jobs[0]["name"] == "Nightly Ship"
+
+
+def test_gateway_node_method_call_endpoint_supports_cron_update() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-update-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        database = client.app.state.database
+        task_id = asyncio.run(
+            database.create_task_blueprint(
+                name="Nightly Ship",
+                summary="Ship the next verified slice.",
+                project_id=None,
+                instance_id=None,
+                cadence_minutes=60,
+                enabled=True,
+                payload={
+                    "objective_template": "Ship the next verified slice.",
+                    "conversation_target": None,
+                    "run_until_complete": False,
+                    "continuation_cooldown_minutes": 10,
+                    "completion_marker": None,
+                    "cwd": None,
+                    "model": "gpt-5.4",
+                    "reasoning_effort": None,
+                    "collaboration_mode": None,
+                    "max_turns": None,
+                    "use_builtin_agents": True,
+                    "run_verification": True,
+                    "auto_commit": False,
+                    "pause_on_approval": True,
+                    "allow_auto_reflexes": True,
+                    "auto_recover": True,
+                    "auto_recover_limit": 2,
+                    "reflex_cooldown_seconds": 900,
+                    "allow_failover": True,
+                    "toolsets": [],
+                },
+            )
+        )
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "cron.update",
+                "params": {
+                    "id": f"task-blueprint:{task_id}",
+                    "patch": {
+                        "name": "Nightly Repair",
+                        "description": "Repair the next verified slice.",
+                        "enabled": False,
+                        "schedule": {"kind": "every", "everyMs": 7_200_000},
+                        "payload": {
+                            "message": "Repair the next verified slice.",
+                            "model": "gpt-5.4-mini",
+                        },
+                    },
+                },
+            },
+        )
+        list_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "cron.list",
+                "params": {"includeDisabled": True},
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["id"] == f"task-blueprint:{task_id}"
+    assert payload["name"] == "Nightly Repair"
+    assert payload["description"] == "Repair the next verified slice."
+    assert payload["enabled"] is False
+    assert payload["schedule"] == {"kind": "every", "everyMs": 7_200_000}
+    assert payload["payload"] == {
+        "kind": "agentTurn",
+        "message": "Repair the next verified slice.",
+        "model": "gpt-5.4-mini",
+    }
+    assert list_response.status_code == 200
+    jobs = list_response.json()["jobs"]
+    assert len(jobs) == 1
+    assert jobs[0]["id"] == payload["id"]
+    assert jobs[0]["name"] == "Nightly Repair"
+    assert jobs[0]["enabled"] is False
+
+
+def test_gateway_node_method_call_endpoint_surfaces_wake_as_explicit_unavailable(tmp_path) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "wake",
+                "params": {
+                    "mode": "now",
+                    "text": "Resume parity from the latest checkpoint.",
+                },
+            },
+        )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == (
+        "wake is unavailable until control-plane wake queue is wired"
+    )
+
+
+def test_gateway_node_method_call_endpoint_supports_agents_files_list_and_get(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    workspace_root = tmp_path / "workspace"
+    (workspace_root / ".codex").mkdir(parents=True, exist_ok=True)
+    (workspace_root / "AGENTS.md").write_text("Top-level instructions.\n", encoding="utf-8")
+    (workspace_root / ".codex" / "AGENTS.md").write_text(
+        "Codex instructions.\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(workspace_root)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        list_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={"method": "agents.files.list", "params": {"agentId": "main"}},
+        )
+        get_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "agents.files.get",
+                "params": {"agentId": "main", "name": "AGENTS.md"},
+            },
+        )
+
+    assert list_response.status_code == 200
+    list_payload = list_response.json()
+    assert list_payload["agentId"] == "main"
+    assert list_payload["workspace"] == str(workspace_root)
+    files_by_name = {entry["name"]: entry for entry in list_payload["files"]}
+    assert files_by_name["AGENTS.md"]["missing"] is False
+    assert files_by_name[".codex/AGENTS.md"]["missing"] is False
+
+    assert get_response.status_code == 200
+    get_payload = get_response.json()
+    assert get_payload["agentId"] == "main"
+    assert get_payload["workspace"] == str(workspace_root)
+    assert get_payload["file"]["name"] == "AGENTS.md"
+    assert get_payload["file"]["missing"] is False
+    assert get_payload["file"]["content"] == "Top-level instructions.\n"
+
+
+def test_gateway_node_method_call_endpoint_supports_agents_files_set(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir(parents=True, exist_ok=True)
+    monkeypatch.chdir(workspace_root)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        set_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "agents.files.set",
+                "params": {
+                    "agentId": "main",
+                    "name": ".codex/AGENTS.md",
+                    "content": "Codex instructions.\n",
+                },
+            },
+        )
+        get_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "agents.files.get",
+                "params": {"agentId": "main", "name": ".codex/AGENTS.md"},
+            },
+        )
+
+    written_path = workspace_root / ".codex" / "AGENTS.md"
+    assert set_response.status_code == 200
+    set_payload = set_response.json()
+    assert set_payload["ok"] is True
+    assert set_payload["agentId"] == "main"
+    assert set_payload["workspace"] == str(workspace_root)
+    assert set_payload["file"]["name"] == ".codex/AGENTS.md"
+    assert set_payload["file"]["path"] == str(written_path)
+    assert set_payload["file"]["missing"] is False
+    assert set_payload["file"]["content"] == "Codex instructions.\n"
+    assert written_path.read_text(encoding="utf-8") == "Codex instructions.\n"
+
+    assert get_response.status_code == 200
+    get_payload = get_response.json()
+    assert get_payload["file"]["name"] == ".codex/AGENTS.md"
+    assert get_payload["file"]["missing"] is False
+    assert get_payload["file"]["content"] == "Codex instructions.\n"
+
+
+def test_gateway_node_method_call_endpoint_supports_agents_list_and_agent_identity_get(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir(parents=True, exist_ok=True)
+    monkeypatch.chdir(workspace_root)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        list_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={"method": "agents.list", "params": {}},
+        )
+        identity_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "agent.identity.get",
+                "params": {"sessionKey": "launch:mode:workspace_affinity"},
+            },
+        )
+
+    assert list_response.status_code == 200
+    list_payload = list_response.json()
+    assert list_payload["defaultId"] == "main"
+    assert list_payload["mainKey"] == "main"
+    assert list_payload["scope"] == "global"
+    assert list_payload["agents"] == [
+        {
+            "id": "main",
+            "name": "OpenZues",
+            "identity": {
+                "name": "OpenZues",
+                "avatar": "/static/favicon.svg",
+                "avatarUrl": "/static/favicon.svg",
+                "emoji": None,
+            },
+            "workspace": str(workspace_root),
+            "model": {"primary": "gpt-5.4"},
+        }
+    ]
+
+    assert identity_response.status_code == 200
+    assert identity_response.json() == {
+        "agentId": "main",
+        "name": "OpenZues",
+        "avatar": "/static/favicon.svg",
+        "emoji": None,
+    }
 
 
 def test_gateway_node_method_call_endpoint_supports_sessions_list() -> None:
@@ -1577,6 +4030,347 @@ def test_gateway_node_method_call_endpoint_supports_sessions_list() -> None:
     assert isinstance(payload["ts"], int)
     assert isinstance(payload["sessions"][0]["updatedAt"], int)
     assert payload["sessions"][0]["updatedAt"] > 0
+
+
+def test_gateway_node_method_call_endpoint_sessions_list_includes_metadata_sessions() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-list-metadata-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+    main_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+    )
+    thread_session_key = resolve_thread_session_keys(
+        base_session_key=main_session_key,
+        thread_id="thread-parity",
+    ).session_key
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        asyncio.run(
+            client.app.state.database.upsert_gateway_session_metadata(
+                session_key=thread_session_key,
+                metadata={
+                    "label": "Parity Worker",
+                    "spawnedBy": "parity-conductor",
+                    "model": "gpt-5.4-mini",
+                },
+            )
+        )
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.list",
+                "params": {"includeGlobal": True, "includeUnknown": False, "limit": 10},
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["count"] == 2
+    assert payload["sessions"] == [
+        {
+            "key": main_session_key,
+            "kind": "global",
+            "displayName": "OpenZues Control Chat",
+            "surface": "control-chat",
+            "subject": "Operator control chat",
+            "room": None,
+            "space": None,
+            "updatedAt": payload["sessions"][0]["updatedAt"],
+            "sessionId": None,
+            "systemSent": None,
+            "abortedLastRun": None,
+            "thinkingLevel": None,
+            "verboseLevel": None,
+            "inputTokens": None,
+            "outputTokens": None,
+            "totalTokens": None,
+            "modelProvider": "openai",
+            "model": "gpt-5.4",
+            "contextTokens": None,
+        },
+        {
+            "key": thread_session_key,
+            "kind": "thread",
+            "displayName": "OpenZues Control Chat Thread",
+            "surface": "control-chat",
+            "subject": "Operator control chat",
+            "room": None,
+            "space": None,
+            "updatedAt": payload["sessions"][1]["updatedAt"],
+            "sessionId": "thread-parity",
+            "systemSent": None,
+            "abortedLastRun": None,
+            "thinkingLevel": None,
+            "verboseLevel": None,
+            "inputTokens": None,
+            "outputTokens": None,
+            "totalTokens": None,
+            "modelProvider": "openai",
+            "model": "gpt-5.4-mini",
+            "contextTokens": None,
+            "label": "Parity Worker",
+            "spawnedBy": "parity-conductor",
+        },
+    ]
+    assert isinstance(payload["sessions"][1]["updatedAt"], int)
+    assert payload["sessions"][1]["updatedAt"] > 0
+
+
+def test_gateway_node_method_call_endpoint_supports_sessions_get() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-get-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        database = client.app.state.database
+        asyncio.run(
+            database.append_control_chat_message(
+                role="user",
+                content="Need the control-chat transcript.",
+                session_key="openzues:thread:demo",
+            )
+        )
+        asyncio.run(
+            database.append_control_chat_message(
+                role="assistant",
+                content="The bounded session transcript is ready.",
+                session_key="openzues:thread:demo",
+            )
+        )
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.get",
+                "params": {"sessionKey": "openzues:thread:demo", "limit": 2},
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "messages": [
+            {
+                "role": "user",
+                "content": [{"type": "text", "text": "Need the control-chat transcript."}],
+            },
+            {
+                "role": "assistant",
+                "content": [{"type": "text", "text": "The bounded session transcript is ready."}],
+            },
+        ]
+    }
+
+
+def test_gateway_node_method_call_endpoint_filters_sessions_get_by_session_key() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-get-filtered-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        database = client.app.state.database
+        asyncio.run(
+            database.append_control_chat_message(
+                role="user",
+                content="Need the thread transcript.",
+                session_key="openzues:thread:demo",
+            )
+        )
+        asyncio.run(
+            database.append_control_chat_message(
+                role="assistant",
+                content="The thread transcript is ready.",
+                session_key="openzues:thread:demo",
+            )
+        )
+        asyncio.run(
+            database.append_control_chat_message(
+                role="assistant",
+                content="Noise from another session.",
+                session_key="openzues:thread:other",
+            )
+        )
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.get",
+                "params": {"sessionKey": "openzues:thread:demo", "limit": 5},
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "messages": [
+            {
+                "role": "user",
+                "content": [{"type": "text", "text": "Need the thread transcript."}],
+            },
+            {
+                "role": "assistant",
+                "content": [{"type": "text", "text": "The thread transcript is ready."}],
+            },
+        ]
+    }
+
+
+def test_gateway_node_method_call_endpoint_supports_sessions_resolve() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-resolve-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.resolve",
+                "params": {"agentId": "main"},
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True, "key": "launch:mode:workspace_affinity"}
+
+
+def test_gateway_node_method_call_endpoint_supports_sessions_resolve_by_label() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-resolve-label-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+    current_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+    )
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        asyncio.run(
+            client.app.state.database.upsert_gateway_session_metadata(
+                session_key=current_session_key,
+                metadata={"label": "Parity Session"},
+            )
+        )
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.resolve",
+                "params": {"label": "Parity Session"},
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True, "key": current_session_key}
+
+
+def test_gateway_node_method_call_endpoint_supports_sessions_resolve_by_spawned_by() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-resolve-spawned-by-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+    current_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+    )
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        asyncio.run(
+            client.app.state.database.upsert_gateway_session_metadata(
+                session_key=current_session_key,
+                metadata={"spawnedBy": "parity-conductor"},
+            )
+        )
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.resolve",
+                "params": {"spawnedBy": "parity-conductor"},
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True, "key": current_session_key}
+
+
+def test_gateway_node_method_call_endpoint_supports_sessions_resolve_by_metadata_known_spawned_by(
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-resolve-metadata-spawned-by-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+    main_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+    )
+    thread_session_key = resolve_thread_session_keys(
+        base_session_key=main_session_key,
+        thread_id="thread-parity",
+    ).session_key
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        asyncio.run(
+            client.app.state.database.upsert_gateway_session_metadata(
+                session_key=thread_session_key,
+                metadata={"spawnedBy": "parity-conductor"},
+            )
+        )
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.resolve",
+                "params": {"spawnedBy": "parity-conductor"},
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True, "key": thread_session_key}
 
 
 def test_gateway_node_method_call_endpoint_supports_config_get(tmp_path) -> None:

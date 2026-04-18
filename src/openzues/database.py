@@ -121,10 +121,13 @@ class Database:
                     mission_id INTEGER,
                     opportunity_id TEXT,
                     target_label TEXT,
+                    session_key TEXT,
                     created_at TEXT NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS idx_control_chat_messages_created
                     ON control_chat_messages(id DESC);
+                CREATE INDEX IF NOT EXISTS idx_control_chat_messages_session_key
+                    ON control_chat_messages(session_key, id DESC);
                 CREATE TABLE IF NOT EXISTS attention_queue_actions (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     signal_id TEXT NOT NULL,
@@ -252,6 +255,12 @@ class Database:
                     reflex_cooldown_seconds INTEGER NOT NULL DEFAULT 900,
                     allow_failover INTEGER NOT NULL DEFAULT 1,
                     toolsets_json TEXT NOT NULL DEFAULT '[]',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS gateway_session_metadata (
+                    session_key TEXT PRIMARY KEY,
+                    metadata_json TEXT NOT NULL DEFAULT '{}',
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );
@@ -510,6 +519,7 @@ class Database:
             await self._ensure_column(db, "notification_routes", "conversation_target_json", "TEXT")
             await self._ensure_column(db, "outbound_deliveries", "event_payload_json", "TEXT")
             await self._ensure_column(db, "integrations", "vault_secret_id", "INTEGER")
+            await self._ensure_column(db, "control_chat_messages", "session_key", "TEXT")
             await self._ensure_column(db, "missions", "session_key", "TEXT")
             await self._ensure_column(db, "missions", "conversation_target_json", "TEXT")
             await self._ensure_column(db, "missions", "toolsets_json", "TEXT NOT NULL DEFAULT '[]'")
@@ -523,6 +533,12 @@ class Database:
                 """
                 CREATE INDEX IF NOT EXISTS idx_missions_session_key
                 ON missions(session_key, id DESC)
+                """
+            )
+            await db.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_control_chat_messages_session_key
+                ON control_chat_messages(session_key, id DESC)
                 """
             )
             await db.execute(
@@ -1266,6 +1282,17 @@ class Database:
                 output.append({**item, **payload})
             return output
 
+    async def list_task_blueprint_records(self) -> list[dict[str, Any]]:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            rows = await db.execute_fetchall("SELECT * FROM task_blueprints ORDER BY id ASC")
+            output = []
+            for row in rows:
+                item = dict(row)
+                item["payload"] = json.loads(item.pop("payload_json"))
+                output.append(item)
+            return output
+
     async def get_task_blueprint(self, task_id: int) -> dict[str, Any] | None:
         async with aiosqlite.connect(self.path) as db:
             db.row_factory = aiosqlite.Row
@@ -1533,6 +1560,94 @@ class Database:
                 WHERE id = 1
                 """,
                 (last_route_instance_id, last_route_resolved_at, utcnow()),
+            )
+            await db.commit()
+
+    async def get_gateway_session_metadata(self, session_key: str) -> dict[str, Any] | None:
+        aliases = session_key_lookup_aliases(session_key)
+        if not aliases:
+            return None
+        placeholders = ", ".join("?" for _ in aliases)
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                f"""
+                SELECT *
+                FROM gateway_session_metadata
+                WHERE LOWER(TRIM(session_key)) IN ({placeholders})
+                ORDER BY updated_at DESC
+                LIMIT 1
+                """,
+                aliases,
+            )
+            row = await cursor.fetchone()
+            if row is None:
+                return None
+            item = dict(row)
+            item["metadata"] = self._decode_json_object(item.pop("metadata_json", "{}")) or {}
+            return item
+
+    async def list_gateway_session_metadata_rows(
+        self,
+        *,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        query = """
+            SELECT *
+            FROM gateway_session_metadata
+            ORDER BY updated_at DESC
+        """
+        params: tuple[object, ...] = ()
+        if limit is not None:
+            query += " LIMIT ?"
+            params = (limit,)
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            rows = await db.execute_fetchall(query, params)
+            items: list[dict[str, Any]] = []
+            for row in rows:
+                item = dict(row)
+                item["metadata"] = self._decode_json_object(item.pop("metadata_json", "{}")) or {}
+                items.append(item)
+            return items
+
+    async def upsert_gateway_session_metadata(
+        self,
+        *,
+        session_key: str,
+        metadata: dict[str, Any],
+    ) -> None:
+        now = utcnow()
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute(
+                """
+                INSERT INTO gateway_session_metadata (
+                    session_key,
+                    metadata_json,
+                    created_at,
+                    updated_at
+                )
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(session_key) DO UPDATE SET
+                    metadata_json = excluded.metadata_json,
+                    updated_at = excluded.updated_at
+                """,
+                (session_key, json.dumps(metadata), now, now),
+            )
+            await db.commit()
+
+    async def delete_gateway_session_metadata(self, session_key: str) -> None:
+        aliases = session_key_lookup_aliases(session_key)
+        if not aliases:
+            return
+        placeholders = ", ".join("?" for _ in aliases)
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute(
+                (
+                    "DELETE FROM gateway_session_metadata "
+                    f"WHERE LOWER(TRIM(session_key)) IN ({placeholders})"
+                ),
+                aliases,
             )
             await db.commit()
 
@@ -2851,6 +2966,7 @@ class Database:
         mission_id: int | None = None,
         opportunity_id: str | None = None,
         target_label: str | None = None,
+        session_key: str | None = None,
     ) -> int:
         now = utcnow()
         async with aiosqlite.connect(self.path) as db:
@@ -2863,11 +2979,21 @@ class Database:
                     mission_id,
                     opportunity_id,
                     target_label,
+                    session_key,
                     created_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (role, content, action_kind, mission_id, opportunity_id, target_label, now),
+                (
+                    role,
+                    content,
+                    action_kind,
+                    mission_id,
+                    opportunity_id,
+                    target_label,
+                    session_key,
+                    now,
+                ),
             )
             await db.commit()
             assert cursor.lastrowid is not None
@@ -2883,19 +3009,85 @@ class Database:
             row = await cursor.fetchone()
             return dict(row) if row else None
 
-    async def list_control_chat_messages(self, *, limit: int = 24) -> list[dict[str, Any]]:
+    async def list_control_chat_messages(
+        self,
+        *,
+        limit: int = 24,
+        session_key: str | None = None,
+    ) -> list[dict[str, Any]]:
         async with aiosqlite.connect(self.path) as db:
             db.row_factory = aiosqlite.Row
-            rows = await db.execute_fetchall(
-                """
-                SELECT *
-                FROM control_chat_messages
-                ORDER BY id DESC
-                LIMIT ?
-                """,
-                (limit,),
-            )
+            if session_key is None:
+                rows = await db.execute_fetchall(
+                    """
+                    SELECT *
+                    FROM control_chat_messages
+                    ORDER BY id DESC
+                    LIMIT ?
+                    """,
+                    (limit,),
+                )
+            else:
+                aliases = session_key_lookup_aliases(session_key)
+                if not aliases:
+                    return []
+                placeholders = ",".join("?" for _ in aliases)
+                rows = await db.execute_fetchall(
+                    f"""
+                    SELECT *
+                    FROM control_chat_messages
+                    WHERE LOWER(TRIM(session_key)) IN ({placeholders})
+                    ORDER BY id DESC
+                    LIMIT ?
+                    """,
+                    (*aliases, limit),
+                )
             return list(reversed([dict(row) for row in rows]))
+
+    async def count_control_chat_messages(
+        self,
+        *,
+        session_key: str,
+        up_to_id: int | None = None,
+    ) -> int:
+        aliases = session_key_lookup_aliases(session_key)
+        if not aliases:
+            return 0
+        placeholders = ",".join("?" for _ in aliases)
+        query = f"""
+            SELECT COUNT(*) AS count
+            FROM control_chat_messages
+            WHERE LOWER(TRIM(session_key)) IN ({placeholders})
+        """
+        params: list[object] = list(aliases)
+        if up_to_id is not None:
+            query += " AND id <= ?"
+            params.append(up_to_id)
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(query, tuple(params))
+            row = await cursor.fetchone()
+            return int(row["count"]) if row is not None else 0
+
+    async def delete_control_chat_messages(
+        self,
+        *,
+        session_key: str,
+    ) -> int:
+        aliases = session_key_lookup_aliases(session_key)
+        if not aliases:
+            return 0
+        placeholders = ",".join("?" for _ in aliases)
+        async with aiosqlite.connect(self.path) as db:
+            cursor = await db.execute(
+                f"""
+                DELETE FROM control_chat_messages
+                WHERE LOWER(TRIM(session_key)) IN ({placeholders})
+                """,
+                tuple(aliases),
+            )
+            await db.commit()
+            return int(cursor.rowcount or 0)
 
     async def append_attention_queue_action(
         self,
