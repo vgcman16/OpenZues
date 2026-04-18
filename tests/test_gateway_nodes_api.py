@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import os
+import shutil
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -1439,6 +1441,144 @@ def test_gateway_node_method_call_endpoint_tools_effective_is_explicitly_unavail
     assert response.json()["detail"] == "Effective tool inventory is not wired in OpenZues yet"
 
 
+def test_gateway_node_method_call_endpoint_supports_chat_history() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-chat-history-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        database = client.app.state.database
+        asyncio.run(
+            database.append_control_chat_message(
+                role="user",
+                content="Need the latest parity checkpoint.",
+            )
+        )
+        asyncio.run(
+            database.append_control_chat_message(
+                role="assistant",
+                content="The status bridge is landed and verified.",
+            )
+        )
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "chat.history",
+                "params": {"sessionKey": "openzues:thread:demo", "limit": 2},
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "sessionKey": "openzues:thread:demo",
+        "sessionId": None,
+        "messages": [
+            {
+                "role": "user",
+                "content": [{"type": "text", "text": "Need the latest parity checkpoint."}],
+            },
+            {
+                "role": "assistant",
+                "content": [{"type": "text", "text": "The status bridge is landed and verified."}],
+            },
+        ],
+        "thinkingLevel": None,
+        "fastMode": None,
+        "verboseLevel": None,
+    }
+
+
+def test_gateway_node_method_call_endpoint_supports_chat_send() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-chat-send-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "chat.send",
+                "params": {
+                    "sessionKey": "openzues:thread:demo",
+                    "message": "status",
+                    "thinking": "low",
+                    "timeoutMs": 30_000,
+                    "idempotencyKey": "run-chat-send-1",
+                },
+            },
+        )
+        messages = asyncio.run(client.app.state.database.list_control_chat_messages())
+
+    assert response.status_code == 200
+    assert response.json() == {"runId": "run-chat-send-1", "status": "ok"}
+    assert [message["role"] for message in messages[-2:]] == ["user", "assistant"]
+    assert messages[-2]["content"] == "status"
+
+
+def test_gateway_node_method_call_endpoint_supports_sessions_list() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-list-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.list",
+                "params": {"includeGlobal": True, "includeUnknown": False, "limit": 10},
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["count"] == 1
+    assert payload["defaults"]["mainSessionKey"] == "launch:mode:workspace_affinity"
+    assert payload["sessions"] == [
+        {
+            "key": "launch:mode:workspace_affinity",
+            "kind": "global",
+            "displayName": "OpenZues Control Chat",
+            "surface": "control-chat",
+            "subject": "Operator control chat",
+            "room": None,
+            "space": None,
+            "updatedAt": payload["sessions"][0]["updatedAt"],
+            "sessionId": None,
+            "systemSent": None,
+            "abortedLastRun": None,
+            "thinkingLevel": None,
+            "verboseLevel": None,
+            "inputTokens": None,
+            "outputTokens": None,
+            "totalTokens": None,
+            "modelProvider": "openai",
+            "model": "gpt-5.4",
+            "contextTokens": None,
+        }
+    ]
+    assert isinstance(payload["ts"], int)
+    assert isinstance(payload["sessions"][0]["updatedAt"], int)
+    assert payload["sessions"][0]["updatedAt"] > 0
+
+
 def test_gateway_node_method_call_endpoint_supports_config_get(tmp_path) -> None:
     app_settings = Settings(
         data_dir=tmp_path / "data",
@@ -1478,6 +1618,34 @@ def test_gateway_node_method_call_endpoint_supports_commands_list(tmp_path) -> N
     assert payload["commands"]
     assert any(command["name"] == "status" for command in payload["commands"])
     assert any(command["name"] == "browser.open" for command in payload["commands"])
+
+
+def test_gateway_node_method_call_endpoint_supports_status() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-status-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        gateway_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={"method": "status", "params": {}},
+        )
+        api_response = client.get("/api/status")
+
+    assert gateway_response.status_code == 200
+    assert api_response.status_code == 200
+    gateway_payload = gateway_response.json()
+    api_payload = api_response.json()
+    if "gateway_capability" in gateway_payload and "gateway_capability" in api_payload:
+        gateway_payload["gateway_capability"].pop("checked_at", None)
+        api_payload["gateway_capability"].pop("checked_at", None)
+    assert gateway_payload == api_payload
 
 
 def test_gateway_node_method_call_endpoint_commands_list_rejects_unknown_agent(tmp_path) -> None:

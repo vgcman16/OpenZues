@@ -74,7 +74,10 @@ class CodexDesktopService:
     def discover(self) -> DesktopDiscovery:
         source_path, source_kind = self.find_source_executable()
         staged_path = self._staged_path_for(source_path) if source_path is not None else None
-        staged_ready = staged_path.exists() if staged_path is not None else False
+        try:
+            staged_ready = staged_path.exists() if staged_path is not None else False
+        except OSError:
+            staged_ready = False
         return DesktopDiscovery(
             source_path=source_path,
             source_kind=source_kind,
@@ -174,18 +177,25 @@ class CodexDesktopService:
         return "launching with " + ", ".join(parts)
 
     def _discover_session(self) -> DesktopSessionInfo:
-        if not self.logs_root.exists():
+        try:
+            if not self.logs_root.exists():
+                return DesktopSessionInfo()
+            log_candidates = [path for path in self.logs_root.glob(LOG_GLOB) if path.is_file()]
+        except OSError:
             return DesktopSessionInfo()
-        log_candidates = [path for path in self.logs_root.glob(LOG_GLOB) if path.is_file()]
         if not log_candidates:
             return DesktopSessionInfo()
-        log_candidates.sort(key=lambda path: path.stat().st_mtime_ns, reverse=True)
-        log_path = log_candidates[0]
-        session = DesktopSessionInfo(
-            log_path=log_path,
-            last_seen_at=self._isoformat_mtime(log_path),
-        )
-        for line in log_path.read_text(encoding="utf-8", errors="replace").splitlines():
+        try:
+            log_candidates.sort(key=lambda path: path.stat().st_mtime_ns, reverse=True)
+            log_path = log_candidates[0]
+            session = DesktopSessionInfo(
+                log_path=log_path,
+                last_seen_at=self._isoformat_mtime(log_path),
+            )
+            lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            return DesktopSessionInfo()
+        for line in lines:
             if "Starting app-server connection" in line:
                 transport = self._match(r"transport=(\w+)", line)
                 if transport:
@@ -209,18 +219,24 @@ class CodexDesktopService:
         return session
 
     def _package_executable_candidate(self) -> Path | None:
-        if not self.package_root.exists():
+        try:
+            if not self.package_root.exists():
+                return None
+            candidates = [path for path in self.package_root.glob(PACKAGE_GLOB) if path.is_file()]
+        except OSError:
             return None
-        candidates = [path for path in self.package_root.glob(PACKAGE_GLOB) if path.is_file()]
         if not candidates:
             return None
-        candidates.sort(
-            key=lambda path: (
-                self._package_version_key(path.parents[2].name),
-                path.stat().st_mtime_ns,
-            ),
-            reverse=True,
-        )
+        try:
+            candidates.sort(
+                key=lambda path: (
+                    self._package_version_key(path.parents[2].name),
+                    path.stat().st_mtime_ns,
+                ),
+                reverse=True,
+            )
+        except OSError:
+            return None
         return candidates[0]
 
     def _session_executable_candidate(self) -> Path | None:
@@ -228,7 +244,10 @@ class CodexDesktopService:
         if not session.spawned_executable:
             return None
         candidate = Path(session.spawned_executable)
-        return candidate if candidate.is_file() else None
+        try:
+            return candidate if candidate.is_file() else None
+        except OSError:
+            return None
 
     def _staged_path_for(self, source_path: Path) -> Path:
         package_name = source_path.parents[2].name

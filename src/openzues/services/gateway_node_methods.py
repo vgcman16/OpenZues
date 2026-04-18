@@ -34,6 +34,7 @@ from openzues.services.gateway_node_pending_work import (
     NodePendingWorkType,
 )
 from openzues.services.gateway_node_registry import GatewayNodeRegistry, KnownNode
+from openzues.services.gateway_sessions import GatewaySessionsService
 from openzues.services.gateway_skill_bins import GatewaySkillBinsService
 from openzues.services.gateway_skill_catalog import GatewaySkillCatalogService
 from openzues.services.gateway_skill_status import GatewaySkillStatusService
@@ -90,6 +91,7 @@ class GatewayNodeMethodService:
         gateway_identity_service: GatewayIdentityService | None = None,
         last_heartbeat_service: GatewayLastHeartbeatService | None = None,
         models_service: GatewayModelsService | None = None,
+        sessions_service: GatewaySessionsService | None = None,
         system_presence_service: GatewaySystemPresenceService | None = None,
         talk_config_service: GatewayTalkConfigService | None = None,
         tts_service: GatewayTtsService | None = None,
@@ -97,6 +99,8 @@ class GatewayNodeMethodService:
         skill_bins_service: GatewaySkillBinsService | None = None,
         skill_catalog_service: GatewaySkillCatalogService | None = None,
         skill_status_service: GatewaySkillStatusService | None = None,
+        chat_send_service: Callable[..., Awaitable[dict[str, object]]] | None = None,
+        status_service: Callable[[], Awaitable[dict[str, object]]] | None = None,
         voicewake_service: GatewayVoiceWakeService | None = None,
         sync: Callable[[], Awaitable[None]] | None = None,
         wake_node: Callable[[str], Awaitable[bool]] | None = None,
@@ -118,6 +122,9 @@ class GatewayNodeMethodService:
                 registry=registry,
             )
         self._models_service = models_service or GatewayModelsService()
+        self._sessions_service = sessions_service
+        if self._sessions_service is None and self._database is not None:
+            self._sessions_service = GatewaySessionsService(self._database)
         self._system_presence_service = system_presence_service
         if self._system_presence_service is None and self._gateway_identity_service is not None:
             self._system_presence_service = GatewaySystemPresenceService(
@@ -130,6 +137,8 @@ class GatewayNodeMethodService:
         self._skill_bins_service = skill_bins_service or GatewaySkillBinsService()
         self._skill_catalog_service = skill_catalog_service or GatewaySkillCatalogService()
         self._skill_status_service = skill_status_service or GatewaySkillStatusService()
+        self._chat_send_service = chat_send_service
+        self._status_service = status_service
         self._voicewake_service = voicewake_service
         self._sync = sync
         self._wake_node = wake_node
@@ -232,9 +241,54 @@ class GatewayNodeMethodService:
                 scope=cast(Literal["both", "native", "text"], scope or "both"),
             )
 
+        if resolved_method == "status":
+            _validate_exact_keys(resolved_method, payload, allowed_keys=())
+            if self._status_service is None:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message="status is unavailable until operator status is wired",
+                    status_code=503,
+                )
+            return await self._status_service()
+
         if resolved_method == "models.list":
             _validate_exact_keys(resolved_method, payload, allowed_keys=())
             return await self._models_service.build_catalog()
+
+        if resolved_method == "sessions.list":
+            _validate_exact_keys(
+                resolved_method,
+                payload,
+                allowed_keys=("includeGlobal", "includeUnknown", "limit"),
+            )
+            if self._sessions_service is None:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message="sessions.list is unavailable until session inventory is wired",
+                    status_code=503,
+                )
+            include_global = (
+                _optional_bool(payload.get("includeGlobal"), label="includeGlobal")
+                if "includeGlobal" in payload
+                else True
+            )
+            include_unknown = (
+                _optional_bool(payload.get("includeUnknown"), label="includeUnknown")
+                if "includeUnknown" in payload
+                else False
+            )
+            limit = _optional_bounded_int(
+                payload.get("limit"),
+                label="limit",
+                minimum=1,
+                maximum=1000,
+            )
+            return await self._sessions_service.build_snapshot(
+                include_global=bool(include_global),
+                include_unknown=bool(include_unknown),
+                limit=limit,
+                now_ms=_timestamp_ms(now_ms),
+            )
 
         if resolved_method == "talk.mode":
             _validate_exact_keys(resolved_method, payload, allowed_keys=("enabled", "phase"))
@@ -376,6 +430,84 @@ class GatewayNodeMethodService:
                 code="UNAVAILABLE",
                 message="Effective tool inventory is not wired in OpenZues yet",
                 status_code=503,
+            )
+
+        if resolved_method == "chat.history":
+            _validate_exact_keys(
+                resolved_method,
+                payload,
+                allowed_keys=("sessionKey", "limit", "maxChars"),
+            )
+            if self._database is None:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message="chat.history is unavailable until control chat persistence is wired",
+                    status_code=503,
+                )
+            session_key = _require_non_empty_string(payload.get("sessionKey"), label="sessionKey")
+            limit = _optional_bounded_int(
+                payload.get("limit"),
+                label="limit",
+                minimum=1,
+                maximum=1000,
+            )
+            max_chars = _optional_bounded_int(
+                payload.get("maxChars"),
+                label="maxChars",
+                minimum=1,
+                maximum=500_000,
+            )
+            return await _build_chat_history_payload(
+                self._database,
+                session_key=session_key,
+                limit=limit,
+                max_chars=max_chars,
+            )
+
+        if resolved_method == "chat.send":
+            _validate_exact_keys(
+                resolved_method,
+                payload,
+                allowed_keys=(
+                    "sessionKey",
+                    "message",
+                    "thinking",
+                    "deliver",
+                    "timeoutMs",
+                    "idempotencyKey",
+                ),
+            )
+            if self._chat_send_service is None:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message="chat.send is unavailable until control chat runtime is wired",
+                    status_code=503,
+                )
+            session_key = _require_non_empty_string(payload.get("sessionKey"), label="sessionKey")
+            message = _require_string(payload.get("message"), label="message")
+            thinking = (
+                _require_string(payload.get("thinking"), label="thinking")
+                if "thinking" in payload and payload.get("thinking") is not None
+                else None
+            )
+            deliver = _optional_bool(payload.get("deliver"), label="deliver")
+            timeout_ms = _optional_bounded_int(
+                payload.get("timeoutMs"),
+                label="timeoutMs",
+                minimum=0,
+                maximum=2_592_000_000,
+            )
+            idempotency_key = _require_non_empty_string(
+                payload.get("idempotencyKey"),
+                label="idempotencyKey",
+            )
+            return await self._chat_send_service(
+                session_key=session_key,
+                message=message,
+                idempotency_key=idempotency_key,
+                thinking=thinking,
+                deliver=deliver,
+                timeout_ms=timeout_ms,
             )
 
         if resolved_method == "health":
@@ -1082,6 +1214,60 @@ def _timestamp_ms(now_ms: int | None) -> int:
 
 def _mint_canvas_capability_token() -> str:
     return secrets.token_urlsafe(18)
+
+
+async def _build_chat_history_payload(
+    database: Database,
+    *,
+    session_key: str,
+    limit: int | None,
+    max_chars: int | None,
+) -> dict[str, Any]:
+    rows = await database.list_control_chat_messages(limit=limit or 200)
+    return {
+        "sessionKey": session_key,
+        "sessionId": None,
+        "messages": _project_control_chat_messages(rows, max_chars=max_chars),
+        "thinkingLevel": None,
+        "fastMode": None,
+        "verboseLevel": None,
+    }
+
+
+def _project_control_chat_messages(
+    rows: list[dict[str, Any]],
+    *,
+    max_chars: int | None,
+) -> list[dict[str, Any]]:
+    normalized: list[tuple[str, str]] = []
+    for row in rows:
+        role = str(row.get("role") or "").strip()
+        if role not in {"user", "assistant"}:
+            continue
+        normalized.append((role, str(row.get("content") or "")))
+
+    if max_chars is None:
+        return [_chat_history_message_payload(role, text) for role, text in normalized]
+
+    bounded: list[dict[str, Any]] = []
+    remaining = max_chars
+    for role, text in reversed(normalized):
+        if not text:
+            bounded.append(_chat_history_message_payload(role, text))
+            continue
+        if len(text) <= remaining:
+            bounded.append(_chat_history_message_payload(role, text))
+            remaining -= len(text)
+            continue
+        if not bounded and remaining > 0:
+            bounded.append(_chat_history_message_payload(role, text[-remaining:]))
+        break
+    bounded.reverse()
+    return bounded
+
+
+def _chat_history_message_payload(role: str, text: str) -> dict[str, Any]:
+    return {"role": role, "content": [{"type": "text", "text": text}]}
 
 
 def _build_canvas_scoped_host_url(base_url: str | None, capability: str) -> str | None:

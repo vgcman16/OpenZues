@@ -3,7 +3,9 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shutil
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 
@@ -27,6 +29,7 @@ from openzues.services.gateway_node_registry import (
 from openzues.services.gateway_skill_bins import GatewaySkillBinsService
 from openzues.services.gateway_voicewake import GatewayVoiceWakeService
 from openzues.services.hub import BroadcastHub
+from openzues.services.session_keys import build_launch_session_key, resolve_thread_session_keys
 
 
 class FakeNodeConnection:
@@ -471,6 +474,244 @@ async def test_tools_effective_requires_session_key_then_fails_as_explicit_unava
 
 
 @pytest.mark.asyncio
+async def test_chat_history_returns_openclaw_shaped_control_chat_projection() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-chat-history-service"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-chat-history.db")
+    await database.initialize()
+    await database.append_control_chat_message(
+        role="user",
+        content="Need the latest parity checkpoint.",
+    )
+    await database.append_control_chat_message(
+        role="assistant",
+        content="The status bridge is landed and verified.",
+    )
+    service = GatewayNodeMethodService(GatewayNodeRegistry(), database=database)
+
+    payload = await service.call(
+        "chat.history",
+        {"sessionKey": "openzues:thread:demo", "limit": 2},
+    )
+
+    assert payload == {
+        "sessionKey": "openzues:thread:demo",
+        "sessionId": None,
+        "messages": [
+            {
+                "role": "user",
+                "content": [{"type": "text", "text": "Need the latest parity checkpoint."}],
+            },
+            {
+                "role": "assistant",
+                "content": [{"type": "text", "text": "The status bridge is landed and verified."}],
+            },
+        ],
+        "thinkingLevel": None,
+        "fastMode": None,
+        "verboseLevel": None,
+    }
+
+
+@pytest.mark.asyncio
+async def test_chat_history_applies_tail_char_budget_to_latest_message() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-chat-history-char-budget"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-chat-history.db")
+    await database.initialize()
+    await database.append_control_chat_message(
+        role="user",
+        content="Older context stays behind the cutoff.",
+    )
+    await database.append_control_chat_message(
+        role="assistant",
+        content="checkpoint",
+    )
+    service = GatewayNodeMethodService(GatewayNodeRegistry(), database=database)
+
+    payload = await service.call(
+        "chat.history",
+        {"sessionKey": "openzues:thread:demo", "limit": 2, "maxChars": 4},
+    )
+
+    assert payload["messages"] == [
+        {"role": "assistant", "content": [{"type": "text", "text": "oint"}]}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_chat_send_returns_run_ack_from_injected_control_chat_bridge() -> None:
+    observed: dict[str, object] = {}
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        observed.update(
+            {
+                "session_key": session_key,
+                "message": message,
+                "idempotency_key": idempotency_key,
+                "thinking": thinking,
+                "deliver": deliver,
+                "timeout_ms": timeout_ms,
+            }
+        )
+        return {"runId": idempotency_key, "status": "ok"}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        chat_send_service=fake_chat_send_service,
+    )
+
+    with pytest.raises(ValueError, match="sessionKey must be a non-empty string"):
+        await service.call("chat.send", {})
+
+    payload = await service.call(
+        "chat.send",
+        {
+            "sessionKey": "openzues:thread:demo",
+            "message": "status",
+            "thinking": "low",
+            "deliver": False,
+            "timeoutMs": 30_000,
+            "idempotencyKey": "run-chat-send-1",
+        },
+    )
+
+    assert observed == {
+        "session_key": "openzues:thread:demo",
+        "message": "status",
+        "idempotency_key": "run-chat-send-1",
+        "thinking": "low",
+        "deliver": False,
+        "timeout_ms": 30_000,
+    }
+    assert payload == {"runId": "run-chat-send-1", "status": "ok"}
+
+
+@pytest.mark.asyncio
+async def test_sessions_list_returns_bounded_singleton_control_chat_inventory() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-list-service"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-sessions-list.db")
+    await database.initialize()
+    await database.upsert_gateway_bootstrap(
+        setup_mode="local",
+        setup_flow="quickstart",
+        route_binding_mode="saved_lane",
+        preferred_instance_id=9,
+        preferred_project_id=3,
+        team_id=None,
+        operator_id=4,
+        task_blueprint_id=7,
+        default_cwd=str(tmp_path),
+        bootstrap_roles=[],
+        bootstrap_scopes=[],
+        model="gpt-5.4",
+        max_turns=4,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        toolsets=[],
+    )
+    main_session_key = build_launch_session_key(
+        mode="saved_lane",
+        preferred_instance_id=None,
+        task_id=7,
+        project_id=3,
+        operator_id=4,
+    )
+    resolved_session_keys = resolve_thread_session_keys(
+        base_session_key=main_session_key,
+        thread_id="thread-demo",
+    )
+    await database.create_mission(
+        name="Control Chat Thread",
+        objective="Keep the operator control chat lane warm.",
+        status="active",
+        instance_id=9,
+        project_id=3,
+        task_blueprint_id=7,
+        thread_id="thread-demo",
+        session_key=resolved_session_keys.session_key,
+        cwd=str(tmp_path),
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=False,
+        run_verification=False,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+    )
+    await database.append_control_chat_message(
+        role="assistant",
+        content="The singleton session inventory is staged.",
+    )
+    service = GatewayNodeMethodService(GatewayNodeRegistry(), database=database)
+
+    payload = await service.call(
+        "sessions.list",
+        {"includeGlobal": True, "includeUnknown": False, "limit": 50},
+        now_ms=1_234,
+    )
+
+    assert payload["ts"] == 1_234
+    assert payload["path"] == "/api/control-chat"
+    assert payload["count"] == 1
+    assert payload["defaults"] == {
+        "model": "gpt-5.4",
+        "contextTokens": None,
+        "mainSessionKey": main_session_key,
+    }
+    assert payload["sessions"] == [
+        {
+            "key": resolved_session_keys.session_key,
+            "kind": "thread",
+            "displayName": "OpenZues Control Chat Thread",
+            "surface": "control-chat",
+            "subject": "Keep the operator control chat lane warm.",
+            "room": None,
+            "space": None,
+            "updatedAt": payload["sessions"][0]["updatedAt"],
+            "sessionId": "thread-demo",
+            "systemSent": None,
+            "abortedLastRun": None,
+            "thinkingLevel": None,
+            "verboseLevel": None,
+            "inputTokens": None,
+            "outputTokens": None,
+            "totalTokens": None,
+            "modelProvider": "openai",
+            "model": "gpt-5.4",
+            "contextTokens": None,
+        }
+    ]
+    assert isinstance(payload["sessions"][0]["updatedAt"], int)
+    assert payload["sessions"][0]["updatedAt"] > 0
+
+
+@pytest.mark.asyncio
 async def test_commands_list_returns_bounded_native_operator_inventory() -> None:
     service = GatewayNodeMethodService(GatewayNodeRegistry())
 
@@ -527,6 +768,27 @@ async def test_commands_list_rejects_unknown_agent_id() -> None:
 
     with pytest.raises(ValueError, match='unknown agent id "other-agent"'):
         await service.call("commands.list", {"agentId": "other-agent"})
+
+
+@pytest.mark.asyncio
+async def test_status_returns_injected_operator_status_snapshot() -> None:
+    expected = {
+        "headline": "Systems nominal",
+        "summary": "One active mission and one connected lane.",
+        "queue_plan": {"reply": "No bounded move."},
+    }
+
+    async def fake_status_service() -> dict[str, object]:
+        return expected
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        status_service=fake_status_service,
+    )
+
+    payload = await service.call("status", {})
+
+    assert payload == expected
 
 
 @pytest.mark.asyncio

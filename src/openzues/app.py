@@ -1710,20 +1710,11 @@ def create_app(
         pairing_service=active_gateway_node_pairing_service,
         voicewake_service=active_gateway_voicewake_service,
     )
-    active_gateway_node_method_service = gateway_node_method_service or GatewayNodeMethodService(
-        active_gateway_node_service.registry,
-        database=active_database,
-        hub=active_hub,
-        pairing_service=active_gateway_node_pairing_service,
-        channels_service=active_gateway_channels_service,
-        config_service=active_gateway_config_service,
-        health_service=active_gateway_health_service,
-        gateway_identity_service=active_gateway_identity_service,
-        models_service=GatewayModelsService(list_instance_views=active_manager.list_views),
-        voicewake_service=active_gateway_voicewake_service,
-        sync=active_gateway_node_service.sync,
-        wake_node=active_gateway_node_service.wake_node,
-    )
+
+    async def load_gateway_status() -> dict[str, object]:
+        return await build_status()
+
+    active_gateway_node_method_service = gateway_node_method_service
     active_gateway_bootstrap_service = gateway_bootstrap_service or GatewayBootstrapService(
         active_database,
         active_manager,
@@ -1831,6 +1822,38 @@ def create_app(
         active_manager,
         active_hub,
     )
+
+    async def submit_gateway_chat_message(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        del session_key, thinking, deliver, timeout_ms
+        dashboard_view = await build_dashboard()
+        await active_control_chat_service.submit(message, dashboard_view)
+        return {"runId": idempotency_key, "status": "ok"}
+
+    if active_gateway_node_method_service is None:
+        active_gateway_node_method_service = GatewayNodeMethodService(
+            active_gateway_node_service.registry,
+            database=active_database,
+            hub=active_hub,
+            pairing_service=active_gateway_node_pairing_service,
+            channels_service=active_gateway_channels_service,
+            config_service=active_gateway_config_service,
+            health_service=active_gateway_health_service,
+            gateway_identity_service=active_gateway_identity_service,
+            models_service=GatewayModelsService(list_instance_views=active_manager.list_views),
+            chat_send_service=submit_gateway_chat_message,
+            status_service=load_gateway_status,
+            voicewake_service=active_gateway_voicewake_service,
+            sync=active_gateway_node_service.sync,
+            wake_node=active_gateway_node_service.wake_node,
+        )
     active_control_plane_lease = control_plane_lease or ControlPlaneLease(
         active_settings.data_dir / "control-plane.lock"
     )

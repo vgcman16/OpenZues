@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 
-from openzues.services.codex_desktop import CodexDesktopService
+from openzues.services.codex_desktop import CodexDesktopService, DesktopSessionInfo
 
 
 def write_desktop_package(base: Path, version: str, *, contents: bytes = b"codex") -> Path:
@@ -100,3 +101,22 @@ def test_resolve_launch_respects_custom_execution_policy(tmp_path, monkeypatch) 
     assert launch.args == "-a on-request -s danger-full-access app-server"
     assert launch.approval_policy == "on-request"
     assert launch.sandbox_mode == "danger-full-access"
+
+
+def test_discover_treats_permission_denied_logs_as_no_active_session() -> None:
+    class DeniedLogsRoot:
+        def exists(self) -> bool:
+            raise PermissionError("logs unavailable")
+
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "codex-desktop-permission"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    service = CodexDesktopService(
+        runtime_root=tmp_path / "runtime",
+        package_root=tmp_path / "packages",
+        logs_root=DeniedLogsRoot(),  # type: ignore[arg-type]
+    )
+
+    discovery = service.discover()
+
+    assert discovery.session == DesktopSessionInfo()
