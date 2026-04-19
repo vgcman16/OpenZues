@@ -8224,3 +8224,536 @@ Next best slice:
 - Next exact seam:
   - the remaining audio parity gap is no longer basic method execution; it is richer provider/config breadth beyond the bounded local Microsoft path, or we can pivot to another still-missing gateway runtime seam outside speech.
 
+### Recovery addendum 2026-04-18 bounded control-chat session compaction parity America/Chicago
+
+- Closed the first truthful `sessions.compact` checkpoint seam instead of leaving the whole family as blanket 503s:
+  - `sessions.compact({ key, maxLines })` now performs bounded control-chat compaction against persisted `control_chat_messages`.
+  - the current slice trims the archived prefix at whole-message boundaries until the retained transcript fits inside the requested line budget, creates a durable checkpoint row, and emits the usual `sessions.changed` event with `reason: "compact"` and `compacted: true`.
+  - `sessions.compaction.list({ key })` now returns `{ ok, key, checkpoints }` from the new SQLite-backed checkpoint store.
+  - `sessions.compaction.get({ key, checkpointId })` now returns `{ ok, key, checkpoint }` for a saved checkpoint and rejects unknown checkpoint ids as a `400` validation failure instead of another `503`.
+- Kept the scope intentionally honest:
+  - this is a bounded control-chat checkpoint slice, not a full OpenClaw transcript-file compaction port.
+  - `sessions.compact` is only wired for the explicit `maxLines` path right now. Calling it without `maxLines` still fails closed until real summarization compaction is wired.
+  - `sessions.compaction.restore` and `sessions.compaction.branch` remain explicit `UNAVAILABLE` methods in this turn.
+  - the local checkpoint `sessionId` intentionally mirrors the canonical `sessionKey` because the OpenZues control-chat transcript store does not currently own a separate session-file UUID.
+- Product effect proved end to end:
+  - after a bounded compaction, the archived prefix is removed from the live `control_chat_messages` store, the checkpoint becomes immediately visible through `sessions.compaction.list`, and the exact checkpoint can be fetched through `sessions.compaction.get`.
+- Primary files carrying the product change:
+  - `src/openzues/database.py`
+  - `src/openzues/services/gateway_session_compaction.py`
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_sessions_compact_archives_trimmed_control_chat_messages_into_checkpoint_inventory`
+    - `test_sessions_compaction_list_returns_empty_inventory_for_unknown_session`
+    - `test_sessions_compaction_get_rejects_unknown_checkpoint`
+    - retained fail-closed proofs for:
+      - `test_sessions_compaction_restore_fails_explicitly_until_restore_runtime_is_wired`
+      - `test_sessions_compaction_branch_fails_explicitly_until_branch_runtime_is_wired`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_gateway_node_method_call_endpoint_supports_sessions_compact_and_checkpoint_inventory`
+    - `test_sessions_compaction_list_api_returns_empty_inventory_for_unknown_key`
+    - `test_gateway_node_method_call_endpoint_sessions_compaction_get_rejects_unknown_checkpoint`
+    - retained fail-closed proofs for:
+      - `test_sessions_compaction_restore_api_is_explicitly_unavailable`
+      - `test_gateway_node_method_call_endpoint_sessions_compaction_branch_fails_explicitly_when_unwired`
+- Verified the slice with:
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py::test_sessions_compact_archives_trimmed_control_chat_messages_into_checkpoint_inventory tests/test_gateway_node_methods.py::test_sessions_compaction_list_returns_empty_inventory_for_unknown_session tests/test_gateway_node_methods.py::test_sessions_compaction_get_rejects_unknown_checkpoint tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_sessions_compact_and_checkpoint_inventory tests/test_gateway_nodes_api.py::test_sessions_compaction_list_api_returns_empty_inventory_for_unknown_key tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_sessions_compaction_get_rejects_unknown_checkpoint -q`
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py::test_sessions_compact_archives_trimmed_control_chat_messages_into_checkpoint_inventory tests/test_gateway_node_methods.py::test_sessions_compaction_list_returns_empty_inventory_for_unknown_session tests/test_gateway_node_methods.py::test_sessions_compaction_get_rejects_unknown_checkpoint tests/test_gateway_node_methods.py::test_sessions_compaction_restore_fails_explicitly_until_restore_runtime_is_wired tests/test_gateway_node_methods.py::test_sessions_compaction_branch_fails_explicitly_until_branch_runtime_is_wired tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_sessions_compact_and_checkpoint_inventory tests/test_gateway_nodes_api.py::test_sessions_compaction_list_api_returns_empty_inventory_for_unknown_key tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_sessions_compaction_get_rejects_unknown_checkpoint tests/test_gateway_nodes_api.py::test_sessions_compaction_restore_api_is_explicitly_unavailable tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_sessions_compaction_branch_fails_explicitly_when_unwired -q`
+  - `& '.\.venv\Scripts\python.exe' -m ruff check src/openzues/database.py src/openzues/services/gateway_session_compaction.py src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `& '.\.venv\Scripts\python.exe' -m mypy src/openzues/database.py src/openzues/services/gateway_session_compaction.py src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused compaction proof set passed (`6 passed`).
+  - the wider adjacent compaction family sweep passed (`10 passed`).
+  - Ruff stayed clean on the touched files.
+  - `src/openzues/database.py`, `src/openzues/services/gateway_session_compaction.py`, and `src/openzues/services/gateway_node_methods.py` type-checked cleanly.
+- Next exact seam:
+  - the next compaction gap is no longer checkpoint inventory itself; it is checkpoint replay behavior, specifically `sessions.compaction.restore` or `sessions.compaction.branch` on top of the now-real archived control-chat checkpoint store.
+
+### Recovery addendum 2026-04-18 bounded control-chat checkpoint restore parity America/Chicago
+
+- Closed the next truthful compaction replay seam instead of leaving checkpoint restore as a blanket `503`:
+  - `sessions.compaction.restore({ key, checkpointId })` now restores a bounded control-chat checkpoint into the same canonical session key and returns the OpenClaw-shaped subset `{ ok, key, sessionId, checkpoint, entry }`.
+  - the restore path now replays a full checkpoint snapshot from SQLite, not just the archived prefix, so it can honestly discard post-compaction live drift and rebuild the pre-compaction transcript for that key.
+  - the method now emits `sessions.changed` with `reason: "checkpoint-restore"` instead of the previous explicit unavailable stub.
+- Kept the scope intentionally honest:
+  - this is still a bounded control-chat restore, not a full transcript-file/session-manager port.
+  - the local restore keeps the same session key and rebuilds the control-chat transcript in place, while the returned `entry` comes from the existing OpenZues session payload builder rather than a raw OpenClaw session-store row.
+  - `sessions.compaction.branch` remains explicit `UNAVAILABLE`, and `sessions.compact` without `maxLines` still fails closed until real summarization compaction is wired.
+- Product effect proved end to end:
+  - a checkpoint created by `sessions.compact` can now be replayed through the gateway method surface.
+  - if new live transcript content appears after compaction, restore discards that drift and rehydrates the original pre-compaction transcript snapshot instead of merging the new tail into the restored session.
+- Primary files carrying the product change:
+  - `src/openzues/database.py`
+  - `src/openzues/services/gateway_session_compaction.py`
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_sessions_compaction_restore_rehydrates_snapshot_and_publishes_event`
+    - retained adjacent proofs for:
+      - `test_sessions_compact_archives_trimmed_control_chat_messages_into_checkpoint_inventory`
+      - `test_sessions_compaction_list_returns_empty_inventory_for_unknown_session`
+      - `test_sessions_compaction_get_rejects_unknown_checkpoint`
+      - `test_sessions_compaction_branch_fails_explicitly_until_branch_runtime_is_wired`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_gateway_node_method_call_endpoint_supports_sessions_compaction_restore`
+    - retained adjacent proofs for:
+      - `test_gateway_node_method_call_endpoint_supports_sessions_compact_and_checkpoint_inventory`
+      - `test_sessions_compaction_list_api_returns_empty_inventory_for_unknown_key`
+      - `test_gateway_node_method_call_endpoint_sessions_compaction_get_rejects_unknown_checkpoint`
+      - `test_gateway_node_method_call_endpoint_sessions_compaction_branch_fails_explicitly_when_unwired`
+- Verified the slice with:
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py::test_sessions_compact_archives_trimmed_control_chat_messages_into_checkpoint_inventory tests/test_gateway_node_methods.py::test_sessions_compaction_restore_rehydrates_snapshot_and_publishes_event tests/test_gateway_node_methods.py::test_sessions_compaction_list_returns_empty_inventory_for_unknown_session tests/test_gateway_node_methods.py::test_sessions_compaction_get_rejects_unknown_checkpoint tests/test_gateway_node_methods.py::test_sessions_compaction_branch_fails_explicitly_until_branch_runtime_is_wired tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_sessions_compact_and_checkpoint_inventory tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_sessions_compaction_restore tests/test_gateway_nodes_api.py::test_sessions_compaction_list_api_returns_empty_inventory_for_unknown_key tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_sessions_compaction_get_rejects_unknown_checkpoint tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_sessions_compaction_branch_fails_explicitly_when_unwired -q`
+  - `& '.\.venv\Scripts\python.exe' -m ruff check src/openzues/database.py src/openzues/services/gateway_session_compaction.py src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `& '.\.venv\Scripts\python.exe' -m mypy src/openzues/database.py src/openzues/services/gateway_session_compaction.py src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the widened adjacent compaction restore proof set passed (`10 passed`).
+  - Ruff stayed clean on the touched files.
+  - `src/openzues/database.py`, `src/openzues/services/gateway_session_compaction.py`, and `src/openzues/services/gateway_node_methods.py` type-checked cleanly.
+- Next exact seam:
+  - the remaining compaction parity gap in this neighborhood is checkpoint branching (`sessions.compaction.branch`) or the no-`maxLines` summarization compaction path, with branching now the smaller adjacent follow-through seam.
+
+### Recovery addendum 2026-04-18 bounded control-chat checkpoint branch parity America/Chicago
+
+- Closed the next truthful branch seam on top of the new checkpoint snapshot store:
+  - `sessions.compaction.branch({ key, checkpointId })` now creates a fresh control-chat session key, replays the saved checkpoint snapshot into that new key, and returns the OpenClaw-shaped subset `{ ok, sourceKey, key, sessionId, checkpoint, entry }`.
+  - the new branch keeps the source session on its current compacted/live path while materializing the checkpoint snapshot under a separate session key instead of mutating the source transcript in place.
+  - the method now emits `sessions.changed` with `reason: "checkpoint-branch"` for both the source key and the new branch key.
+- Kept the scope intentionally honest:
+  - this is still a bounded control-chat branch, not a full OpenClaw session-store/session-file clone.
+  - the branch key is generated as a new thread session under the same base session family, and the returned `entry` is still built from the OpenZues session payload builder rather than a raw upstream session-store row.
+  - the branch preserves the local metadata we can represent truthfully today: copied model override, a checkpoint-suffixed label, and `parentSessionKey` pointing back to the source session.
+  - no-`maxLines` summarization compaction remains unwired, and that is now the primary remaining compaction-family gap once inventory, restore, and branch are all real.
+- Product effect proved end to end:
+  - after a bounded compaction plus additional live source drift, branching now creates a separate checkpoint session that rehydrates the original pre-compaction transcript snapshot.
+  - the source session remains on its compacted/live transcript, while the branched session exposes the restored checkpoint content and parent linkage through the normal session payload surface.
+- Primary files carrying the product change:
+  - `src/openzues/database.py`
+  - `src/openzues/services/gateway_session_compaction.py`
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_sessions_compaction_branch_rehydrates_snapshot_into_new_session_key`
+    - retained adjacent proofs for:
+      - `test_sessions_compact_archives_trimmed_control_chat_messages_into_checkpoint_inventory`
+      - `test_sessions_compaction_restore_rehydrates_snapshot_and_publishes_event`
+      - `test_sessions_compaction_list_returns_empty_inventory_for_unknown_session`
+      - `test_sessions_compaction_get_rejects_unknown_checkpoint`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_gateway_node_method_call_endpoint_supports_sessions_compaction_branch`
+    - retained adjacent proofs for:
+      - `test_gateway_node_method_call_endpoint_supports_sessions_compact_and_checkpoint_inventory`
+      - `test_gateway_node_method_call_endpoint_supports_sessions_compaction_restore`
+      - `test_sessions_compaction_list_api_returns_empty_inventory_for_unknown_key`
+      - `test_gateway_node_method_call_endpoint_sessions_compaction_get_rejects_unknown_checkpoint`
+- Verified the slice with:
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py::test_sessions_compact_archives_trimmed_control_chat_messages_into_checkpoint_inventory tests/test_gateway_node_methods.py::test_sessions_compaction_restore_rehydrates_snapshot_and_publishes_event tests/test_gateway_node_methods.py::test_sessions_compaction_list_returns_empty_inventory_for_unknown_session tests/test_gateway_node_methods.py::test_sessions_compaction_get_rejects_unknown_checkpoint tests/test_gateway_node_methods.py::test_sessions_compaction_branch_rehydrates_snapshot_into_new_session_key tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_sessions_compact_and_checkpoint_inventory tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_sessions_compaction_restore tests/test_gateway_nodes_api.py::test_sessions_compaction_list_api_returns_empty_inventory_for_unknown_key tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_sessions_compaction_get_rejects_unknown_checkpoint tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_sessions_compaction_branch -q`
+  - `& '.\.venv\Scripts\python.exe' -m ruff check src/openzues/database.py src/openzues/services/gateway_session_compaction.py src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `& '.\.venv\Scripts\python.exe' -m mypy src/openzues/database.py src/openzues/services/gateway_session_compaction.py src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the widened adjacent compaction branch proof set passed (`10 passed`).
+  - Ruff stayed clean on the touched files.
+  - `src/openzues/database.py`, `src/openzues/services/gateway_session_compaction.py`, and `src/openzues/services/gateway_node_methods.py` type-checked cleanly.
+- Next exact seam:
+  - the remaining smaller adjacent parity gap is to surface checkpoint summary metadata through `sessions.list` / session payloads, or to wire the no-`maxLines` summarization compaction path.
+
+### Recovery addendum 2026-04-18 sessions list compaction metadata parity America/Chicago
+
+- Closed the next small visibility seam on top of the real checkpoint store:
+  - `sessions.list` session rows now surface `compactionCheckpointCount` when a session has saved compaction checkpoints.
+  - the same row now also exposes `latestCompactionCheckpoint`, matching the newest persisted checkpoint payload for that session.
+- Kept the scope intentionally honest:
+  - this slice only lifts existing checkpoint metadata into the session list payload; it does not yet widen every `sessions.changed` event or every other derived session surface to include the same fields.
+  - the values come directly from the bounded SQLite compaction store we already landed in the prior restore/branch work, so this is parity visibility on top of real state, not synthetic decoration.
+- Product effect proved end to end:
+  - once a session is compacted, operators can now see from `sessions.list` that the session has checkpoint history and inspect the newest checkpoint summary without making a separate `sessions.compaction.list` call first.
+- Primary files carrying the product change:
+  - `src/openzues/database.py`
+  - `src/openzues/services/gateway_sessions.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_sessions_list_surfaces_compaction_checkpoint_metadata`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_gateway_node_method_call_endpoint_sessions_list_surfaces_compaction_checkpoint_metadata`
+- Verified the slice with:
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py::test_sessions_compact_archives_trimmed_control_chat_messages_into_checkpoint_inventory tests/test_gateway_node_methods.py::test_sessions_compaction_restore_rehydrates_snapshot_and_publishes_event tests/test_gateway_node_methods.py::test_sessions_compaction_branch_rehydrates_snapshot_into_new_session_key tests/test_gateway_node_methods.py::test_sessions_list_includes_metadata_known_non_current_sessions tests/test_gateway_node_methods.py::test_sessions_list_surfaces_compaction_checkpoint_metadata tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_sessions_compact_and_checkpoint_inventory tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_sessions_compaction_restore tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_sessions_compaction_branch tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_sessions_list_includes_metadata_sessions tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_sessions_list_surfaces_compaction_checkpoint_metadata -q`
+  - `& '.\.venv\Scripts\python.exe' -m ruff check src/openzues/database.py src/openzues/services/gateway_session_compaction.py src/openzues/services/gateway_sessions.py src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `& '.\.venv\Scripts\python.exe' -m mypy src/openzues/database.py src/openzues/services/gateway_session_compaction.py src/openzues/services/gateway_sessions.py src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the widened adjacent sessions/compaction proof set passed (`10 passed`).
+  - Ruff stayed clean on the touched files.
+  - `src/openzues/database.py`, `src/openzues/services/gateway_session_compaction.py`, `src/openzues/services/gateway_sessions.py`, and `src/openzues/services/gateway_node_methods.py` type-checked cleanly.
+- Next exact seam:
+  - the remaining smaller adjacent checkpoint-family gap is now broader event parity such as `sessions.changed` carrying the checkpoint metadata, or the still-missing no-`maxLines` summarization compaction path.
+
+### Recovery addendum 2026-04-18 sessions changed compaction metadata parity America/Chicago
+
+- Closed the next small event-parity seam on top of the real checkpoint store:
+  - `sessions.changed` payloads now surface `compactionCheckpointCount` when the changed session has saved compaction checkpoints.
+  - the same event now also exposes `latestCompactionCheckpoint`, matching the newest persisted checkpoint payload for that session.
+- Kept the scope intentionally honest:
+  - this slice only widens the `sessions.changed` event payload. It does not yet implement the still-missing no-`maxLines` summarization compaction path.
+  - the values are lifted from the existing bounded SQLite compaction store and the already-real session payload builder, so this is event parity on top of persisted state rather than synthetic event decoration.
+- Product effect proved end to end:
+  - after bounded compaction, operators subscribed through the session gateway event stream now receive the same checkpoint summary metadata already surfaced through `sessions.list`, without having to issue a separate inventory call first.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_sessions.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_sessions_compact_archives_trimmed_control_chat_messages_into_checkpoint_inventory`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_sessions_subscribe_api_delivers_compaction_checkpoint_metadata`
+- Verified the slice with:
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py::test_sessions_compact_archives_trimmed_control_chat_messages_into_checkpoint_inventory tests/test_gateway_node_methods.py::test_sessions_compaction_restore_rehydrates_snapshot_and_publishes_event tests/test_gateway_node_methods.py::test_sessions_compaction_branch_rehydrates_snapshot_into_new_session_key tests/test_gateway_node_methods.py::test_sessions_list_surfaces_compaction_checkpoint_metadata tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_sessions_compact_and_checkpoint_inventory tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_sessions_compaction_restore tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_sessions_compaction_branch tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_sessions_list_surfaces_compaction_checkpoint_metadata tests/test_gateway_nodes_api.py::test_sessions_subscribe_api_delivers_compaction_checkpoint_metadata -q`
+  - `& '.\.venv\Scripts\python.exe' -m ruff check src/openzues/database.py src/openzues/services/gateway_session_compaction.py src/openzues/services/gateway_sessions.py src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `& '.\.venv\Scripts\python.exe' -m mypy src/openzues/database.py src/openzues/services/gateway_session_compaction.py src/openzues/services/gateway_sessions.py src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the widened adjacent sessions/compaction event proof set passed (`9 passed`).
+  - Ruff stayed clean on the touched files.
+  - `src/openzues/database.py`, `src/openzues/services/gateway_session_compaction.py`, `src/openzues/services/gateway_sessions.py`, and `src/openzues/services/gateway_node_methods.py` type-checked cleanly.
+- Next exact seam:
+  - the remaining smaller adjacent checkpoint-family gap is now the still-missing no-`maxLines` summarization compaction path, unless a tighter event/regression gap appears while inspecting that runtime.
+
+### Recovery addendum 2026-04-18 bounded no-maxLines summary compaction parity America/Chicago
+
+- Closed the last checkpoint-family gap that was still hard-failing on `sessions.compact({ key })`:
+  - `sessions.compact` without `maxLines` now runs a bounded local summary compaction path instead of returning `503 UNAVAILABLE`.
+  - the live transcript is rewritten into one deterministic compaction-summary message plus an intact recent tail, while the full pre-compaction transcript still lands in the durable checkpoint snapshot store.
+  - the resulting checkpoint inventory remains visible through the existing `sessions.compaction.list`, `sessions.compaction.get`, `sessions.list`, and `sessions.changed` surfaces already landed in adjacent slices.
+- Kept the scope intentionally honest:
+  - this is not OpenClaw's full token-aware, model-backed, provider-pluggable auto-compaction engine.
+  - the local bridge is deterministic and bounded: it summarizes the archived prefix from persisted control-chat rows, keeps a small recent tail intact, and stores the complete original transcript for restore/branch on disk.
+  - OpenZues still does not claim OpenClaw's richer provider/model compaction configuration, memory-flush hooks, or token-window heuristics.
+- Product effect proved end to end:
+  - operators can now call `sessions.compact` without supplying a line budget and receive a real checkpointed compaction result instead of an explicit unavailable error.
+  - the compacted live transcript now shows a summary message for earlier turns while preserving the newest turns intact, and the checkpoint metadata is immediately queryable through the same gateway/session surfaces already wired.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_session_compaction.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_sessions_compact_without_max_lines_rewrites_history_into_summary_message`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_gateway_node_method_call_endpoint_supports_sessions_compact_summary_without_max_lines`
+- Verified the slice with:
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py::test_sessions_compact_archives_trimmed_control_chat_messages_into_checkpoint_inventory tests/test_gateway_node_methods.py::test_sessions_compact_without_max_lines_rewrites_history_into_summary_message tests/test_gateway_node_methods.py::test_sessions_compaction_restore_rehydrates_snapshot_and_publishes_event tests/test_gateway_node_methods.py::test_sessions_compaction_branch_rehydrates_snapshot_into_new_session_key tests/test_gateway_node_methods.py::test_sessions_list_surfaces_compaction_checkpoint_metadata tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_sessions_compact_and_checkpoint_inventory tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_sessions_compact_summary_without_max_lines tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_sessions_compaction_restore tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_sessions_compaction_branch tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_sessions_list_surfaces_compaction_checkpoint_metadata tests/test_gateway_nodes_api.py::test_sessions_subscribe_api_delivers_compaction_checkpoint_metadata -q`
+  - `& '.\.venv\Scripts\python.exe' -m ruff check src/openzues/services/gateway_session_compaction.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `& '.\.venv\Scripts\python.exe' -m mypy src/openzues/services/gateway_session_compaction.py src/openzues/services/gateway_node_methods.py src/openzues/services/gateway_sessions.py src/openzues/database.py`
+- Result:
+  - the widened adjacent compaction-family proof set passed (`11 passed`).
+  - Ruff stayed clean on the touched files.
+  - `src/openzues/services/gateway_session_compaction.py`, `src/openzues/services/gateway_node_methods.py`, `src/openzues/services/gateway_sessions.py`, and `src/openzues/database.py` type-checked cleanly.
+- Next exact seam:
+  - prove that checkpoint restore/branch stay truthful when the checkpoint came from the new summary-compaction path, or move to the next still-advertised session mutation gap once that regression risk is closed.
+
+### Recovery addendum 2026-04-18 summary-checkpoint restore and branch proof America/Chicago
+
+- Closed the immediate compatibility risk introduced by the new no-`maxLines` summary compaction path:
+  - checkpoints created by summary compaction now have explicit proof that `sessions.compaction.restore` rehydrates the original full transcript snapshot.
+  - the same checkpoint type now also has explicit proof that `sessions.compaction.branch` leaves the compacted source session intact while materializing a fresh branch with the original pre-compaction transcript.
+- Kept the scope intentionally honest:
+  - this was a proof-and-checkpoint landing, not a new production behavior patch. The summary-generated checkpoints were already compatible with restore/branch because the full transcript snapshot was being persisted into the checkpoint store.
+  - the value of this slice is durability and trust: the parity ledger no longer assumes that compatibility indirectly from the max-`maxLines` path alone.
+- Product effect proved end to end:
+  - a session compacted through the bounded summary path can now be restored back to its full transcript through the gateway method surface.
+  - the same summary-generated checkpoint can be branched into a new session while the source session remains on its compacted summary-plus-tail state.
+- Primary files carrying the proof change:
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_sessions_compaction_restore_rehydrates_snapshot_after_summary_compaction`
+    - `test_sessions_compaction_branch_rehydrates_snapshot_after_summary_compaction`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_gateway_node_method_call_endpoint_supports_summary_compaction_restore`
+    - `test_gateway_node_method_call_endpoint_supports_summary_compaction_branch`
+- Verified the slice with:
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py::test_sessions_compact_archives_trimmed_control_chat_messages_into_checkpoint_inventory tests/test_gateway_node_methods.py::test_sessions_compact_without_max_lines_rewrites_history_into_summary_message tests/test_gateway_node_methods.py::test_sessions_compaction_restore_rehydrates_snapshot_after_summary_compaction tests/test_gateway_node_methods.py::test_sessions_compaction_branch_rehydrates_snapshot_after_summary_compaction tests/test_gateway_node_methods.py::test_sessions_compaction_restore_rehydrates_snapshot_and_publishes_event tests/test_gateway_node_methods.py::test_sessions_compaction_branch_rehydrates_snapshot_into_new_session_key tests/test_gateway_node_methods.py::test_sessions_list_surfaces_compaction_checkpoint_metadata tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_sessions_compact_and_checkpoint_inventory tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_sessions_compact_summary_without_max_lines tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_summary_compaction_restore tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_summary_compaction_branch tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_sessions_compaction_restore tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_sessions_compaction_branch tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_sessions_list_surfaces_compaction_checkpoint_metadata tests/test_gateway_nodes_api.py::test_sessions_subscribe_api_delivers_compaction_checkpoint_metadata -q`
+  - `& '.\.venv\Scripts\python.exe' -m ruff check src/openzues/services/gateway_session_compaction.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `& '.\.venv\Scripts\python.exe' -m mypy src/openzues/services/gateway_session_compaction.py src/openzues/services/gateway_node_methods.py src/openzues/services/gateway_sessions.py src/openzues/database.py`
+- Result:
+  - the widened adjacent compaction-family compatibility proof set passed (`15 passed`).
+  - Ruff stayed clean on the touched files.
+  - `src/openzues/services/gateway_session_compaction.py`, `src/openzues/services/gateway_node_methods.py`, `src/openzues/services/gateway_sessions.py`, and `src/openzues/database.py` type-checked cleanly.
+- Next exact seam:
+  - step out of the compaction family and inventory the next still-advertised session mutation/runtime gap, or prove one more adjacent checkpoint-surface edge only if it is smaller than that next missing contract.
+
+### Recovery addendum 2026-04-18 bounded push.test unavailable parity America/Chicago
+
+- Closed the next small registry-only control-plane gap without pretending OpenZues already has OpenClaw's APNS runtime:
+  - `push.test` now accepts the upstream-shaped request surface `nodeId`, optional `title`, optional `body`, and optional `environment`.
+  - after validation, the gateway dispatcher now returns an explicit `503 UNAVAILABLE` with `push.test is unavailable until APNS push runtime is wired` instead of falling through as `unsupported method`.
+- Kept the scope intentionally honest:
+  - this slice does not claim OpenClaw's APNS registration, relay, or direct push delivery runtime.
+  - OpenZues already owns webhook notification-route test delivery through `OpsMeshService.test_route_delivery(...)`, but that is a different delivery substrate and not a truthful one-to-one peer for OpenClaw's node-targeted APNS `push.test` contract.
+- Product effect proved end to end:
+  - callers now get a stable, source-shaped gateway response boundary for `push.test`.
+  - valid requests no longer look like a missing method; they now clearly communicate that the push runtime itself is the missing piece.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_push_test_fails_as_explicitly_unavailable`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_gateway_node_method_call_endpoint_surfaces_push_test_unavailable`
+- Verified the slice with:
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py::test_push_test_fails_as_explicitly_unavailable tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_surfaces_push_test_unavailable -q`
+  - `& '.\.venv\Scripts\python.exe' -m ruff check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `& '.\.venv\Scripts\python.exe' -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused `push.test` service/API proof pair passed (`2 passed`).
+  - Ruff stayed clean on the touched files.
+  - `src/openzues/services/gateway_node_methods.py` type-checked cleanly.
+- Next exact seam:
+  - keep walking the remaining registry-only control-plane helpers that still fall through as `unsupported method`, with `poll`, `connect`, `web.login.start`, or `web.login.wait` as the next honest candidates for either bounded-unavailable parity or the smallest real bridge.
+
+### Recovery addendum 2026-04-18 bounded connect invalid-request parity America/Chicago
+
+- Closed the smallest remaining registry-only handshake gap without pretending the HTTP node-method surface is a WebSocket bootstrap channel:
+  - `connect` no longer falls through as `unsupported method`.
+  - the gateway dispatcher now validates the empty request shape and returns an explicit `400 INVALID_REQUEST` with `connect is only valid as the first request`, matching the upstream control-plane boundary for this method family.
+- Kept the scope intentionally honest:
+  - this slice does not claim OpenClaw's first-frame WebSocket handshake, auth-challenge exchange, or connection bootstrap runtime.
+  - it only makes the already-advertised `connect` method truthfully non-callable on this surface, so callers stop seeing it as a missing implementation and instead get the same bounded contract OpenClaw exposes after the initial request boundary has passed.
+- Product effect proved end to end:
+  - callers hitting the OpenZues gateway method API with `connect` now receive a stable, source-shaped invalid-request response instead of the generic unsupported-method fallback.
+  - the registry and dispatcher are now aligned for this method: advertised, recognized, and explicitly rejected for the right reason.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_connect_fails_as_explicit_invalid_request`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_gateway_node_method_call_endpoint_rejects_connect_as_non_callable_method`
+- Verified the slice with:
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py::test_connect_fails_as_explicit_invalid_request tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_rejects_connect_as_non_callable_method -q`
+  - `& '.\.venv\Scripts\python.exe' -m ruff check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `& '.\.venv\Scripts\python.exe' -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused `connect` service/API proof pair passed (`2 passed`).
+  - Ruff stayed clean on the touched files.
+  - `src/openzues/services/gateway_node_methods.py` type-checked cleanly.
+- Next exact seam:
+  - keep walking the remaining registry-only helpers that still lack a truthful dispatcher boundary, with `web.login.start` and `web.login.wait` now the smallest adjacent candidates before revisiting the larger `poll` send-family surface.
+
+### Recovery addendum 2026-04-18 bounded web.login provider-unavailable parity America/Chicago
+
+- Closed the next registry-only QR-login helper pair without pretending OpenZues already has an outbound channel plugin runtime:
+  - `web.login.start` now accepts the upstream-shaped params `force`, `timeoutMs`, `verbose`, and optional `accountId`.
+  - `web.login.wait` now accepts the upstream-shaped params `timeoutMs` and optional `accountId`.
+  - both methods now return an explicit `400 INVALID_REQUEST` with `web login provider is not available` instead of falling through as unsupported methods.
+- Kept the scope intentionally honest:
+  - this slice does not claim OpenClaw's plugin-discovered QR login providers, channel stop/start orchestration, or live QR wait loop.
+  - OpenZues currently has no local channel plugin surface implementing `loginWithQrStart` / `loginWithQrWait`, so the truthful parity move here is the same bounded no-provider response OpenClaw emits when no provider is available.
+- Product effect proved end to end:
+  - callers now get a stable, source-shaped boundary for both web login helpers instead of a generic missing-method fallback.
+  - valid request shapes are recognized and rejected for the right operational reason: there is no configured provider runtime behind them yet.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_web_login_methods_fail_as_explicit_provider_unavailable`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_gateway_node_method_call_endpoint_rejects_web_login_without_provider`
+- Verified the slice with:
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py::test_web_login_methods_fail_as_explicit_provider_unavailable tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_rejects_web_login_without_provider -q`
+  - `& '.\.venv\Scripts\python.exe' -m ruff check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `& '.\.venv\Scripts\python.exe' -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused `web.login.start` / `web.login.wait` service/API proof set passed (`4 passed`).
+  - Ruff stayed clean on the touched files.
+  - `src/openzues/services/gateway_node_methods.py` type-checked cleanly.
+- Next exact seam:
+  - revisit the remaining larger registry-only `poll` send-family gap, or move to the next adjacent advertised runtime contract only if it is smaller than that outbound-channel surface.
+
+### Recovery addendum 2026-04-18 bounded channels.logout unsupported-channel parity America/Chicago
+
+- Closed another small advertised channel-control gap without pretending OpenZues has logout-capable channel plugins:
+  - `channels.logout` now accepts the upstream-shaped request surface `channel` plus optional `accountId`.
+  - after validation, the dispatcher returns an explicit `400 INVALID_REQUEST` with `channel <id> does not support logout` instead of falling through as an unsupported method.
+- Kept the scope intentionally honest:
+  - this slice does not claim OpenClaw's plugin-backed account logout runtime, config snapshot validation, or channel stop/restart orchestration.
+  - OpenZues currently exposes channel inventory through `GatewayChannelsService`, but not provider plugins with `logoutAccount`, so the truthful parity boundary here is the same unsupported-channel invalid request OpenClaw emits when a channel does not implement logout.
+- Product effect proved end to end:
+  - callers now get a stable, source-shaped error for `channels.logout` instead of a generic missing-method response.
+  - valid params are recognized and rejected for the real operational reason: the requested channel has no logout-capable runtime in OpenZues yet.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_channels_logout_fails_as_explicit_unsupported_channel`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_gateway_node_method_call_endpoint_rejects_channels_logout_without_supported_channel`
+- Verified the slice with:
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py::test_channels_logout_fails_as_explicit_unsupported_channel tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_rejects_channels_logout_without_supported_channel -q`
+  - `& '.\.venv\Scripts\python.exe' -m ruff check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `& '.\.venv\Scripts\python.exe' -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused `channels.logout` service/API proof pair passed (`2 passed`).
+  - Ruff stayed clean on the touched files.
+  - `src/openzues/services/gateway_node_methods.py` type-checked cleanly.
+- Next exact seam:
+  - decide whether to bound the larger outbound `poll` send-family surface next, or inventory one more smaller advertised channel/runtime gap if a tighter seam exists than that outbound contract.
+
+### Recovery addendum 2026-04-18 logs.tail workspace bridge parity America/Chicago
+
+- Closed the next truthful runtime-observability seam with a real bridge instead of another registry-only placeholder:
+  - `logs.tail` now accepts the source-shaped params `cursor`, `limit`, and `maxBytes`.
+  - the dispatcher reads the newest `*.log` under the workspace-relative `logs/` root, returns `{ file, cursor, size, lines, truncated, reset }`, and supports follow-up reads from a prior cursor.
+  - sensitive `--token` and `--hook-token` values are redacted before lines are returned through the gateway surface.
+- Kept the scope intentionally honest:
+  - this is a bounded local workspace log bridge, not a full remote lane log streaming port.
+  - the implementation intentionally follows the freshest local log file under `logs/` and does not pretend OpenZues already has OpenClaw's wider multi-source log muxing.
+- Product effect proved end to end:
+  - operators can now read live workspace log tails through `/api/gateway/node-methods/call` without shelling into the repo.
+  - cursor follow-up reads only return newly appended lines when the same log file continues growing.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_logs.py`
+  - `src/openzues/services/gateway_node_methods.py`
+  - `src/openzues/app.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_logs_tail_returns_latest_workspace_log_lines`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_gateway_node_method_call_endpoint_supports_logs_tail_cursor_follow_up`
+- Verified the slice with:
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py::test_logs_tail_returns_latest_workspace_log_lines tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_logs_tail_cursor_follow_up -q`
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py::test_logs_tail_returns_latest_workspace_log_lines tests/test_gateway_node_methods.py::test_update_run_triggers_runtime_update_tick_and_returns_fresh_view tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_logs_tail_cursor_follow_up tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_update_run -q`
+  - `& '.\.venv\Scripts\python.exe' -m ruff check src/openzues/services/gateway_logs.py src/openzues/services/gateway_node_methods.py src/openzues/app.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `& '.\.venv\Scripts\python.exe' -m mypy src/openzues/services/gateway_logs.py src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused `logs.tail` service/API proof pair passed, and the widened adjacent gateway sweep still passed cleanly (`4 passed`).
+  - Ruff stayed clean on the touched files.
+  - `src/openzues/services/gateway_logs.py` and `src/openzues/services/gateway_node_methods.py` type-checked cleanly.
+- Next exact seam:
+  - keep walking the remaining registry-only admin/runtime helpers with the same bounded discipline, with `update.run` now the next adjacent runtime seam to close.
+
+### Recovery addendum 2026-04-18 manual update.run parity America/Chicago
+
+- Closed the next reserved admin runtime seam by wiring the existing self-update engine through the gateway dispatcher:
+  - `update.run` now performs one real `RuntimeUpdateService.tick()` cycle and returns the same shaped runtime update view exposed by `/api/runtime/update`.
+  - the gateway method now reflects live repo-watch state such as `pending_revision`, `pending_restart`, `safe_to_restart`, `restart_in_progress`, and `last_checked_at` instead of falling through as unsupported.
+- Kept the scope intentionally honest:
+  - this slice is a bounded manual poll/run surface, not a new restart implementation.
+  - restart behavior still belongs to the existing runtime update service, so `update.run` only advances the check cycle and returns the current update posture; it does not invent a separate forced-reexec path.
+- Product effect proved end to end:
+  - operators can now trigger a fresh self-update evaluation from the gateway method layer and immediately read the refreshed status payload without leaving the control-plane surface.
+  - when the repo has advanced but the system is not at a safe restart boundary, the method truthfully reports the waiting posture instead of pretending a restart already happened.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `src/openzues/app.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_update_run_triggers_runtime_update_tick_and_returns_fresh_view`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_gateway_node_method_call_endpoint_supports_update_run`
+- Verified the slice with:
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py::test_update_run_triggers_runtime_update_tick_and_returns_fresh_view tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_update_run -q`
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py::test_logs_tail_returns_latest_workspace_log_lines tests/test_gateway_node_methods.py::test_update_run_triggers_runtime_update_tick_and_returns_fresh_view tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_logs_tail_cursor_follow_up tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_update_run -q`
+  - `& '.\.venv\Scripts\python.exe' -m ruff check src/openzues/services/gateway_logs.py src/openzues/services/gateway_node_methods.py src/openzues/app.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `& '.\.venv\Scripts\python.exe' -m mypy src/openzues/services/gateway_logs.py src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused `update.run` service/API proof pair passed, and the widened adjacent gateway sweep still passed cleanly (`4 passed`).
+  - Ruff stayed clean on the touched files.
+  - `src/openzues/services/gateway_logs.py` and `src/openzues/services/gateway_node_methods.py` type-checked cleanly.
+- Next exact seam:
+  - inspect the next smallest reserved/admin helper with an already-existing backend source of truth, with `wizard.status` now a likely candidate before the larger `config.*` write family.
+
+### Recovery addendum 2026-04-18 wizard.status setup-session parity America/Chicago
+
+- Closed the next reserved admin wizard seam by reusing the existing setup-wizard session source of truth:
+  - `wizard.status` now returns the saved setup wizard session through the gateway dispatcher.
+  - the method reuses `SetupService.get_wizard_session()` and returns the same shaped session payload already exposed by `/api/setup/wizard`.
+- Kept the scope intentionally honest:
+  - this slice only exposes wizard status/inspection.
+  - it does not yet claim OpenClaw's full wizard mutation flow for `wizard.start`, `wizard.next`, or `wizard.cancel`; those remain separate seams until their local equivalents are mapped cleanly.
+- Product effect proved end to end:
+  - operators can now inspect the saved wizard posture, recommendations, bootstrap roles/scopes, and current saved defaults from the gateway method surface instead of dropping to the dedicated setup route.
+  - the gateway result stays aligned with the same persisted setup-wizard state the dashboard and setup API already use.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `src/openzues/app.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_wizard_status_returns_injected_setup_wizard_session`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_gateway_node_method_call_endpoint_supports_wizard_status`
+- Verified the slice with:
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py::test_wizard_status_returns_injected_setup_wizard_session tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_wizard_status -q`
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py::test_logs_tail_returns_latest_workspace_log_lines tests/test_gateway_node_methods.py::test_update_run_triggers_runtime_update_tick_and_returns_fresh_view tests/test_gateway_node_methods.py::test_wizard_status_returns_injected_setup_wizard_session tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_logs_tail_cursor_follow_up tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_update_run tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_wizard_status -q`
+  - `& '.\.venv\Scripts\python.exe' -m ruff check src/openzues/services/gateway_logs.py src/openzues/services/gateway_node_methods.py src/openzues/app.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `& '.\.venv\Scripts\python.exe' -m mypy src/openzues/services/gateway_logs.py src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused `wizard.status` service/API proof pair passed, and the widened adjacent gateway sweep still passed cleanly (`6 passed`).
+  - Ruff stayed clean on the touched files.
+  - `src/openzues/services/gateway_logs.py` and `src/openzues/services/gateway_node_methods.py` type-checked cleanly.
+- Next exact seam:
+  - inspect whether `wizard.cancel` can truthfully map to existing saved-session clearing/reset behavior, or pivot to the next reserved helper with an equally direct local source of truth before touching the heavier `config.*` family.
+
+### Recovery addendum 2026-04-18 wizard session contract correction parity America/Chicago
+
+- Corrected a parity drift after re-reading the upstream OpenClaw wizard handlers in `openclaw-main/src/gateway/server-methods/wizard.ts`:
+  - the real OpenClaw wizard surface is not a saved setup-session read.
+  - `wizard.start`, `wizard.next`, `wizard.cancel`, and `wizard.status` are all part of an in-memory session protocol keyed by `sessionId`.
+- Landed the bounded local runtime that matches that contract shape instead of leaving the earlier saved-session interpretation in place:
+  - added `src/openzues/services/gateway_wizard.py` with a bounded in-memory wizard session service.
+  - `wizard.start({ mode?, workspace? })` now creates a gateway wizard session, seeds the local draft from the existing saved setup posture, and returns `{ sessionId, done, status, step? }`.
+  - `wizard.next({ sessionId, answer? })` now advances the session, validates `stepId`, persists the draft only when the bounded flow completes, and returns `{ done, status, step? }`.
+  - `wizard.cancel({ sessionId })` now returns `{ status: "cancelled", error: "cancelled" }` and discards unapplied draft changes.
+  - `wizard.status({ sessionId })` now returns the upstream-shaped session status payload instead of the saved setup-wizard profile.
+- Kept the scope intentionally honest:
+  - this is a bounded local setup wizard runtime, not a full port of OpenClaw's broader runner and prompt graph.
+  - the current local flow only stages the smallest real setup-draft steps we already own cleanly in OpenZues: workspace path and recurring task name, plus the optional `mode` / `workspace` seeds accepted by `wizard.start`.
+  - the saved setup-wizard profile is still available through `/api/setup/wizard`; it is no longer being mislabeled as the gateway `wizard.status` contract.
+- Product effect proved end to end:
+  - operators can now start a wizard session, inspect live running status by `sessionId`, answer a bounded setup step, finish with persisted draft state, or cancel without persisting partial input.
+  - the gateway wizard family now follows the same session-oriented request/response shape as OpenClaw for this bounded local slice.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_wizard.py`
+  - `src/openzues/services/gateway_node_methods.py`
+  - `src/openzues/app.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_wizard_methods_drive_bounded_gateway_wizard_runtime`
+    - `test_wizard_cancel_discards_unapplied_draft`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_gateway_node_method_call_endpoint_supports_wizard_start_next_completion`
+    - `test_gateway_node_method_call_endpoint_supports_wizard_cancel_without_persisting_draft`
+- Verified the corrected slice with:
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py::test_logs_tail_returns_latest_workspace_log_lines tests/test_gateway_node_methods.py::test_update_run_triggers_runtime_update_tick_and_returns_fresh_view tests/test_gateway_node_methods.py::test_wizard_methods_drive_bounded_gateway_wizard_runtime tests/test_gateway_node_methods.py::test_wizard_cancel_discards_unapplied_draft tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_logs_tail_cursor_follow_up tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_update_run tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_wizard_start_next_completion tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_wizard_cancel_without_persisting_draft -q`
+  - `& '.\.venv\Scripts\python.exe' -m ruff check src/openzues/services/gateway_logs.py src/openzues/services/gateway_wizard.py src/openzues/services/gateway_node_methods.py src/openzues/app.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `& '.\.venv\Scripts\python.exe' -m mypy src/openzues/services/gateway_logs.py src/openzues/services/gateway_wizard.py src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the widened adjacent gateway proof set passed cleanly (`8 passed`).
+  - Ruff stayed clean on the touched files.
+  - `src/openzues/services/gateway_logs.py`, `src/openzues/services/gateway_wizard.py`, and `src/openzues/services/gateway_node_methods.py` type-checked cleanly.
+- Next exact seam:
+  - either widen this bounded wizard runtime to cover richer prompt graphs only if there is a real local backend for them, or pivot back to the next smallest advertised admin helper outside the wizard family before touching the heavier `config.*` write surface.
+

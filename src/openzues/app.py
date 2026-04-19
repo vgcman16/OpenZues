@@ -156,6 +156,7 @@ from openzues.services.gateway_channels import GatewayChannelsService
 from openzues.services.gateway_config import GatewayConfigService
 from openzues.services.gateway_health import GatewayHealthService
 from openzues.services.gateway_identity import GatewayIdentityService
+from openzues.services.gateway_logs import GatewayLogsService
 from openzues.services.gateway_models import GatewayModelsService
 from openzues.services.gateway_node_methods import (
     GatewayNodeMethodError,
@@ -169,6 +170,7 @@ from openzues.services.gateway_tts import GatewayTtsService
 from openzues.services.gateway_tts_runtime import GatewayTtsRuntimeService
 from openzues.services.gateway_voicewake import GatewayVoiceWakeService
 from openzues.services.gateway_wake import GatewayWakeService
+from openzues.services.gateway_wizard import GatewayWizardService
 from openzues.services.github import GitHubService
 from openzues.services.hermes_platform import HermesPlatformService
 from openzues.services.hermes_runtime_profile import (
@@ -1710,6 +1712,9 @@ def create_app(
     active_gateway_channels_service = GatewayChannelsService(
         list_notification_route_views=list_gateway_notification_route_views
     )
+    active_gateway_logs_service = GatewayLogsService(
+        logs_root=active_settings.data_dir.parent / "logs"
+    )
     active_gateway_health_service = GatewayHealthService(
         control_plane_role=lambda: fastapi_app.state.control_plane_role,
         owner_pid=lambda: fastapi_app.state.control_plane_owner_pid,
@@ -1891,6 +1896,22 @@ def create_app(
         instance_id = raw_instance_id
         return await active_manager.interrupt_turn(instance_id, thread_id)
 
+    async def load_runtime_update_view() -> dict[str, object]:
+        return (await active_hermes_platform_service.get_update_view()).model_dump(mode="json")
+
+    async def load_setup_wizard_session() -> dict[str, object]:
+        return (await active_setup_service.get_wizard_session()).model_dump(mode="json")
+
+    async def save_setup_wizard_session(patch: dict[str, object]) -> dict[str, object]:
+        return (
+            await active_setup_service.save_wizard_session(dict(patch))
+        ).model_dump(mode="json")
+
+    active_gateway_wizard_service = GatewayWizardService(
+        load_session=load_setup_wizard_session,
+        save_session=save_setup_wizard_session,
+    )
+
     if active_gateway_node_method_service is None:
         active_gateway_node_method_service = GatewayNodeMethodService(
             active_gateway_node_service.registry,
@@ -1901,6 +1922,7 @@ def create_app(
             config_service=active_gateway_config_service,
             health_service=active_gateway_health_service,
             gateway_identity_service=active_gateway_identity_service,
+            logs_service=active_gateway_logs_service,
             models_service=GatewayModelsService(list_instance_views=active_manager.list_views),
             chat_send_service=submit_gateway_chat_message,
             chat_abort_service=abort_gateway_chat_run,
@@ -1908,6 +1930,9 @@ def create_app(
             run_task_blueprint_now=active_ops_mesh_service.run_task_blueprint_now,
             delete_task_blueprint=active_ops_mesh_service.delete_task_blueprint,
             status_service=load_gateway_status,
+            runtime_update_tick=active_runtime_update_service.tick,
+            runtime_update_view=load_runtime_update_view,
+            wizard_service=active_gateway_wizard_service,
             talk_mode_service=active_gateway_talk_mode_service,
             tts_service=active_gateway_tts_service,
             tts_runtime_service=active_gateway_tts_runtime_service,

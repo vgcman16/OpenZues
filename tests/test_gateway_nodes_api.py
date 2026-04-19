@@ -2941,7 +2941,7 @@ def test_gateway_node_method_call_endpoint_sessions_delete_removes_metadata_sess
     assert [event["payload"]["reason"] for event in delete_events] == ["delete"]
 
 
-def test_gateway_node_method_call_endpoint_sessions_compact_fails_explicitly_when_unwired() -> (
+def test_gateway_node_method_call_endpoint_supports_sessions_compact_and_checkpoint_inventory() -> (
     None
 ):
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-compact-api"
@@ -2955,27 +2955,440 @@ def test_gateway_node_method_call_endpoint_sessions_compact_fails_explicitly_whe
 
     with TestClient(app, client=("testclient", 50000)) as client:
         _allow_mutating_api_requests(client)
-        response = client.post(
+        asyncio.run(
+            client.app.state.database.append_control_chat_message(
+                role="user",
+                content="Alpha line 1\nAlpha line 2",
+                mission_id=None,
+                session_key="openzues:thread:demo",
+            )
+        )
+        asyncio.run(
+            client.app.state.database.append_control_chat_message(
+                role="assistant",
+                content="Bravo line 1",
+                mission_id=None,
+                session_key="openzues:thread:demo",
+            )
+        )
+        kept_id = asyncio.run(
+            client.app.state.database.append_control_chat_message(
+                role="assistant",
+                content="Charlie line 1\nCharlie line 2",
+                mission_id=None,
+                session_key="openzues:thread:demo",
+            )
+        )
+        compact_response = client.post(
             "/api/gateway/node-methods/call",
             json={
                 "method": "sessions.compact",
                 "params": {
                     "key": "openzues:thread:demo",
-                    "maxLines": 200,
+                    "maxLines": 2,
                 },
             },
         )
+        checkpoint_id = compact_response.json()["checkpointId"]
+        list_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.compaction.list",
+                "params": {"key": "openzues:thread:demo"},
+            },
+        )
+        get_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.compaction.get",
+                "params": {
+                    "key": "openzues:thread:demo",
+                    "checkpointId": checkpoint_id,
+                },
+            },
+        )
+        remaining_messages = asyncio.run(
+            client.app.state.database.list_control_chat_messages(
+                limit=10,
+                session_key="openzues:thread:demo",
+            )
+        )
 
-    assert response.status_code == 503
-    assert response.json()["detail"] == (
-        "sessions.compact is unavailable until control chat compaction is wired"
+    assert compact_response.status_code == 200
+    compact_payload = compact_response.json()
+    assert compact_payload["ok"] is True
+    assert compact_payload["key"] == "openzues:thread:demo"
+    assert compact_payload["compacted"] is True
+    assert compact_payload["kept"] == 2
+    assert compact_payload["archivedCount"] == 2
+
+    assert list_response.status_code == 200
+    list_payload = list_response.json()
+    assert list_payload["ok"] is True
+    assert list_payload["key"] == "openzues:thread:demo"
+    assert list_payload["checkpoints"] == [
+        {
+            "checkpointId": checkpoint_id,
+            "sessionKey": "openzues:thread:demo",
+            "sessionId": "openzues:thread:demo",
+            "createdAt": list_payload["checkpoints"][0]["createdAt"],
+            "reason": "manual",
+            "summary": "Alpha line 1 Alpha line 2 Bravo line 1",
+            "firstKeptEntryId": str(kept_id),
+            "preCompaction": {
+                "sessionId": "openzues:thread:demo",
+                "entryId": list_payload["checkpoints"][0]["preCompaction"]["entryId"],
+            },
+            "postCompaction": {
+                "sessionId": "openzues:thread:demo",
+                "entryId": str(kept_id),
+            },
+        }
+    ]
+
+    assert get_response.status_code == 200
+    assert get_response.json() == {
+        "ok": True,
+        "key": "openzues:thread:demo",
+        "checkpoint": list_payload["checkpoints"][0],
+    }
+    assert [message["id"] for message in remaining_messages] == [kept_id]
+
+
+def test_gateway_node_method_call_endpoint_supports_sessions_compact_summary_without_max_lines(
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-compaction-summary-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
     )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        asyncio.run(
+            client.app.state.database.append_control_chat_message(
+                role="user",
+                content="Alpha line 1\nAlpha line 2",
+                mission_id=None,
+                session_key="openzues:thread:demo",
+            )
+        )
+        asyncio.run(
+            client.app.state.database.append_control_chat_message(
+                role="assistant",
+                content="Bravo line 1",
+                mission_id=None,
+                session_key="openzues:thread:demo",
+            )
+        )
+        third_id = asyncio.run(
+            client.app.state.database.append_control_chat_message(
+                role="assistant",
+                content="Charlie line 1\nCharlie line 2",
+                mission_id=None,
+                session_key="openzues:thread:demo",
+            )
+        )
+        asyncio.run(
+            client.app.state.database.append_control_chat_message(
+                role="user",
+                content="Delta line 1",
+                mission_id=None,
+                session_key="openzues:thread:demo",
+            )
+        )
+        asyncio.run(
+            client.app.state.database.append_control_chat_message(
+                role="assistant",
+                content="Echo line 1",
+                mission_id=None,
+                session_key="openzues:thread:demo",
+            )
+        )
+        compact_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.compact",
+                "params": {
+                    "key": "openzues:thread:demo",
+                },
+            },
+        )
+        checkpoint_id = compact_response.json()["checkpointId"]
+        list_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.compaction.list",
+                "params": {"key": "openzues:thread:demo"},
+            },
+        )
+        remaining_messages = asyncio.run(
+            client.app.state.database.list_control_chat_messages(
+                limit=10,
+                session_key="openzues:thread:demo",
+            )
+        )
+
+    assert compact_response.status_code == 200
+    compact_payload = compact_response.json()
+    assert compact_payload["ok"] is True
+    assert compact_payload["key"] == "openzues:thread:demo"
+    assert compact_payload["compacted"] is True
+    assert compact_payload["archivedCount"] == 3
+
+    assert [message["role"] for message in remaining_messages] == [
+        "system",
+        "user",
+        "assistant",
+    ]
+    assert remaining_messages[0]["action_kind"] == "compaction_summary"
+    assert remaining_messages[0]["content"] == (
+        "Compaction summary of earlier turns:\n"
+        "Alpha line 1 Alpha line 2 Bravo line 1 Charlie line 1 Charlie line 2"
+    )
+    assert [message["content"] for message in remaining_messages[1:]] == [
+        "Delta line 1",
+        "Echo line 1",
+    ]
+
+    assert list_response.status_code == 200
+    list_payload = list_response.json()
+    assert list_payload["ok"] is True
+    assert list_payload["key"] == "openzues:thread:demo"
+    assert list_payload["checkpoints"] == [
+        {
+            "checkpointId": checkpoint_id,
+            "sessionKey": "openzues:thread:demo",
+            "sessionId": "openzues:thread:demo",
+            "createdAt": list_payload["checkpoints"][0]["createdAt"],
+            "reason": "summary",
+            "summary": "Alpha line 1 Alpha line 2 Bravo line 1 Charlie line 1 Charlie line 2",
+            "firstKeptEntryId": str(remaining_messages[0]["id"]),
+            "preCompaction": {
+                "sessionId": "openzues:thread:demo",
+                "entryId": str(third_id),
+            },
+            "postCompaction": {
+                "sessionId": "openzues:thread:demo",
+                "entryId": str(remaining_messages[0]["id"]),
+            },
+        }
+    ]
 
 
-def test_sessions_compaction_restore_api_is_explicitly_unavailable(
-) -> (
-    None
-):
+def test_gateway_node_method_call_endpoint_supports_summary_compaction_restore() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-compaction-summary-restore-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        asyncio.run(
+            client.app.state.database.append_control_chat_message(
+                role="user",
+                content="Alpha line 1\nAlpha line 2",
+                mission_id=None,
+                session_key="openzues:thread:demo",
+            )
+        )
+        asyncio.run(
+            client.app.state.database.append_control_chat_message(
+                role="assistant",
+                content="Bravo line 1",
+                mission_id=None,
+                session_key="openzues:thread:demo",
+            )
+        )
+        asyncio.run(
+            client.app.state.database.append_control_chat_message(
+                role="assistant",
+                content="Charlie line 1\nCharlie line 2",
+                mission_id=None,
+                session_key="openzues:thread:demo",
+            )
+        )
+        asyncio.run(
+            client.app.state.database.append_control_chat_message(
+                role="user",
+                content="Delta line 1",
+                mission_id=None,
+                session_key="openzues:thread:demo",
+            )
+        )
+        asyncio.run(
+            client.app.state.database.append_control_chat_message(
+                role="assistant",
+                content="Echo line 1",
+                mission_id=None,
+                session_key="openzues:thread:demo",
+            )
+        )
+        compact_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.compact",
+                "params": {
+                    "key": "openzues:thread:demo",
+                },
+            },
+        )
+        checkpoint_id = compact_response.json()["checkpointId"]
+        asyncio.run(
+            client.app.state.database.append_control_chat_message(
+                role="assistant",
+                content="Foxtrot line 1",
+                mission_id=None,
+                session_key="openzues:thread:demo",
+            )
+        )
+        restore_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.compaction.restore",
+                "params": {
+                    "key": "openzues:thread:demo",
+                    "checkpointId": checkpoint_id,
+                },
+            },
+        )
+        restored_messages = asyncio.run(
+            client.app.state.database.list_control_chat_messages(
+                limit=10,
+                session_key="openzues:thread:demo",
+            )
+        )
+
+    assert compact_response.status_code == 200
+    assert restore_response.status_code == 200
+    restore_payload = restore_response.json()
+    assert restore_payload["ok"] is True
+    assert restore_payload["key"] == "openzues:thread:demo"
+    assert restore_payload["checkpoint"]["checkpointId"] == checkpoint_id
+    assert [message["content"] for message in restored_messages] == [
+        "Alpha line 1\nAlpha line 2",
+        "Bravo line 1",
+        "Charlie line 1\nCharlie line 2",
+        "Delta line 1",
+        "Echo line 1",
+    ]
+
+
+def test_gateway_node_method_call_endpoint_supports_summary_compaction_branch() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-compaction-summary-branch-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        asyncio.run(
+            client.app.state.database.append_control_chat_message(
+                role="user",
+                content="Alpha line 1\nAlpha line 2",
+                mission_id=None,
+                session_key="openzues:thread:demo",
+            )
+        )
+        asyncio.run(
+            client.app.state.database.append_control_chat_message(
+                role="assistant",
+                content="Bravo line 1",
+                mission_id=None,
+                session_key="openzues:thread:demo",
+            )
+        )
+        asyncio.run(
+            client.app.state.database.append_control_chat_message(
+                role="assistant",
+                content="Charlie line 1\nCharlie line 2",
+                mission_id=None,
+                session_key="openzues:thread:demo",
+            )
+        )
+        asyncio.run(
+            client.app.state.database.append_control_chat_message(
+                role="user",
+                content="Delta line 1",
+                mission_id=None,
+                session_key="openzues:thread:demo",
+            )
+        )
+        asyncio.run(
+            client.app.state.database.append_control_chat_message(
+                role="assistant",
+                content="Echo line 1",
+                mission_id=None,
+                session_key="openzues:thread:demo",
+            )
+        )
+        compact_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.compact",
+                "params": {
+                    "key": "openzues:thread:demo",
+                },
+            },
+        )
+        checkpoint_id = compact_response.json()["checkpointId"]
+        branch_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.compaction.branch",
+                "params": {
+                    "key": "openzues:thread:demo",
+                    "checkpointId": checkpoint_id,
+                },
+            },
+        )
+        branch_key = branch_response.json()["key"]
+        source_messages = asyncio.run(
+            client.app.state.database.list_control_chat_messages(
+                limit=10,
+                session_key="openzues:thread:demo",
+            )
+        )
+        branch_messages = asyncio.run(
+            client.app.state.database.list_control_chat_messages(
+                limit=10,
+                session_key=branch_key,
+            )
+        )
+
+    assert compact_response.status_code == 200
+    assert branch_response.status_code == 200
+    branch_payload = branch_response.json()
+    assert branch_payload["ok"] is True
+    assert branch_payload["sourceKey"] == "openzues:thread:demo"
+    assert branch_payload["checkpoint"]["checkpointId"] == checkpoint_id
+    assert [message["content"] for message in source_messages] == [
+        "Compaction summary of earlier turns:\n"
+        "Alpha line 1 Alpha line 2 Bravo line 1 Charlie line 1 Charlie line 2",
+        "Delta line 1",
+        "Echo line 1",
+    ]
+    assert [message["content"] for message in branch_messages] == [
+        "Alpha line 1\nAlpha line 2",
+        "Bravo line 1",
+        "Charlie line 1\nCharlie line 2",
+        "Delta line 1",
+        "Echo line 1",
+    ]
+
+
+def test_gateway_node_method_call_endpoint_supports_sessions_compaction_restore() -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-compaction-restore-api"
     shutil.rmtree(tmp_path, ignore_errors=True)
     tmp_path.mkdir(parents=True, exist_ok=True)
@@ -2987,24 +3400,94 @@ def test_sessions_compaction_restore_api_is_explicitly_unavailable(
 
     with TestClient(app, client=("testclient", 50000)) as client:
         _allow_mutating_api_requests(client)
-        response = client.post(
+        asyncio.run(
+            client.app.state.database.append_control_chat_message(
+                role="user",
+                content="Alpha line 1\nAlpha line 2",
+                mission_id=None,
+                session_key="openzues:thread:demo",
+            )
+        )
+        asyncio.run(
+            client.app.state.database.append_control_chat_message(
+                role="assistant",
+                content="Bravo line 1",
+                mission_id=None,
+                session_key="openzues:thread:demo",
+            )
+        )
+        asyncio.run(
+            client.app.state.database.append_control_chat_message(
+                role="assistant",
+                content="Charlie line 1\nCharlie line 2",
+                mission_id=None,
+                session_key="openzues:thread:demo",
+            )
+        )
+        compact_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.compact",
+                "params": {
+                    "key": "openzues:thread:demo",
+                    "maxLines": 2,
+                },
+            },
+        )
+        checkpoint_id = compact_response.json()["checkpointId"]
+        asyncio.run(
+            client.app.state.database.append_control_chat_message(
+                role="assistant",
+                content="Delta line 1",
+                mission_id=None,
+                session_key="openzues:thread:demo",
+            )
+        )
+        restore_response = client.post(
             "/api/gateway/node-methods/call",
             json={
                 "method": "sessions.compaction.restore",
                 "params": {
                     "key": "openzues:thread:demo",
-                    "checkpointId": "checkpoint-001",
+                    "checkpointId": checkpoint_id,
                 },
             },
         )
+        checkpoint_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.compaction.get",
+                "params": {
+                    "key": "openzues:thread:demo",
+                    "checkpointId": checkpoint_id,
+                },
+            },
+        )
+        restored_messages = asyncio.run(
+            client.app.state.database.list_control_chat_messages(
+                limit=10,
+                session_key="openzues:thread:demo",
+            )
+        )
 
-    assert response.status_code == 503
-    assert response.json()["detail"] == (
-        "sessions.compaction.restore is unavailable until control chat compaction restore is wired"
-    )
+    assert compact_response.status_code == 200
+    assert restore_response.status_code == 200
+    restore_payload = restore_response.json()
+    assert restore_payload["ok"] is True
+    assert restore_payload["key"] == "openzues:thread:demo"
+    assert restore_payload["sessionId"] == restore_payload["entry"]["sessionId"]
+    assert restore_payload["checkpoint"] == checkpoint_response.json()["checkpoint"]
+    assert restore_payload["entry"]["key"] == "openzues:thread:demo"
+    assert restore_payload["entry"]["kind"] == "thread"
+    assert isinstance(restore_payload["entry"]["updatedAt"], int)
+    assert [message["content"] for message in restored_messages] == [
+        "Alpha line 1\nAlpha line 2",
+        "Bravo line 1",
+        "Charlie line 1\nCharlie line 2",
+    ]
 
 
-def test_gateway_node_method_call_endpoint_sessions_compaction_list_fails_explicitly_when_unwired(
+def test_sessions_compaction_list_api_returns_empty_inventory_for_unknown_key(
 ) -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-compaction-list-api"
     shutil.rmtree(tmp_path, ignore_errors=True)
@@ -3025,14 +3508,15 @@ def test_gateway_node_method_call_endpoint_sessions_compaction_list_fails_explic
             },
         )
 
-    assert response.status_code == 503
-    assert response.json()["detail"] == (
-        "sessions.compaction.list is unavailable until control chat compaction "
-        "checkpoints are wired"
-    )
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True,
+        "key": "openzues:thread:demo",
+        "checkpoints": [],
+    }
 
 
-def test_gateway_node_method_call_endpoint_sessions_compaction_get_fails_explicitly_when_unwired(
+def test_gateway_node_method_call_endpoint_sessions_compaction_get_rejects_unknown_checkpoint(
 ) -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-compaction-get-api"
     shutil.rmtree(tmp_path, ignore_errors=True)
@@ -3056,14 +3540,11 @@ def test_gateway_node_method_call_endpoint_sessions_compaction_get_fails_explici
             },
         )
 
-    assert response.status_code == 503
-    assert response.json()["detail"] == (
-        "sessions.compaction.get is unavailable until control chat compaction checkpoints are wired"
-    )
+    assert response.status_code == 400
+    assert response.json()["detail"] == "checkpoint not found: checkpoint-001"
 
 
-def test_gateway_node_method_call_endpoint_sessions_compaction_branch_fails_explicitly_when_unwired(
-) -> None:
+def test_gateway_node_method_call_endpoint_supports_sessions_compaction_branch() -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-compaction-branch-api"
     shutil.rmtree(tmp_path, ignore_errors=True)
     tmp_path.mkdir(parents=True, exist_ok=True)
@@ -3075,21 +3556,112 @@ def test_gateway_node_method_call_endpoint_sessions_compaction_branch_fails_expl
 
     with TestClient(app, client=("testclient", 50000)) as client:
         _allow_mutating_api_requests(client)
-        response = client.post(
+        asyncio.run(
+            client.app.state.database.upsert_gateway_session_metadata(
+                session_key="openzues:thread:demo",
+                metadata={"label": "Parity Session", "model": "gpt-5.4-mini"},
+            )
+        )
+        asyncio.run(
+            client.app.state.database.append_control_chat_message(
+                role="user",
+                content="Alpha line 1\nAlpha line 2",
+                mission_id=None,
+                session_key="openzues:thread:demo",
+            )
+        )
+        asyncio.run(
+            client.app.state.database.append_control_chat_message(
+                role="assistant",
+                content="Bravo line 1",
+                mission_id=None,
+                session_key="openzues:thread:demo",
+            )
+        )
+        asyncio.run(
+            client.app.state.database.append_control_chat_message(
+                role="assistant",
+                content="Charlie line 1\nCharlie line 2",
+                mission_id=None,
+                session_key="openzues:thread:demo",
+            )
+        )
+        compact_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.compact",
+                "params": {
+                    "key": "openzues:thread:demo",
+                    "maxLines": 2,
+                },
+            },
+        )
+        checkpoint_id = compact_response.json()["checkpointId"]
+        asyncio.run(
+            client.app.state.database.append_control_chat_message(
+                role="assistant",
+                content="Delta line 1",
+                mission_id=None,
+                session_key="openzues:thread:demo",
+            )
+        )
+        branch_response = client.post(
             "/api/gateway/node-methods/call",
             json={
                 "method": "sessions.compaction.branch",
                 "params": {
                     "key": "openzues:thread:demo",
-                    "checkpointId": "checkpoint-001",
+                    "checkpointId": checkpoint_id,
                 },
             },
         )
+        branch_key = branch_response.json()["key"]
+        checkpoint_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.compaction.get",
+                "params": {
+                    "key": "openzues:thread:demo",
+                    "checkpointId": checkpoint_id,
+                },
+            },
+        )
+        source_messages = asyncio.run(
+            client.app.state.database.list_control_chat_messages(
+                limit=10,
+                session_key="openzues:thread:demo",
+            )
+        )
+        branch_messages = asyncio.run(
+            client.app.state.database.list_control_chat_messages(
+                limit=10,
+                session_key=branch_key,
+            )
+        )
 
-    assert response.status_code == 503
-    assert response.json()["detail"] == (
-        "sessions.compaction.branch is unavailable until control chat compaction branching is wired"
-    )
+    assert compact_response.status_code == 200
+    assert branch_response.status_code == 200
+    branch_payload = branch_response.json()
+    assert branch_payload["ok"] is True
+    assert branch_payload["sourceKey"] == "openzues:thread:demo"
+    assert branch_payload["key"] != "openzues:thread:demo"
+    assert branch_payload["sessionId"] == branch_payload["entry"]["sessionId"]
+    assert branch_payload["checkpoint"] == checkpoint_response.json()["checkpoint"]
+    assert branch_payload["entry"]["key"] == branch_payload["key"]
+    assert branch_payload["entry"]["kind"] == "thread"
+    assert branch_payload["entry"]["label"] == "Parity Session (checkpoint)"
+    assert branch_payload["entry"]["parentSessionKey"] == "openzues:thread:demo"
+    assert branch_payload["entry"]["model"] == "gpt-5.4-mini"
+    assert isinstance(branch_payload["entry"]["updatedAt"], int)
+    assert [message["content"] for message in source_messages] == [
+        "Charlie line 1\nCharlie line 2",
+        "Delta line 1",
+    ]
+    assert [message["content"] for message in branch_messages] == [
+        "Alpha line 1\nAlpha line 2",
+        "Bravo line 1",
+        "Charlie line 1\nCharlie line 2",
+    ]
 
 
 def test_gateway_node_method_call_endpoint_sessions_preview_returns_current_session_items() -> (
@@ -3159,6 +3731,325 @@ def test_gateway_node_method_call_endpoint_sessions_preview_returns_current_sess
             "items": [],
         },
     ]
+
+
+def test_gateway_node_method_call_endpoint_surfaces_push_test_unavailable(tmp_path) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "push.test",
+                "params": {
+                    "nodeId": "ios-node-1",
+                    "title": "OpenZues",
+                    "body": "Push parity ping.",
+                    "environment": "production",
+                },
+            },
+        )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "push.test is unavailable until APNS push runtime is wired"
+
+
+def test_gateway_node_method_call_endpoint_rejects_connect_as_non_callable_method(tmp_path) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={"method": "connect", "params": {}},
+        )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "connect is only valid as the first request"
+
+
+@pytest.mark.parametrize(
+    ("method", "params"),
+    [
+        (
+            "web.login.start",
+            {
+                "force": True,
+                "timeoutMs": 30_000,
+                "verbose": True,
+                "accountId": "telegram-primary",
+            },
+        ),
+        (
+            "web.login.wait",
+            {
+                "timeoutMs": 30_000,
+                "accountId": "telegram-primary",
+            },
+        ),
+    ],
+)
+def test_gateway_node_method_call_endpoint_rejects_web_login_without_provider(
+    tmp_path,
+    method: str,
+    params: dict[str, object],
+) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={"method": method, "params": params},
+        )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "web login provider is not available"
+
+
+def test_gateway_node_method_call_endpoint_rejects_channels_logout_without_supported_channel(
+    tmp_path,
+) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "channels.logout",
+                "params": {
+                    "channel": "telegram",
+                    "accountId": "primary",
+                },
+            },
+        )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "channel telegram does not support logout"
+
+
+def test_gateway_node_method_call_endpoint_supports_logs_tail_cursor_follow_up(tmp_path) -> None:
+    logs_root = tmp_path / "logs"
+    logs_root.mkdir(parents=True, exist_ok=True)
+    log_path = logs_root / "openzues-test.log"
+    log_path.write_text("first line\nsecond line\n", encoding="utf-8")
+
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        first = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "logs.tail",
+                "params": {
+                    "limit": 1,
+                    "maxBytes": 1_000,
+                },
+            },
+        )
+        assert first.status_code == 200
+        first_payload = first.json()
+        assert first_payload["file"] == str(log_path)
+        assert first_payload["lines"] == ["second line"]
+
+        with log_path.open("a", encoding="utf-8") as handle:
+            handle.write("third line\n")
+
+        second = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "logs.tail",
+                "params": {
+                    "cursor": first_payload["cursor"],
+                    "limit": 10,
+                    "maxBytes": 1_000,
+                },
+            },
+        )
+
+    assert second.status_code == 200
+    second_payload = second.json()
+    assert second_payload["file"] == str(log_path)
+    assert second_payload["lines"] == ["third line"]
+    assert second_payload["reset"] is False
+
+
+def test_gateway_node_method_call_endpoint_supports_update_run(tmp_path) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+    restart_calls: list[str] = []
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        runtime_updates = client.app.state.hermes_platform_service.runtime_updates
+        assert runtime_updates is not None
+
+        async def fake_restart() -> None:
+            restart_calls.append("restart")
+
+        async def fake_safe_boundary() -> bool:
+            return False
+
+        runtime_updates._restart_callback = fake_restart
+        runtime_updates._is_safe_restart_boundary = fake_safe_boundary
+        runtime_updates.repo_root = tmp_path
+        runtime_updates.startup_revision = "rev-a"
+        runtime_updates._revision_resolver = lambda _repo_root: "rev-b"
+        runtime_updates._snapshot.enabled = True
+        runtime_updates._snapshot.repo_root = str(tmp_path)
+        runtime_updates._snapshot.startup_revision = "rev-a"
+        runtime_updates._snapshot.current_revision = "rev-a"
+        runtime_updates._snapshot.pending_revision = None
+        runtime_updates._snapshot.pending_restart = False
+        runtime_updates._snapshot.restart_in_progress = False
+        runtime_updates._snapshot.safe_to_restart = False
+        runtime_updates._snapshot.last_checked_at = None
+        runtime_updates._snapshot.last_restart_at = None
+        runtime_updates._snapshot.last_error = None
+        runtime_updates._snapshot.auto_restart = True
+
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={"method": "update.run", "params": {}},
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["headline"] == "A newer repo revision is waiting for a safe boundary"
+    assert payload["pending_restart"] is True
+    assert payload["pending_revision"] == "rev-b"
+    assert payload["safe_to_restart"] is False
+    assert payload["restart_in_progress"] is False
+    assert payload["last_checked_at"]
+    assert restart_calls == []
+
+
+def test_gateway_node_method_call_endpoint_supports_wizard_start_next_completion(tmp_path) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        start = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "wizard.start",
+                "params": {
+                    "mode": "remote",
+                    "workspace": str(tmp_path),
+                },
+            },
+        )
+        assert start.status_code == 200
+        start_payload = start.json()
+        session_id = start_payload["sessionId"]
+        step = start_payload["step"]
+
+        status = client.post(
+            "/api/gateway/node-methods/call",
+            json={"method": "wizard.status", "params": {"sessionId": session_id}},
+        )
+        next_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "wizard.next",
+                "params": {
+                    "sessionId": session_id,
+                    "answer": {
+                        "stepId": step["id"],
+                        "value": "Parity Workspace Loop",
+                    },
+                },
+            },
+        )
+        saved = client.get("/api/setup/wizard")
+
+    assert start_payload["done"] is False
+    assert start_payload["status"] == "running"
+    assert step == {
+        "id": step["id"],
+        "type": "text",
+        "title": "Task Name",
+        "message": "Name the recurring setup task.",
+        "executor": "client",
+    }
+    assert status.status_code == 200
+    assert status.json() == {"status": "running"}
+    assert next_response.status_code == 200
+    assert next_response.json() == {"done": True, "status": "done"}
+    assert saved.status_code == 200
+    saved_payload = saved.json()
+    assert saved_payload["mode"] == "remote"
+    assert saved_payload["flow"] == "advanced"
+    assert saved_payload["project_path"] == str(tmp_path)
+    assert saved_payload["task_name"] == "Parity Workspace Loop"
+
+
+def test_gateway_node_method_call_endpoint_supports_wizard_cancel_without_persisting_draft(
+    tmp_path,
+) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        start = client.post(
+            "/api/gateway/node-methods/call",
+            json={"method": "wizard.start", "params": {}},
+        )
+        assert start.status_code == 200
+        session_id = start.json()["sessionId"]
+
+        cancel = client.post(
+            "/api/gateway/node-methods/call",
+            json={"method": "wizard.cancel", "params": {"sessionId": session_id}},
+        )
+        status_after = client.post(
+            "/api/gateway/node-methods/call",
+            json={"method": "wizard.status", "params": {"sessionId": session_id}},
+        )
+        saved = client.get("/api/setup/wizard")
+
+    assert cancel.status_code == 200
+    assert cancel.json() == {"status": "cancelled", "error": "cancelled"}
+    assert status_after.status_code == 400
+    assert status_after.json()["detail"] == "wizard not found"
+    assert saved.status_code == 200
+    saved_payload = saved.json()
+    assert saved_payload["project_path"] is None
+    assert saved_payload["task_name"] is None
 
 
 def test_sessions_messages_subscribe_api_returns_stateless_ack_without_connection_context() -> (
@@ -3414,6 +4305,100 @@ def test_sessions_subscribe_api_filters_websocket_delivery_by_client_id() -> Non
     assert event["event"] == "sessions.changed"
     assert event["payload"]["sessionKey"] == session_key
     assert event["payload"]["reason"] == "delete"
+
+
+def test_sessions_subscribe_api_delivers_compaction_checkpoint_metadata() -> None:
+    tmp_path = (
+        Path.cwd()
+        / ".tmp-pytest-local"
+        / "gateway-sessions-changed-compaction-websocket-api"
+    )
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+    main_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+    )
+    session_key = resolve_thread_session_keys(
+        base_session_key=main_session_key,
+        thread_id="thread-subscribe-websocket-compact",
+    ).session_key
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        asyncio.run(
+            client.app.state.database.append_control_chat_message(
+                role="user",
+                content="Alpha line 1\nAlpha line 2",
+                session_key=session_key,
+            )
+        )
+        asyncio.run(
+            client.app.state.database.append_control_chat_message(
+                role="assistant",
+                content="Bravo line 1",
+                session_key=session_key,
+            )
+        )
+        asyncio.run(
+            client.app.state.database.append_control_chat_message(
+                role="assistant",
+                content="Charlie line 1\nCharlie line 2",
+                session_key=session_key,
+            )
+        )
+
+        with client.websocket_connect("/ws?clientId=client-session") as websocket:
+            subscribe_response = client.post(
+                "/api/gateway/node-methods/call",
+                headers={"X-OpenZues-Client-Id": "client-session"},
+                json={"method": "sessions.subscribe", "params": {}},
+            )
+            compact_response = client.post(
+                "/api/gateway/node-methods/call",
+                json={
+                    "method": "sessions.compact",
+                    "params": {"key": session_key, "maxLines": 2},
+                },
+            )
+            event = websocket.receive_json()
+
+    assert subscribe_response.status_code == 200
+    assert subscribe_response.json() == {"subscribed": True}
+    assert compact_response.status_code == 200
+    compact_payload = compact_response.json()
+    assert compact_payload["ok"] is True
+    assert event["type"] == "gateway_event"
+    assert event["event"] == "sessions.changed"
+    assert event["payload"]["sessionKey"] == session_key
+    assert event["payload"]["reason"] == "compact"
+    assert event["payload"]["compacted"] is True
+    assert event["payload"]["compactionCheckpointCount"] == 1
+    assert event["payload"]["latestCompactionCheckpoint"] == {
+        "checkpointId": compact_payload["checkpointId"],
+        "sessionKey": session_key,
+        "sessionId": session_key,
+        "createdAt": event["payload"]["latestCompactionCheckpoint"]["createdAt"],
+        "reason": "manual",
+        "summary": "Alpha line 1 Alpha line 2 Bravo line 1",
+        "firstKeptEntryId": event["payload"]["latestCompactionCheckpoint"]["firstKeptEntryId"],
+        "preCompaction": {
+            "sessionId": session_key,
+            "entryId": event["payload"]["latestCompactionCheckpoint"]["preCompaction"]["entryId"],
+        },
+        "postCompaction": {
+            "sessionId": session_key,
+            "entryId": event["payload"]["latestCompactionCheckpoint"]["postCompaction"]["entryId"],
+        },
+    }
 
 
 def test_sessions_unsubscribe_api_returns_stateless_ack_without_connection_context() -> None:
@@ -4978,6 +5963,101 @@ def test_gateway_node_method_call_endpoint_sessions_list_includes_metadata_sessi
     ]
     assert isinstance(payload["sessions"][1]["updatedAt"], int)
     assert payload["sessions"][1]["updatedAt"] > 0
+
+
+def test_gateway_node_method_call_endpoint_sessions_list_surfaces_compaction_checkpoint_metadata(
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-list-compaction-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+    main_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+    )
+    session_key = resolve_thread_session_keys(
+        base_session_key=main_session_key,
+        thread_id="thread-compaction-list",
+    ).session_key
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        asyncio.run(
+            client.app.state.database.upsert_gateway_session_metadata(
+                session_key=session_key,
+                metadata={"label": "Checkpoint Worker"},
+            )
+        )
+        asyncio.run(
+            client.app.state.database.append_control_chat_message(
+                role="user",
+                content="Alpha line 1\nAlpha line 2",
+                mission_id=None,
+                session_key=session_key,
+            )
+        )
+        asyncio.run(
+            client.app.state.database.append_control_chat_message(
+                role="assistant",
+                content="Bravo line 1",
+                mission_id=None,
+                session_key=session_key,
+            )
+        )
+        asyncio.run(
+            client.app.state.database.append_control_chat_message(
+                role="assistant",
+                content="Charlie line 1\nCharlie line 2",
+                mission_id=None,
+                session_key=session_key,
+            )
+        )
+        compact_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.compact",
+                "params": {"key": session_key, "maxLines": 2},
+            },
+        )
+        list_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.list",
+                "params": {"includeGlobal": True, "includeUnknown": False, "limit": 10},
+            },
+        )
+
+    assert compact_response.status_code == 200
+    assert list_response.status_code == 200
+    payload = list_response.json()
+    session_payload = next(
+        session for session in payload["sessions"] if session["key"] == session_key
+    )
+    assert session_payload["compactionCheckpointCount"] == 1
+    assert session_payload["latestCompactionCheckpoint"] == {
+        "checkpointId": compact_response.json()["checkpointId"],
+        "sessionKey": session_key,
+        "sessionId": session_key,
+        "createdAt": session_payload["latestCompactionCheckpoint"]["createdAt"],
+        "reason": "manual",
+        "summary": "Alpha line 1 Alpha line 2 Bravo line 1",
+        "firstKeptEntryId": session_payload["latestCompactionCheckpoint"]["firstKeptEntryId"],
+        "preCompaction": {
+            "sessionId": session_key,
+            "entryId": session_payload["latestCompactionCheckpoint"]["preCompaction"]["entryId"],
+        },
+        "postCompaction": {
+            "sessionId": session_key,
+            "entryId": session_payload["latestCompactionCheckpoint"]["postCompaction"]["entryId"],
+        },
+    }
 
 
 def test_gateway_node_method_call_endpoint_sessions_list_hides_unknown_session_unless_requested(

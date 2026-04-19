@@ -41,6 +41,7 @@ from openzues.services.gateway_tts_runtime import (
 )
 from openzues.services.gateway_voicewake import GatewayVoiceWakeService
 from openzues.services.gateway_wake import GatewayWakeService
+from openzues.services.gateway_wizard import GatewayWizardService
 from openzues.services.hub import BroadcastHub
 from openzues.services.session_keys import build_launch_session_key, resolve_thread_session_keys
 
@@ -285,7 +286,16 @@ async def test_voicewake_methods_surface_defaults_persist_updates_and_broadcast(
             platform="ios",
         ),
     )
-    hub = BroadcastHub()
+    class _RecordingBroadcastHub(BroadcastHub):
+        def __init__(self) -> None:
+            super().__init__()
+            self.published_events: list[dict[str, object]] = []
+
+        async def publish(self, event: dict[str, object]) -> None:
+            self.published_events.append(dict(event))
+            await super().publish(event)
+
+    hub = _RecordingBroadcastHub()
     service = GatewayNodeMethodService(
         registry,
         hub=hub,
@@ -329,7 +339,16 @@ async def test_talk_mode_persists_updates_and_broadcast(tmp_path) -> None:
             platform="ios",
         ),
     )
-    hub = BroadcastHub()
+    class _RecordingBroadcastHub(BroadcastHub):
+        def __init__(self) -> None:
+            super().__init__()
+            self.published_events: list[dict[str, object]] = []
+
+        async def publish(self, event: dict[str, object]) -> None:
+            self.published_events.append(dict(event))
+            await super().publish(event)
+
+    hub = _RecordingBroadcastHub()
     service = GatewayNodeMethodService(
         registry,
         hub=hub,
@@ -1517,36 +1536,459 @@ async def test_sessions_delete_removes_metadata_backed_session_and_transcript() 
 
 
 @pytest.mark.asyncio
-async def test_sessions_compact_fails_explicitly_until_compaction_runtime_is_wired() -> None:
-    service = GatewayNodeMethodService(GatewayNodeRegistry())
+async def test_sessions_compact_archives_trimmed_control_chat_messages_into_checkpoint_inventory(
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-compact-service"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-sessions-compact.db")
+    await database.initialize()
+    session_key = "openzues:thread:demo"
+    await database.append_control_chat_message(
+        role="user",
+        content="Alpha line 1\nAlpha line 2",
+        mission_id=None,
+        session_key=session_key,
+    )
+    second_id = await database.append_control_chat_message(
+        role="assistant",
+        content="Bravo line 1",
+        mission_id=None,
+        session_key=session_key,
+    )
+    third_id = await database.append_control_chat_message(
+        role="assistant",
+        content="Charlie line 1\nCharlie line 2",
+        mission_id=None,
+        session_key=session_key,
+    )
+    class _RecordingBroadcastHub(BroadcastHub):
+        def __init__(self) -> None:
+            super().__init__()
+            self.published_events: list[dict[str, object]] = []
+
+        async def publish(self, event: dict[str, object]) -> None:
+            self.published_events.append(dict(event))
+            await super().publish(event)
+
+    hub = _RecordingBroadcastHub()
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        hub=hub,
+    )
 
     with pytest.raises(ValueError, match="key must be a non-empty string"):
         await service.call("sessions.compact", {})
 
     with pytest.raises(ValueError, match="maxLines must be between 1 and 1000000"):
-        await service.call(
-            "sessions.compact",
-            {"key": "openzues:thread:demo", "maxLines": 0},
-        )
+        await service.call("sessions.compact", {"key": session_key, "maxLines": 0})
 
-    with pytest.raises(GatewayNodeMethodError) as exc_info:
-        await service.call(
-            "sessions.compact",
-            {"key": "openzues:thread:demo", "maxLines": 200},
-        )
+    compacted = await service.call(
+        "sessions.compact",
+        {"key": session_key, "maxLines": 2},
+        now_ms=1_700_000_000_123,
+    )
 
-    assert exc_info.value.code == "UNAVAILABLE"
-    assert exc_info.value.status_code == 503
-    assert exc_info.value.message == (
-        "sessions.compact is unavailable until control chat compaction is wired"
+    assert compacted["ok"] is True
+    assert compacted["key"] == session_key
+    assert compacted["compacted"] is True
+    assert compacted["kept"] == 2
+    assert compacted["archivedCount"] == 2
+    checkpoint_id = str(compacted["checkpointId"])
+    remaining_messages = await database.list_control_chat_messages(
+        limit=10,
+        session_key=session_key,
+    )
+    assert [message["id"] for message in remaining_messages] == [third_id]
+
+    inventory = await service.call("sessions.compaction.list", {"key": session_key})
+
+    assert inventory["ok"] is True
+    assert inventory["key"] == session_key
+    assert inventory["checkpoints"] == [
+        {
+            "checkpointId": checkpoint_id,
+            "sessionKey": session_key,
+            "sessionId": session_key,
+            "createdAt": 1_700_000_000_123,
+            "reason": "manual",
+            "summary": "Alpha line 1 Alpha line 2 Bravo line 1",
+            "firstKeptEntryId": str(third_id),
+            "preCompaction": {
+                "sessionId": session_key,
+                "entryId": str(second_id),
+            },
+            "postCompaction": {
+                "sessionId": session_key,
+                "entryId": str(third_id),
+            },
+        }
+    ]
+
+    checkpoint_payload = await service.call(
+        "sessions.compaction.get",
+        {"key": session_key, "checkpointId": checkpoint_id},
+    )
+
+    assert checkpoint_payload == {
+        "ok": True,
+        "key": session_key,
+        "checkpoint": inventory["checkpoints"][0],
+    }
+    sessions_changed = [
+        event
+        for event in hub.published_events
+        if event.get("type") == "gateway_event" and event.get("event") == "sessions.changed"
+    ]
+    assert len(sessions_changed) == 1
+    assert sessions_changed[0]["payload"]["sessionKey"] == session_key
+    assert sessions_changed[0]["payload"]["reason"] == "compact"
+    assert sessions_changed[0]["payload"]["compacted"] is True
+    assert sessions_changed[0]["payload"]["compactionCheckpointCount"] == 1
+    assert (
+        sessions_changed[0]["payload"]["latestCompactionCheckpoint"]
+        == inventory["checkpoints"][0]
     )
 
 
 @pytest.mark.asyncio
-async def test_sessions_compaction_restore_fails_explicitly_until_restore_runtime_is_wired() -> (
-    None
-):
-    service = GatewayNodeMethodService(GatewayNodeRegistry())
+async def test_sessions_compact_without_max_lines_rewrites_history_into_summary_message() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-compaction-summary-service"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-sessions-compaction-summary.db")
+    await database.initialize()
+    session_key = "openzues:thread:demo"
+    await database.append_control_chat_message(
+        role="user",
+        content="Alpha line 1\nAlpha line 2",
+        mission_id=None,
+        session_key=session_key,
+    )
+    await database.append_control_chat_message(
+        role="assistant",
+        content="Bravo line 1",
+        mission_id=None,
+        session_key=session_key,
+    )
+    third_id = await database.append_control_chat_message(
+        role="assistant",
+        content="Charlie line 1\nCharlie line 2",
+        mission_id=None,
+        session_key=session_key,
+    )
+    await database.append_control_chat_message(
+        role="user",
+        content="Delta line 1",
+        mission_id=None,
+        session_key=session_key,
+    )
+    await database.append_control_chat_message(
+        role="assistant",
+        content="Echo line 1",
+        mission_id=None,
+        session_key=session_key,
+    )
+
+    class _RecordingBroadcastHub(BroadcastHub):
+        def __init__(self) -> None:
+            super().__init__()
+            self.published_events: list[dict[str, object]] = []
+
+        async def publish(self, event: dict[str, object]) -> None:
+            self.published_events.append(dict(event))
+            await super().publish(event)
+
+    hub = _RecordingBroadcastHub()
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        hub=hub,
+    )
+
+    compacted = await service.call(
+        "sessions.compact",
+        {"key": session_key},
+        now_ms=1_700_000_000_123,
+    )
+
+    assert compacted["ok"] is True
+    assert compacted["key"] == session_key
+    assert compacted["compacted"] is True
+    assert compacted["archivedCount"] == 3
+    checkpoint_id = str(compacted["checkpointId"])
+
+    remaining_messages = await database.list_control_chat_messages(
+        limit=10,
+        session_key=session_key,
+    )
+    assert [message["role"] for message in remaining_messages] == [
+        "system",
+        "user",
+        "assistant",
+    ]
+    assert remaining_messages[0]["action_kind"] == "compaction_summary"
+    assert remaining_messages[0]["content"] == (
+        "Compaction summary of earlier turns:\n"
+        "Alpha line 1 Alpha line 2 Bravo line 1 Charlie line 1 Charlie line 2"
+    )
+    assert [message["content"] for message in remaining_messages[1:]] == [
+        "Delta line 1",
+        "Echo line 1",
+    ]
+
+    inventory = await service.call("sessions.compaction.list", {"key": session_key})
+
+    assert inventory["ok"] is True
+    assert inventory["key"] == session_key
+    assert inventory["checkpoints"] == [
+        {
+            "checkpointId": checkpoint_id,
+            "sessionKey": session_key,
+            "sessionId": session_key,
+            "createdAt": 1_700_000_000_123,
+            "reason": "summary",
+            "summary": "Alpha line 1 Alpha line 2 Bravo line 1 Charlie line 1 Charlie line 2",
+            "firstKeptEntryId": str(remaining_messages[0]["id"]),
+            "preCompaction": {
+                "sessionId": session_key,
+                "entryId": str(third_id),
+            },
+            "postCompaction": {
+                "sessionId": session_key,
+                "entryId": str(remaining_messages[0]["id"]),
+            },
+        }
+    ]
+    sessions_changed = [
+        event
+        for event in hub.published_events
+        if event.get("type") == "gateway_event" and event.get("event") == "sessions.changed"
+    ]
+    assert len(sessions_changed) == 1
+    assert sessions_changed[0]["payload"]["sessionKey"] == session_key
+    assert sessions_changed[0]["payload"]["reason"] == "compact"
+    assert sessions_changed[0]["payload"]["compacted"] is True
+    assert sessions_changed[0]["payload"]["compactionCheckpointCount"] == 1
+    assert (
+        sessions_changed[0]["payload"]["latestCompactionCheckpoint"]
+        == inventory["checkpoints"][0]
+    )
+
+
+@pytest.mark.asyncio
+async def test_sessions_compaction_restore_rehydrates_snapshot_after_summary_compaction() -> None:
+    tmp_path = (
+        Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-compaction-summary-restore-service"
+    )
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-sessions-compaction-summary-restore.db")
+    await database.initialize()
+    session_key = "openzues:thread:demo"
+    await database.append_control_chat_message(
+        role="user",
+        content="Alpha line 1\nAlpha line 2",
+        mission_id=None,
+        session_key=session_key,
+    )
+    await database.append_control_chat_message(
+        role="assistant",
+        content="Bravo line 1",
+        mission_id=None,
+        session_key=session_key,
+    )
+    await database.append_control_chat_message(
+        role="assistant",
+        content="Charlie line 1\nCharlie line 2",
+        mission_id=None,
+        session_key=session_key,
+    )
+    await database.append_control_chat_message(
+        role="user",
+        content="Delta line 1",
+        mission_id=None,
+        session_key=session_key,
+    )
+    await database.append_control_chat_message(
+        role="assistant",
+        content="Echo line 1",
+        mission_id=None,
+        session_key=session_key,
+    )
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        hub=BroadcastHub(),
+    )
+
+    compacted = await service.call(
+        "sessions.compact",
+        {"key": session_key},
+        now_ms=1_700_000_000_123,
+    )
+    checkpoint_id = str(compacted["checkpointId"])
+
+    await database.append_control_chat_message(
+        role="assistant",
+        content="Foxtrot line 1",
+        mission_id=None,
+        session_key=session_key,
+    )
+
+    restored = await service.call(
+        "sessions.compaction.restore",
+        {"key": session_key, "checkpointId": checkpoint_id},
+        now_ms=1_700_000_000_456,
+    )
+    restored_messages = await database.list_control_chat_messages(
+        limit=10,
+        session_key=session_key,
+    )
+
+    assert restored["ok"] is True
+    assert restored["key"] == session_key
+    assert restored["checkpoint"]["checkpointId"] == checkpoint_id
+    assert [message["content"] for message in restored_messages] == [
+        "Alpha line 1\nAlpha line 2",
+        "Bravo line 1",
+        "Charlie line 1\nCharlie line 2",
+        "Delta line 1",
+        "Echo line 1",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_sessions_compaction_branch_rehydrates_snapshot_after_summary_compaction() -> None:
+    tmp_path = (
+        Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-compaction-summary-branch-service"
+    )
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-sessions-compaction-summary-branch.db")
+    await database.initialize()
+    session_key = "openzues:thread:demo"
+    await database.append_control_chat_message(
+        role="user",
+        content="Alpha line 1\nAlpha line 2",
+        mission_id=None,
+        session_key=session_key,
+    )
+    await database.append_control_chat_message(
+        role="assistant",
+        content="Bravo line 1",
+        mission_id=None,
+        session_key=session_key,
+    )
+    await database.append_control_chat_message(
+        role="assistant",
+        content="Charlie line 1\nCharlie line 2",
+        mission_id=None,
+        session_key=session_key,
+    )
+    await database.append_control_chat_message(
+        role="user",
+        content="Delta line 1",
+        mission_id=None,
+        session_key=session_key,
+    )
+    await database.append_control_chat_message(
+        role="assistant",
+        content="Echo line 1",
+        mission_id=None,
+        session_key=session_key,
+    )
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        hub=BroadcastHub(),
+    )
+
+    compacted = await service.call(
+        "sessions.compact",
+        {"key": session_key},
+        now_ms=1_700_000_000_123,
+    )
+    checkpoint_id = str(compacted["checkpointId"])
+
+    branched = await service.call(
+        "sessions.compaction.branch",
+        {"key": session_key, "checkpointId": checkpoint_id},
+        now_ms=1_700_000_000_456,
+    )
+    branch_key = str(branched["key"])
+    source_messages = await database.list_control_chat_messages(
+        limit=10,
+        session_key=session_key,
+    )
+    branch_messages = await database.list_control_chat_messages(
+        limit=10,
+        session_key=branch_key,
+    )
+
+    assert branched["ok"] is True
+    assert branched["sourceKey"] == session_key
+    assert branched["checkpoint"]["checkpointId"] == checkpoint_id
+    assert [message["content"] for message in source_messages] == [
+        "Compaction summary of earlier turns:\n"
+        "Alpha line 1 Alpha line 2 Bravo line 1 Charlie line 1 Charlie line 2",
+        "Delta line 1",
+        "Echo line 1",
+    ]
+    assert [message["content"] for message in branch_messages] == [
+        "Alpha line 1\nAlpha line 2",
+        "Bravo line 1",
+        "Charlie line 1\nCharlie line 2",
+        "Delta line 1",
+        "Echo line 1",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_sessions_compaction_restore_rehydrates_snapshot_and_publishes_event() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-compaction-restore-service"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-sessions-compaction-restore.db")
+    await database.initialize()
+    session_key = "openzues:thread:demo"
+    await database.append_control_chat_message(
+        role="user",
+        content="Alpha line 1\nAlpha line 2",
+        mission_id=None,
+        session_key=session_key,
+    )
+    await database.append_control_chat_message(
+        role="assistant",
+        content="Bravo line 1",
+        mission_id=None,
+        session_key=session_key,
+    )
+    await database.append_control_chat_message(
+        role="assistant",
+        content="Charlie line 1\nCharlie line 2",
+        mission_id=None,
+        session_key=session_key,
+    )
+
+    class _RecordingBroadcastHub(BroadcastHub):
+        def __init__(self) -> None:
+            super().__init__()
+            self.published_events: list[dict[str, object]] = []
+
+        async def publish(self, event: dict[str, object]) -> None:
+            self.published_events.append(dict(event))
+            await super().publish(event)
+
+    hub = _RecordingBroadcastHub()
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        hub=hub,
+    )
 
     with pytest.raises(ValueError, match="key must be a non-empty string"):
         await service.call("sessions.compaction.restore", {})
@@ -1554,81 +1996,147 @@ async def test_sessions_compaction_restore_fails_explicitly_until_restore_runtim
     with pytest.raises(ValueError, match="checkpointId must be a non-empty string"):
         await service.call(
             "sessions.compaction.restore",
-            {"key": "openzues:thread:demo"},
+            {"key": session_key},
         )
 
-    with pytest.raises(GatewayNodeMethodError) as exc_info:
-        await service.call(
-            "sessions.compaction.restore",
-            {
-                "key": "openzues:thread:demo",
-                "checkpointId": "checkpoint-001",
-            },
-        )
-
-    assert exc_info.value.code == "UNAVAILABLE"
-    assert exc_info.value.status_code == 503
-    assert exc_info.value.message == (
-        "sessions.compaction.restore is unavailable until control chat compaction restore is wired"
+    compacted = await service.call(
+        "sessions.compact",
+        {"key": session_key, "maxLines": 2},
+        now_ms=1_700_000_000_123,
     )
+    checkpoint_id = str(compacted["checkpointId"])
+
+    await database.append_control_chat_message(
+        role="assistant",
+        content="Delta line 1",
+        mission_id=None,
+        session_key=session_key,
+    )
+
+    restored = await service.call(
+        "sessions.compaction.restore",
+        {"key": session_key, "checkpointId": checkpoint_id},
+        now_ms=1_700_000_000_456,
+    )
+    restored_messages = await database.list_control_chat_messages(
+        limit=10,
+        session_key=session_key,
+    )
+    checkpoint_payload = await service.call(
+        "sessions.compaction.get",
+        {"key": session_key, "checkpointId": checkpoint_id},
+    )
+
+    assert restored["ok"] is True
+    assert restored["key"] == session_key
+    assert restored["sessionId"] == restored["entry"]["sessionId"]
+    assert restored["checkpoint"] == checkpoint_payload["checkpoint"]
+    assert restored["entry"]["key"] == session_key
+    assert restored["entry"]["kind"] == "thread"
+    assert isinstance(restored["entry"]["updatedAt"], int)
+    assert restored["entry"]["updatedAt"] > 0
+    assert [message["content"] for message in restored_messages] == [
+        "Alpha line 1\nAlpha line 2",
+        "Bravo line 1",
+        "Charlie line 1\nCharlie line 2",
+    ]
+    sessions_changed = [
+        event
+        for event in hub.published_events
+        if event.get("type") == "gateway_event" and event.get("event") == "sessions.changed"
+    ]
+    assert [event["payload"]["reason"] for event in sessions_changed] == [
+        "compact",
+        "checkpoint-restore",
+    ]
+    assert sessions_changed[-1]["payload"]["sessionKey"] == session_key
 
 
 @pytest.mark.asyncio
-async def test_sessions_compaction_list_fails_explicitly_until_checkpoint_inventory_is_wired() -> (
-    None
-):
-    service = GatewayNodeMethodService(GatewayNodeRegistry())
+async def test_sessions_compaction_list_returns_empty_inventory_for_unknown_session() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-compaction-list-empty-service"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-sessions-compaction-list-empty.db")
+    await database.initialize()
+    service = GatewayNodeMethodService(GatewayNodeRegistry(), database=database)
 
     with pytest.raises(ValueError, match="key must be a non-empty string"):
         await service.call("sessions.compaction.list", {})
 
-    with pytest.raises(GatewayNodeMethodError) as exc_info:
-        await service.call(
-            "sessions.compaction.list",
-            {"key": "openzues:thread:demo"},
-        )
+    payload = await service.call("sessions.compaction.list", {"key": "openzues:thread:demo"})
 
-    assert exc_info.value.code == "UNAVAILABLE"
-    assert exc_info.value.status_code == 503
-    assert exc_info.value.message == (
-        "sessions.compaction.list is unavailable until control chat compaction "
-        "checkpoints are wired"
-    )
+    assert payload == {"ok": True, "key": "openzues:thread:demo", "checkpoints": []}
 
 
 @pytest.mark.asyncio
-async def test_sessions_compaction_get_fails_explicitly_until_checkpoint_inventory_is_wired() -> (
-    None
-):
-    service = GatewayNodeMethodService(GatewayNodeRegistry())
+async def test_sessions_compaction_get_rejects_unknown_checkpoint() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-compaction-get-missing-service"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-sessions-compaction-get-missing.db")
+    await database.initialize()
+    service = GatewayNodeMethodService(GatewayNodeRegistry(), database=database)
 
     with pytest.raises(ValueError, match="key must be a non-empty string"):
         await service.call("sessions.compaction.get", {})
 
     with pytest.raises(ValueError, match="checkpointId must be a non-empty string"):
-        await service.call(
-            "sessions.compaction.get",
-            {"key": "openzues:thread:demo"},
-        )
+        await service.call("sessions.compaction.get", {"key": "openzues:thread:demo"})
 
-    with pytest.raises(GatewayNodeMethodError) as exc_info:
+    with pytest.raises(ValueError, match="checkpoint not found: checkpoint-001"):
         await service.call(
             "sessions.compaction.get",
             {"key": "openzues:thread:demo", "checkpointId": "checkpoint-001"},
         )
 
-    assert exc_info.value.code == "UNAVAILABLE"
-    assert exc_info.value.status_code == 503
-    assert exc_info.value.message == (
-        "sessions.compaction.get is unavailable until control chat compaction checkpoints are wired"
-    )
-
 
 @pytest.mark.asyncio
-async def test_sessions_compaction_branch_fails_explicitly_until_branch_runtime_is_wired() -> (
-    None
-):
-    service = GatewayNodeMethodService(GatewayNodeRegistry())
+async def test_sessions_compaction_branch_rehydrates_snapshot_into_new_session_key() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-compaction-branch-service"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-sessions-compaction-branch.db")
+    await database.initialize()
+    session_key = "openzues:thread:demo"
+    await database.upsert_gateway_session_metadata(
+        session_key=session_key,
+        metadata={"label": "Parity Session", "model": "gpt-5.4-mini"},
+    )
+    await database.append_control_chat_message(
+        role="user",
+        content="Alpha line 1\nAlpha line 2",
+        mission_id=None,
+        session_key=session_key,
+    )
+    await database.append_control_chat_message(
+        role="assistant",
+        content="Bravo line 1",
+        mission_id=None,
+        session_key=session_key,
+    )
+    await database.append_control_chat_message(
+        role="assistant",
+        content="Charlie line 1\nCharlie line 2",
+        mission_id=None,
+        session_key=session_key,
+    )
+
+    class _RecordingBroadcastHub(BroadcastHub):
+        def __init__(self) -> None:
+            super().__init__()
+            self.published_events: list[dict[str, object]] = []
+
+        async def publish(self, event: dict[str, object]) -> None:
+            self.published_events.append(dict(event))
+            await super().publish(event)
+
+    hub = _RecordingBroadcastHub()
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        hub=hub,
+    )
 
     with pytest.raises(ValueError, match="key must be a non-empty string"):
         await service.call("sessions.compaction.branch", {})
@@ -1636,20 +2144,76 @@ async def test_sessions_compaction_branch_fails_explicitly_until_branch_runtime_
     with pytest.raises(ValueError, match="checkpointId must be a non-empty string"):
         await service.call(
             "sessions.compaction.branch",
-            {"key": "openzues:thread:demo"},
+            {"key": session_key},
         )
 
-    with pytest.raises(GatewayNodeMethodError) as exc_info:
-        await service.call(
-            "sessions.compaction.branch",
-            {"key": "openzues:thread:demo", "checkpointId": "checkpoint-001"},
-        )
-
-    assert exc_info.value.code == "UNAVAILABLE"
-    assert exc_info.value.status_code == 503
-    assert exc_info.value.message == (
-        "sessions.compaction.branch is unavailable until control chat compaction branching is wired"
+    compacted = await service.call(
+        "sessions.compact",
+        {"key": session_key, "maxLines": 2},
+        now_ms=1_700_000_000_123,
     )
+    checkpoint_id = str(compacted["checkpointId"])
+
+    await database.append_control_chat_message(
+        role="assistant",
+        content="Delta line 1",
+        mission_id=None,
+        session_key=session_key,
+    )
+
+    branched = await service.call(
+        "sessions.compaction.branch",
+        {"key": session_key, "checkpointId": checkpoint_id},
+        now_ms=1_700_000_000_789,
+    )
+    branch_key = branched["key"]
+    source_messages = await database.list_control_chat_messages(limit=10, session_key=session_key)
+    branch_messages = await database.list_control_chat_messages(limit=10, session_key=branch_key)
+    branch_metadata = await database.get_gateway_session_metadata(branch_key)
+    checkpoint_payload = await service.call(
+        "sessions.compaction.get",
+        {"key": session_key, "checkpointId": checkpoint_id},
+    )
+
+    assert branched["ok"] is True
+    assert branched["sourceKey"] == session_key
+    assert branch_key != session_key
+    assert branched["sessionId"] == branched["entry"]["sessionId"]
+    assert branched["checkpoint"] == checkpoint_payload["checkpoint"]
+    assert branched["entry"]["key"] == branch_key
+    assert branched["entry"]["kind"] == "thread"
+    assert branched["entry"]["label"] == "Parity Session (checkpoint)"
+    assert branched["entry"]["parentSessionKey"] == session_key
+    assert branched["entry"]["model"] == "gpt-5.4-mini"
+    assert isinstance(branched["entry"]["updatedAt"], int)
+    assert branched["entry"]["updatedAt"] > 0
+    assert [message["content"] for message in source_messages] == [
+        "Charlie line 1\nCharlie line 2",
+        "Delta line 1",
+    ]
+    assert [message["content"] for message in branch_messages] == [
+        "Alpha line 1\nAlpha line 2",
+        "Bravo line 1",
+        "Charlie line 1\nCharlie line 2",
+    ]
+    assert branch_metadata is not None
+    assert branch_metadata["metadata"] == {
+        "label": "Parity Session (checkpoint)",
+        "model": "gpt-5.4-mini",
+        "parentSessionKey": session_key,
+    }
+    sessions_changed = [
+        event
+        for event in hub.published_events
+        if event.get("type") == "gateway_event" and event.get("event") == "sessions.changed"
+    ]
+    assert [event["payload"]["reason"] for event in sessions_changed] == [
+        "compact",
+        "checkpoint-branch",
+        "checkpoint-branch",
+    ]
+    assert sessions_changed[-2]["payload"]["sessionKey"] == session_key
+    assert sessions_changed[-1]["payload"]["sessionKey"] == branch_key
 
 
 @pytest.mark.asyncio
@@ -1716,6 +2280,300 @@ async def test_sessions_preview_returns_current_session_items_and_missing_unknow
                 "items": [],
             },
         ],
+    }
+
+
+@pytest.mark.asyncio
+async def test_push_test_fails_as_explicitly_unavailable() -> None:
+    service = GatewayNodeMethodService(GatewayNodeRegistry())
+
+    with pytest.raises(
+        GatewayNodeMethodError,
+        match="push.test is unavailable until APNS push runtime is wired",
+    ) as exc_info:
+        await service.call(
+            "push.test",
+            {
+                "nodeId": "ios-node-1",
+                "title": "OpenZues",
+                "body": "Push parity ping.",
+                "environment": "production",
+            },
+        )
+
+    assert exc_info.value.code == "UNAVAILABLE"
+    assert exc_info.value.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_connect_fails_as_explicit_invalid_request() -> None:
+    service = GatewayNodeMethodService(GatewayNodeRegistry())
+
+    with pytest.raises(
+        GatewayNodeMethodError,
+        match="connect is only valid as the first request",
+    ) as exc_info:
+        await service.call("connect", {})
+
+    assert exc_info.value.code == "INVALID_REQUEST"
+    assert exc_info.value.status_code == 400
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method", "params"),
+    [
+        (
+            "web.login.start",
+            {
+                "force": True,
+                "timeoutMs": 30_000,
+                "verbose": True,
+                "accountId": "telegram-primary",
+            },
+        ),
+        (
+            "web.login.wait",
+            {
+                "timeoutMs": 30_000,
+                "accountId": "telegram-primary",
+            },
+        ),
+    ],
+)
+async def test_web_login_methods_fail_as_explicit_provider_unavailable(
+    method: str,
+    params: dict[str, object],
+) -> None:
+    service = GatewayNodeMethodService(GatewayNodeRegistry())
+
+    with pytest.raises(
+        GatewayNodeMethodError,
+        match="web login provider is not available",
+    ) as exc_info:
+        await service.call(method, params)
+
+    assert exc_info.value.code == "INVALID_REQUEST"
+    assert exc_info.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_channels_logout_fails_as_explicit_unsupported_channel() -> None:
+    service = GatewayNodeMethodService(GatewayNodeRegistry())
+
+    with pytest.raises(
+        GatewayNodeMethodError,
+        match="channel telegram does not support logout",
+    ) as exc_info:
+        await service.call(
+            "channels.logout",
+            {
+                "channel": "telegram",
+                "accountId": "primary",
+            },
+        )
+
+    assert exc_info.value.code == "INVALID_REQUEST"
+    assert exc_info.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_logs_tail_returns_latest_workspace_log_lines(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    logs_root = tmp_path / "logs"
+    logs_root.mkdir(parents=True, exist_ok=True)
+    older = logs_root / "openzues-older.log"
+    newer = logs_root / "openzues-newer.log"
+    older.write_text("old line\n", encoding="utf-8")
+    newer.write_text("new line\n", encoding="utf-8")
+    os.utime(older, (1, 1))
+    os.utime(newer, None)
+
+    service = GatewayNodeMethodService(GatewayNodeRegistry())
+    payload = await service.call(
+        "logs.tail",
+        {
+            "limit": 10,
+            "maxBytes": 1_000,
+        },
+    )
+
+    assert payload == {
+        "file": str(newer),
+        "cursor": newer.stat().st_size,
+        "size": newer.stat().st_size,
+        "lines": ["new line"],
+        "truncated": False,
+        "reset": False,
+    }
+
+
+@pytest.mark.asyncio
+async def test_update_run_triggers_runtime_update_tick_and_returns_fresh_view() -> None:
+    payload: dict[str, object] = {
+        "headline": "Runtime self-update is watching the repo",
+        "summary": "The current process is aligned with the checked-out repo revision.",
+        "enabled": True,
+        "repo_root": "C:/workspace/OpenZues",
+        "startup_revision": "rev-a",
+        "current_revision": "rev-a",
+        "pending_revision": None,
+        "pending_restart": False,
+        "restart_in_progress": False,
+        "safe_to_restart": True,
+        "last_checked_at": None,
+        "last_restart_at": None,
+        "last_error": None,
+        "auto_restart": True,
+    }
+    tick_calls: list[str] = []
+
+    async def fake_tick() -> bool:
+        tick_calls.append("tick")
+        payload.update(
+            {
+                "headline": "A newer repo revision is waiting for a safe boundary",
+                "summary": (
+                    "OpenZues sees a newer checked-out revision, but it is still waiting "
+                    "for live missions to reach a restart-safe checkpoint."
+                ),
+                "current_revision": "rev-b",
+                "pending_revision": "rev-b",
+                "pending_restart": True,
+                "safe_to_restart": False,
+                "last_checked_at": "2026-04-18T16:20:00Z",
+            }
+        )
+        return False
+
+    async def fake_view() -> dict[str, object]:
+        return dict(payload)
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        runtime_update_tick=fake_tick,
+        runtime_update_view=fake_view,
+    )
+    result = await service.call("update.run", {})
+
+    assert tick_calls == ["tick"]
+    assert result == payload
+
+
+@pytest.mark.asyncio
+async def test_wizard_methods_drive_bounded_gateway_wizard_runtime() -> None:
+    state: dict[str, object] = {
+        "mode": "local",
+        "project_path": None,
+        "task_name": None,
+    }
+
+    async def load_session() -> dict[str, object]:
+        return dict(state)
+
+    async def save_session(patch: dict[str, object]) -> dict[str, object]:
+        state.update(patch)
+        return dict(state)
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        wizard_service=GatewayWizardService(
+            load_session=load_session,
+            save_session=save_session,
+        ),
+    )
+
+    start = await service.call(
+        "wizard.start",
+        {"mode": "remote", "workspace": "C:/workspace/OpenZues"},
+    )
+    session_id = start["sessionId"]
+    step = start["step"]
+
+    assert isinstance(session_id, str)
+    assert start["done"] is False
+    assert start["status"] == "running"
+    assert step == {
+        "id": step["id"],
+        "type": "text",
+        "title": "Task Name",
+        "message": "Name the recurring setup task.",
+        "executor": "client",
+    }
+
+    status = await service.call("wizard.status", {"sessionId": session_id})
+    assert status == {"status": "running"}
+
+    done = await service.call(
+        "wizard.next",
+        {
+            "sessionId": session_id,
+            "answer": {
+                "stepId": step["id"],
+                "value": "Parity Loop",
+            },
+        },
+    )
+
+    assert done == {"done": True, "status": "done"}
+    assert state == {
+        "flow": "advanced",
+        "mode": "remote",
+        "project_path": "C:/workspace/OpenZues",
+        "task_name": "Parity Loop",
+    }
+
+    with pytest.raises(ValueError, match="wizard not found"):
+        await service.call("wizard.status", {"sessionId": session_id})
+
+
+@pytest.mark.asyncio
+async def test_wizard_cancel_discards_unapplied_draft() -> None:
+    state: dict[str, object] = {
+        "mode": "local",
+        "project_path": None,
+        "task_name": None,
+    }
+
+    async def load_session() -> dict[str, object]:
+        return dict(state)
+
+    async def save_session(patch: dict[str, object]) -> dict[str, object]:
+        state.update(patch)
+        return dict(state)
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        wizard_service=GatewayWizardService(
+            load_session=load_session,
+            save_session=save_session,
+        ),
+    )
+
+    start = await service.call("wizard.start", {})
+    session_id = start["sessionId"]
+
+    assert start["done"] is False
+    assert start["status"] == "running"
+    assert start["step"] == {
+        "id": start["step"]["id"],
+        "type": "text",
+        "title": "Workspace",
+        "message": "Enter the workspace path to stage for setup.",
+        "placeholder": "C:/workspace",
+        "executor": "client",
+    }
+
+    cancel = await service.call("wizard.cancel", {"sessionId": session_id})
+
+    assert cancel == {"status": "cancelled", "error": "cancelled"}
+    assert state == {
+        "mode": "local",
+        "project_path": None,
+        "task_name": None,
     }
 
 
@@ -3482,6 +4340,82 @@ async def test_sessions_list_includes_metadata_known_non_current_sessions() -> N
     ]
     assert isinstance(payload["sessions"][1]["updatedAt"], int)
     assert payload["sessions"][1]["updatedAt"] > 0
+
+
+@pytest.mark.asyncio
+async def test_sessions_list_surfaces_compaction_checkpoint_metadata() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-list-compaction-service"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-sessions-list-compaction.db")
+    await database.initialize()
+    main_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+    )
+    session_key = resolve_thread_session_keys(
+        base_session_key=main_session_key,
+        thread_id="thread-compaction-list",
+    ).session_key
+    await database.upsert_gateway_session_metadata(
+        session_key=session_key,
+        metadata={"label": "Checkpoint Worker"},
+    )
+    await database.append_control_chat_message(
+        role="user",
+        content="Alpha line 1\nAlpha line 2",
+        mission_id=None,
+        session_key=session_key,
+    )
+    await database.append_control_chat_message(
+        role="assistant",
+        content="Bravo line 1",
+        mission_id=None,
+        session_key=session_key,
+    )
+    await database.append_control_chat_message(
+        role="assistant",
+        content="Charlie line 1\nCharlie line 2",
+        mission_id=None,
+        session_key=session_key,
+    )
+    service = GatewayNodeMethodService(GatewayNodeRegistry(), database=database)
+
+    compacted = await service.call(
+        "sessions.compact",
+        {"key": session_key, "maxLines": 2},
+        now_ms=1_700_000_000_123,
+    )
+    payload = await service.call(
+        "sessions.list",
+        {"includeGlobal": True, "includeUnknown": False, "limit": 10},
+        now_ms=1_700_000_000_456,
+    )
+    session_payload = next(
+        session for session in payload["sessions"] if session["key"] == session_key
+    )
+
+    assert session_payload["compactionCheckpointCount"] == 1
+    assert session_payload["latestCompactionCheckpoint"] == {
+        "checkpointId": compacted["checkpointId"],
+        "sessionKey": session_key,
+        "sessionId": session_key,
+        "createdAt": 1_700_000_000_123,
+        "reason": "manual",
+        "summary": "Alpha line 1 Alpha line 2 Bravo line 1",
+        "firstKeptEntryId": session_payload["latestCompactionCheckpoint"]["firstKeptEntryId"],
+        "preCompaction": {
+            "sessionId": session_key,
+            "entryId": session_payload["latestCompactionCheckpoint"]["preCompaction"]["entryId"],
+        },
+        "postCompaction": {
+            "sessionId": session_key,
+            "entryId": session_payload["latestCompactionCheckpoint"]["postCompaction"]["entryId"],
+        },
+    }
 
 
 @pytest.mark.asyncio

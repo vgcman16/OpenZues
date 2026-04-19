@@ -28,6 +28,7 @@ from openzues.services.gateway_cron import GatewayCronService, build_gateway_cro
 from openzues.services.gateway_health import GatewayHealthService
 from openzues.services.gateway_identity import GatewayIdentityService
 from openzues.services.gateway_last_heartbeat import GatewayLastHeartbeatService
+from openzues.services.gateway_logs import GatewayLogsService, GatewayLogsUnavailableError
 from openzues.services.gateway_method_policy import TALK_SECRETS_GATEWAY_METHOD_SCOPE
 from openzues.services.gateway_models import GatewayModelsService
 from openzues.services.gateway_node_command_policy import (
@@ -43,6 +44,10 @@ from openzues.services.gateway_node_pending_work import (
     NodePendingWorkType,
 )
 from openzues.services.gateway_node_registry import GatewayNodeRegistry, KnownNode
+from openzues.services.gateway_session_compaction import (
+    GatewaySessionCompactionService,
+    GatewaySessionCompactionUnavailableError,
+)
 from openzues.services.gateway_sessions import GatewaySessionsService
 from openzues.services.gateway_skill_bins import GatewaySkillBinsService
 from openzues.services.gateway_skill_catalog import GatewaySkillCatalogService
@@ -64,8 +69,10 @@ from openzues.services.gateway_tts_runtime import (
 )
 from openzues.services.gateway_voicewake import GatewayVoiceWakeService
 from openzues.services.gateway_wake import GatewayWakeService
+from openzues.services.gateway_wizard import GatewayWizardService
 from openzues.services.hub import BroadcastHub
 from openzues.services.session_keys import (
+    parse_thread_session_suffix,
     resolve_agent_id_from_session_key,
     resolve_thread_session_keys,
     session_key_lookup_aliases,
@@ -132,8 +139,10 @@ class GatewayNodeMethodService:
         health_service: GatewayHealthService | None = None,
         gateway_identity_service: GatewayIdentityService | None = None,
         last_heartbeat_service: GatewayLastHeartbeatService | None = None,
+        logs_service: GatewayLogsService | None = None,
         models_service: GatewayModelsService | None = None,
         sessions_service: GatewaySessionsService | None = None,
+        session_compaction_service: GatewaySessionCompactionService | None = None,
         system_presence_service: GatewaySystemPresenceService | None = None,
         talk_config_service: GatewayTalkConfigService | None = None,
         talk_mode_service: GatewayTalkModeService | None = None,
@@ -149,6 +158,9 @@ class GatewayNodeMethodService:
         chat_send_service: Callable[..., Awaitable[dict[str, object]]] | None = None,
         chat_abort_service: Callable[..., Awaitable[dict[str, object]]] | None = None,
         status_service: Callable[[], Awaitable[dict[str, object]]] | None = None,
+        runtime_update_tick: Callable[[], Awaitable[bool]] | None = None,
+        runtime_update_view: Callable[[], Awaitable[dict[str, object]]] | None = None,
+        wizard_service: GatewayWizardService | None = None,
         voicewake_service: GatewayVoiceWakeService | None = None,
         wake_service: GatewayWakeService | None = None,
         sync: Callable[[], Awaitable[None]] | None = None,
@@ -185,10 +197,14 @@ class GatewayNodeMethodService:
                 self._database,
                 registry=registry,
             )
+        self._logs_service = logs_service or GatewayLogsService()
         self._models_service = models_service or GatewayModelsService()
         self._sessions_service = sessions_service
         if self._sessions_service is None and self._database is not None:
             self._sessions_service = GatewaySessionsService(self._database)
+        self._session_compaction_service = session_compaction_service
+        if self._session_compaction_service is None and self._database is not None:
+            self._session_compaction_service = GatewaySessionCompactionService(self._database)
         self._system_presence_service = system_presence_service
         if self._system_presence_service is None and self._gateway_identity_service is not None:
             self._system_presence_service = GatewaySystemPresenceService(
@@ -212,6 +228,9 @@ class GatewayNodeMethodService:
         self._chat_abort_service = chat_abort_service
         self._gateway_chat_run_ids_by_session_key: dict[str, str] = {}
         self._status_service = status_service
+        self._runtime_update_tick = runtime_update_tick
+        self._runtime_update_view = runtime_update_view
+        self._wizard_service = wizard_service
         self._voicewake_service = voicewake_service
         self._wake_service = wake_service
         self._sync = sync
@@ -324,6 +343,143 @@ class GatewayNodeMethodService:
                     status_code=503,
                 )
             return await self._status_service()
+
+        if resolved_method == "update.run":
+            _validate_exact_keys(resolved_method, payload, allowed_keys=())
+            if self._runtime_update_tick is None or self._runtime_update_view is None:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message=(
+                        "update.run is unavailable until runtime self-update execution is wired"
+                    ),
+                    status_code=503,
+                )
+            await self._runtime_update_tick()
+            return await self._runtime_update_view()
+
+        if resolved_method == "wizard.start":
+            _validate_exact_keys(
+                resolved_method,
+                payload,
+                allowed_keys=("mode", "workspace"),
+            )
+            if self._wizard_service is None:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message="wizard.start is unavailable until setup wizard session is wired",
+                    status_code=503,
+                )
+            mode = _optional_enum_value(
+                payload.get("mode"),
+                label="mode",
+                allowed_values={"local", "remote"},
+            )
+            workspace = _optional_non_empty_string(payload.get("workspace"), label="workspace")
+            return await self._wizard_service.start(
+                mode=cast(Literal["local", "remote"] | None, mode),
+                workspace=workspace,
+            )
+
+        if resolved_method == "wizard.next":
+            _validate_exact_keys(
+                resolved_method,
+                payload,
+                allowed_keys=("sessionId", "answer"),
+            )
+            if self._wizard_service is None:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message="wizard.next is unavailable until setup wizard session is wired",
+                    status_code=503,
+                )
+            session_id = _require_non_empty_string(payload.get("sessionId"), label="sessionId")
+            answer_payload = payload.get("answer")
+            answer: dict[str, object] | None = None
+            if answer_payload is not None:
+                if not isinstance(answer_payload, dict):
+                    raise ValueError("invalid wizard.next params: answer must be an object")
+                _validate_exact_keys(
+                    "wizard.next.answer",
+                    answer_payload,
+                    allowed_keys=("stepId", "value"),
+                )
+                answer = {
+                    "stepId": _require_non_empty_string(
+                        answer_payload.get("stepId"),
+                        label="stepId",
+                    ),
+                    "value": answer_payload.get("value"),
+                }
+            return await self._wizard_service.next(
+                session_id=session_id,
+                answer=answer,
+            )
+
+        if resolved_method == "wizard.cancel":
+            _validate_exact_keys(
+                resolved_method,
+                payload,
+                allowed_keys=("sessionId",),
+            )
+            if self._wizard_service is None:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message="wizard.cancel is unavailable until setup wizard session is wired",
+                    status_code=503,
+                )
+            session_id = _require_non_empty_string(payload.get("sessionId"), label="sessionId")
+            return await self._wizard_service.cancel(session_id=session_id)
+
+        if resolved_method == "wizard.status":
+            _validate_exact_keys(
+                resolved_method,
+                payload,
+                allowed_keys=("sessionId",),
+            )
+            if self._wizard_service is None:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message="wizard.status is unavailable until setup wizard session is wired",
+                    status_code=503,
+                )
+            session_id = _require_non_empty_string(payload.get("sessionId"), label="sessionId")
+            return await self._wizard_service.status(session_id=session_id)
+
+        if resolved_method == "logs.tail":
+            _validate_exact_keys(
+                resolved_method,
+                payload,
+                allowed_keys=("cursor", "limit", "maxBytes"),
+            )
+            cursor = _optional_min_int(
+                payload.get("cursor"),
+                label="cursor",
+                minimum=0,
+            )
+            limit = _optional_bounded_int(
+                payload.get("limit"),
+                label="limit",
+                minimum=1,
+                maximum=5_000,
+            )
+            max_bytes = _optional_bounded_int(
+                payload.get("maxBytes"),
+                label="maxBytes",
+                minimum=1,
+                maximum=1_000_000,
+            )
+            try:
+                return await self._logs_service.read_tail(
+                    cursor=cursor,
+                    limit=limit,
+                    max_bytes=max_bytes,
+                )
+            except GatewayLogsUnavailableError as exc:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message=str(exc),
+                    status_code=503,
+                ) from exc
 
         if resolved_method == "models.list":
             _validate_exact_keys(resolved_method, payload, allowed_keys=())
@@ -618,6 +774,78 @@ class GatewayNodeMethodService:
                 text=text,
             )
 
+        if resolved_method == "connect":
+            _validate_exact_keys(resolved_method, payload, allowed_keys=())
+            raise GatewayNodeMethodError(
+                code="INVALID_REQUEST",
+                message="connect is only valid as the first request",
+                status_code=400,
+            )
+
+        if resolved_method == "web.login.start":
+            _validate_exact_keys(
+                resolved_method,
+                payload,
+                allowed_keys=("force", "timeoutMs", "verbose", "accountId"),
+            )
+            _optional_bool(payload.get("force"), label="force")
+            _optional_bounded_int(
+                payload.get("timeoutMs"),
+                label="timeoutMs",
+                minimum=0,
+                maximum=2_592_000_000,
+            )
+            _optional_bool(payload.get("verbose"), label="verbose")
+            if "accountId" in payload and payload.get("accountId") is not None:
+                _require_string(payload.get("accountId"), label="accountId")
+            raise GatewayNodeMethodError(
+                code="INVALID_REQUEST",
+                message="web login provider is not available",
+                status_code=400,
+            )
+
+        if resolved_method == "web.login.wait":
+            _validate_exact_keys(
+                resolved_method,
+                payload,
+                allowed_keys=("timeoutMs", "accountId"),
+            )
+            _optional_bounded_int(
+                payload.get("timeoutMs"),
+                label="timeoutMs",
+                minimum=0,
+                maximum=2_592_000_000,
+            )
+            if "accountId" in payload and payload.get("accountId") is not None:
+                _require_string(payload.get("accountId"), label="accountId")
+            raise GatewayNodeMethodError(
+                code="INVALID_REQUEST",
+                message="web login provider is not available",
+                status_code=400,
+            )
+
+        if resolved_method == "push.test":
+            _validate_exact_keys(
+                resolved_method,
+                payload,
+                allowed_keys=("nodeId", "title", "body", "environment"),
+            )
+            _require_non_empty_string(payload.get("nodeId"), label="nodeId")
+            if "title" in payload and payload.get("title") is not None:
+                _require_string(payload.get("title"), label="title")
+            if "body" in payload and payload.get("body") is not None:
+                _require_string(payload.get("body"), label="body")
+            _optional_enum_value(
+                payload.get("environment"),
+                label="environment",
+                allowed_values={"sandbox", "production"},
+            )
+            raise GatewayNodeMethodError(
+                code="UNAVAILABLE",
+                message="push.test is unavailable until APNS push runtime is wired",
+                status_code=503,
+            )
+
         if resolved_method == "sessions.list":
             _validate_exact_keys(
                 resolved_method,
@@ -711,7 +939,10 @@ class GatewayNodeMethodService:
                     status_code=503,
                 )
             key = _optional_non_empty_string(payload.get("key"), label="key")
-            session_id = _optional_non_empty_string(payload.get("sessionId"), label="sessionId")
+            resolved_session_id = _optional_non_empty_string(
+                payload.get("sessionId"),
+                label="sessionId",
+            )
             label = _optional_non_empty_string(payload.get("label"), label="label")
             agent_id = _optional_non_empty_string(payload.get("agentId"), label="agentId")
             spawned_by = _optional_non_empty_string(payload.get("spawnedBy"), label="spawnedBy")
@@ -727,7 +958,7 @@ class GatewayNodeMethodService:
             )
             return await self._sessions_service.resolve_key(
                 key=key,
-                session_id=session_id,
+                session_id=resolved_session_id,
                 label=label,
                 agent_id=agent_id,
                 spawned_by=spawned_by,
@@ -1006,6 +1237,21 @@ class GatewayNodeMethodService:
                     status_code=503,
                 )
             return await self._channels_service.build_snapshot()
+
+        if resolved_method == "channels.logout":
+            _validate_exact_keys(
+                resolved_method,
+                payload,
+                allowed_keys=("channel", "accountId"),
+            )
+            channel = _require_non_empty_string(payload.get("channel"), label="channel")
+            if "accountId" in payload and payload.get("accountId") is not None:
+                _require_string(payload.get("accountId"), label="accountId")
+            raise GatewayNodeMethodError(
+                code="INVALID_REQUEST",
+                message=f"channel {channel} does not support logout",
+                status_code=400,
+            )
 
         if resolved_method == "tools.catalog":
             _validate_exact_keys(
@@ -1306,15 +1552,15 @@ class GatewayNodeMethodService:
             if existing_entry is None:
                 raise ValueError(f"session not found: {session_key}")
             existing_metadata_row = await self._database.get_gateway_session_metadata(canonical_key)
-            next_metadata: dict[str, Any] = {}
+            restored_metadata: dict[str, Any] = {}
             if isinstance(existing_metadata_row, dict):
                 metadata_value = existing_metadata_row.get("metadata")
                 if isinstance(metadata_value, dict):
-                    next_metadata = dict(metadata_value)
+                    restored_metadata = dict(metadata_value)
             await self._database.delete_control_chat_messages(session_key=canonical_key)
             await self._database.upsert_gateway_session_metadata(
                 session_key=canonical_key,
-                metadata=next_metadata,
+                metadata=restored_metadata,
             )
             self._forget_gateway_chat_run(canonical_key)
             entry = await self._sessions_service.build_session_payload_for_key(
@@ -1399,18 +1645,41 @@ class GatewayNodeMethodService:
                 payload,
                 allowed_keys=("key", "maxLines"),
             )
-            _require_non_empty_string(payload.get("key"), label="key")
-            _optional_bounded_int(
+            session_key = _require_non_empty_string(payload.get("key"), label="key")
+            max_lines = _optional_bounded_int(
                 payload.get("maxLines"),
                 label="maxLines",
                 minimum=1,
                 maximum=1_000_000,
             )
-            raise GatewayNodeMethodError(
-                code="UNAVAILABLE",
-                message="sessions.compact is unavailable until control chat compaction is wired",
-                status_code=503,
-            )
+            if self._session_compaction_service is None:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message=(
+                        "sessions.compact is unavailable until control chat compaction is wired"
+                    ),
+                    status_code=503,
+                )
+            try:
+                compacted = await self._session_compaction_service.compact(
+                    session_key=session_key,
+                    max_lines=max_lines,
+                    now_ms=_timestamp_ms(now_ms),
+                )
+            except GatewaySessionCompactionUnavailableError as exc:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message=str(exc),
+                    status_code=503,
+                ) from exc
+            if compacted.get("compacted") is True:
+                await self._publish_sessions_changed_event(
+                    session_key=session_key,
+                    reason="compact",
+                    now_ms=now_ms,
+                    compacted=True,
+                )
+            return compacted
 
         if resolved_method == "sessions.compaction.restore":
             _validate_exact_keys(
@@ -1418,16 +1687,73 @@ class GatewayNodeMethodService:
                 payload,
                 allowed_keys=("key", "checkpointId"),
             )
-            _require_non_empty_string(payload.get("key"), label="key")
-            _require_non_empty_string(payload.get("checkpointId"), label="checkpointId")
-            raise GatewayNodeMethodError(
-                code="UNAVAILABLE",
-                message=(
-                    "sessions.compaction.restore is unavailable until control chat compaction "
-                    "restore is wired"
-                ),
-                status_code=503,
+            session_key = _require_non_empty_string(payload.get("key"), label="key")
+            checkpoint_id = _require_non_empty_string(
+                payload.get("checkpointId"),
+                label="checkpointId",
             )
+            if (
+                self._database is None
+                or self._sessions_service is None
+                or self._session_compaction_service is None
+            ):
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message=(
+                        "sessions.compaction.restore is unavailable until control chat compaction "
+                        "restore is wired"
+                    ),
+                    status_code=503,
+                )
+            canonical_key = _canonical_session_key(session_key)
+            if self._tracked_gateway_chat_run_id(canonical_key) is not None:
+                await self._abort_gateway_chat_run(session_key=canonical_key, run_id=None)
+            existing_metadata_row = await self._database.get_gateway_session_metadata(canonical_key)
+            next_metadata: dict[str, Any] = {}
+            if isinstance(existing_metadata_row, dict):
+                metadata_value = existing_metadata_row.get("metadata")
+                if isinstance(metadata_value, dict):
+                    next_metadata = dict(metadata_value)
+            try:
+                restored = await self._session_compaction_service.restore(
+                    session_key=canonical_key,
+                    checkpoint_id=checkpoint_id,
+                )
+            except GatewaySessionCompactionUnavailableError as exc:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message=str(exc),
+                    status_code=503,
+                ) from exc
+            await self._database.upsert_gateway_session_metadata(
+                session_key=canonical_key,
+                metadata=next_metadata,
+            )
+            self._forget_gateway_chat_run(canonical_key)
+            entry = await self._sessions_service.build_session_payload_for_key(
+                session_key=canonical_key,
+                now_ms=_timestamp_ms(now_ms),
+            )
+            if entry is None:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message=(
+                        "sessions.compaction.restore could not materialize the restored session"
+                    ),
+                    status_code=503,
+                )
+            await self._publish_sessions_changed_event(
+                session_key=canonical_key,
+                reason="checkpoint-restore",
+                now_ms=now_ms,
+            )
+            return {
+                "ok": True,
+                "key": canonical_key,
+                "sessionId": entry["sessionId"],
+                "checkpoint": restored["checkpoint"],
+                "entry": entry,
+            }
 
         if resolved_method == "sessions.compaction.list":
             _validate_exact_keys(
@@ -1435,14 +1761,18 @@ class GatewayNodeMethodService:
                 payload,
                 allowed_keys=("key",),
             )
-            _require_non_empty_string(payload.get("key"), label="key")
-            raise GatewayNodeMethodError(
-                code="UNAVAILABLE",
-                message=(
-                    "sessions.compaction.list is unavailable until control chat compaction "
-                    "checkpoints are wired"
-                ),
-                status_code=503,
+            session_key = _require_non_empty_string(payload.get("key"), label="key")
+            if self._session_compaction_service is None:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message=(
+                        "sessions.compaction.list is unavailable until control chat compaction "
+                        "checkpoints are wired"
+                    ),
+                    status_code=503,
+                )
+            return await self._session_compaction_service.list_checkpoints(
+                session_key=session_key
             )
 
         if resolved_method == "sessions.compaction.get":
@@ -1451,15 +1781,23 @@ class GatewayNodeMethodService:
                 payload,
                 allowed_keys=("key", "checkpointId"),
             )
-            _require_non_empty_string(payload.get("key"), label="key")
-            _require_non_empty_string(payload.get("checkpointId"), label="checkpointId")
-            raise GatewayNodeMethodError(
-                code="UNAVAILABLE",
-                message=(
-                    "sessions.compaction.get is unavailable until control chat compaction "
-                    "checkpoints are wired"
-                ),
-                status_code=503,
+            session_key = _require_non_empty_string(payload.get("key"), label="key")
+            checkpoint_id = _require_non_empty_string(
+                payload.get("checkpointId"),
+                label="checkpointId",
+            )
+            if self._session_compaction_service is None:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message=(
+                        "sessions.compaction.get is unavailable until control chat compaction "
+                        "checkpoints are wired"
+                    ),
+                    status_code=503,
+                )
+            return await self._session_compaction_service.get_checkpoint(
+                session_key=session_key,
+                checkpoint_id=checkpoint_id,
             )
 
         if resolved_method == "sessions.compaction.branch":
@@ -1468,16 +1806,119 @@ class GatewayNodeMethodService:
                 payload,
                 allowed_keys=("key", "checkpointId"),
             )
-            _require_non_empty_string(payload.get("key"), label="key")
-            _require_non_empty_string(payload.get("checkpointId"), label="checkpointId")
-            raise GatewayNodeMethodError(
-                code="UNAVAILABLE",
-                message=(
-                    "sessions.compaction.branch is unavailable until control chat compaction "
-                    "branching is wired"
-                ),
-                status_code=503,
+            session_key = _require_non_empty_string(payload.get("key"), label="key")
+            checkpoint_id = _require_non_empty_string(
+                payload.get("checkpointId"),
+                label="checkpointId",
             )
+            if (
+                self._database is None
+                or self._sessions_service is None
+                or self._session_compaction_service is None
+            ):
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message=(
+                        "sessions.compaction.branch is unavailable until control chat compaction "
+                        "branching is wired"
+                    ),
+                    status_code=503,
+                )
+            canonical_key = _canonical_session_key(session_key)
+            source_entry = await self._sessions_service.build_session_payload_for_key(
+                session_key=canonical_key,
+                now_ms=_timestamp_ms(now_ms),
+            )
+            if source_entry is None:
+                raise ValueError(f"session not found: {session_key}")
+            existing_metadata_row = await self._database.get_gateway_session_metadata(canonical_key)
+            branch_metadata: dict[str, Any] = {}
+            if isinstance(existing_metadata_row, dict):
+                metadata_value = existing_metadata_row.get("metadata")
+                if isinstance(metadata_value, dict):
+                    branch_metadata = dict(metadata_value)
+            label_source = _optional_non_empty_string(
+                branch_metadata.get("label") or source_entry.get("label"),
+                label="label",
+            )
+            branch_metadata["label"] = (
+                f"{label_source} (checkpoint)"
+                if label_source is not None
+                else "Checkpoint branch"
+            )
+            branch_metadata["parentSessionKey"] = canonical_key
+            model_override = _optional_non_empty_string(
+                branch_metadata.get("model") or source_entry.get("model"),
+                label="model",
+            )
+            if model_override is not None:
+                branch_metadata["model"] = model_override
+
+            parsed_session_key = parse_thread_session_suffix(canonical_key)
+            base_session_key = (
+                str(parsed_session_key.base_session_key or "").strip() or canonical_key
+            )
+            next_key = resolve_thread_session_keys(
+                base_session_key=base_session_key,
+                thread_id=f"checkpoint-{secrets.token_hex(6)}",
+            ).session_key
+            while (
+                await self._sessions_service.build_session_payload_for_key(
+                    session_key=next_key,
+                    now_ms=_timestamp_ms(now_ms),
+                )
+                is not None
+            ):
+                next_key = resolve_thread_session_keys(
+                    base_session_key=base_session_key,
+                    thread_id=f"checkpoint-{secrets.token_hex(6)}",
+                ).session_key
+            try:
+                branched = await self._session_compaction_service.branch(
+                    session_key=canonical_key,
+                    checkpoint_id=checkpoint_id,
+                    target_session_key=next_key,
+                )
+            except GatewaySessionCompactionUnavailableError as exc:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message=str(exc),
+                    status_code=503,
+                ) from exc
+            await self._database.upsert_gateway_session_metadata(
+                session_key=next_key,
+                metadata=branch_metadata,
+            )
+            entry = await self._sessions_service.build_session_payload_for_key(
+                session_key=next_key,
+                now_ms=_timestamp_ms(now_ms),
+            )
+            if entry is None:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message=(
+                        "sessions.compaction.branch could not materialize the checkpoint branch"
+                    ),
+                    status_code=503,
+                )
+            await self._publish_sessions_changed_event(
+                session_key=canonical_key,
+                reason="checkpoint-branch",
+                now_ms=now_ms,
+            )
+            await self._publish_sessions_changed_event(
+                session_key=next_key,
+                reason="checkpoint-branch",
+                now_ms=now_ms,
+            )
+            return {
+                "ok": True,
+                "sourceKey": canonical_key,
+                "key": next_key,
+                "sessionId": entry["sessionId"],
+                "checkpoint": branched["checkpoint"],
+                "entry": entry,
+            }
 
         if resolved_method == "sessions.preview":
             _validate_exact_keys(
