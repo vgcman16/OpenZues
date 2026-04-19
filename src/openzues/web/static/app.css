@@ -304,6 +304,12 @@ a {
   margin-top: 18px;
 }
 
+.brief-browser-posture {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
 .brief-action {
   display: inline-flex;
   align-items: center;

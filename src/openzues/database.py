@@ -146,6 +146,18 @@ class Database:
                     ON attention_queue_actions(signal_fingerprint, id DESC);
                 CREATE INDEX IF NOT EXISTS idx_attention_queue_actions_created
                     ON attention_queue_actions(id DESC);
+                CREATE TABLE IF NOT EXISTS gateway_wake_requests (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    mode TEXT NOT NULL,
+                    text TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    created_at TEXT NOT NULL,
+                    claimed_at TEXT,
+                    dispatched_at TEXT,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_gateway_wake_requests_status
+                    ON gateway_wake_requests(status, id ASC);
                 CREATE TABLE IF NOT EXISTS server_requests (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     instance_id INTEGER NOT NULL,
@@ -2708,6 +2720,112 @@ class Database:
                 )
         raise RuntimeError("append_event exhausted all retry attempts without raising.")
 
+    async def create_gateway_wake_request(
+        self,
+        *,
+        mode: str,
+        text: str,
+    ) -> int:
+        now = utcnow()
+        async with aiosqlite.connect(self.path) as db:
+            cursor = await db.execute(
+                """
+                INSERT INTO gateway_wake_requests (
+                    mode,
+                    text,
+                    status,
+                    created_at,
+                    updated_at
+                )
+                VALUES (?, ?, 'pending', ?, ?)
+                """,
+                (mode, text, now, now),
+            )
+            await db.commit()
+            assert cursor.lastrowid is not None
+            return int(cursor.lastrowid)
+
+    async def list_gateway_wake_requests(self, *, limit: int = 50) -> list[dict[str, Any]]:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            rows = await db.execute_fetchall(
+                """
+                SELECT *
+                FROM gateway_wake_requests
+                ORDER BY id ASC
+                LIMIT ?
+                """,
+                (limit,),
+            )
+            return [dict(row) for row in rows]
+
+    async def claim_next_gateway_wake_request(self) -> dict[str, Any] | None:
+        now = utcnow()
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            while True:
+                row = await (
+                    await db.execute(
+                        """
+                        SELECT *
+                        FROM gateway_wake_requests
+                        WHERE status = 'pending'
+                        ORDER BY id ASC
+                        LIMIT 1
+                        """
+                    )
+                ).fetchone()
+                if row is None:
+                    return None
+                request_id = int(row["id"])
+                cursor = await db.execute(
+                    """
+                    UPDATE gateway_wake_requests
+                    SET status = 'claimed',
+                        claimed_at = ?,
+                        updated_at = ?
+                    WHERE id = ? AND status = 'pending'
+                    """,
+                    (now, now, request_id),
+                )
+                await db.commit()
+                if cursor.rowcount:
+                    claimed = dict(row)
+                    claimed["status"] = "claimed"
+                    claimed["claimed_at"] = now
+                    claimed["updated_at"] = now
+                    return claimed
+
+    async def release_gateway_wake_request(self, request_id: int) -> None:
+        now = utcnow()
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute(
+                """
+                UPDATE gateway_wake_requests
+                SET status = 'pending',
+                    claimed_at = NULL,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (now, request_id),
+            )
+            await db.commit()
+
+    async def mark_gateway_wake_request_dispatched(self, request_id: int) -> None:
+        now = utcnow()
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute(
+                """
+                UPDATE gateway_wake_requests
+                SET status = 'dispatched',
+                    dispatched_at = ?,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (now, now, request_id),
+            )
+            await db.commit()
+
     async def list_events(self, limit: int = 200) -> list[dict[str, Any]]:
         async with aiosqlite.connect(self.path) as db:
             db.row_factory = aiosqlite.Row
@@ -3044,6 +3162,33 @@ class Database:
                 )
             return list(reversed([dict(row) for row in rows]))
 
+    async def get_first_control_chat_message(
+        self,
+        *,
+        session_key: str,
+        role: str | None = None,
+    ) -> dict[str, Any] | None:
+        aliases = session_key_lookup_aliases(session_key)
+        if not aliases:
+            return None
+        placeholders = ",".join("?" for _ in aliases)
+        query = f"""
+            SELECT *
+            FROM control_chat_messages
+            WHERE LOWER(TRIM(session_key)) IN ({placeholders})
+        """
+        params: list[object] = list(aliases)
+        normalized_role = str(role or "").strip().lower()
+        if normalized_role:
+            query += " AND LOWER(TRIM(role)) = ?"
+            params.append(normalized_role)
+        query += " ORDER BY id ASC LIMIT 1"
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(query, tuple(params))
+            row = await cursor.fetchone()
+            return dict(row) if row is not None else None
+
     async def count_control_chat_messages(
         self,
         *,
@@ -3068,6 +3213,25 @@ class Database:
             cursor = await db.execute(query, tuple(params))
             row = await cursor.fetchone()
             return int(row["count"]) if row is not None else 0
+
+    async def list_control_chat_session_keys(self) -> list[str]:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            rows = await db.execute_fetchall(
+                """
+                SELECT session_key, MAX(id) AS latest_id
+                FROM control_chat_messages
+                WHERE session_key IS NOT NULL AND TRIM(session_key) <> ''
+                GROUP BY LOWER(TRIM(session_key))
+                ORDER BY latest_id DESC
+                """
+            )
+            session_keys: list[str] = []
+            for row in rows:
+                session_key = str(row["session_key"] or "").strip()
+                if session_key:
+                    session_keys.append(session_key)
+            return session_keys
 
     async def delete_control_chat_messages(
         self,

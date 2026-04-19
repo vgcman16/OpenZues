@@ -24,6 +24,7 @@ from openzues.services.gateway_node_registry import (
     GatewayNodeRegistry,
     KnownNode,
 )
+from openzues.services.gateway_talk_mode import GatewayTalkModeService
 from openzues.services.gateway_voicewake import GatewayVoiceWakeService
 from openzues.services.manager import RuntimeManager
 
@@ -114,10 +115,12 @@ class GatewayNodeService:
         self,
         manager: RuntimeManager,
         pairing_service: GatewayNodePairingService | None = None,
+        talk_mode_service: GatewayTalkModeService | None = None,
         voicewake_service: GatewayVoiceWakeService | None = None,
     ) -> None:
         self.manager = manager
         self.pairing_service = pairing_service
+        self._talk_mode_service = talk_mode_service
         self._voicewake_service = voicewake_service
         self.registry = GatewayNodeRegistry()
         self._managed_node_ids: set[str] = set()
@@ -172,6 +175,14 @@ class GatewayNodeService:
                     "voicewake.changed",
                     {"triggers": list(self._voicewake_service.load().triggers)},
                 )
+            if fresh_connection and self._talk_mode_service is not None:
+                talk_mode = self._talk_mode_service.load()
+                if talk_mode.updated_at_ms > 0:
+                    self.registry.send_event(
+                        node_id,
+                        "talk.mode",
+                        talk_mode.to_payload(),
+                    )
 
     async def sync(self) -> None:
         await self._sync()

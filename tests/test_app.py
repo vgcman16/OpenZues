@@ -12,6 +12,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from openzues.app import (
+    _compact_dashboard_mission,
     build_brief,
     build_continuity,
     build_cortex,
@@ -23,14 +24,21 @@ from openzues.app import (
     create_app,
 )
 from openzues.schemas import (
+    BrowserPostureView,
     DashboardView,
     DiagnosticCheck,
     DiagnosticsView,
     GatewayCapabilityView,
+    HermesToolPolicyView,
     InstanceView,
+    MissionCheckpointView,
+    MissionDelegationBriefView,
+    MissionDelegationRoleView,
     MissionLiveTelemetryView,
     MissionSwarmConflictView,
     MissionSwarmRuntimeView,
+    MissionToolEvidenceItemView,
+    MissionToolEvidenceView,
     MissionView,
     OperatorView,
     ProjectView,
@@ -918,6 +926,68 @@ def make_gateway_capability_view(
     )
 
 
+def make_browser_posture_view(
+    *,
+    status: str = "warn",
+    headline: str = "Browser runtime needs repair",
+    summary: str = (
+        "Local agent-browser is available, but the saved launch browser runtime still "
+        "needs attention."
+    ),
+    recommended_action: str = (
+        "Refresh the connected browser lane before trusting browser-led verification."
+    ),
+    local_available: bool = True,
+) -> BrowserPostureView:
+    return BrowserPostureView.model_validate(
+        {
+            "status": status,
+            "headline": headline,
+            "summary": summary,
+            "control_plane_url": "http://127.0.0.1:8884",
+            "local_agent_browser": {
+                "available": local_available,
+                "command": "agent-browser.cmd" if local_available else None,
+                "summary": (
+                    "agent-browser is available at agent-browser.cmd."
+                    if local_available
+                    else "agent-browser is not installed or not on PATH."
+                ),
+            },
+            "saved_launch": {
+                "status": "ready",
+                "headline": "Gateway bootstrap is launch-ready",
+                "summary": "Saved launch lane is aligned.",
+            },
+            "saved_launch_browser_runtime": {
+                "headline": "Browser runtime is partial",
+                "summary": summary,
+                "status": status,
+                "lane_count": 1,
+                "connected_lane_count": 1,
+                "ready_lane_count": 0 if status != "ready" else 1,
+                "method_count": 1,
+                "service_count": 0 if status != "ready" else 1,
+                "plugin_count": 1,
+                "server_count": 1,
+                "methods": ["browser.request"],
+                "services": [] if status != "ready" else ["browser-control"],
+                "plugins": ["browser"],
+                "servers": ["browser-runtime"],
+                "recommended_action": recommended_action,
+                "lanes": [],
+            },
+            "live_gateway": {
+                "status": "ready",
+                "headline": "Gateway capability is operator-ready",
+                "summary": "Control plane is aligned.",
+            },
+            "live_gateway_browser_runtime": None,
+            "recommended_action": recommended_action,
+        }
+    )
+
+
 def make_gateway_repair_opportunity(
     *,
     instance_id: int = 1,
@@ -1194,6 +1264,74 @@ def test_health_endpoint(tmp_path) -> None:
     assert "runtime_update" in response.json()
 
 
+def test_liveness_probe_stays_shallow(tmp_path) -> None:
+    lease = FakeControlPlaneLease(owner=False, owner_pid=4242)
+    with make_client(tmp_path, control_plane_lease=lease, reset_data_dir=True) as client:
+        response = client.get("/healthz")
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True, "status": "live"}
+
+
+def test_readiness_probe_returns_detailed_payload_for_local_requests(tmp_path) -> None:
+    with make_client(tmp_path, reset_data_dir=True) as client:
+        response = client.get("/ready")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ready"] is True
+    assert payload["failing"] == []
+    assert isinstance(payload["uptimeMs"], int)
+    assert payload["uptimeMs"] >= 0
+
+
+def test_readiness_probe_returns_minimal_payload_for_unauthenticated_remote_requests(
+    tmp_path,
+) -> None:
+    lease = FakeControlPlaneLease(owner=False, owner_pid=4242)
+    with make_client(
+        tmp_path,
+        client_host="10.0.0.8",
+        control_plane_lease=lease,
+        reset_data_dir=True,
+    ) as client:
+        response = client.get("/ready")
+
+    assert response.status_code == 503
+    assert response.json() == {"ready": False}
+
+
+def test_readiness_probe_returns_detailed_payload_for_authenticated_remote_requests(
+    tmp_path,
+) -> None:
+    with make_client(tmp_path, reset_data_dir=True) as client:
+        operator = asyncio.run(client.app.state.access_service.list_operator_views())[0]
+        credential = asyncio.run(client.app.state.access_service.issue_api_key(operator.id))
+        assert credential.api_key is not None
+
+    with make_client(tmp_path, client_host="10.0.0.8") as client:
+        response = client.get(
+            "/ready",
+            headers={"Authorization": f"Bearer {credential.api_key}"},
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ready"] is True
+    assert payload["failing"] == []
+    assert isinstance(payload["uptimeMs"], int)
+    assert payload["uptimeMs"] >= 0
+
+
+def test_readyz_head_reflects_readiness_without_body(tmp_path) -> None:
+    lease = FakeControlPlaneLease(owner=False, owner_pid=4242)
+    with make_client(tmp_path, control_plane_lease=lease, reset_data_dir=True) as client:
+        response = client.head("/readyz")
+
+    assert response.status_code == 503
+    assert response.content == b""
+
+
 def test_dashboard_merges_repeated_plugin_warning_events(tmp_path) -> None:
     duplicate_warning = (
         "\x1b[2m2026-04-11T01:37:30.455301Z\x1b[0m \x1b[33m WARN\x1b[0m "
@@ -1340,6 +1478,167 @@ def test_dashboard_compacts_verbose_command_events(tmp_path) -> None:
 
     assert delta_event["payload"]["delta"].endswith("... [truncated]")
     assert delta_event["payload"]["deltaLength"] == len(long_delta)
+
+
+def test_dashboard_compacts_verbose_recovery_user_message_events(tmp_path) -> None:
+    long_text = "recovery packet detail " * 120
+
+    with make_client(tmp_path, reset_data_dir=True) as client:
+        database = client.app.state.database
+        asyncio.run(
+            database.append_event(
+                instance_id=2,
+                thread_id="thread_recovery",
+                method="item/completed",
+                payload={
+                    "threadId": "thread_recovery",
+                    "turnId": "turn_recovery",
+                    "item": {
+                        "type": "userMessage",
+                        "id": "msg_1",
+                        "content": [
+                            {"type": "text", "text": long_text},
+                            {"type": "text", "text": "follow-up"},
+                            {"type": "text", "text": "overflow"},
+                        ],
+                    },
+                },
+            )
+        )
+        response = client.get("/api/dashboard")
+
+    assert response.status_code == 200
+    payload = response.json()
+    recovery_event = next(
+        event for event in payload["events"] if event["method"] == "item/completed"
+    )
+    item = recovery_event["payload"]["item"]
+    assert item["contentCount"] == 3
+    assert item["contentTruncated"] is True
+    assert len(item["content"]) == 2
+    assert item["content"][0]["text"].endswith("... [truncated]")
+    assert item["content"][0]["textLength"] == len(long_text)
+
+
+def test_compact_dashboard_mission_minimizes_archived_mission_payload() -> None:
+    mission = make_mission_view(
+        mission_id=77,
+        name="Gateway Archive",
+        objective="Ship the gateway bootstrap parity seam " * 10,
+        status="completed",
+        last_commentary="Commentary relay " * 30,
+        last_checkpoint="Checkpoint relay " * 30,
+        current_command="powershell -Command \"Get-Content giant-file\"" * 8,
+        toolsets=["search", "file", "terminal", "delegation", "debugging"],
+    ).model_copy(
+        update={
+            "session_key": "gateway-parity-session",
+            "commentary_summary": "summary " * 20,
+            "charter_summary": "charter " * 30,
+            "charter_focus_terms": ["gateway", "parity", "bootstrap", "plugins"],
+            "scope_drift_summary": "scope drift " * 18,
+            "runtime_profile_summary": "runtime profile " * 18,
+            "tool_policy": HermesToolPolicyView(
+                toolsets=["search", "file", "terminal", "delegation"],
+                capability_families=["inspection", "editing", "verification", "routing"],
+                headline="Hermes tool posture is active",
+                summary="Lean on the full Hermes tool deck while validating gateway parity." * 4,
+                warnings=["Keep the thread bounded. " * 10],
+            ),
+            "tool_evidence": MissionToolEvidenceView(
+                proof_ready=True,
+                expected_toolsets=["search", "file", "terminal", "delegation"],
+                observed_toolsets=["search", "file", "terminal", "delegation"],
+                unproven_toolsets=["browser", "memory"],
+                summary=(
+                    "Observed tool evidence confirms the lane is using the expected "
+                    "Hermes stack." * 3
+                ),
+                items=[
+                    MissionToolEvidenceItemView(
+                        toolset="search",
+                        status="observed",
+                        evidence_count=4,
+                        examples=["rg gateway", "rg bootstrap"],
+                    )
+                ],
+            ),
+            "delegation_brief": MissionDelegationBriefView(
+                enabled=True,
+                mode="conductor_brainstorm_architect_planner_coder_auditor",
+                activation="ready_now",
+                confidence="high",
+                summary="Use the full built-in delegation stack for parity work." * 4,
+                rationale=(
+                    "Parallel architecture and audit coverage helps keep the parity "
+                    "thread bounded." * 3
+                ),
+                roles=[
+                    MissionDelegationRoleView(
+                        name="Architect",
+                        objective="Design the bootstrap seam.",
+                        ownership="Gateway bootstrap contract",
+                        trigger="Before implementation",
+                    ),
+                    MissionDelegationRoleView(
+                        name="Auditor",
+                        objective="Review for regressions.",
+                        ownership="Tests and contract drift",
+                        trigger="After edits",
+                    ),
+                ],
+            ),
+            "live_telemetry": MissionLiveTelemetryView(
+                streaming=False,
+                thread_status="idle",
+                last_thread_event_at="2026-04-15T22:59:59Z",
+                last_thread_event_age_seconds=600,
+                recent_event_count_30s=9,
+                recent_event_count_5m=30,
+                recent_output_delta_count_30s=8,
+                recent_turn_activity_count_30s=5,
+                token_rollup_pending=True,
+                summary=(
+                    "Recent relay traffic shows the mission cooled down after a long "
+                    "inspection pass." * 2
+                ),
+            ),
+            "checkpoints": [
+                MissionCheckpointView(
+                    id=1,
+                    mission_id=77,
+                    kind="checkpoint",
+                    summary="Gateway checkpoint " * 25,
+                    created_at=datetime.now(UTC),
+                ),
+                MissionCheckpointView(
+                    id=2,
+                    mission_id=77,
+                    kind="handoff",
+                    summary="Handoff checkpoint " * 25,
+                    created_at=datetime.now(UTC),
+                ),
+            ],
+        }
+    )
+
+    original_size = len(json.dumps(mission.model_dump(mode="json")))
+    compacted = _compact_dashboard_mission(mission)
+    compacted_size = len(json.dumps(compacted.model_dump(mode="json")))
+
+    assert compacted.current_command is None
+    assert compacted.session_key is None
+    assert compacted.toolsets == ["search", "file", "terminal"]
+    assert compacted.checkpoints and len(compacted.checkpoints) == 1
+    assert compacted.delegation_brief.roles == []
+    assert compacted.tool_policy is not None
+    assert compacted.tool_policy.toolsets == ["search", "file"]
+    assert compacted.tool_policy.warnings == []
+    assert compacted.tool_evidence.items == []
+    assert compacted.live_telemetry.last_thread_event_at is None
+    assert compacted.live_telemetry.recent_event_count_30s == 0
+    assert compacted.live_telemetry.recent_event_count_5m == 0
+    assert compacted_size < original_size - 1000
 
 
 def test_observer_mode_blocks_mutating_requests(tmp_path) -> None:
@@ -4140,6 +4439,341 @@ def test_gateway_bootstrap_endpoint_marks_connected_local_lane_ready_without_api
     assert read_response.json()["status"] == "ready"
 
 
+def test_gateway_bootstrap_endpoint_surfaces_browser_runtime_inventory(tmp_path) -> None:
+    with make_client(tmp_path) as client:
+        project_response = client.post(
+            "/api/projects",
+            json={"path": str(tmp_path), "label": "Browser Bootstrap Workspace"},
+        )
+        instance_response = client.post(
+            "/api/instances",
+            json={
+                "name": "Browser Bootstrap Lane",
+                "transport": "desktop",
+                "cwd": str(tmp_path),
+                "auto_connect": False,
+            },
+        )
+        task_response = client.post(
+            "/api/tasks",
+            json={
+                "name": "Browser Bootstrap Loop",
+                "summary": "Launch the next browser-backed bootstrap slice.",
+                "objective_template": "Inspect the repo and ship the next browser runtime slice.",
+                "instance_id": instance_response.json()["id"],
+                "project_id": project_response.json()["id"],
+                "cadence_minutes": 120,
+                "cwd": str(tmp_path),
+                "model": "gpt-5.4-mini",
+                "reasoning_effort": None,
+                "collaboration_mode": None,
+                "max_turns": 3,
+                "use_builtin_agents": False,
+                "run_verification": True,
+                "auto_commit": False,
+                "pause_on_approval": True,
+                "allow_auto_reflexes": True,
+                "auto_recover": True,
+                "auto_recover_limit": 2,
+                "reflex_cooldown_seconds": 900,
+                "allow_failover": True,
+                "enabled": True,
+            },
+        )
+        runtime = client.app.state.manager.instances[instance_response.json()["id"]]
+        runtime.connected = True
+        runtime.initialized = True
+        runtime.mcp_servers = [
+            {
+                "name": "browser-runtime",
+                "source": "browser",
+                "status": "ready",
+            }
+        ]
+        runtime.mcp_server_status = [
+            {
+                "name": "browser-runtime",
+                "source": "browser",
+                "status": "ready",
+                "tools": [
+                    {"name": "browser.request", "scope": "operator.write"},
+                ],
+                "services": [{"service": {"id": "browser-control"}}],
+            }
+        ]
+
+        profile_response = client.put(
+            "/api/gateway/bootstrap",
+            json={
+                "preferred_instance_id": instance_response.json()["id"],
+                "preferred_project_id": project_response.json()["id"],
+                "team_id": 1,
+                "operator_id": 1,
+                "task_blueprint_id": task_response.json()["id"],
+                "default_cwd": str(tmp_path),
+                "model": "gpt-5.4-mini",
+                "max_turns": 3,
+                "use_builtin_agents": False,
+                "run_verification": True,
+                "auto_commit": False,
+                "pause_on_approval": True,
+                "allow_auto_reflexes": True,
+                "auto_recover": True,
+                "auto_recover_limit": 2,
+                "reflex_cooldown_seconds": 900,
+                "allow_failover": True,
+            },
+        )
+        dashboard_response = client.get("/api/dashboard")
+
+    assert profile_response.status_code == 200
+    profile = profile_response.json()
+    assert profile["runtime_inventory"]["browser_runtime"]["status"] == "ready"
+    assert profile["runtime_inventory"]["browser_runtime"]["methods"] == ["browser.request"]
+    assert profile["runtime_inventory"]["browser_runtime"]["services"] == ["browser-control"]
+    assert profile["runtime_inventory"]["browser_runtime"]["plugins"] == ["browser"]
+
+    assert dashboard_response.status_code == 200
+    dashboard = dashboard_response.json()
+    assert (
+        dashboard["gateway_bootstrap"]["runtime_inventory"]["browser_runtime"]["status"]
+        == "ready"
+    )
+    assert (
+        dashboard["gateway_bootstrap"]["runtime_inventory"]["browser_runtime"]["services"]
+        == ["browser-control"]
+    )
+
+
+def test_status_and_dashboard_surface_browser_posture_contract(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "openzues.services.browser_posture.find_agent_browser_command",
+        lambda: "agent-browser.cmd",
+    )
+
+    with make_client(tmp_path) as client:
+        project_response = client.post(
+            "/api/projects",
+            json={"path": str(tmp_path), "label": "Browser Status Workspace"},
+        )
+        instance_response = client.post(
+            "/api/instances",
+            json={
+                "name": "Browser Status Lane",
+                "transport": "desktop",
+                "cwd": str(tmp_path),
+                "auto_connect": False,
+            },
+        )
+        task_response = client.post(
+            "/api/tasks",
+            json={
+                "name": "Browser Status Loop",
+                "summary": "Surface browser posture in status.",
+                "objective_template": "Ship the next browser posture slice.",
+                "instance_id": instance_response.json()["id"],
+                "project_id": project_response.json()["id"],
+                "cadence_minutes": 120,
+                "cwd": str(tmp_path),
+                "model": "gpt-5.4-mini",
+                "reasoning_effort": None,
+                "collaboration_mode": None,
+                "max_turns": 3,
+                "use_builtin_agents": False,
+                "run_verification": True,
+                "auto_commit": False,
+                "pause_on_approval": True,
+                "allow_auto_reflexes": True,
+                "auto_recover": True,
+                "auto_recover_limit": 2,
+                "reflex_cooldown_seconds": 900,
+                "allow_failover": True,
+                "enabled": True,
+            },
+        )
+        runtime = client.app.state.manager.instances[instance_response.json()["id"]]
+        runtime.connected = True
+        runtime.initialized = True
+        runtime.mcp_servers = [
+            {
+                "name": "browser-runtime",
+                "source": "browser",
+                "status": "ready",
+            }
+        ]
+        runtime.mcp_server_status = [
+            {
+                "name": "browser-runtime",
+                "source": "browser",
+                "status": "ready",
+                "tools": [
+                    {"name": "browser.request", "scope": "operator.write"},
+                ],
+                "services": [{"service": {"id": "browser-control"}}],
+            }
+        ]
+
+        profile_response = client.put(
+            "/api/gateway/bootstrap",
+            json={
+                "preferred_instance_id": instance_response.json()["id"],
+                "preferred_project_id": project_response.json()["id"],
+                "team_id": 1,
+                "operator_id": 1,
+                "task_blueprint_id": task_response.json()["id"],
+                "default_cwd": str(tmp_path),
+                "model": "gpt-5.4-mini",
+                "max_turns": 3,
+                "use_builtin_agents": False,
+                "run_verification": True,
+                "auto_commit": False,
+                "pause_on_approval": True,
+                "allow_auto_reflexes": True,
+                "auto_recover": True,
+                "auto_recover_limit": 2,
+                "reflex_cooldown_seconds": 900,
+                "allow_failover": True,
+            },
+        )
+        status_response = client.get("/api/status")
+        dashboard_response = client.get("/api/dashboard")
+
+    assert profile_response.status_code == 200
+    assert status_response.status_code == 200
+    status_payload = status_response.json()
+    assert status_payload["browser_posture"]["status"] == "ready"
+    assert status_payload["browser_posture"]["local_agent_browser"]["available"] is True
+    assert status_payload["browser_posture"]["saved_launch_browser_runtime"]["services"] == [
+        "browser-control"
+    ]
+
+    assert dashboard_response.status_code == 200
+    dashboard = dashboard_response.json()
+    assert dashboard["browser_posture"]["status"] == "ready"
+    assert dashboard["browser_posture"]["local_agent_browser"]["command"] == "agent-browser.cmd"
+    assert dashboard["browser_posture"]["saved_launch_browser_runtime"]["methods"] == [
+        "browser.request"
+    ]
+
+
+def test_status_and_dashboard_escalate_browser_runtime_gap_into_brief_and_radar(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "openzues.services.browser_posture.find_agent_browser_command",
+        lambda: "agent-browser.cmd",
+    )
+
+    with make_client(tmp_path) as client:
+        project_response = client.post(
+            "/api/projects",
+            json={"path": str(tmp_path), "label": "Browser Gap Workspace"},
+        )
+        instance_response = client.post(
+            "/api/instances",
+            json={
+                "name": "Browser Gap Lane",
+                "transport": "desktop",
+                "cwd": str(tmp_path),
+                "auto_connect": False,
+            },
+        )
+        task_response = client.post(
+            "/api/tasks",
+            json={
+                "name": "Browser Gap Loop",
+                "summary": "Surface browser runtime repair pressure.",
+                "objective_template": "Ship the next browser runtime repair slice.",
+                "instance_id": instance_response.json()["id"],
+                "project_id": project_response.json()["id"],
+                "cadence_minutes": 120,
+                "cwd": str(tmp_path),
+                "model": "gpt-5.4-mini",
+                "reasoning_effort": None,
+                "collaboration_mode": None,
+                "max_turns": 3,
+                "use_builtin_agents": False,
+                "run_verification": True,
+                "auto_commit": False,
+                "pause_on_approval": True,
+                "allow_auto_reflexes": True,
+                "auto_recover": True,
+                "auto_recover_limit": 2,
+                "reflex_cooldown_seconds": 900,
+                "allow_failover": True,
+                "enabled": True,
+            },
+        )
+        runtime = client.app.state.manager.instances[instance_response.json()["id"]]
+        runtime.connected = True
+        runtime.initialized = True
+        runtime.mcp_servers = [
+            {
+                "name": "browser-runtime",
+                "source": "browser",
+                "status": "ready",
+            }
+        ]
+        runtime.mcp_server_status = [
+            {
+                "name": "browser-runtime",
+                "source": "browser",
+                "status": "ready",
+                "tools": [
+                    {"name": "browser.request", "scope": "operator.write"},
+                ],
+                "services": [],
+            }
+        ]
+
+        profile_response = client.put(
+            "/api/gateway/bootstrap",
+            json={
+                "preferred_instance_id": instance_response.json()["id"],
+                "preferred_project_id": project_response.json()["id"],
+                "team_id": 1,
+                "operator_id": 1,
+                "task_blueprint_id": task_response.json()["id"],
+                "default_cwd": str(tmp_path),
+                "model": "gpt-5.4-mini",
+                "max_turns": 3,
+                "use_builtin_agents": False,
+                "run_verification": True,
+                "auto_commit": False,
+                "pause_on_approval": True,
+                "allow_auto_reflexes": True,
+                "auto_recover": True,
+                "auto_recover_limit": 2,
+                "reflex_cooldown_seconds": 900,
+                "allow_failover": True,
+            },
+        )
+        status_response = client.get("/api/status")
+        dashboard_response = client.get("/api/dashboard")
+
+    assert profile_response.status_code == 200
+    assert status_response.status_code == 200
+    status_payload = status_response.json()
+    assert status_payload["browser_posture"]["status"] == "warn"
+    assert any(
+        signal["id"] == "browser/posture" for signal in status_payload["radar"]["signals"]
+    )
+
+    assert dashboard_response.status_code == 200
+    dashboard = dashboard_response.json()
+    assert "Browser-led verification still needs attention." in dashboard["brief"]["summary"]
+    assert any(
+        "Refresh the connected browser lane" in action
+        for action in dashboard["brief"]["next_actions"]
+    )
+    browser_signal = next(
+        signal for signal in dashboard["radar"]["signals"] if signal["id"] == "browser/posture"
+    )
+    assert browser_signal["level"] == "warn"
+    assert browser_signal["title"] == "Browser runtime needs repair"
+
+
 def test_gateway_capability_stays_ready_with_offline_aux_lane_when_primary_lane_is_healthy(
     tmp_path,
 ) -> None:
@@ -4367,6 +5001,16 @@ def test_gateway_capability_endpoint_summarizes_connected_lane_health_inventory_
     assert capability["inventory"]["method_catalog"]["server_count"] == 1
     assert capability["inventory"]["method_catalog"]["lane_count"] == 1
     assert capability["inventory"]["method_catalog"]["tools"][0] == "github_create_pull_request"
+    assert capability["inventory"]["node_catalog"]["node_count"] == 1
+    node_catalog = capability["inventory"]["node_catalog"]
+    assert node_catalog["connected_count"] == 1
+    assert node_catalog["paired_count"] == 1
+    node = node_catalog["nodes"][0]
+    assert node["node_id"] == str(instance_id)
+    assert node["display_name"] == "Gateway Lane"
+    assert node["platform"] == "desktop"
+    assert node["client_mode"] == "desktop"
+    assert node["paired"] is True
     assert capability["approval_posture"]["approval_count"] == 1
     assert capability["approval_posture"]["pause_on_approval"] is True
     assert capability["launch_policy"]["setup_mode"] == "local"
@@ -4378,10 +5022,73 @@ def test_gateway_capability_endpoint_summarizes_connected_lane_health_inventory_
     assert dashboard["gateway_capability"]["approval_posture"]["approval_count"] == 1
     assert dashboard["gateway_capability"]["inventory"]["tracked_ready_count"] == 1
     assert dashboard["gateway_capability"]["inventory"]["method_catalog"]["tool_count"] == 3
+    assert dashboard["gateway_capability"]["inventory"]["node_catalog"]["node_count"] == 1
     assert (
         dashboard["gateway_capability"]["connected_lane_health"]["lanes"][0]["instance_name"]
         == "Gateway Lane"
     )
+
+
+def test_gateway_capability_node_catalog_includes_offline_saved_lane(tmp_path) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        bootstrap_response = client.post(
+            "/api/onboarding/bootstrap",
+            json={
+                "setup_mode": "local",
+                "setup_flow": "quickstart",
+                "instance_mode": "create_desktop",
+                "instance_name": "Gateway Lane",
+                "project_path": str(tmp_path),
+                "project_label": "Gateway Workspace",
+                "operator_name": "Gateway Builder",
+                "task_name": "Gateway Loop",
+                "objective_template": "Ship the next verified gateway slice.",
+            },
+        )
+        assert bootstrap_response.status_code == 200
+
+        instance_id = bootstrap_response.json()["instance"]["id"]
+        runtime = client.app.state.manager.instances[instance_id]
+        runtime.connected = True
+        runtime.initialized = True
+
+        create_response = client.post(
+            "/api/instances",
+            json={
+                "name": "Archive Lane",
+                "transport": "desktop",
+                "cwd": str(tmp_path / "archive"),
+                "auto_connect": False,
+            },
+        )
+        assert create_response.status_code == 200
+        archive_lane = create_response.json()
+
+        capability_response = client.get("/api/gateway/capability")
+
+    assert capability_response.status_code == 200
+    node_catalog = capability_response.json()["inventory"]["node_catalog"]
+    assert node_catalog["node_count"] == 2
+    assert node_catalog["connected_count"] == 1
+    assert node_catalog["paired_count"] == 2
+    assert [node["node_id"] for node in node_catalog["nodes"]] == [
+        str(instance_id),
+        str(archive_lane["id"]),
+    ]
+    assert node_catalog["nodes"][0]["connected"] is True
+    assert node_catalog["nodes"][0]["paired"] is True
+    assert node_catalog["nodes"][1]["display_name"] == "Archive Lane"
+    assert node_catalog["nodes"][1]["platform"] == "desktop"
+    assert node_catalog["nodes"][1]["client_mode"] == "desktop"
+    assert node_catalog["nodes"][1]["connected"] is False
+    assert node_catalog["nodes"][1]["paired"] is True
+    assert node_catalog["nodes"][1]["path_env"] == str(tmp_path / "archive")
 
 
 def test_gateway_capability_classifies_operator_scopes_and_reserved_admin_methods(
@@ -4805,6 +5512,155 @@ def test_gateway_capability_falls_back_to_staged_local_registry_when_lane_catalo
         "wizard.start",
         "wizard.status",
     ]
+
+
+def test_gateway_capability_surfaces_live_browser_runtime_contract(tmp_path) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        bootstrap_response = client.post(
+            "/api/onboarding/bootstrap",
+            json={
+                "setup_mode": "local",
+                "setup_flow": "quickstart",
+                "instance_mode": "create_desktop",
+                "instance_name": "Browser Runtime Lane",
+                "project_path": str(tmp_path),
+                "project_label": "Browser Runtime Workspace",
+                "operator_name": "Browser Runtime Builder",
+                "task_name": "Browser Runtime Loop",
+                "objective_template": "Prove the live browser runtime contract.",
+            },
+        )
+        assert bootstrap_response.status_code == 200
+
+        instance_id = bootstrap_response.json()["instance"]["id"]
+        runtime = client.app.state.manager.instances[instance_id]
+        runtime.connected = True
+        runtime.initialized = True
+        runtime.apps = []
+        runtime.plugins = []
+        runtime.mcp_servers = [
+            {
+                "name": "browser-runtime",
+                "source": "browser",
+                "status": "ready",
+            }
+        ]
+        runtime.mcp_server_status = [
+            {
+                "name": "browser-runtime",
+                "source": "browser",
+                "status": "ready",
+                "tools": [
+                    {"name": "browser.request", "scope": "operator.write"},
+                ],
+                "services": [{"service": {"id": "browser-control"}}],
+            }
+        ]
+
+        capability_response = client.get("/api/gateway/capability")
+        dashboard_response = client.get("/api/dashboard")
+
+    assert capability_response.status_code == 200
+    browser_runtime = capability_response.json()["inventory"]["browser_runtime"]
+    assert browser_runtime["headline"] == "Browser runtime is live"
+    assert browser_runtime["status"] == "ready"
+    assert browser_runtime["lane_count"] == 1
+    assert browser_runtime["connected_lane_count"] == 1
+    assert browser_runtime["ready_lane_count"] == 1
+    assert browser_runtime["method_count"] == 1
+    assert browser_runtime["service_count"] == 1
+    assert browser_runtime["methods"] == ["browser.request"]
+    assert browser_runtime["services"] == ["browser-control"]
+    assert browser_runtime["plugins"] == ["browser"]
+    assert browser_runtime["servers"] == ["browser-runtime"]
+    assert (
+        "1 connected lane(s) publish 1 browser method(s) and 1 browser service(s)."
+        in browser_runtime["summary"]
+    )
+
+    assert dashboard_response.status_code == 200
+    dashboard_browser_runtime = dashboard_response.json()["gateway_capability"]["inventory"][
+        "browser_runtime"
+    ]
+    assert dashboard_browser_runtime["status"] == "ready"
+    assert dashboard_browser_runtime["services"] == ["browser-control"]
+
+
+def test_gateway_capability_marks_partial_browser_runtime_when_service_is_missing(
+    tmp_path,
+) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        bootstrap_response = client.post(
+            "/api/onboarding/bootstrap",
+            json={
+                "setup_mode": "local",
+                "setup_flow": "quickstart",
+                "instance_mode": "create_desktop",
+                "instance_name": "Partial Browser Lane",
+                "project_path": str(tmp_path),
+                "project_label": "Partial Browser Workspace",
+                "operator_name": "Partial Browser Builder",
+                "task_name": "Partial Browser Loop",
+                "objective_template": "Surface the partial browser runtime posture.",
+            },
+        )
+        assert bootstrap_response.status_code == 200
+
+        instance_id = bootstrap_response.json()["instance"]["id"]
+        runtime = client.app.state.manager.instances[instance_id]
+        runtime.connected = True
+        runtime.initialized = True
+        runtime.apps = []
+        runtime.plugins = []
+        runtime.mcp_servers = [
+            {
+                "name": "browser-runtime",
+                "source": "browser",
+                "status": "ready",
+            }
+        ]
+        runtime.mcp_server_status = [
+            {
+                "name": "browser-runtime",
+                "source": "browser",
+                "status": "ready",
+                "tools": [
+                    {"name": "browser.request", "scope": "operator.write"},
+                ],
+                "services": [],
+            }
+        ]
+
+        capability_response = client.get("/api/gateway/capability")
+
+    assert capability_response.status_code == 200
+    browser_runtime = capability_response.json()["inventory"]["browser_runtime"]
+    assert browser_runtime["headline"] == "Browser runtime is partial"
+    assert browser_runtime["status"] == "warn"
+    assert browser_runtime["lane_count"] == 1
+    assert browser_runtime["connected_lane_count"] == 1
+    assert browser_runtime["ready_lane_count"] == 0
+    assert browser_runtime["method_count"] == 1
+    assert browser_runtime["service_count"] == 0
+    assert browser_runtime["methods"] == ["browser.request"]
+    assert browser_runtime["services"] == []
+    assert (
+        "no connected lane currently publishes both callable browser methods and "
+        "browser-control services"
+    ) in browser_runtime["summary"]
+    assert "Refresh the connected browser lane" in browser_runtime["recommended_action"]
 
 
 def test_gateway_capability_surfaces_mempalace_memory_posture(tmp_path) -> None:
@@ -8147,6 +9003,79 @@ def test_mission_creation_normalizes_explicit_session_key_for_thread_reuse(tmp_p
     assert created["thread_id"] == "thread_saved"
 
 
+def test_mission_creation_preserves_saved_child_session_key_for_parent_reuse(tmp_path) -> None:
+    with make_client(tmp_path) as client:
+        instance_response = client.post(
+            "/api/instances",
+            json={
+                "name": "Local Codex Desktop",
+                "transport": "desktop",
+                "cwd": str(tmp_path),
+                "auto_connect": False,
+            },
+        )
+        instance_id = instance_response.json()["id"]
+        database = client.app.state.database
+        asyncio.run(
+            database.create_mission(
+                name="Previous routed thread run",
+                objective="Keep the routed child session alive.",
+                status="completed",
+                instance_id=instance_id,
+                project_id=None,
+                task_blueprint_id=None,
+                thread_id="thread_saved",
+                session_key="launch:mode:workspace_affinity:task:7:operator:1:thread:thread_saved",
+                conversation_target=None,
+                cwd=str(tmp_path),
+                model="gpt-5.4",
+                reasoning_effort=None,
+                collaboration_mode=None,
+                max_turns=3,
+                use_builtin_agents=True,
+                run_verification=True,
+                auto_commit=False,
+                pause_on_approval=True,
+                allow_auto_reflexes=True,
+                auto_recover=True,
+                auto_recover_limit=2,
+                reflex_cooldown_seconds=900,
+                allow_failover=True,
+                toolsets=["debugging"],
+            )
+        )
+
+        mission_response = client.post(
+            "/api/missions",
+            json={
+                "name": "Follow the routed parent session",
+                "objective": "Continue the prior routed thread without resetting its child key.",
+                "instance_id": instance_id,
+                "project_id": None,
+                "cwd": str(tmp_path),
+                "thread_id": None,
+                "session_key": "Launch:Mode:Workspace_Affinity:Task:7:Operator:1",
+                "model": "gpt-5.4",
+                "reasoning_effort": None,
+                "collaboration_mode": None,
+                "max_turns": 3,
+                "use_builtin_agents": True,
+                "run_verification": True,
+                "auto_commit": True,
+                "pause_on_approval": True,
+                "start_immediately": False,
+            },
+        )
+
+    assert mission_response.status_code == 200, mission_response.text
+    created = mission_response.json()
+    assert (
+        created["session_key"]
+        == "launch:mode:workspace_affinity:task:7:operator:1:thread:thread_saved"
+    )
+    assert created["thread_id"] == "thread_saved"
+
+
 def test_mission_creation_reuses_default_agent_main_session_alias(tmp_path) -> None:
     with make_client(tmp_path) as client:
         instance_response = client.post(
@@ -8571,6 +9500,22 @@ def test_build_brief_ignores_passive_queued_recovery_followup() -> None:
     assert brief.focus_mission_id == 59
 
 
+def test_build_brief_adds_browser_repair_action_when_browser_posture_warns() -> None:
+    brief = build_brief(
+        [make_instance_view()],
+        [],
+        [make_project_view()],
+        browser_posture=make_browser_posture_view(),
+    )
+
+    assert brief.status == "idle"
+    assert "Browser-led verification still needs attention." in brief.summary
+    assert any(
+        "browser lane" in action.lower() or "browser-led verification" in action.lower()
+        for action in brief.next_actions
+    )
+
+
 def test_build_radar_ignores_passive_queued_recovery_followup_signal() -> None:
     active = make_mission_view(
         mission_id=59,
@@ -8604,6 +9549,25 @@ def test_build_radar_ignores_passive_queued_recovery_followup_signal() -> None:
     radar = build_radar([make_instance_view()], [active, queued_recovery], [make_project_view()])
 
     assert not any(signal.id == "mission-63-queued" for signal in radar.signals)
+
+
+def test_build_radar_surfaces_browser_posture_warning_signal() -> None:
+    radar = build_radar(
+        [make_instance_view()],
+        [],
+        [make_project_view()],
+        browser_posture=make_browser_posture_view(),
+    )
+
+    signal = next(signal for signal in radar.signals if signal.id == "browser/posture")
+    assert radar.posture == "watch"
+    assert signal.level == "warn"
+    assert signal.title == "Browser runtime needs repair"
+    assert "saved launch browser runtime still needs attention" in signal.detail
+    assert (
+        signal.action
+        == "Refresh the connected browser lane before trusting browser-led verification."
+    )
 
 
 def test_plan_control_chat_status_ignores_passive_queued_recovery_followup() -> None:

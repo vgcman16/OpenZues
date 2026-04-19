@@ -1,15 +1,17 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import os
 import shutil
-from datetime import UTC, datetime
+import sqlite3
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 
-from openzues.database import Database
+from openzues.database import Database, utcnow
 from openzues.schemas import ConversationTargetView, NotificationRouteView, TaskBlueprintCreate
 from openzues.services.gateway_agent_files import GatewayAgentFilesService
 from openzues.services.gateway_channels import GatewayChannelsService
@@ -29,7 +31,16 @@ from openzues.services.gateway_node_registry import (
 )
 from openzues.services.gateway_sessions import GatewaySessionsService
 from openzues.services.gateway_skill_bins import GatewaySkillBinsService
+from openzues.services.gateway_skill_clawhub import GatewaySkillClawHubService
+from openzues.services.gateway_skill_install import GatewaySkillInstallService
+from openzues.services.gateway_talk_mode import GatewayTalkModeService
+from openzues.services.gateway_tts import GatewayTtsService
+from openzues.services.gateway_tts_runtime import (
+    GatewayTtsRuntimeService,
+    GatewayTtsSynthesisResult,
+)
 from openzues.services.gateway_voicewake import GatewayVoiceWakeService
+from openzues.services.gateway_wake import GatewayWakeService
 from openzues.services.hub import BroadcastHub
 from openzues.services.session_keys import build_launch_session_key, resolve_thread_session_keys
 
@@ -307,6 +318,57 @@ async def test_voicewake_methods_surface_defaults_persist_updates_and_broadcast(
 
 
 @pytest.mark.asyncio
+async def test_talk_mode_persists_updates_and_broadcast(tmp_path) -> None:
+    registry = GatewayNodeRegistry()
+    connection = FakeNodeConnection("conn-talk-mode-node-1")
+    registry.register(
+        connection,
+        GatewayNodeConnect(
+            client_id="live-talk-mode-node-1",
+            device_id="talk-mode-node-1",
+            platform="ios",
+        ),
+    )
+    hub = BroadcastHub()
+    service = GatewayNodeMethodService(
+        registry,
+        hub=hub,
+        talk_mode_service=GatewayTalkModeService(tmp_path),
+    )
+
+    async with hub.subscribe() as queue:
+        updated = await service.call(
+            "talk.mode",
+            {"enabled": True, "phase": "listening"},
+            now_ms=1234,
+        )
+        published = await asyncio.wait_for(queue.get(), timeout=1)
+
+    reloaded = GatewayTalkModeService(tmp_path).load()
+
+    assert updated == {
+        "enabled": True,
+        "phase": "listening",
+    }
+    assert reloaded.enabled is True
+    assert reloaded.phase == "listening"
+    assert connection.sent_events[-1] == {
+        "event": "talk.mode",
+        "payload": {
+            "enabled": True,
+            "phase": "listening",
+        },
+    }
+    assert published["type"] == "gateway_event"
+    assert published["event"] == "talk.mode"
+    assert published["payload"] == {
+        "enabled": True,
+        "phase": "listening",
+    }
+    assert isinstance(published["createdAt"], str)
+
+
+@pytest.mark.asyncio
 async def test_gateway_identity_get_returns_stable_persisted_device_identity(tmp_path) -> None:
     service = GatewayNodeMethodService(
         GatewayNodeRegistry(),
@@ -387,12 +449,74 @@ async def test_tts_status_and_providers_surface_disabled_empty_runtime() -> None
         "fallbackProvider": None,
         "fallbackProviders": [],
         "prefsPath": None,
-        "providerStates": [],
+        "providerStates": [
+            {
+                "id": "elevenlabs",
+                "label": "ElevenLabs",
+                "available": False,
+                "selected": False,
+            },
+            {
+                "id": "microsoft",
+                "label": "Microsoft",
+                "available": True,
+                "selected": False,
+            },
+            {
+                "id": "minimax",
+                "label": "MiniMax",
+                "available": False,
+                "selected": False,
+            },
+            {
+                "id": "openai",
+                "label": "OpenAI",
+                "available": False,
+                "selected": False,
+            },
+        ],
     }
     assert providers == {
-        "providers": [],
+        "providers": ["elevenlabs", "microsoft", "minimax", "openai"],
         "active": None,
     }
+
+
+@pytest.mark.asyncio
+async def test_tts_pref_methods_persist_local_state_and_surface_status(tmp_path) -> None:
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        tts_service=GatewayTtsService(tmp_path),
+    )
+
+    enabled = await service.call("tts.enable", {})
+    selected = await service.call("tts.setProvider", {"provider": "edge"})
+    providers = await service.call("tts.providers", {})
+    disabled = await service.call("tts.disable", {})
+    reloaded = await GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        tts_service=GatewayTtsService(tmp_path),
+    ).call("tts.status", {})
+
+    assert enabled["enabled"] is True
+    assert enabled["auto"] == "on"
+    assert enabled["provider"] is None
+    assert enabled["prefsPath"] is not None
+    assert selected["provider"] == "microsoft"
+    assert selected["enabled"] is True
+    assert providers == {
+        "providers": ["elevenlabs", "microsoft", "minimax", "openai"],
+        "active": "microsoft",
+    }
+    assert disabled["enabled"] is False
+    assert disabled["auto"] == "off"
+    assert disabled["provider"] == "microsoft"
+    assert reloaded["enabled"] is False
+    assert reloaded["provider"] == "microsoft"
+    assert reloaded["prefsPath"] == enabled["prefsPath"]
+    provider_states = {entry["id"]: entry for entry in reloaded["providerStates"]}
+    assert provider_states["microsoft"]["available"] is True
+    assert provider_states["microsoft"]["selected"] is True
 
 
 @pytest.mark.asyncio
@@ -548,19 +672,79 @@ async def test_tools_catalog_returns_bounded_openzues_toolset_inventory() -> Non
 
 
 @pytest.mark.asyncio
-async def test_tools_effective_requires_session_key_then_fails_as_explicit_unavailable() -> None:
-    service = GatewayNodeMethodService(GatewayNodeRegistry())
+async def test_tools_effective_returns_bounded_effective_inventory_from_session_toolsets() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-tools-effective-service"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-tools-effective.db")
+    await database.initialize()
+    main_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+    )
+    session_key = resolve_thread_session_keys(
+        base_session_key=main_session_key,
+        thread_id="thread-effective-tools",
+    ).session_key
+    await database.create_mission(
+        name="Effective Tool Mission",
+        objective="Keep the effective tool posture aligned with the session.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        task_blueprint_id=None,
+        thread_id="thread-effective-tools",
+        session_key=session_key,
+        cwd=str(tmp_path),
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        toolsets=["hermes-cli"],
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+    )
 
     with pytest.raises(ValueError, match="sessionKey must be a non-empty string"):
         await service.call("tools.effective", {})
 
-    with pytest.raises(
-        GatewayNodeMethodError,
-        match="Effective tool inventory is not wired in OpenZues yet",
-    ) as exc_info:
-        await service.call("tools.effective", {"sessionKey": "openzues:thread:demo"})
+    payload = await service.call(
+        "tools.effective",
+        {"sessionKey": session_key, "agentId": "main"},
+    )
 
-    assert exc_info.value.status_code == 503
+    assert payload["agentId"] == "main"
+    assert payload["profile"] == "coding"
+    assert len(payload["groups"]) == 1
+    group = payload["groups"][0]
+    assert group["id"] == "core"
+    assert group["label"] == "Built-in tools"
+    assert group["source"] == "core"
+    assert [tool["id"] for tool in group["tools"]] == [
+        "safe",
+        "skills",
+        "file",
+        "terminal",
+        "search",
+        "delegation",
+        "debugging",
+    ]
+    assert group["tools"][0]["rawDescription"] == group["tools"][0]["description"]
 
 
 @pytest.mark.asyncio
@@ -1241,6 +1425,14 @@ async def test_sessions_delete_removes_metadata_backed_session_and_transcript() 
         content="Noise from another session.",
         session_key=other_session_key,
     )
+    archive_dir = database.path.parent / "gateway-session-archives"
+    archive_dir.mkdir(parents=True, exist_ok=True)
+    stale_archive = archive_dir / "other-session-deleted-20260301T000000Z.jsonl"
+    recent_archive = archive_dir / "other-session-deleted-20260417T000000Z.jsonl"
+    ignored_file = archive_dir / "readme.txt"
+    stale_archive.write_text("stale\n", encoding="utf-8")
+    recent_archive.write_text("recent\n", encoding="utf-8")
+    ignored_file.write_text("ignore\n", encoding="utf-8")
 
     class _RecordingBroadcastHub(BroadcastHub):
         def __init__(self) -> None:
@@ -1271,15 +1463,24 @@ async def test_sessions_delete_removes_metadata_backed_session_and_transcript() 
     payload = await service.call(
         "sessions.delete",
         {"key": session_key},
-        now_ms=666,
+        now_ms=int(datetime(2026, 4, 18, 12, 0, tzinfo=UTC).timestamp() * 1000),
     )
 
-    assert payload == {
-        "ok": True,
-        "key": session_key,
-        "deleted": True,
-        "archived": [],
-    }
+    assert payload["ok"] is True
+    assert payload["key"] == session_key
+    assert payload["deleted"] is True
+    assert len(payload["archived"]) == 1
+    archived_path = Path(payload["archived"][0])
+    assert archived_path.exists()
+    archived_lines = archived_path.read_text(encoding="utf-8").splitlines()
+    assert len(archived_lines) == 2
+    archived_records = [json.loads(line) for line in archived_lines]
+    assert [record["role"] for record in archived_records] == ["user", "assistant"]
+    assert all(record["sessionKey"] == session_key for record in archived_records)
+    assert all(record["reason"] == "deleted" for record in archived_records)
+    assert not stale_archive.exists()
+    assert recent_archive.exists()
+    assert ignored_file.exists()
     assert await database.get_gateway_session_metadata(session_key) is None
     assert await database.count_control_chat_messages(session_key=session_key) == 0
     assert await database.count_control_chat_messages(session_key=other_session_key) == 1
@@ -1553,12 +1754,126 @@ async def test_sessions_messages_unsubscribe_returns_stateless_ack_without_conne
 
 
 @pytest.mark.asyncio
+async def test_sessions_messages_subscribe_filters_by_client_id() -> None:
+    hub = BroadcastHub()
+    service = GatewayNodeMethodService(GatewayNodeRegistry(), hub=hub)
+
+    async with hub.subscribe(client_id="client-1") as subscribed_queue:
+        async with hub.subscribe(client_id="client-2") as other_queue:
+            payload = await service.call(
+                "sessions.messages.subscribe",
+                {"key": "  MAIN  "},
+                requester=GatewayNodeMethodRequester(client_id="client-1"),
+            )
+
+            assert payload == {"subscribed": True, "key": "agent:main:main"}
+
+            await hub.publish(
+                {
+                    "type": "gateway_event",
+                    "event": "session.message",
+                    "payload": {"sessionKey": "agent:main:main"},
+                    "createdAt": utcnow(),
+                }
+            )
+
+            delivered = await asyncio.wait_for(subscribed_queue.get(), timeout=0.2)
+            assert delivered["event"] == "session.message"
+            assert delivered["payload"]["sessionKey"] == "agent:main:main"
+            with pytest.raises(asyncio.TimeoutError):
+                await asyncio.wait_for(other_queue.get(), timeout=0.05)
+
+            await hub.publish(
+                {
+                    "type": "gateway_event",
+                    "event": "session.message",
+                    "payload": {"sessionKey": "launch:mode:workspace_affinity"},
+                    "createdAt": utcnow(),
+                }
+            )
+
+            with pytest.raises(asyncio.TimeoutError):
+                await asyncio.wait_for(subscribed_queue.get(), timeout=0.05)
+
+            payload = await service.call(
+                "sessions.messages.unsubscribe",
+                {"key": "  MAIN  "},
+                requester=GatewayNodeMethodRequester(client_id="client-1"),
+            )
+
+            assert payload == {"subscribed": False, "key": "agent:main:main"}
+
+            await hub.publish(
+                {
+                    "type": "gateway_event",
+                    "event": "session.message",
+                    "payload": {"sessionKey": "agent:main:main"},
+                    "createdAt": utcnow(),
+                }
+            )
+
+            with pytest.raises(asyncio.TimeoutError):
+                await asyncio.wait_for(subscribed_queue.get(), timeout=0.05)
+
+
+@pytest.mark.asyncio
 async def test_sessions_subscribe_returns_stateless_ack_without_connection_context() -> None:
     service = GatewayNodeMethodService(GatewayNodeRegistry())
 
     payload = await service.call("sessions.subscribe", {})
 
     assert payload == {"subscribed": False}
+
+
+@pytest.mark.asyncio
+async def test_sessions_subscribe_registers_client_scoped_filter_when_client_id_present() -> None:
+    hub = BroadcastHub()
+    service = GatewayNodeMethodService(GatewayNodeRegistry(), hub=hub)
+
+    async with hub.subscribe(client_id="client-1") as subscribed_queue:
+        async with hub.subscribe(client_id="client-2") as other_queue:
+            payload = await service.call(
+                "sessions.subscribe",
+                {},
+                requester=GatewayNodeMethodRequester(client_id="client-1"),
+            )
+
+            assert payload == {"subscribed": True}
+
+            await hub.publish(
+                {
+                    "type": "gateway_event",
+                    "event": "sessions.changed",
+                    "payload": {"sessionKey": "agent:main:main", "reason": "send"},
+                    "createdAt": utcnow(),
+                }
+            )
+
+            delivered = await asyncio.wait_for(subscribed_queue.get(), timeout=0.2)
+            assert delivered["event"] == "sessions.changed"
+            assert delivered["payload"]["reason"] == "send"
+            with pytest.raises(asyncio.TimeoutError):
+                await asyncio.wait_for(other_queue.get(), timeout=0.05)
+
+            payload = await service.call(
+                "sessions.unsubscribe",
+                {},
+                requester=GatewayNodeMethodRequester(client_id="client-1"),
+            )
+
+            assert payload == {"subscribed": False}
+
+            await hub.publish(
+                {
+                    "type": "gateway_event",
+                    "event": "sessions.changed",
+                    "payload": {"sessionKey": "agent:main:main", "reason": "patch"},
+                    "createdAt": utcnow(),
+                }
+            )
+
+            with pytest.raises(asyncio.TimeoutError):
+                await asyncio.wait_for(subscribed_queue.get(), timeout=0.05)
 
 
 @pytest.mark.asyncio
@@ -1814,73 +2129,374 @@ async def test_sessions_patch_persists_current_session_metadata_and_surfaces_it(
 
 
 @pytest.mark.asyncio
-async def test_sessions_usage_fails_explicitly_until_analytics_runtime_is_wired() -> None:
-    service = GatewayNodeMethodService(GatewayNodeRegistry())
+async def test_sessions_usage_returns_bounded_summary_from_latest_persisted_mission() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-usage-service"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway.db")
+    await database.initialize()
+    service = GatewayNodeMethodService(GatewayNodeRegistry(), database=database)
 
     with pytest.raises(ValueError, match="mode must be one of: gateway, specific, utc"):
         await service.call("sessions.usage", {"mode": "broken"})
 
-    with pytest.raises(GatewayNodeMethodError) as exc_info:
-        await service.call(
-            "sessions.usage",
-            {
-                "key": "openzues:thread:demo",
-                "startDate": "2026-04-01",
-                "endDate": "2026-04-18",
-                "mode": "specific",
-                "utcOffset": "UTC-5",
-                "limit": 50,
-                "includeContextWeight": False,
-            },
-        )
-
-    assert exc_info.value.code == "UNAVAILABLE"
-    assert exc_info.value.status_code == 503
-    assert exc_info.value.message == (
-        "sessions.usage is unavailable until session usage analytics are wired"
+    main_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
     )
+    session_key = resolve_thread_session_keys(
+        base_session_key=main_session_key,
+        thread_id="thread-usage-service",
+    ).session_key
+    await database.upsert_gateway_session_metadata(
+        session_key=session_key,
+        metadata={"label": "Parity Usage Session"},
+    )
+    await database.append_control_chat_message(
+        role="user",
+        content="Please summarize the latest session usage.",
+        session_key=session_key,
+    )
+    await database.append_control_chat_message(
+        role="assistant",
+        content="The latest persisted mission totals are ready.",
+        session_key=session_key,
+    )
+    mission_id = await database.create_mission(
+        name="Usage parity summary",
+        objective="Summarize the current usage seam.",
+        status="completed",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread-usage-service",
+        session_key=session_key,
+        conversation_target=None,
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        toolsets=[],
+    )
+    await database.update_mission(
+        mission_id,
+        total_tokens=1200,
+        output_tokens=220,
+        reasoning_tokens=90,
+    )
+
+    payload = await service.call(
+        "sessions.usage",
+        {
+            "key": session_key,
+            "startDate": "2026-04-01",
+            "endDate": "2026-04-18",
+            "mode": "specific",
+            "utcOffset": "UTC-5",
+            "limit": 50,
+            "includeContextWeight": False,
+        },
+    )
+
+    assert payload["startDate"] == "2026-04-01"
+    assert payload["endDate"] == "2026-04-18"
+    assert payload["totals"]["totalTokens"] == 1200
+    assert payload["aggregates"]["messages"] == {
+        "total": 2,
+        "user": 1,
+        "assistant": 1,
+        "toolCalls": 0,
+        "toolResults": 0,
+        "errors": 0,
+    }
+    assert payload["aggregates"]["tools"] == {
+        "totalCalls": 0,
+        "uniqueTools": 0,
+        "tools": [],
+    }
+    assert len(payload["sessions"]) == 1
+    session_payload = payload["sessions"][0]
+    assert session_payload["key"] == session_key
+    assert session_payload["label"] == "Parity Usage Session"
+    assert session_payload["sessionId"] == "thread-usage-service"
+    assert session_payload["modelProvider"] == "openai"
+    assert session_payload["model"] == "gpt-5.4"
+    assert session_payload["usage"]["totalTokens"] == 1200
+    assert session_payload["usage"]["output"] == 220
+    assert session_payload["usage"]["missingCostEntries"] == 1
+    assert session_payload["usage"]["messageCounts"] == {
+        "total": 2,
+        "user": 1,
+        "assistant": 1,
+        "toolCalls": 0,
+        "toolResults": 0,
+        "errors": 0,
+    }
 
 
 @pytest.mark.asyncio
-async def test_sessions_usage_timeseries_fails_explicitly_until_analytics_runtime_is_wired() -> (
-    None
-):
-    service = GatewayNodeMethodService(GatewayNodeRegistry())
+async def test_sessions_usage_timeseries_returns_bounded_mission_points_for_session() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-usage-timeseries-service"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway.db")
+    await database.initialize()
+    service = GatewayNodeMethodService(GatewayNodeRegistry(), database=database)
 
     with pytest.raises(ValueError, match="key must be a non-empty string"):
         await service.call("sessions.usage.timeseries", {})
 
-    with pytest.raises(GatewayNodeMethodError) as exc_info:
-        await service.call(
-            "sessions.usage.timeseries",
-            {"key": "openzues:thread:demo"},
-        )
-
-    assert exc_info.value.code == "UNAVAILABLE"
-    assert exc_info.value.status_code == 503
-    assert exc_info.value.message == (
-        "sessions.usage.timeseries is unavailable until session usage analytics are wired"
+    main_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
     )
+    session_key = resolve_thread_session_keys(
+        base_session_key=main_session_key,
+        thread_id="thread-usage-timeseries-service",
+    ).session_key
+
+    first_mission_id = await database.create_mission(
+        name="Usage timeseries first slice",
+        objective="Record the first bounded usage point.",
+        status="completed",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread-usage-timeseries-service",
+        session_key=session_key,
+        conversation_target=None,
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        toolsets=[],
+    )
+    await database.update_mission(
+        first_mission_id,
+        total_tokens=300,
+        output_tokens=80,
+    )
+
+    second_mission_id = await database.create_mission(
+        name="Usage timeseries second slice",
+        objective="Record the second bounded usage point.",
+        status="completed",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread-usage-timeseries-service",
+        session_key=session_key,
+        conversation_target=None,
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        toolsets=[],
+    )
+    await database.update_mission(
+        second_mission_id,
+        total_tokens=700,
+        output_tokens=180,
+    )
+
+    other_session_key = resolve_thread_session_keys(
+        base_session_key=main_session_key,
+        thread_id="thread-usage-timeseries-other",
+    ).session_key
+    other_mission_id = await database.create_mission(
+        name="Usage timeseries noise",
+        objective="Stay out of the selected usage timeseries.",
+        status="completed",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread-usage-timeseries-other",
+        session_key=other_session_key,
+        conversation_target=None,
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        toolsets=[],
+    )
+    await database.update_mission(
+        other_mission_id,
+        total_tokens=999,
+        output_tokens=333,
+    )
+
+    payload = await service.call(
+        "sessions.usage.timeseries",
+        {"key": session_key},
+    )
+
+    assert payload["sessionId"] == "thread-usage-timeseries-service"
+    assert len(payload["points"]) == 2
+    assert payload["points"][0] == {
+        "timestamp": payload["points"][0]["timestamp"],
+        "input": 220,
+        "output": 80,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "totalTokens": 300,
+        "cost": 0.0,
+        "cumulativeTokens": 300,
+        "cumulativeCost": 0.0,
+    }
+    assert payload["points"][1] == {
+        "timestamp": payload["points"][1]["timestamp"],
+        "input": 520,
+        "output": 180,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "totalTokens": 700,
+        "cost": 0.0,
+        "cumulativeTokens": 1000,
+        "cumulativeCost": 0.0,
+    }
+    assert payload["points"][0]["timestamp"] <= payload["points"][1]["timestamp"]
 
 
 @pytest.mark.asyncio
-async def test_sessions_usage_logs_fails_explicitly_until_analytics_runtime_is_wired() -> None:
-    service = GatewayNodeMethodService(GatewayNodeRegistry())
+async def test_sessions_usage_logs_returns_bounded_transcript_entries_with_linked_usage() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-usage-logs-service"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway.db")
+    await database.initialize()
+    service = GatewayNodeMethodService(GatewayNodeRegistry(), database=database)
 
     with pytest.raises(ValueError, match="limit must be between 1 and 1000"):
         await service.call("sessions.usage.logs", {"key": "openzues:thread:demo", "limit": 0})
 
-    with pytest.raises(GatewayNodeMethodError) as exc_info:
-        await service.call(
-            "sessions.usage.logs",
-            {"key": "openzues:thread:demo", "limit": 200},
-        )
-
-    assert exc_info.value.code == "UNAVAILABLE"
-    assert exc_info.value.status_code == 503
-    assert exc_info.value.message == (
-        "sessions.usage.logs is unavailable until session usage analytics are wired"
+    main_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
     )
+    session_key = resolve_thread_session_keys(
+        base_session_key=main_session_key,
+        thread_id="thread-usage-logs-service",
+    ).session_key
+
+    await database.append_control_chat_message(
+        role="user",
+        content="Please show the bounded usage logs.",
+        session_key=session_key,
+    )
+
+    mission_id = await database.create_mission(
+        name="Usage log slice",
+        objective="Link the assistant reply back to bounded mission usage.",
+        status="completed",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread-usage-logs-service",
+        session_key=session_key,
+        conversation_target=None,
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        toolsets=[],
+    )
+    await database.update_mission(
+        mission_id,
+        total_tokens=640,
+        output_tokens=160,
+    )
+
+    await database.append_control_chat_message(
+        role="assistant",
+        content="Here is the latest bounded usage log entry.",
+        mission_id=mission_id,
+        session_key=session_key,
+    )
+
+    other_session_key = resolve_thread_session_keys(
+        base_session_key=main_session_key,
+        thread_id="thread-usage-logs-other",
+    ).session_key
+    await database.append_control_chat_message(
+        role="assistant",
+        content="Noise from another session.",
+        session_key=other_session_key,
+    )
+
+    payload = await service.call(
+        "sessions.usage.logs",
+        {"key": session_key, "limit": 10},
+    )
+
+    assert payload["sessionId"] == "thread-usage-logs-service"
+    assert payload["entries"] == [
+        {
+            "timestamp": payload["entries"][0]["timestamp"],
+            "role": "user",
+            "content": "Please show the bounded usage logs.",
+        },
+        {
+            "timestamp": payload["entries"][1]["timestamp"],
+            "role": "assistant",
+            "content": "Here is the latest bounded usage log entry.",
+            "tokens": 640,
+        },
+    ]
+    assert payload["entries"][0]["timestamp"] <= payload["entries"][1]["timestamp"]
 
 
 @pytest.mark.asyncio
@@ -2452,8 +3068,20 @@ async def test_cron_update_rejects_unsupported_schedule_kind() -> None:
 
 
 @pytest.mark.asyncio
-async def test_wake_requires_openclaw_shape_then_fails_as_explicit_unavailable() -> None:
-    service = GatewayNodeMethodService(GatewayNodeRegistry())
+async def test_wake_requires_openclaw_shape_then_dispatches_or_queues_when_runtime_wired(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-wake.db")
+    await database.initialize()
+    dispatched: list[str] = []
+
+    async def fake_dispatch_now(text: str) -> None:
+        dispatched.append(text)
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        wake_service=GatewayWakeService(database, dispatch_now=fake_dispatch_now),
+    )
 
     with pytest.raises(ValueError, match="mode is required"):
         await service.call("wake", {"text": "Resume parity from the latest checkpoint."})
@@ -2467,17 +3095,26 @@ async def test_wake_requires_openclaw_shape_then_fails_as_explicit_unavailable()
             {"mode": "later", "text": "Resume parity from the latest checkpoint."},
         )
 
-    with pytest.raises(
-        GatewayNodeMethodError,
-        match="wake is unavailable until control-plane wake queue is wired",
-    ) as exc_info:
-        await service.call(
-            "wake",
-            {"mode": "now", "text": "Resume parity from the latest checkpoint."},
-        )
+    now_payload = await service.call(
+        "wake",
+        {"mode": "now", "text": "  Resume parity from the latest checkpoint.  "},
+    )
+    queued_payload = await service.call(
+        "wake",
+        {
+            "mode": "next-heartbeat",
+            "text": "  Check the queued parity nudge on the next heartbeat.  ",
+        },
+    )
+    wake_requests = await database.list_gateway_wake_requests()
 
-    assert exc_info.value.code == "UNAVAILABLE"
-    assert exc_info.value.status_code == 503
+    assert now_payload == {"ok": True}
+    assert queued_payload == {"ok": True}
+    assert dispatched == ["Resume parity from the latest checkpoint."]
+    assert len(wake_requests) == 1
+    assert wake_requests[0]["mode"] == "next-heartbeat"
+    assert wake_requests[0]["text"] == "Check the queued parity nudge on the next heartbeat."
+    assert wake_requests[0]["status"] == "pending"
 
 
 @pytest.mark.asyncio
@@ -2848,6 +3485,385 @@ async def test_sessions_list_includes_metadata_known_non_current_sessions() -> N
 
 
 @pytest.mark.asyncio
+async def test_sessions_list_hides_unknown_session_unless_explicitly_requested() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-list-unknown-service"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-sessions-list-unknown.db")
+    await database.initialize()
+    main_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+    )
+    await database.upsert_gateway_session_metadata(
+        session_key="unknown",
+        metadata={"label": "Unknown Session"},
+    )
+    service = GatewayNodeMethodService(GatewayNodeRegistry(), database=database)
+
+    hidden_payload = await service.call(
+        "sessions.list",
+        {"includeGlobal": True, "includeUnknown": False, "limit": 10},
+        now_ms=789,
+    )
+    visible_payload = await service.call(
+        "sessions.list",
+        {"includeGlobal": True, "includeUnknown": True, "limit": 10},
+        now_ms=790,
+    )
+
+    assert [session["key"] for session in hidden_payload["sessions"]] == [main_session_key]
+    assert [session["key"] for session in visible_payload["sessions"]] == [
+        main_session_key,
+        "unknown",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_sessions_list_supports_label_and_spawned_by_filters() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-list-filters-service"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-sessions-list-filters.db")
+    await database.initialize()
+    main_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+    )
+    parity_worker_key = resolve_thread_session_keys(
+        base_session_key=main_session_key,
+        thread_id="thread-parity-worker",
+    ).session_key
+    other_worker_key = resolve_thread_session_keys(
+        base_session_key=main_session_key,
+        thread_id="thread-other-worker",
+    ).session_key
+    await database.upsert_gateway_session_metadata(
+        session_key=parity_worker_key,
+        metadata={
+            "label": "Parity Worker",
+            "spawnedBy": "parity-conductor",
+        },
+    )
+    await database.upsert_gateway_session_metadata(
+        session_key=other_worker_key,
+        metadata={
+            "label": "Other Worker",
+            "spawnedBy": "other-conductor",
+        },
+    )
+    service = GatewayNodeMethodService(GatewayNodeRegistry(), database=database)
+
+    label_payload = await service.call(
+        "sessions.list",
+        {
+            "includeGlobal": True,
+            "includeUnknown": False,
+            "limit": 10,
+            "label": "Parity Worker",
+        },
+        now_ms=791,
+    )
+    spawned_payload = await service.call(
+        "sessions.list",
+        {
+            "includeGlobal": True,
+            "includeUnknown": True,
+            "limit": 10,
+            "spawnedBy": "parity-conductor",
+        },
+        now_ms=792,
+    )
+
+    assert [session["key"] for session in label_payload["sessions"]] == [parity_worker_key]
+    assert [session["key"] for session in spawned_payload["sessions"]] == [parity_worker_key]
+
+
+@pytest.mark.asyncio
+async def test_sessions_list_supports_agent_id_filter() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-list-agent-service"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-sessions-list-agent.db")
+    await database.initialize()
+    main_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+    )
+    thread_session_key = resolve_thread_session_keys(
+        base_session_key=main_session_key,
+        thread_id="thread-agent-filter",
+    ).session_key
+    await database.upsert_gateway_session_metadata(
+        session_key=thread_session_key,
+        metadata={"label": "Agent Filter Worker"},
+    )
+    service = GatewayNodeMethodService(GatewayNodeRegistry(), database=database)
+
+    payload = await service.call(
+        "sessions.list",
+        {
+            "includeGlobal": True,
+            "includeUnknown": False,
+            "limit": 10,
+            "agentId": "main",
+        },
+        now_ms=793,
+    )
+
+    assert [session["key"] for session in payload["sessions"]] == [
+        main_session_key,
+        thread_session_key,
+    ]
+
+    with pytest.raises(ValueError, match='unknown agent id "other-agent"'):
+        await service.call(
+            "sessions.list",
+            {"includeGlobal": True, "includeUnknown": False, "agentId": "other-agent"},
+            now_ms=794,
+        )
+
+
+@pytest.mark.asyncio
+async def test_sessions_list_supports_active_minutes_filter() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-list-active-service"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-sessions-list-active.db")
+    await database.initialize()
+    main_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+    )
+    stale_session_key = resolve_thread_session_keys(
+        base_session_key=main_session_key,
+        thread_id="thread-stale-active-filter",
+    ).session_key
+    await database.upsert_gateway_session_metadata(
+        session_key=stale_session_key,
+        metadata={"label": "Stale Worker"},
+    )
+    reference_time = datetime.now(UTC)
+    stale_updated_at = (reference_time - timedelta(minutes=20)).isoformat().replace("+00:00", "Z")
+    with sqlite3.connect(database.path) as db:
+        db.execute(
+            "UPDATE gateway_session_metadata SET updated_at = ? WHERE session_key = ?",
+            (stale_updated_at, stale_session_key),
+        )
+        db.commit()
+    service = GatewayNodeMethodService(GatewayNodeRegistry(), database=database)
+
+    tight_payload = await service.call(
+        "sessions.list",
+        {"includeGlobal": True, "includeUnknown": False, "limit": 10, "activeMinutes": 5},
+        now_ms=int(reference_time.timestamp() * 1000),
+    )
+    wide_payload = await service.call(
+        "sessions.list",
+        {"includeGlobal": True, "includeUnknown": False, "limit": 10, "activeMinutes": 30},
+        now_ms=int(reference_time.timestamp() * 1000),
+    )
+
+    assert [session["key"] for session in tight_payload["sessions"]] == [main_session_key]
+    assert [session["key"] for session in wide_payload["sessions"]] == [
+        main_session_key,
+        stale_session_key,
+    ]
+
+
+@pytest.mark.asyncio
+async def test_sessions_list_supports_search_filter() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-list-search-service"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-sessions-list-search.db")
+    await database.initialize()
+    main_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+    )
+    target_session_key = resolve_thread_session_keys(
+        base_session_key=main_session_key,
+        thread_id="thread-search-target",
+    ).session_key
+    other_session_key = resolve_thread_session_keys(
+        base_session_key=main_session_key,
+        thread_id="thread-search-other",
+    ).session_key
+    await database.upsert_gateway_session_metadata(
+        session_key=target_session_key,
+        metadata={"label": "Parity Search Worker"},
+    )
+    await database.upsert_gateway_session_metadata(
+        session_key=other_session_key,
+        metadata={"label": "Background Worker"},
+    )
+    service = GatewayNodeMethodService(GatewayNodeRegistry(), database=database)
+
+    label_payload = await service.call(
+        "sessions.list",
+        {"includeGlobal": True, "includeUnknown": False, "limit": 10, "search": "parity"},
+        now_ms=795,
+    )
+    key_payload = await service.call(
+        "sessions.list",
+        {
+            "includeGlobal": True,
+            "includeUnknown": False,
+            "limit": 10,
+            "search": "thread-search-other",
+        },
+        now_ms=796,
+    )
+
+    assert [session["key"] for session in label_payload["sessions"]] == [target_session_key]
+    assert [session["key"] for session in key_payload["sessions"]] == [other_session_key]
+
+
+@pytest.mark.asyncio
+async def test_sessions_list_supports_include_last_message_preview() -> None:
+    tmp_path = (
+        Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-list-last-message-service"
+    )
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-sessions-list-last-message.db")
+    await database.initialize()
+    main_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+    )
+    preview_session_key = resolve_thread_session_keys(
+        base_session_key=main_session_key,
+        thread_id="thread-last-message-preview",
+    ).session_key
+    await database.upsert_gateway_session_metadata(
+        session_key=preview_session_key,
+        metadata={"label": "Preview Worker"},
+    )
+    await database.append_control_chat_message(
+        role="user",
+        content="First preview message.",
+        session_key=preview_session_key,
+    )
+    await database.append_control_chat_message(
+        role="assistant",
+        content="Latest preview message.",
+        session_key=preview_session_key,
+    )
+    service = GatewayNodeMethodService(GatewayNodeRegistry(), database=database)
+
+    hidden_payload = await service.call(
+        "sessions.list",
+        {
+            "includeGlobal": False,
+            "includeUnknown": False,
+            "includeLastMessage": False,
+            "label": "Preview Worker",
+            "limit": 10,
+        },
+        now_ms=797,
+    )
+    visible_payload = await service.call(
+        "sessions.list",
+        {
+            "includeGlobal": False,
+            "includeUnknown": False,
+            "includeLastMessage": True,
+            "label": "Preview Worker",
+            "limit": 10,
+        },
+        now_ms=798,
+    )
+
+    assert [session["key"] for session in hidden_payload["sessions"]] == [preview_session_key]
+    assert "lastMessagePreview" not in hidden_payload["sessions"][0]
+    assert [session["key"] for session in visible_payload["sessions"]] == [preview_session_key]
+    assert visible_payload["sessions"][0]["lastMessagePreview"] == "Latest preview message."
+
+
+@pytest.mark.asyncio
+async def test_sessions_list_supports_include_derived_titles() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-list-derived-title-service"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-sessions-list-derived-title.db")
+    await database.initialize()
+    main_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+    )
+    preview_session_key = resolve_thread_session_keys(
+        base_session_key=main_session_key,
+        thread_id="thread-derived-title",
+    ).session_key
+    await database.upsert_gateway_session_metadata(
+        session_key=preview_session_key,
+        metadata={"label": "Preview Worker"},
+    )
+    await database.append_control_chat_message(
+        role="user",
+        content="First derived title message.",
+        session_key=preview_session_key,
+    )
+    await database.append_control_chat_message(
+        role="assistant",
+        content="Latest preview message.",
+        session_key=preview_session_key,
+    )
+    service = GatewayNodeMethodService(GatewayNodeRegistry(), database=database)
+
+    hidden_payload = await service.call(
+        "sessions.list",
+        {
+            "includeGlobal": False,
+            "includeUnknown": False,
+            "includeDerivedTitles": False,
+            "label": "Preview Worker",
+            "limit": 10,
+        },
+        now_ms=799,
+    )
+    visible_payload = await service.call(
+        "sessions.list",
+        {
+            "includeGlobal": False,
+            "includeUnknown": False,
+            "includeDerivedTitles": True,
+            "label": "Preview Worker",
+            "limit": 10,
+        },
+        now_ms=800,
+    )
+
+    assert [session["key"] for session in hidden_payload["sessions"]] == [preview_session_key]
+    assert "derivedTitle" not in hidden_payload["sessions"][0]
+    assert [session["key"] for session in visible_payload["sessions"]] == [preview_session_key]
+    assert visible_payload["sessions"][0]["derivedTitle"] == "First derived title message."
+
+
+@pytest.mark.asyncio
 async def test_sessions_get_returns_openclaw_shaped_control_chat_messages() -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-get-service"
     shutil.rmtree(tmp_path, ignore_errors=True)
@@ -2972,6 +3988,41 @@ async def test_sessions_resolve_supports_current_session_label_lookup() -> None:
 
 
 @pytest.mark.asyncio
+async def test_sessions_resolve_hides_current_session_label_when_global_is_excluded() -> None:
+    tmp_path = (
+        Path.cwd()
+        / ".tmp-pytest-local"
+        / "gateway-sessions-resolve-label-excludes-global-service"
+    )
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-sessions-resolve-label-excludes-global.db")
+    await database.initialize()
+    current_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+    )
+    await database.upsert_gateway_session_metadata(
+        session_key=current_session_key,
+        metadata={"label": "Parity Session"},
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    with pytest.raises(ValueError, match="unknown session label"):
+        await service.call(
+            "sessions.resolve",
+            {"label": "Parity Session", "includeGlobal": False},
+        )
+
+
+@pytest.mark.asyncio
 async def test_sessions_resolve_supports_current_session_spawned_by_lookup() -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-resolve-spawned-by-service"
     shutil.rmtree(tmp_path, ignore_errors=True)
@@ -3035,6 +4086,296 @@ async def test_sessions_resolve_supports_metadata_known_session_spawned_by_looku
     payload = await service.call("sessions.resolve", {"spawnedBy": "parity-conductor"})
 
     assert payload == {"ok": True, "key": thread_session_key}
+
+
+@pytest.mark.asyncio
+async def test_sessions_resolve_supports_metadata_known_session_id_lookup() -> None:
+    tmp_path = (
+        Path.cwd()
+        / ".tmp-pytest-local"
+        / "gateway-sessions-resolve-metadata-session-id-service"
+    )
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-sessions-resolve-metadata-session-id.db")
+    await database.initialize()
+    main_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+    )
+    thread_session_key = resolve_thread_session_keys(
+        base_session_key=main_session_key,
+        thread_id="thread-session-id-parity",
+    ).session_key
+    await database.upsert_gateway_session_metadata(
+        session_key=thread_session_key,
+        metadata={"label": "Session Id Parity"},
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    payload = await service.call("sessions.resolve", {"sessionId": "thread-session-id-parity"})
+
+    assert payload == {"ok": True, "key": thread_session_key}
+
+
+@pytest.mark.asyncio
+async def test_sessions_resolve_hides_global_session_id_when_global_is_excluded() -> None:
+    tmp_path = (
+        Path.cwd()
+        / ".tmp-pytest-local"
+        / "gateway-sessions-resolve-session-id-excludes-global-service"
+    )
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-sessions-resolve-session-id-excludes-global.db")
+    await database.initialize()
+    current_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+    )
+    await database.create_mission(
+        name="Global Session Id",
+        objective="Prove global sessionId visibility filtering.",
+        status="completed",
+        instance_id=9,
+        project_id=None,
+        thread_id="global-session-id-parity",
+        session_key=current_session_key,
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=False,
+        run_verification=False,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        task_blueprint_id=None,
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    with pytest.raises(ValueError, match="unknown sessionId"):
+        await service.call(
+            "sessions.resolve",
+            {"sessionId": "global-session-id-parity", "includeGlobal": False},
+        )
+
+
+@pytest.mark.asyncio
+async def test_sessions_resolve_supports_mission_backed_session_id_lookup() -> None:
+    tmp_path = (
+        Path.cwd()
+        / ".tmp-pytest-local"
+        / "gateway-sessions-resolve-mission-session-id-service"
+    )
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-sessions-resolve-mission-session-id.db")
+    await database.initialize()
+    mission_session_key = resolve_thread_session_keys(
+        base_session_key="agent:main:main",
+        thread_id="thread-mission-session-id",
+    ).session_key
+    await database.create_mission(
+        name="Mission-backed Session",
+        objective="Prove mission-backed session id resolution.",
+        status="completed",
+        instance_id=9,
+        project_id=None,
+        thread_id="thread-mission-session-id",
+        session_key=mission_session_key,
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=False,
+        run_verification=False,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        task_blueprint_id=None,
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    payload = await service.call("sessions.resolve", {"sessionId": "thread-mission-session-id"})
+
+    assert payload == {"ok": True, "key": mission_session_key}
+
+
+@pytest.mark.asyncio
+async def test_sessions_resolve_prefers_freshest_mission_for_duplicate_session_id() -> None:
+    tmp_path = (
+        Path.cwd()
+        / ".tmp-pytest-local"
+        / "gateway-sessions-resolve-duplicate-session-id-service"
+    )
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-sessions-resolve-duplicate-session-id.db")
+    await database.initialize()
+    older_session_key = resolve_thread_session_keys(
+        base_session_key="agent:main:main",
+        thread_id="thread-duplicate-session-id",
+    ).session_key
+    newer_session_key = resolve_thread_session_keys(
+        base_session_key="launch:mode:workspace_affinity",
+        thread_id="thread-duplicate-session-id",
+    ).session_key
+    await database.create_mission(
+        name="Older duplicate session",
+        objective="Older duplicate sessionId record.",
+        status="completed",
+        instance_id=9,
+        project_id=None,
+        thread_id="thread-duplicate-session-id",
+        session_key=older_session_key,
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=False,
+        run_verification=False,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        task_blueprint_id=None,
+    )
+    await database.create_mission(
+        name="Newer duplicate session",
+        objective="Newer duplicate sessionId record.",
+        status="completed",
+        instance_id=9,
+        project_id=None,
+        thread_id="thread-duplicate-session-id",
+        session_key=newer_session_key,
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=False,
+        run_verification=False,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        task_blueprint_id=None,
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    payload = await service.call("sessions.resolve", {"sessionId": "thread-duplicate-session-id"})
+
+    assert payload == {"ok": True, "key": newer_session_key}
+
+
+@pytest.mark.asyncio
+async def test_sessions_resolve_supports_transcript_only_session_id_lookup() -> None:
+    tmp_path = (
+        Path.cwd()
+        / ".tmp-pytest-local"
+        / "gateway-sessions-resolve-transcript-session-id-service"
+    )
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-sessions-resolve-transcript-session-id.db")
+    await database.initialize()
+    session_key = resolve_thread_session_keys(
+        base_session_key="launch:mode:workspace_affinity",
+        thread_id="thread-transcript-session-id",
+    ).session_key
+    await database.append_control_chat_message(
+        role="assistant",
+        content="Transcript-only session evidence.",
+        session_key=session_key,
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    payload = await service.call("sessions.resolve", {"sessionId": "thread-transcript-session-id"})
+
+    assert payload == {"ok": True, "key": session_key}
+
+
+@pytest.mark.asyncio
+async def test_sessions_resolve_by_key_respects_spawned_by_filter() -> None:
+    tmp_path = (
+        Path.cwd()
+        / ".tmp-pytest-local"
+        / "gateway-sessions-resolve-key-spawned-by-filter-service"
+    )
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-sessions-resolve-key-spawned-by-filter.db")
+    await database.initialize()
+    visible_parent_key = "agent:main:subagent:visible-parent"
+    hidden_parent_key = "agent:main:subagent:hidden-parent"
+    child_key = "agent:main:subagent:shared-child-key-filter"
+    await database.upsert_gateway_session_metadata(
+        session_key=visible_parent_key,
+        metadata={"spawnedBy": "agent:main:main"},
+    )
+    await database.upsert_gateway_session_metadata(
+        session_key=hidden_parent_key,
+        metadata={"spawnedBy": "agent:main:main"},
+    )
+    await database.upsert_gateway_session_metadata(
+        session_key=child_key,
+        metadata={"spawnedBy": hidden_parent_key},
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    with pytest.raises(ValueError, match="unknown session key"):
+        await service.call(
+            "sessions.resolve",
+            {"key": child_key, "spawnedBy": visible_parent_key},
+        )
 
 
 @pytest.mark.asyncio
@@ -3421,6 +4762,479 @@ Body
             }
         ],
     }
+
+
+@pytest.mark.asyncio
+async def test_skills_update_persists_local_entry_config_and_status_reflects_enabled_override(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    codex_home = tmp_path / ".codex"
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    monkeypatch.chdir(tmp_path)
+    skill_path = codex_home / "skills" / "local-update-test" / "SKILL.md"
+    skill_path.parent.mkdir(parents=True, exist_ok=True)
+    skill_path.write_text(
+        """---
+name: local-update-test
+description: local skill update
+platforms:
+  - windows
+metadata:
+  skillKey: local-update
+---
+Body
+""",
+        encoding="utf-8",
+    )
+    service = GatewayNodeMethodService(GatewayNodeRegistry())
+
+    updated = await service.call(
+        "skills.update",
+        {
+            "skillKey": "local-update",
+            "enabled": False,
+            "apiKey": "abc\r\ndef",
+            "env": {
+                " OPENZUES_TOKEN ": "  ready  ",
+                "REMOVE_ME": "   ",
+            },
+        },
+    )
+    status = await service.call("skills.status", {})
+
+    assert updated == {
+        "ok": True,
+        "skillKey": "local-update",
+        "config": {
+            "enabled": False,
+            "apiKey": "abcdef",
+            "env": {"OPENZUES_TOKEN": "ready"},
+        },
+    }
+    assert status["skills"] == [
+        {
+            "name": "local-update-test",
+            "description": "local skill update",
+            "source": "codex-home",
+            "bundled": True,
+            "filePath": str(skill_path),
+            "baseDir": str(skill_path.parent),
+            "skillKey": "local-update",
+            "primaryEnv": None,
+            "emoji": None,
+            "homepage": None,
+            "always": False,
+            "disabled": True,
+            "blockedByAllowlist": False,
+            "eligible": False,
+            "requirements": {
+                "bins": [],
+                "env": [],
+                "config": [],
+                "os": ["windows"],
+            },
+            "missing": {
+                "bins": [],
+                "env": [],
+                "config": [],
+                "os": [],
+            },
+            "configChecks": [],
+            "install": [],
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_skills_install_runs_declared_gateway_installer_and_updates_skill_status(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    codex_home = tmp_path / ".codex"
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    monkeypatch.chdir(tmp_path)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+    skill_path = codex_home / "skills" / "local-install-test" / "SKILL.md"
+    skill_path.parent.mkdir(parents=True, exist_ok=True)
+    skill_path.write_text(
+        """---
+name: local-install-test
+description: local skill install
+platforms:
+  - windows
+metadata:
+  skillKey: local-install
+  requires:
+    bins:
+      - missing-bin
+  install:
+    - id: node
+      kind: node
+      label: Install local-install-test
+      package: demo-skill
+      bins:
+        - missing-bin
+---
+Body
+""",
+        encoding="utf-8",
+    )
+    observed: dict[str, object] = {}
+
+    async def fake_command_runner(
+        argv: tuple[str, ...],
+        *,
+        cwd: Path,
+        timeout_ms: int | None,
+    ) -> tuple[int, str, str]:
+        observed["argv"] = argv
+        observed["cwd"] = str(cwd)
+        observed["timeout_ms"] = timeout_ms
+        shim_path = bin_dir / "missing-bin.cmd"
+        shim_path.write_text("@echo off\r\necho installed\r\n", encoding="utf-8")
+        return (0, "installed", "")
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        skill_install_service=GatewaySkillInstallService(command_runner=fake_command_runner),
+    )
+
+    installed = await service.call(
+        "skills.install",
+        {"name": "local-install-test", "installId": "node", "timeoutMs": 45_000},
+    )
+    status = await service.call("skills.status", {})
+
+    assert installed == {
+        "ok": True,
+        "name": "local-install-test",
+        "skillKey": "local-install",
+        "installId": "node",
+        "kind": "node",
+        "label": "Install local-install-test",
+        "bins": ["missing-bin"],
+        "command": ["npm", "install", "-g", "demo-skill"],
+        "cwd": str(skill_path.parent),
+    }
+    assert observed == {
+        "argv": ("npm", "install", "-g", "demo-skill"),
+        "cwd": str(skill_path.parent),
+        "timeout_ms": 45_000,
+    }
+    assert status["skills"] == [
+        {
+            "name": "local-install-test",
+            "description": "local skill install",
+            "source": "codex-home",
+            "bundled": True,
+            "filePath": str(skill_path),
+            "baseDir": str(skill_path.parent),
+            "skillKey": "local-install",
+            "primaryEnv": None,
+            "emoji": None,
+            "homepage": None,
+            "always": False,
+            "disabled": False,
+            "blockedByAllowlist": False,
+            "eligible": True,
+            "requirements": {
+                "bins": ["missing-bin"],
+                "env": [],
+                "config": [],
+                "os": ["windows"],
+            },
+            "missing": {
+                "bins": [],
+                "env": [],
+                "config": [],
+                "os": [],
+            },
+            "configChecks": [],
+            "install": [
+                {
+                    "id": "node",
+                    "kind": "node",
+                    "label": "Install local-install-test",
+                    "bins": ["missing-bin"],
+                }
+            ],
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_skills_install_clawhub_mode_runs_cli_and_refreshes_workspace_inventory(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    codex_home = tmp_path / ".codex"
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    monkeypatch.chdir(tmp_path)
+    observed: dict[str, object] = {}
+
+    async def fake_command_runner(
+        argv: tuple[str, ...],
+        *,
+        cwd: Path,
+        timeout_ms: int | None,
+    ) -> tuple[int, str, str]:
+        observed["argv"] = argv
+        observed["cwd"] = str(cwd)
+        observed["timeout_ms"] = timeout_ms
+        skill_path = tmp_path / "skills" / "demo-skill" / "SKILL.md"
+        skill_path.parent.mkdir(parents=True, exist_ok=True)
+        skill_path.write_text(
+            """---
+name: demo-skill
+description: installed from clawhub
+platforms:
+  - windows
+metadata:
+  skillKey: demo-skill
+---
+Body
+""",
+            encoding="utf-8",
+        )
+        return (0, "installed", "")
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        skill_clawhub_service=GatewaySkillClawHubService(
+            launcher=("clawhub",),
+            command_runner=fake_command_runner,
+        ),
+    )
+
+    installed = await service.call(
+        "skills.install",
+        {
+            "source": "clawhub",
+            "slug": "demo-skill",
+            "version": "1.2.3",
+            "force": True,
+        },
+    )
+    status = await service.call("skills.status", {})
+
+    assert installed == {
+        "ok": True,
+        "source": "clawhub",
+        "action": "install",
+        "slug": "demo-skill",
+        "version": "1.2.3",
+        "force": True,
+        "command": [
+            "clawhub",
+            "install",
+            "demo-skill",
+            "--workdir",
+            str(tmp_path),
+            "--dir",
+            "skills",
+            "--no-input",
+            "--version",
+            "1.2.3",
+            "--force",
+        ],
+        "workspaceDir": str(tmp_path),
+        "skillsDir": str(tmp_path / "skills"),
+    }
+    assert observed == {
+        "argv": (
+            "clawhub",
+            "install",
+            "demo-skill",
+            "--workdir",
+            str(tmp_path),
+            "--dir",
+            "skills",
+            "--no-input",
+            "--version",
+            "1.2.3",
+            "--force",
+        ),
+        "cwd": str(tmp_path),
+        "timeout_ms": None,
+    }
+    assert status["skills"] == [
+        {
+            "name": "demo-skill",
+            "description": "installed from clawhub",
+            "source": "workspace",
+            "bundled": False,
+            "filePath": str(tmp_path / "skills" / "demo-skill" / "SKILL.md"),
+            "baseDir": str(tmp_path / "skills" / "demo-skill"),
+            "skillKey": "demo-skill",
+            "primaryEnv": None,
+            "emoji": None,
+            "homepage": None,
+            "always": False,
+            "disabled": False,
+            "blockedByAllowlist": False,
+            "eligible": True,
+            "requirements": {
+                "bins": [],
+                "env": [],
+                "config": [],
+                "os": ["windows"],
+            },
+            "missing": {
+                "bins": [],
+                "env": [],
+                "config": [],
+                "os": [],
+            },
+            "configChecks": [],
+            "install": [],
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_skills_update_clawhub_mode_runs_cli_and_refreshes_workspace_inventory(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    codex_home = tmp_path / ".codex"
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    monkeypatch.chdir(tmp_path)
+    skill_path = tmp_path / "skills" / "demo-skill" / "SKILL.md"
+    skill_path.parent.mkdir(parents=True, exist_ok=True)
+    skill_path.write_text(
+        """---
+name: demo-skill
+description: before update
+platforms:
+  - windows
+metadata:
+  skillKey: demo-skill
+---
+Body
+""",
+        encoding="utf-8",
+    )
+    observed: dict[str, object] = {}
+
+    async def fake_command_runner(
+        argv: tuple[str, ...],
+        *,
+        cwd: Path,
+        timeout_ms: int | None,
+    ) -> tuple[int, str, str]:
+        observed["argv"] = argv
+        observed["cwd"] = str(cwd)
+        observed["timeout_ms"] = timeout_ms
+        skill_path.write_text(
+            """---
+name: demo-skill
+description: updated from clawhub
+platforms:
+  - windows
+metadata:
+  skillKey: demo-skill
+---
+Body
+""",
+            encoding="utf-8",
+        )
+        return (0, "updated", "")
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        skill_clawhub_service=GatewaySkillClawHubService(
+            launcher=("clawhub",),
+            command_runner=fake_command_runner,
+        ),
+    )
+
+    updated = await service.call(
+        "skills.update",
+        {
+            "source": "clawhub",
+            "slug": "demo-skill",
+            "version": "1.2.4",
+            "force": True,
+        },
+    )
+    status = await service.call("skills.status", {})
+
+    assert updated == {
+        "ok": True,
+        "source": "clawhub",
+        "action": "update",
+        "slug": "demo-skill",
+        "version": "1.2.4",
+        "force": True,
+        "all": False,
+        "command": [
+            "clawhub",
+            "update",
+            "demo-skill",
+            "--workdir",
+            str(tmp_path),
+            "--dir",
+            "skills",
+            "--no-input",
+            "--version",
+            "1.2.4",
+            "--force",
+        ],
+        "workspaceDir": str(tmp_path),
+        "skillsDir": str(tmp_path / "skills"),
+    }
+    assert observed == {
+        "argv": (
+            "clawhub",
+            "update",
+            "demo-skill",
+            "--workdir",
+            str(tmp_path),
+            "--dir",
+            "skills",
+            "--no-input",
+            "--version",
+            "1.2.4",
+            "--force",
+        ),
+        "cwd": str(tmp_path),
+        "timeout_ms": None,
+    }
+    assert status["skills"] == [
+        {
+            "name": "demo-skill",
+            "description": "updated from clawhub",
+            "source": "workspace",
+            "bundled": False,
+            "filePath": str(skill_path),
+            "baseDir": str(skill_path.parent),
+            "skillKey": "demo-skill",
+            "primaryEnv": None,
+            "emoji": None,
+            "homepage": None,
+            "always": False,
+            "disabled": False,
+            "blockedByAllowlist": False,
+            "eligible": True,
+            "requirements": {
+                "bins": [],
+                "env": [],
+                "config": [],
+                "os": ["windows"],
+            },
+            "missing": {
+                "bins": [],
+                "env": [],
+                "config": [],
+                "os": [],
+            },
+            "configChecks": [],
+            "install": [],
+        }
+    ]
 
 
 @pytest.mark.asyncio
@@ -4214,16 +6028,6 @@ async def test_node_pending_enqueue_attempts_saved_lane_wake_when_requested() ->
     ("method", "params", "message"),
     [
         (
-            "skills.install",
-            {"source": "clawhub", "slug": "openclaw/example"},
-            "ClawHub skill install is not wired in OpenZues yet",
-        ),
-        (
-            "skills.update",
-            {"skillKey": "example-skill", "enabled": True},
-            "Skill config patching is not wired in OpenZues yet",
-        ),
-        (
             "node.canvas.capability.refresh",
             {},
             "canvas host unavailable for this node session",
@@ -4237,31 +6041,6 @@ async def test_node_pending_enqueue_attempts_saved_lane_wake_when_requested() ->
             "last-heartbeat",
             {},
             "last-heartbeat is unavailable until gateway events are wired",
-        ),
-        (
-            "tts.enable",
-            {},
-            "TTS runtime not wired in OpenZues yet",
-        ),
-        (
-            "tts.disable",
-            {},
-            "TTS runtime not wired in OpenZues yet",
-        ),
-        (
-            "tts.setProvider",
-            {"provider": "example"},
-            "TTS runtime not wired in OpenZues yet",
-        ),
-        (
-            "tts.convert",
-            {"text": "Hello from Zues"},
-            "TTS conversion runtime not wired in OpenZues yet",
-        ),
-        (
-            "talk.mode",
-            {"enabled": True},
-            "Talk mode broadcast is not wired in OpenZues yet",
         ),
         (
             "talk.speak",
@@ -4282,6 +6061,174 @@ async def test_known_node_methods_can_fail_as_explicitly_unavailable(
 
     with pytest.raises(GatewayNodeMethodError, match=message) as exc_info:
         await service.call(method, params, requester=requester)
+
+    assert exc_info.value.code == "UNAVAILABLE"
+    assert exc_info.value.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_tts_convert_runs_bounded_runtime_when_wired(tmp_path) -> None:
+    synthesized_path = tmp_path / "speech.wav"
+    synthesized_path.write_bytes(b"RIFFtest-wave",)
+    observed: dict[str, object] = {}
+
+    def fake_convert(
+        *,
+        text: str,
+        channel: str | None,
+        provider: str | None,
+        model_id: str | None,
+        voice_id: str | None,
+    ) -> GatewayTtsSynthesisResult:
+        observed.update(
+            {
+                "text": text,
+                "channel": channel,
+                "provider": provider,
+                "model_id": model_id,
+                "voice_id": voice_id,
+            }
+        )
+        return GatewayTtsSynthesisResult(
+            audio_path=str(synthesized_path),
+            provider="microsoft",
+            output_format="wav",
+            voice_compatible=True,
+        )
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        tts_runtime_service=GatewayTtsRuntimeService(
+            data_dir=tmp_path,
+            convert_runner=fake_convert,
+        ),
+    )
+
+    payload = await service.call(
+        "tts.convert",
+        {
+            "text": "Hello from Zues",
+            "channel": "assistant",
+            "provider": "edge",
+            "modelId": "ignored-local-model",
+            "voiceId": "Microsoft Zira Desktop",
+        },
+    )
+
+    assert payload == {
+        "audioPath": str(synthesized_path),
+        "provider": "microsoft",
+        "outputFormat": "wav",
+        "voiceCompatible": True,
+    }
+    assert observed == {
+        "text": "Hello from Zues",
+        "channel": "assistant",
+        "provider": "microsoft",
+        "model_id": "ignored-local-model",
+        "voice_id": "Microsoft Zira Desktop",
+    }
+
+
+@pytest.mark.asyncio
+async def test_tts_convert_fails_closed_when_runtime_is_disabled() -> None:
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        tts_runtime_service=GatewayTtsRuntimeService(enabled=False),
+    )
+
+    with pytest.raises(
+        GatewayNodeMethodError,
+        match="TTS conversion runtime not wired in OpenZues yet",
+    ) as exc_info:
+        await service.call("tts.convert", {"text": "Hello from Zues"})
+
+    assert exc_info.value.code == "UNAVAILABLE"
+    assert exc_info.value.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_talk_speak_returns_inline_audio_when_runtime_is_wired(tmp_path) -> None:
+    synthesized_path = tmp_path / "spoken.wav"
+    synthesized_bytes = b"RIFFtalk-wave"
+    synthesized_path.write_bytes(synthesized_bytes)
+    observed: dict[str, object] = {}
+
+    def fake_convert(
+        *,
+        text: str,
+        channel: str | None,
+        provider: str | None,
+        model_id: str | None,
+        voice_id: str | None,
+    ) -> GatewayTtsSynthesisResult:
+        observed.update(
+            {
+                "text": text,
+                "channel": channel,
+                "provider": provider,
+                "model_id": model_id,
+                "voice_id": voice_id,
+            }
+        )
+        return GatewayTtsSynthesisResult(
+            audio_path=str(synthesized_path),
+            provider="microsoft",
+            output_format="wav",
+            voice_compatible=True,
+        )
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        tts_runtime_service=GatewayTtsRuntimeService(
+            data_dir=tmp_path,
+            convert_runner=fake_convert,
+        ),
+    )
+
+    payload = await service.call(
+        "talk.speak",
+        {
+            "text": "Hello from talk mode.",
+            "provider": "edge",
+            "voiceId": "Microsoft Zira Desktop",
+            "outputFormat": "wav",
+            "rateWpm": 180,
+        },
+    )
+
+    assert payload == {
+        "audioBase64": base64.b64encode(synthesized_bytes).decode("ascii"),
+        "provider": "microsoft",
+        "outputFormat": "wav",
+        "voiceCompatible": True,
+        "mimeType": "audio/wav",
+        "fileExtension": ".wav",
+    }
+    assert observed == {
+        "text": "Hello from talk mode.",
+        "channel": None,
+        "provider": "microsoft",
+        "model_id": None,
+        "voice_id": "Microsoft Zira Desktop",
+    }
+
+
+@pytest.mark.asyncio
+async def test_skills_install_clawhub_mode_fails_closed_when_gateway_host_lacks_cli() -> None:
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        skill_clawhub_service=GatewaySkillClawHubService(resolve_launcher=False),
+    )
+
+    with pytest.raises(
+        GatewayNodeMethodError,
+        match="ClawHub CLI is not available on the gateway host.",
+    ) as exc_info:
+        await service.call(
+            "skills.install",
+            {"source": "clawhub", "slug": "openclaw/example"},
+        )
 
     assert exc_info.value.code == "UNAVAILABLE"
     assert exc_info.value.status_code == 503

@@ -2,19 +2,26 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from openzues.database import Database
 from openzues.schemas import (
     GatewayBootstrapResourceView,
+    GatewayBootstrapRuntimeInventoryView,
     GatewayBootstrapStatus,
     GatewayBootstrapUpdate,
     GatewayBootstrapView,
+    GatewayCapabilityBrowserLaneView,
+    GatewayCapabilityBrowserRuntimeView,
+    GatewayCapabilityMethodCatalogView,
+    GatewayCapabilityMethodScopeView,
     GatewayRouteBindingMode,
     InstanceView,
     OperatorView,
     ProjectView,
     SetupFlow,
     SetupMode,
+    SignalLevel,
     TaskBlueprintView,
     TeamView,
 )
@@ -23,6 +30,16 @@ from openzues.services.codex_rpc import extract_thread_id
 from openzues.services.device_bootstrap_profile import (
     default_device_bootstrap_profile,
     normalize_device_bootstrap_profile,
+)
+from openzues.services.gateway_method_policy import (
+    NODE_ROLE_GATEWAY_METHOD_SCOPE,
+    ORDERED_OPERATOR_SCOPES,
+    RESERVED_ADMIN_GATEWAY_METHOD_SCOPE,
+    build_known_gateway_method_catalog,
+    classify_gateway_methods,
+    is_node_role_gateway_method,
+    is_reserved_admin_gateway_method,
+    list_known_gateway_methods,
 )
 from openzues.services.hermes_runtime_profile import (
     executor_label,
@@ -58,6 +75,428 @@ def _resource_from_instance(instance: InstanceView | None) -> GatewayBootstrapRe
         label=instance.name,
         detail=detail,
         connected=instance.connected,
+    )
+
+
+def _runtime_entry_name(entry: object) -> str | None:
+    if isinstance(entry, dict):
+        value = entry.get("name") or entry.get("id") or entry.get("source")
+    else:
+        value = entry
+    name = str(value or "").strip()
+    return name or None
+
+
+def _runtime_plugin_status_name(entry: object) -> str | None:
+    if not isinstance(entry, dict):
+        return None
+    value = entry.get("source")
+    name = str(value or "").strip()
+    return name or None
+
+
+def _catalog_item_name(item: object) -> str | None:
+    if isinstance(item, str):
+        name = item.strip()
+        return name or None
+    if not isinstance(item, dict):
+        return None
+    for key in ("name", "id", "uri", "method", "title", "serviceId"):
+        raw = item.get(key)
+        if isinstance(raw, str) and raw.strip():
+            return raw.strip()
+    nested_service = item.get("service")
+    if isinstance(nested_service, dict):
+        for key in ("name", "id", "uri", "title"):
+            raw = nested_service.get(key)
+            if isinstance(raw, str) and raw.strip():
+                return raw.strip()
+    return None
+
+
+def _catalog_entry_names(value: Any) -> list[str]:
+    names: list[str] = []
+    if isinstance(value, list):
+        for item in value:
+            if name := _catalog_item_name(item):
+                names.append(name)
+        return names
+    if isinstance(value, dict):
+        for key in value:
+            name = str(key).strip()
+            if name:
+                names.append(name)
+    return names
+
+
+def _catalog_method_scope_entries(value: Any) -> list[tuple[str, str | None]]:
+    entries: list[tuple[str, str | None]] = []
+    if isinstance(value, list):
+        for item in value:
+            if isinstance(item, str) and item.strip():
+                entries.append((item.strip(), None))
+                continue
+            if not isinstance(item, dict):
+                continue
+            name: str | None = None
+            for key in ("name", "id", "uri", "method", "title"):
+                raw = item.get(key)
+                if isinstance(raw, str) and raw.strip():
+                    name = raw.strip()
+                    break
+            if name is None:
+                continue
+            raw_scope = item.get("scope")
+            scope = raw_scope.strip() if isinstance(raw_scope, str) and raw_scope.strip() else None
+            entries.append((name, scope))
+        return entries
+    if isinstance(value, dict):
+        for key, raw_scope in value.items():
+            name = str(key).strip()
+            if not name:
+                continue
+            scope = raw_scope.strip() if isinstance(raw_scope, str) and raw_scope.strip() else None
+            entries.append((name, scope))
+    return entries
+
+
+def _is_browser_runtime_name(value: str | None) -> bool:
+    text = str(value or "").strip().lower()
+    return bool(text) and "browser" in text
+
+
+def _build_runtime_method_catalog(
+    instance: InstanceView | None,
+    mcp_server_status: list[dict[str, Any]] | None,
+) -> GatewayCapabilityMethodCatalogView:
+    fallback_catalog = build_known_gateway_method_catalog()
+    if instance is None:
+        return fallback_catalog
+
+    tool_names = {method.lower(): method for method in fallback_catalog.tools}
+    server_names: dict[str, str] = {}
+    plugin_method_scopes: dict[str, str] = {}
+
+    for entry in mcp_server_status or []:
+        if not isinstance(entry, dict):
+            continue
+        tool_entries = _catalog_method_scope_entries(entry.get("tools"))
+        if not tool_entries:
+            continue
+        server_name = str(entry.get("name") or entry.get("source") or "MCP server").strip()
+        if not server_name:
+            server_name = "MCP server"
+        server_names.setdefault(server_name.lower(), server_name)
+        for tool_name, scope in tool_entries:
+            tool_names.setdefault(tool_name.lower(), tool_name)
+            if scope is not None:
+                plugin_method_scopes[tool_name.lower()] = scope
+
+    if not server_names:
+        return fallback_catalog
+
+    tools = sorted(tool_names.values(), key=str.lower)
+    servers = sorted(server_names.values(), key=str.lower)
+    classified_methods = classify_gateway_methods(
+        tools,
+        plugin_method_scopes=plugin_method_scopes,
+    )
+    scope_groups = [
+        GatewayCapabilityMethodScopeView(
+            scope=scope,
+            method_count=len(methods),
+            methods=methods,
+        )
+        for scope in ORDERED_OPERATOR_SCOPES
+        if (methods := classified_methods.get(scope))
+    ]
+    if node_methods := sorted(
+        (method for method in tools if is_node_role_gateway_method(method)),
+        key=str.lower,
+    ):
+        scope_groups.append(
+            GatewayCapabilityMethodScopeView(
+                scope=NODE_ROLE_GATEWAY_METHOD_SCOPE,
+                method_count=len(node_methods),
+                methods=node_methods,
+            )
+        )
+    reserved_tools = [method for method in tools if is_reserved_admin_gateway_method(method)]
+    extra_method_count = max(0, len(tools) - len(fallback_catalog.tools))
+    if extra_method_count:
+        headline = "Gateway method registry includes live plugin methods"
+        summary = (
+            f"{len(tools)} gateway method(s) are resolved for {instance.name}: "
+            f"{len(fallback_catalog.tools)} built-in method(s) plus {extra_method_count} "
+            f"plugin-published method(s) across {len(servers)} MCP server(s)."
+        )
+    else:
+        headline = "Gateway method registry is live"
+        summary = (
+            f"{len(tools)} staged gateway method(s) are confirmed on {instance.name} "
+            f"across {len(servers)} MCP server(s)."
+        )
+    if scope_groups:
+        scope_summary = ", ".join(f"{group.scope} {group.method_count}" for group in scope_groups)
+        summary += f" Scope coverage: {scope_summary}."
+    if reserved_tools:
+        summary += (
+            f" {len(reserved_tools)} reserved admin method(s) require "
+            f"{RESERVED_ADMIN_GATEWAY_METHOD_SCOPE}."
+        )
+    return GatewayCapabilityMethodCatalogView(
+        headline=headline,
+        summary=summary,
+        tool_count=len(tools),
+        server_count=len(servers),
+        lane_count=1,
+        classified_method_count=sum(group.method_count for group in scope_groups),
+        reserved_admin_method_count=len(reserved_tools),
+        reserved_admin_scope=(
+            RESERVED_ADMIN_GATEWAY_METHOD_SCOPE if reserved_tools else None
+        ),
+        tools=tools,
+        servers=servers,
+        reserved_admin_methods=reserved_tools,
+        scopes=scope_groups,
+    )
+
+
+def _build_runtime_browser_runtime(
+    instance: InstanceView | None,
+    mcp_server_status: list[dict[str, Any]] | None,
+    *,
+    plugin_names: list[str],
+    service_names: list[str],
+    resolved_methods: list[str],
+) -> GatewayCapabilityBrowserRuntimeView | None:
+    if instance is None:
+        return None
+
+    methods = sorted(
+        [
+            method_name
+            for method_name in resolved_methods
+            if _is_browser_runtime_name(method_name)
+            or method_name.lower().startswith("browser.")
+        ],
+        key=str.lower,
+    )
+    services = sorted(
+        [
+            service_name
+            for service_name in service_names
+            if _is_browser_runtime_name(service_name)
+        ],
+        key=str.lower,
+    )
+    plugins = sorted(
+        [plugin_name for plugin_name in plugin_names if _is_browser_runtime_name(plugin_name)],
+        key=str.lower,
+    )
+    servers = sorted(
+        {
+            server_name
+            for entry in mcp_server_status or []
+            if isinstance(entry, dict)
+            and _is_browser_runtime_name(
+                str(entry.get("name") or entry.get("id") or entry.get("source") or "")
+            )
+            and (
+                server_name := str(
+                    entry.get("name") or entry.get("id") or entry.get("source") or ""
+                ).strip()
+            )
+        },
+        key=str.lower,
+    )
+    ready = instance.connected and bool(methods) and bool(services)
+
+    if ready:
+        status: SignalLevel = "ready"
+        headline = "Browser runtime is live on the saved launch lane"
+        summary = (
+            f"{instance.name} publishes {len(methods)} browser method(s) and "
+            f"{len(services)} browser service(s) for the saved launch lane."
+        )
+        recommended_action = (
+            "Use this saved launch lane for browser-led verification and browser-control work."
+        )
+    elif methods or services or plugins or servers:
+        if instance.connected:
+            status = "warn"
+            headline = "Browser runtime is partial on the saved launch lane"
+            summary_parts: list[str] = []
+            if methods:
+                summary_parts.append(f"{len(methods)} method(s)")
+            if services:
+                summary_parts.append(f"{len(services)} service(s)")
+            if plugins:
+                summary_parts.append(f"{len(plugins)} plugin signal(s)")
+            if servers:
+                summary_parts.append(f"{len(servers)} MCP server signal(s)")
+            summary = (
+                f"{instance.name} publishes {', '.join(summary_parts)}, but the full "
+                "browser-control contract is not complete yet."
+            )
+            recommended_action = (
+                "Refresh the saved launch lane so browser methods and browser-control "
+                "services publish together before relying on it."
+            )
+        else:
+            status = "info"
+            headline = "Browser runtime is only visible on an offline saved lane"
+            summary = (
+                f"{instance.name} still advertises browser runtime signals, but the saved "
+                "launch lane is offline right now."
+            )
+            recommended_action = (
+                "Reconnect the saved launch lane before relying on browser-control parity."
+            )
+    else:
+        status = "info"
+        headline = "Browser runtime is not published on the saved launch lane"
+        summary = (
+            f"No browser methods, browser-control services, or browser plugin signals are "
+            f"published on {instance.name} right now."
+        )
+        recommended_action = (
+            "Enable or refresh the bundled browser runtime on the saved launch lane before "
+            "expecting OpenClaw-style browser control there."
+        )
+
+    if plugins:
+        summary += f" Plugin signals: {', '.join(plugins[:3])}."
+    if servers:
+        summary += f" MCP servers: {', '.join(servers[:3])}."
+
+    return GatewayCapabilityBrowserRuntimeView(
+        headline=headline,
+        summary=summary,
+        status=status,
+        lane_count=1,
+        connected_lane_count=1 if instance.connected else 0,
+        ready_lane_count=1 if ready else 0,
+        method_count=len(methods),
+        service_count=len(services),
+        plugin_count=len(plugins),
+        server_count=len(servers),
+        methods=methods,
+        services=services,
+        plugins=plugins,
+        servers=servers,
+        recommended_action=recommended_action,
+        lanes=[
+            GatewayCapabilityBrowserLaneView(
+                instance_id=instance.id,
+                instance_name=instance.name,
+                connected=instance.connected,
+                level=status,
+                ready=ready,
+                method_count=len(methods),
+                service_count=len(services),
+                methods=methods,
+                services=services,
+                plugins=plugins,
+                servers=servers,
+                summary=summary,
+            )
+        ],
+    )
+
+
+def _build_runtime_inventory(
+    instance: InstanceView | None,
+    mcp_server_status: list[dict[str, Any]] | None = None,
+) -> GatewayBootstrapRuntimeInventoryView:
+    base_method_catalog = build_known_gateway_method_catalog()
+    method_catalog = _build_runtime_method_catalog(instance, mcp_server_status)
+    app_names = sorted(
+        {
+            name
+            for entry in getattr(instance, "apps", []) or []
+            if (name := _runtime_entry_name(entry)) is not None
+        },
+        key=str.lower,
+    )
+    plugin_names = sorted(
+        {
+            name
+            for entry in getattr(instance, "plugins", []) or []
+            if (name := _runtime_entry_name(entry)) is not None
+        }
+        | {
+            name
+            for entry in mcp_server_status or []
+            if (name := _runtime_plugin_status_name(entry)) is not None
+        },
+        key=str.lower,
+    )
+    mcp_server_names = sorted(
+        {
+            name
+            for entry in getattr(instance, "mcp_servers", []) or []
+            if (name := _runtime_entry_name(entry)) is not None
+        },
+        key=str.lower,
+    )
+    service_names = sorted(
+        {
+            name
+            for entry in mcp_server_status or []
+            if isinstance(entry, dict)
+            for name in _catalog_entry_names(entry.get("services"))
+        },
+        key=str.lower,
+    )
+    base_methods = list(base_method_catalog.tools or list_known_gateway_methods())
+    resolved_methods = list(method_catalog.tools or base_methods)
+    browser_runtime = _build_runtime_browser_runtime(
+        instance,
+        mcp_server_status,
+        plugin_names=plugin_names,
+        service_names=service_names,
+        resolved_methods=resolved_methods,
+    )
+    lane_label = instance.name if instance is not None else "the saved launch route"
+    if instance is None:
+        headline = "Gateway runtime inventory is waiting for a lane"
+        summary = (
+            f"{len(base_methods)} base gateway method(s) are staged locally, "
+            "but no launch lane is resolved yet."
+        )
+    else:
+        headline = "Gateway runtime inventory is staged"
+        method_summary = (
+            f"{len(resolved_methods)} resolved gateway method(s) are available for {lane_label}: "
+            f"{len(base_methods)} built in and "
+            f"{max(0, len(resolved_methods) - len(base_methods))} plugin-published."
+            if len(resolved_methods) > len(base_methods)
+            else f"{len(base_methods)} base gateway method(s) are registered locally."
+        )
+        summary = (
+            f"{len(app_names)} app(s), {len(plugin_names)} plugin(s), "
+            f"{len(service_names)} service(s), and "
+            f"{len(mcp_server_names)} MCP server(s) are visible on {lane_label}. "
+            f"{method_summary}"
+        )
+    return GatewayBootstrapRuntimeInventoryView(
+        headline=headline,
+        summary=summary,
+        app_count=len(app_names),
+        plugin_count=len(plugin_names),
+        mcp_server_count=len(mcp_server_names),
+        service_count=len(service_names),
+        base_method_count=len(base_methods),
+        resolved_method_count=len(resolved_methods),
+        app_names=app_names,
+        plugin_names=plugin_names,
+        mcp_server_names=mcp_server_names,
+        service_names=service_names,
+        base_methods=base_methods,
+        resolved_methods=resolved_methods,
+        method_catalog=method_catalog,
+        browser_runtime=browser_runtime,
     )
 
 
@@ -501,6 +940,36 @@ class GatewayBootstrapService:
             if self.launch_routing is not None
             else None
         )
+        runtime_instance = instance or (
+            instances.get(int(launch_route.resolved_instance.id))
+            if launch_route is not None and launch_route.resolved_instance is not None
+            else None
+        )
+        runtime_status: list[dict[str, Any]] | None = None
+        if runtime_instance is not None:
+            runtime = None
+            manager_get = getattr(self.manager, "get", None)
+            if callable(manager_get):
+                try:
+                    runtime = await manager_get(runtime_instance.id)
+                except KeyError:
+                    runtime = None
+            if runtime_status is None:
+                if runtime is not None:
+                    runtime_status = [dict(item) for item in runtime.mcp_server_status]
+            if runtime_status is None:
+                try:
+                    runtime_status = await self.manager.list_mcp_server_status(
+                        runtime_instance.id,
+                        limit=50,
+                        refresh=False,
+                    )
+                except TimeoutError:
+                    runtime_status = []
+        runtime_inventory = _build_runtime_inventory(
+            runtime_instance,
+            runtime_status,
+        )
         return GatewayBootstrapView(
             status=status,
             headline=headline,
@@ -533,6 +1002,7 @@ class GatewayBootstrapService:
             tool_policy=tool_policy,
             launch_defaults_summary=launch_defaults_summary,
             launch_route=launch_route,
+            runtime_inventory=runtime_inventory,
         )
 
     async def save(self, payload: GatewayBootstrapUpdate) -> GatewayBootstrapView:

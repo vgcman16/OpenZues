@@ -7428,3 +7428,799 @@ Next best slice:
 - Next exact step:
   - inspect the subscriber/runtime delivery gap next, because the core metadata-backed lifecycle trio (`sessions.create`, `sessions.reset`, `sessions.delete`) is now real enough that the remaining obvious parity mismatch is still the stateless subscribe/unsubscribe surface.
 
+### Recovery addendum 2026-04-18 connection-scoped session subscriptions plus widened sessionId resolve parity America/Chicago
+
+- Closed the next live session/runtime mismatch after the metadata-backed lifecycle trio:
+  - `sessions.subscribe` and `sessions.unsubscribe` now register real client-scoped lifecycle subscriptions when the caller supplies a transport identity, instead of only returning stateless acknowledgement payloads.
+  - `sessions.messages.subscribe` and `sessions.messages.unsubscribe` now register real client-scoped transcript subscriptions keyed to canonical session aliases, so `/ws` delivery is filtered to the requested session instead of broadcasting all transcript events to every subscriber.
+  - the `/ws` gateway path now accepts the same client identity (`clientId` query or `X-OpenZues-Client-Id` header) and binds that subscriber to the same `BroadcastHub` routing state used by the HTTP node-method call path.
+- Kept the scope intentionally honest:
+  - this is still OpenZues-local subscription delivery on top of the existing control-plane event hub, not a claim that OpenZues now owns OpenClaw's full multi-client runtime/session store.
+  - callers that do not supply a transport identity still receive the bounded stateless acknowledgement shape rather than pretending there is an implicit connection registry.
+  - non-session gateway events remain broadcast as before; only `sessions.changed` and `session.message` were tightened to client-scoped delivery.
+- Widened `sessions.resolve(sessionId=...)` to match more of the session surface OpenZues already owns:
+  - metadata-known thread sessions can now resolve by `sessionId`, not just by `key`, `label`, or `spawnedBy`.
+  - mission-backed sessions can now resolve by `sessionId` through the existing SQLite mission history even when they are not the current control-chat session.
+  - duplicate `sessionId` matches now deterministically prefer the freshest known mission row in the current bounded OpenZues scan order, and that rule is now explicitly tested instead of being accidental.
+- Primary files carrying this slice:
+  - `src/openzues/services/hub.py`
+  - `src/openzues/services/gateway_node_methods.py`
+  - `src/openzues/services/gateway_sessions.py`
+  - `src/openzues/app.py`
+- Added focused regression proof in:
+  - [tests/test_gateway_node_methods.py](C:\Users\skull\OneDrive\Documents\OpenZues\tests\test_gateway_node_methods.py)
+    - `test_sessions_messages_subscribe_filters_by_client_id`
+    - `test_sessions_subscribe_registers_client_scoped_filter_when_client_id_present`
+    - `test_sessions_resolve_supports_metadata_known_session_id_lookup`
+    - `test_sessions_resolve_supports_mission_backed_session_id_lookup`
+    - `test_sessions_resolve_prefers_freshest_mission_for_duplicate_session_id`
+  - [tests/test_gateway_nodes_api.py](C:\Users\skull\OneDrive\Documents\OpenZues\tests\test_gateway_nodes_api.py)
+    - `test_sessions_messages_subscribe_api_filters_websocket_delivery_by_client_id`
+    - `test_sessions_subscribe_api_filters_websocket_delivery_by_client_id`
+    - `test_gateway_node_method_call_endpoint_supports_sessions_resolve_by_session_id`
+- Verified the slice with:
+  - `& '.\.venv\Scripts\ruff.exe' check src/openzues/services/hub.py src/openzues/services/gateway_node_methods.py src/openzues/services/gateway_sessions.py src/openzues/app.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `& '.\.venv\Scripts\python.exe' -m mypy src/openzues/services/hub.py src/openzues/services/gateway_node_methods.py src/openzues/services/gateway_sessions.py`
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py -k "sessions_create or sessions_reset or sessions_delete or sessions_list or sessions_resolve or sessions_patch or sessions_get or chat_history or subscribe" -q`
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_nodes_api.py -k "sessions_create or sessions_reset or sessions_delete or sessions_list or supports_sessions_resolve or sessions_patch or supports_sessions_get or supports_chat_history or filters_sessions_get_by_session_key or subscribe" -q`
+- Result:
+  - Ruff stayed clean.
+  - `src/openzues/services/hub.py`, `src/openzues/services/gateway_node_methods.py`, and `src/openzues/services/gateway_sessions.py` type-checked cleanly.
+  - the broader service gateway-session slice passed (`23 passed`).
+  - the broader API gateway-session slice passed (`22 passed`).
+- Remaining honest blockers after this slice:
+  - OpenZues still does not expose transcript archival outputs for deleted sessions, so `sessions.delete` still returns `archived: []`.
+  - `sessions.resolve(sessionId=...)` is still bounded to metadata-known and mission-known session surfaces rather than a full OpenClaw session-store walker.
+  - session subscriptions are now client-scoped on the local hub, but they are not yet backed by a broader multi-process/shared gateway runtime.
+- Next exact step:
+  - land one bounded archival/tombstone proof for `sessions.delete` so metadata-backed session deletion can return a concrete archived transcript reference instead of always reporting an empty `archived` array.
+
+### Recovery addendum 2026-04-18 bounded sessions.delete archive artifact parity America/Chicago
+
+- Closed the next exact step from the prior addendum by making `sessions.delete` return a real archive reference for deleted SQLite-backed control-chat transcripts:
+  - when a metadata-backed session is deleted with transcript removal enabled, OpenZues now writes the deleted session transcript rows to a JSONL artifact under `gateway-session-archives/` beside the SQLite database before removing the live rows.
+  - `sessions.delete` now returns that absolute archive path in `archived` instead of always reporting `[]`.
+  - the archived artifact records the deleted session's `sessionKey`, `role`, `content`, `createdAt`, `missionId`, and delete reason in stable line-delimited JSON so the returned path is actually inspectable evidence, not a fake placeholder.
+- Kept the scope intentionally honest:
+  - this is a bounded SQLite transcript archive for the OpenZues control-chat surface, not OpenClaw's full transcript-file/session-store archival runtime.
+  - mission-backed sessions are still reported as `deleted: false` rather than pretending OpenZues can archive richer runtime-owned evidence it does not control.
+  - deletion still remains local-process and control-plane scoped; this does not claim multi-host retention, pruning, or archive cleanup policy yet.
+- Primary file carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+- Tightened regression proof in:
+  - [tests/test_gateway_node_methods.py](C:\Users\skull\OneDrive\Documents\OpenZues\tests\test_gateway_node_methods.py)
+    - `test_sessions_delete_removes_metadata_backed_session_and_transcript`
+  - [tests/test_gateway_nodes_api.py](C:\Users\skull\OneDrive\Documents\OpenZues\tests\test_gateway_nodes_api.py)
+    - `test_gateway_node_method_call_endpoint_sessions_delete_removes_metadata_session`
+    - `test_sessions_subscribe_api_filters_websocket_delivery_by_client_id`
+- Verified the slice with:
+  - `& '.\.venv\Scripts\ruff.exe' check src/openzues/services/hub.py src/openzues/services/gateway_node_methods.py src/openzues/services/gateway_sessions.py src/openzues/app.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `& '.\.venv\Scripts\python.exe' -m mypy src/openzues/services/hub.py src/openzues/services/gateway_node_methods.py src/openzues/services/gateway_sessions.py`
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py -k "sessions_create or sessions_reset or sessions_delete or sessions_list or sessions_resolve or sessions_patch or sessions_get or chat_history or subscribe" -q`
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_nodes_api.py -k "sessions_create or sessions_reset or sessions_delete or sessions_list or supports_sessions_resolve or sessions_patch or supports_sessions_get or supports_chat_history or filters_sessions_get_by_session_key or subscribe" -q`
+- Result:
+  - Ruff stayed clean.
+  - `src/openzues/services/hub.py`, `src/openzues/services/gateway_node_methods.py`, and `src/openzues/services/gateway_sessions.py` type-checked cleanly.
+  - the broader service gateway-session slice passed (`23 passed`).
+  - the broader API gateway-session slice passed (`22 passed`).
+- Remaining honest blockers after this slice:
+  - `sessions.resolve(sessionId=...)` is still bounded to metadata-known and mission-known session surfaces rather than a full OpenClaw session-store walker.
+  - session subscriptions are client-scoped on the local hub, but they are not yet backed by a broader multi-process/shared gateway runtime.
+  - archive cleanup and retention policy are not implemented yet; OpenZues now produces archive artifacts, but it does not yet manage their lifecycle.
+- Next exact step:
+  - decide whether the next smallest honest parity seam is archive lifecycle management for these new `sessions.delete` artifacts, or a broader shared-runtime upgrade for client-scoped session subscriptions beyond the local in-process hub.
+
+### Recovery addendum 2026-04-18 delete-archive retention cleanup parity America/Chicago
+
+- Closed the archive lifecycle gap left by the prior delete-artifact slice:
+  - every successful metadata-backed `sessions.delete` archive now runs a bounded cleanup pass over `gateway-session-archives/`.
+  - stale delete archives older than 30 days are pruned during the same delete flow, matching the upstream OpenClaw default retention shape for archived session artifacts.
+  - recent delete archives are preserved, and unrelated files in the archive directory are ignored.
+- Kept the scope intentionally honest:
+  - retention is currently a fixed OpenZues default aligned with OpenClaw's default 30-day posture; it is not yet user-configurable.
+  - cleanup only understands the OpenZues delete-archive filename shape for `deleted` transcript artifacts.
+  - this is local file cleanup, not a broader archive catalog, quota manager, or cross-host retention service.
+- Primary file carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+- Tightened regression proof in:
+  - [tests/test_gateway_node_methods.py](C:\Users\skull\OneDrive\Documents\OpenZues\tests\test_gateway_node_methods.py)
+    - `test_sessions_delete_removes_metadata_backed_session_and_transcript`
+  - [tests/test_gateway_nodes_api.py](C:\Users\skull\OneDrive\Documents\OpenZues\tests\test_gateway_nodes_api.py)
+    - `test_gateway_node_method_call_endpoint_sessions_delete_removes_metadata_session`
+- Verified the slice with:
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py::test_sessions_delete_removes_metadata_backed_session_and_transcript tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_sessions_delete_removes_metadata_session -q`
+  - `& '.\.venv\Scripts\ruff.exe' check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `& '.\.venv\Scripts\python.exe' -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused delete-retention pair passed (`2 passed`).
+  - Ruff stayed clean.
+  - `src/openzues/services/gateway_node_methods.py` type-checked cleanly.
+
+### Recovery addendum 2026-04-18 transcript-backed sessionId resolve parity America/Chicago
+
+- Closed another bounded `sessions.resolve(sessionId=...)` gap without inventing a richer session store:
+  - OpenZues now scans distinct control-chat transcript session keys in freshest-first order when metadata and mission state do not already resolve the requested `sessionId`.
+  - transcript-only thread sessions can now resolve by `sessionId` even when they have no metadata row and no mission row yet.
+  - this keeps the exact-match sessionId path moving closer to OpenClaw's session-store-backed behavior while staying grounded in evidence OpenZues already owns.
+- Kept the scope intentionally honest:
+  - this is still not a full OpenClaw session-store walker; it only widens lookup to metadata-known, mission-known, and transcript-known session surfaces.
+  - transcript-backed matching currently depends on thread-shaped session keys that encode the thread id; it does not claim arbitrary historical file scanning or external store discovery.
+- Primary files carrying this slice:
+  - `src/openzues/database.py`
+  - `src/openzues/services/gateway_sessions.py`
+- Added focused regression proof in:
+  - [tests/test_gateway_node_methods.py](C:\Users\skull\OneDrive\Documents\OpenZues\tests\test_gateway_node_methods.py)
+    - `test_sessions_resolve_supports_transcript_only_session_id_lookup`
+  - [tests/test_gateway_nodes_api.py](C:\Users\skull\OneDrive\Documents\OpenZues\tests\test_gateway_nodes_api.py)
+    - `test_gateway_node_method_call_endpoint_supports_sessions_resolve_by_transcript_only_session_id`
+- Verified the slice with:
+  - `& '.\.venv\Scripts\ruff.exe' check src/openzues/database.py src/openzues/services/gateway_sessions.py src/openzues/services/gateway_node_methods.py src/openzues/services/hub.py src/openzues/app.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `& '.\.venv\Scripts\python.exe' -m mypy src/openzues/database.py src/openzues/services/gateway_sessions.py src/openzues/services/gateway_node_methods.py`
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py -k "sessions_create or sessions_reset or sessions_delete or sessions_list or sessions_resolve or sessions_patch or sessions_get or chat_history or subscribe" -q`
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_nodes_api.py -k "sessions_create or sessions_reset or sessions_delete or sessions_list or supports_sessions_resolve or sessions_patch or supports_sessions_get or supports_chat_history or filters_sessions_get_by_session_key or subscribe" -q`
+- Result:
+  - Ruff stayed clean.
+  - `src/openzues/database.py`, `src/openzues/services/gateway_sessions.py`, and `src/openzues/services/gateway_node_methods.py` type-checked cleanly.
+  - the broader service gateway-session slice passed (`24 passed`).
+  - the broader API gateway-session slice passed (`23 passed`).
+- Remaining honest blockers after this slice:
+  - `sessions.resolve(sessionId=...)` is still bounded to metadata-known, mission-known, and transcript-known session surfaces rather than a full OpenClaw session-store walker.
+  - session subscriptions are client-scoped on the local hub, but they are not yet backed by a broader multi-process/shared gateway runtime.
+  - archive retention is now real, but it is still fixed rather than operator-configurable.
+- Next exact step:
+  - pick the next smallest honest seam between a broader shared-runtime upgrade for client-scoped session subscriptions beyond the local in-process hub, or another bounded session discovery increment that closes more of the remaining session-store gap without over-claiming file-backed parity.
+
+### Recovery addendum 2026-04-18 sessions.resolve visibility-filter parity America/Chicago
+
+- Closed two adjacent `sessions.resolve` visibility gaps without pretending OpenZues now owns OpenClaw's full session-store runtime:
+  - direct `sessions.resolve(key=..., spawnedBy=...)` now verifies that the resolved session is actually visible through the requested `spawnedBy` filter instead of failing early with `unknown spawnedBy` before the selected key is checked.
+  - non-key `sessions.resolve` selectors now respect `includeGlobal: false` for the global control session, so label-based and sessionId-based resolution no longer leak the main control session when the caller explicitly excludes global visibility.
+- Kept the scope intentionally honest:
+  - key-based resolution still does not apply `includeGlobal` or `includeUnknown`, which matches the upstream OpenClaw resolver path.
+  - `includeUnknown` is still only partially meaningful in OpenZues because there is no dedicated OpenClaw-style `unknown` session store surface behind the local control-chat inventory yet.
+  - OpenZues still supports extra local selectors such as agent-only and spawnedBy-only resolution; this slice only tightened their visibility semantics where the behavior was already concrete enough to prove.
+- Primary file carrying the product change:
+  - `src/openzues/services/gateway_sessions.py`
+- Added focused regression proof in:
+  - [tests/test_gateway_node_methods.py](C:\Users\skull\OneDrive\Documents\OpenZues\tests\test_gateway_node_methods.py)
+    - `test_sessions_resolve_by_key_respects_spawned_by_filter`
+    - `test_sessions_resolve_hides_current_session_label_when_global_is_excluded`
+    - `test_sessions_resolve_hides_global_session_id_when_global_is_excluded`
+  - [tests/test_gateway_nodes_api.py](C:\Users\skull\OneDrive\Documents\OpenZues\tests\test_gateway_nodes_api.py)
+    - `test_gateway_node_method_call_endpoint_sessions_resolve_by_key_respects_spawned_by_filter`
+    - `test_gateway_node_method_call_endpoint_hides_current_session_label_when_global_is_excluded`
+    - `test_gateway_node_method_call_endpoint_hides_global_session_id_when_global_is_excluded`
+- Verified the slice with:
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py::test_sessions_resolve_hides_current_session_label_when_global_is_excluded tests/test_gateway_node_methods.py::test_sessions_resolve_hides_global_session_id_when_global_is_excluded tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_hides_current_session_label_when_global_is_excluded tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_hides_global_session_id_when_global_is_excluded -q`
+  - `& '.\.venv\Scripts\ruff.exe' check src/openzues/services/gateway_sessions.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py -k "sessions_resolve or sessions_patch or sessions_list or sessions_get or chat_history or subscribe" -q`
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_nodes_api.py -k "supports_sessions_resolve or sessions_patch or supports_sessions_get or supports_chat_history or filters_sessions_get_by_session_key or subscribe" -q`
+  - `& '.\.venv\Scripts\python.exe' -m mypy src/openzues/services/gateway_sessions.py src/openzues/services/gateway_node_methods.py src/openzues/database.py`
+- Result:
+  - the focused visibility quartet passed (`4 passed`).
+  - Ruff stayed clean.
+  - the broader service gateway-session slice passed (`24 passed`).
+  - the broader API gateway-session slice passed (`18 passed`).
+  - `src/openzues/services/gateway_sessions.py`, `src/openzues/services/gateway_node_methods.py`, and `src/openzues/database.py` type-checked cleanly.
+- Remaining honest blockers after this slice:
+  - `sessions.resolve(sessionId=...)` is still bounded to metadata-known, mission-known, and transcript-known session surfaces rather than a full OpenClaw session-store walker.
+  - OpenZues still lacks a dedicated `unknown` session inventory surface, so `includeUnknown` parity is not end-to-end yet.
+  - session subscriptions are client-scoped on the local hub, but they are not yet backed by a broader multi-process/shared gateway runtime.
+- Next exact step:
+  - land the next smallest honest session-inventory seam by deciding whether to add a bounded `unknown` session surface, or to keep narrowing the remaining session-store gap with another exact resolver behavior OpenClaw already proves in code.
+
+### Recovery addendum 2026-04-18 sessions.list includeUnknown visibility parity America/Chicago
+
+- Closed the adjacent list-inventory gap left behind by the resolver work:
+  - `sessions.list` now honors `includeUnknown: false` for the exact `unknown` session key instead of always surfacing that row when it exists in local gateway session metadata.
+  - callers can still opt back in with `includeUnknown: true`, so the list surface now matches the same visibility rule already enforced by the bounded resolver path.
+- Kept the scope intentionally honest:
+  - this only covers the exact `unknown` session key inside OpenZues' local control-chat inventory.
+  - OpenZues still does not have a richer OpenClaw-style unknown-session store, fuzzy unknown-session discovery, or a broader external session catalog.
+  - channel keys that merely contain the word `unknown` as part of a larger structured key are not treated as the dedicated OpenClaw `unknown` surface.
+- Primary file carrying the product change:
+  - `src/openzues/services/gateway_sessions.py`
+- Added focused regression proof in:
+  - [tests/test_gateway_node_methods.py](C:\Users\skull\OneDrive\Documents\OpenZues\tests\test_gateway_node_methods.py)
+    - `test_sessions_list_hides_unknown_session_unless_explicitly_requested`
+  - [tests/test_gateway_nodes_api.py](C:\Users\skull\OneDrive\Documents\OpenZues\tests\test_gateway_nodes_api.py)
+    - `test_gateway_node_method_call_endpoint_sessions_list_hides_unknown_session_unless_requested`
+- Verified the slice with:
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py::test_sessions_list_hides_unknown_session_unless_explicitly_requested tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_sessions_list_hides_unknown_session_unless_requested -q`
+  - `& '.\.venv\Scripts\ruff.exe' check src/openzues/services/gateway_sessions.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py -k "sessions_list or sessions_resolve or sessions_patch or sessions_get or chat_history or subscribe" -q`
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_nodes_api.py -k "sessions_list or supports_sessions_resolve or sessions_patch or supports_sessions_get or supports_chat_history or filters_sessions_get_by_session_key or subscribe" -q`
+  - `& '.\.venv\Scripts\python.exe' -m mypy src/openzues/services/gateway_sessions.py src/openzues/services/gateway_node_methods.py src/openzues/database.py`
+- Result:
+  - the focused unknown-list pair passed (`2 passed`).
+  - Ruff stayed clean.
+  - the broader service gateway-session slice passed (`25 passed`).
+  - the broader API gateway-session slice passed (`21 passed`).
+  - `src/openzues/services/gateway_sessions.py`, `src/openzues/services/gateway_node_methods.py`, and `src/openzues/database.py` type-checked cleanly.
+- Remaining honest blockers after this slice:
+  - `sessions.resolve(sessionId=...)` is still bounded to metadata-known, mission-known, and transcript-known session surfaces rather than a full OpenClaw session-store walker.
+  - OpenZues still lacks a richer unknown-session runtime beyond the exact `unknown` key shape.
+  - session subscriptions are client-scoped on the local hub, but they are not yet backed by a broader multi-process/shared gateway runtime.
+
+### Recovery addendum 2026-04-18 sessions.list metadata-filter parity America/Chicago
+
+- Closed another small but real gateway-session parity gap:
+  - `sessions.list` now accepts `label` and `spawnedBy` filters instead of rejecting them at the node-method boundary.
+  - those filters now flow through the bounded OpenZues control-chat inventory and return only sessions whose metadata actually matches the requested label or parent-session relationship.
+  - the new list behavior lines up with the same metadata semantics already supported by the local `sessions.resolve` slice, so list and resolve no longer disagree on the same session metadata.
+- Kept the scope intentionally honest:
+  - filtering is still limited to OpenZues' local control-chat inventory and gateway session metadata rows, not a full OpenClaw session-store catalog.
+  - `agentId`, `search`, `activeMinutes`, `includeDerivedTitles`, and `includeLastMessage` are still outside this bounded list slice.
+  - `spawnedBy` filtering depends on stored session metadata; it does not yet infer parentage from a richer runtime session graph.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `src/openzues/services/gateway_sessions.py`
+- Added focused regression proof in:
+  - [tests/test_gateway_node_methods.py](C:\Users\skull\OneDrive\Documents\OpenZues\tests\test_gateway_node_methods.py)
+    - `test_sessions_list_supports_label_and_spawned_by_filters`
+  - [tests/test_gateway_nodes_api.py](C:\Users\skull\OneDrive\Documents\OpenZues\tests\test_gateway_nodes_api.py)
+    - `test_gateway_node_method_call_endpoint_sessions_list_supports_label_and_spawned_by_filters`
+- Verified the slice with:
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py::test_sessions_list_supports_label_and_spawned_by_filters tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_sessions_list_supports_label_and_spawned_by_filters -q`
+  - `& '.\.venv\Scripts\ruff.exe' check src/openzues/services/gateway_node_methods.py src/openzues/services/gateway_sessions.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py -k "sessions_list or sessions_resolve or sessions_patch or sessions_get or chat_history or subscribe" -q`
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_nodes_api.py -k "sessions_list or supports_sessions_resolve or sessions_patch or supports_sessions_get or supports_chat_history or filters_sessions_get_by_session_key or subscribe" -q`
+  - `& '.\.venv\Scripts\python.exe' -m mypy src/openzues/services/gateway_sessions.py src/openzues/services/gateway_node_methods.py src/openzues/database.py`
+- Result:
+  - the focused list-filter pair passed (`2 passed`).
+  - Ruff stayed clean.
+  - the broader service gateway-session slice passed (`26 passed`).
+  - the broader API gateway-session slice passed (`22 passed`).
+  - `src/openzues/services/gateway_sessions.py`, `src/openzues/services/gateway_node_methods.py`, and `src/openzues/database.py` type-checked cleanly.
+- Remaining honest blockers after this slice:
+  - `sessions.resolve(sessionId=...)` is still bounded to metadata-known, mission-known, and transcript-known session surfaces rather than a full OpenClaw session-store walker.
+  - OpenZues still lacks a richer unknown-session runtime beyond the exact `unknown` key shape.
+  - `sessions.list` still does not cover upstream filters like `agentId`, `search`, `activeMinutes`, `includeDerivedTitles`, or `includeLastMessage`.
+
+### Recovery addendum 2026-04-18 sessions.list agentId parity America/Chicago
+
+- Closed the next smallest list-contract gap after metadata filters:
+  - `sessions.list` now accepts `agentId` instead of rejecting it at the node-method boundary.
+  - the bounded OpenZues control-chat inventory now honors `agentId: "main"` and continues to reject unknown agent ids with the same explicit error shape already used by nearby gateway methods.
+  - the dedicated exact `unknown` session key is kept out of the `main` agent inventory view, which keeps the new agent filter aligned with the local unknown-session visibility slice.
+- Kept the scope intentionally honest:
+  - this is still a bounded single-agent OpenZues control-plane implementation, not a full multi-agent OpenClaw session-store catalog.
+  - only `main` is meaningful today because the local gateway session inventory is still control-chat scoped.
+  - this slice does not claim parity for richer upstream list filters like `search`, `activeMinutes`, `includeDerivedTitles`, or `includeLastMessage`.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `src/openzues/services/gateway_sessions.py`
+- Added focused regression proof in:
+  - [tests/test_gateway_node_methods.py](C:\Users\skull\OneDrive\Documents\OpenZues\tests\test_gateway_node_methods.py)
+    - `test_sessions_list_supports_agent_id_filter`
+  - [tests/test_gateway_nodes_api.py](C:\Users\skull\OneDrive\Documents\OpenZues\tests\test_gateway_nodes_api.py)
+    - `test_gateway_node_method_call_endpoint_sessions_list_supports_agent_id_filter`
+- Verified the slice with:
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py::test_sessions_list_supports_agent_id_filter tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_sessions_list_supports_agent_id_filter -q`
+  - `& '.\.venv\Scripts\ruff.exe' check src/openzues/services/gateway_node_methods.py src/openzues/services/gateway_sessions.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py -k "sessions_list or sessions_resolve or sessions_patch or sessions_get or chat_history or subscribe" -q`
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_nodes_api.py -k "sessions_list or supports_sessions_resolve or sessions_patch or supports_sessions_get or supports_chat_history or filters_sessions_get_by_session_key or subscribe" -q`
+  - `& '.\.venv\Scripts\python.exe' -m mypy src/openzues/services/gateway_sessions.py src/openzues/services/gateway_node_methods.py src/openzues/database.py`
+- Result:
+  - the focused agentId pair passed (`2 passed`).
+  - Ruff stayed clean.
+  - the broader service gateway-session slice passed (`27 passed`).
+  - the broader API gateway-session slice passed (`23 passed`).
+  - `src/openzues/services/gateway_sessions.py`, `src/openzues/services/gateway_node_methods.py`, and `src/openzues/database.py` type-checked cleanly.
+- Remaining honest blockers after this slice:
+  - `sessions.resolve(sessionId=...)` is still bounded to metadata-known, mission-known, and transcript-known session surfaces rather than a full OpenClaw session-store walker.
+  - OpenZues still lacks a richer unknown-session runtime beyond the exact `unknown` key shape.
+  - `sessions.list` still does not cover upstream filters like `search`, `activeMinutes`, `includeDerivedTitles`, or `includeLastMessage`.
+
+### Recovery addendum 2026-04-18 sessions.list activeMinutes parity America/Chicago
+
+- Closed the next low-risk list-filter gap:
+  - `sessions.list` now accepts `activeMinutes` instead of rejecting it at the node-method boundary.
+  - the bounded OpenZues control-chat inventory now filters assembled session rows by their computed `updatedAt` timestamp using the same basic cutoff rule as upstream.
+  - the filter runs before `limit`, so stale rows do not crowd out fresher sessions just because they were enumerated earlier.
+- Kept the scope intentionally honest:
+  - this is still bounded to OpenZues' computed control-chat `updatedAt` values, not a richer OpenClaw transcript/file-backed freshness model.
+  - OpenZues does not yet sort the inventory with the same broader upstream session-store ordering machinery; this slice only closes the time-window filter itself.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `src/openzues/services/gateway_sessions.py`
+- Added focused regression proof in:
+  - [tests/test_gateway_node_methods.py](C:\Users\skull\OneDrive\Documents\OpenZues\tests\test_gateway_node_methods.py)
+    - `test_sessions_list_supports_active_minutes_filter`
+  - [tests/test_gateway_nodes_api.py](C:\Users\skull\OneDrive\Documents\OpenZues\tests\test_gateway_nodes_api.py)
+    - `test_gateway_node_method_call_endpoint_sessions_list_supports_active_minutes_filter`
+- Verified the slice with:
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py::test_sessions_list_supports_active_minutes_filter tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_sessions_list_supports_active_minutes_filter -q`
+  - `& '.\.venv\Scripts\ruff.exe' check src/openzues/services/gateway_node_methods.py src/openzues/services/gateway_sessions.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py -k "sessions_list or sessions_resolve or sessions_patch or sessions_get or chat_history or subscribe" -q`
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_nodes_api.py -k "sessions_list or supports_sessions_resolve or sessions_patch or supports_sessions_get or supports_chat_history or filters_sessions_get_by_session_key or subscribe" -q`
+  - `& '.\.venv\Scripts\python.exe' -m mypy src/openzues/services/gateway_sessions.py src/openzues/services/gateway_node_methods.py src/openzues/database.py`
+- Result:
+  - the focused active-minutes pair passed (`2 passed`).
+  - Ruff stayed clean.
+  - the broader service gateway-session slice passed (`28 passed`).
+  - the broader API gateway-session slice passed (`24 passed`).
+  - `src/openzues/services/gateway_sessions.py`, `src/openzues/services/gateway_node_methods.py`, and `src/openzues/database.py` type-checked cleanly.
+
+### Recovery addendum 2026-04-18 sessions.list search parity America/Chicago
+
+- Closed another upstream-proven list-filter gap right after `activeMinutes`:
+  - `sessions.list` now accepts `search` instead of rejecting it at the gateway boundary.
+  - the bounded OpenZues control-chat inventory now performs case-insensitive matching across the same core row fields upstream uses for basic search: `displayName`, `label`, `subject`, `sessionId`, and `key`.
+  - this gives local parity for the basic search contract without claiming transcript-derived previews or title extraction yet.
+- Kept the scope intentionally honest:
+  - search is still limited to fields already present in the assembled OpenZues session rows.
+  - OpenZues does not yet implement upstream transcript-derived list enrichments like `includeDerivedTitles` or `includeLastMessage`, so search cannot match data that is not yet surfaced locally.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `src/openzues/services/gateway_sessions.py`
+- Added focused regression proof in:
+  - [tests/test_gateway_node_methods.py](C:\Users\skull\OneDrive\Documents\OpenZues\tests\test_gateway_node_methods.py)
+    - `test_sessions_list_supports_search_filter`
+  - [tests/test_gateway_nodes_api.py](C:\Users\skull\OneDrive\Documents\OpenZues\tests\test_gateway_nodes_api.py)
+    - `test_gateway_node_method_call_endpoint_sessions_list_supports_search_filter`
+- Verified the slice with:
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py::test_sessions_list_supports_search_filter tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_sessions_list_supports_search_filter -q`
+  - `& '.\.venv\Scripts\ruff.exe' check src/openzues/services/gateway_node_methods.py src/openzues/services/gateway_sessions.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py -k "sessions_list or sessions_resolve or sessions_patch or sessions_get or chat_history or subscribe" -q`
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_nodes_api.py -k "sessions_list or supports_sessions_resolve or sessions_patch or supports_sessions_get or supports_chat_history or filters_sessions_get_by_session_key or subscribe" -q`
+  - `& '.\.venv\Scripts\python.exe' -m mypy src/openzues/services/gateway_sessions.py src/openzues/services/gateway_node_methods.py src/openzues/database.py`
+- Result:
+  - the focused search pair passed (`2 passed`).
+  - Ruff stayed clean.
+  - the broader service gateway-session slice passed (`29 passed`).
+  - the broader API gateway-session slice passed (`25 passed`).
+  - `src/openzues/services/gateway_sessions.py`, `src/openzues/services/gateway_node_methods.py`, and `src/openzues/database.py` type-checked cleanly.
+- Remaining honest blockers after these slices:
+  - `sessions.resolve(sessionId=...)` is still bounded to metadata-known, mission-known, and transcript-known session surfaces rather than a full OpenClaw session-store walker.
+  - OpenZues still lacks a richer unknown-session runtime beyond the exact `unknown` key shape.
+  - `sessions.list` still does not cover transcript-derived enrichments like `includeDerivedTitles` and `includeLastMessage`.
+
+### Recovery addendum 2026-04-18 sessions.list includeLastMessage parity America/Chicago
+
+- Closed one of the remaining transcript-derived list enrichments:
+  - `sessions.list` now accepts `includeLastMessage` instead of rejecting it at the node-method boundary.
+  - when explicitly requested, the bounded OpenZues control-chat inventory now adds `lastMessagePreview` from the newest stored control-chat message for that session.
+  - when `includeLastMessage` is false or omitted, the preview field stays absent, so the enrichment remains opt-in just like upstream.
+- Kept the scope intentionally honest:
+  - this is sourced from the newest SQLite-backed control-chat message, not from OpenClaw's transcript-file parsing stack.
+  - preview text is currently the latest stored message content as-is; it does not yet claim upstream transcript-window truncation or richer transcript normalization.
+  - this slice only closes `includeLastMessage`; `includeDerivedTitles` is still open because local title derivation needs a cleaner bounded mapping to OpenClaw's richer session-entry semantics.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `src/openzues/services/gateway_sessions.py`
+- Added focused regression proof in:
+  - [tests/test_gateway_node_methods.py](C:\Users\skull\OneDrive\Documents\OpenZues\tests\test_gateway_node_methods.py)
+    - `test_sessions_list_supports_include_last_message_preview`
+  - [tests/test_gateway_nodes_api.py](C:\Users\skull\OneDrive\Documents\OpenZues\tests\test_gateway_nodes_api.py)
+    - `test_gateway_node_method_call_endpoint_sessions_list_supports_include_last_message_preview`
+- Verified the slice with:
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py::test_sessions_list_supports_include_last_message_preview tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_sessions_list_supports_include_last_message_preview -q`
+  - `& '.\.venv\Scripts\ruff.exe' check src/openzues/services/gateway_node_methods.py src/openzues/services/gateway_sessions.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py -k "sessions_list or sessions_resolve or sessions_patch or sessions_get or chat_history or subscribe" -q`
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_nodes_api.py -k "sessions_list or supports_sessions_resolve or sessions_patch or supports_sessions_get or supports_chat_history or filters_sessions_get_by_session_key or subscribe" -q`
+  - `& '.\.venv\Scripts\python.exe' -m mypy src/openzues/services/gateway_sessions.py src/openzues/services/gateway_node_methods.py src/openzues/database.py`
+- Result:
+  - the focused include-last-message pair passed (`2 passed`).
+  - Ruff stayed clean.
+  - the broader service gateway-session slice passed (`30 passed`).
+  - the broader API gateway-session slice passed (`26 passed`).
+  - `src/openzues/services/gateway_sessions.py`, `src/openzues/services/gateway_node_methods.py`, and `src/openzues/database.py` type-checked cleanly.
+- Remaining honest blockers after this slice:
+  - `sessions.resolve(sessionId=...)` is still bounded to metadata-known, mission-known, and transcript-known session surfaces rather than a full OpenClaw session-store walker.
+  - OpenZues still lacks a richer unknown-session runtime beyond the exact `unknown` key shape.
+  - `sessions.list` still does not cover `includeDerivedTitles`.
+
+### Recovery addendum 2026-04-18 sessions.list includeDerivedTitles parity America/Chicago
+
+- Closed the remaining transcript-derived title enrichment on the bounded local session inventory:
+  - `sessions.list` now accepts `includeDerivedTitles` instead of rejecting it at the node-method boundary.
+  - when explicitly requested, OpenZues now adds `derivedTitle` to session rows.
+  - the local derived-title order is bounded to the session data OpenZues actually has today:
+    - a non-synthetic `displayName`, if one exists in the assembled row later,
+    - then a non-synthetic `subject`,
+    - then the first stored user control-chat message for that session,
+    - then the session-id prefix fallback.
+- Kept the scope intentionally honest:
+  - OpenClaw reads first-user-message hints from transcript files; OpenZues derives them from the earliest SQLite-backed user control-chat message instead.
+  - OpenZues still synthesizes default control-chat `displayName` and fallback `subject`, so the new helper explicitly ignores those placeholders before falling through to the first user message.
+  - this closes the `includeDerivedTitles` request/response seam without claiming OpenClaw's full transcript parser or richer session-store metadata model.
+- Primary files carrying the product change:
+  - `src/openzues/database.py`
+  - `src/openzues/services/gateway_node_methods.py`
+  - `src/openzues/services/gateway_sessions.py`
+- Added focused regression proof in:
+  - [tests/test_gateway_node_methods.py](C:\Users\skull\OneDrive\Documents\OpenZues\tests\test_gateway_node_methods.py)
+    - `test_sessions_list_supports_include_derived_titles`
+  - [tests/test_gateway_nodes_api.py](C:\Users\skull\OneDrive\Documents\OpenZues\tests\test_gateway_nodes_api.py)
+    - `test_gateway_node_method_call_endpoint_sessions_list_supports_include_derived_titles`
+- Verified the slice with:
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py::test_sessions_list_supports_include_derived_titles tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_sessions_list_supports_include_derived_titles -q`
+  - `& '.\.venv\Scripts\ruff.exe' check src/openzues/services/gateway_node_methods.py src/openzues/services/gateway_sessions.py src/openzues/database.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py -k "sessions_list or sessions_resolve or sessions_patch or sessions_get or chat_history or subscribe" -q`
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_nodes_api.py -k "sessions_list or supports_sessions_resolve or sessions_patch or supports_sessions_get or supports_chat_history or filters_sessions_get_by_session_key or subscribe" -q`
+  - `& '.\.venv\Scripts\python.exe' -m mypy src/openzues/services/gateway_sessions.py src/openzues/services/gateway_node_methods.py src/openzues/database.py`
+- Result:
+  - the focused include-derived-title pair passed (`2 passed`).
+  - Ruff stayed clean.
+  - the broader service gateway-session slice passed (`31 passed`).
+  - the broader API gateway-session slice passed (`27 passed`).
+  - `src/openzues/services/gateway_sessions.py`, `src/openzues/services/gateway_node_methods.py`, and `src/openzues/database.py` type-checked cleanly.
+- Remaining honest blockers after this slice:
+  - `sessions.resolve(sessionId=...)` is still bounded to metadata-known, mission-known, and transcript-known session surfaces rather than a full OpenClaw session-store walker.
+  - OpenZues still lacks a richer unknown-session runtime beyond the exact `unknown` key shape.
+  - transcript-derived session enrichment is now covered for the current SQLite-backed store, but it is still not powered by OpenClaw's transcript-file parser or broader session-entry metadata graph.
+
+### Recovery addendum 2026-04-18 wake parity America/Chicago
+
+- Closed the explicitly advertised `wake` contract instead of leaving it as a hard 503:
+  - `wake({ mode: "now", text })` now routes through the real OpenZues control-chat submit path immediately.
+  - `wake({ mode: "next-heartbeat", text })` now persists a bounded wake request and drains it on the next attention-queue tick.
+  - both paths now return the same minimal `{ ok: true }` shape that upstream `cron.wake` exposes.
+- Kept the scope intentionally honest:
+  - upstream wake is a tiny "enqueue system event, maybe request heartbeat now" helper; OpenZues now mirrors that with the closest real local substrate it already has: control-chat submit for immediate wakes, and a persisted wake queue consumed by the existing attention loop for deferred wakes.
+  - this does not claim a full OpenClaw system-event bus; it closes the gateway contract using OpenZues' actual control-plane runtime.
+- Primary files carrying the product change:
+  - `src/openzues/database.py`
+  - `src/openzues/services/gateway_wake.py`
+  - `src/openzues/services/gateway_node_methods.py`
+  - `src/openzues/services/control_chat.py`
+  - `src/openzues/app.py`
+- Added focused regression proof in:
+  - [tests/test_gateway_node_methods.py](C:\Users\skull\OneDrive\Documents\OpenZues\tests\test_gateway_node_methods.py)
+    - `test_wake_requires_openclaw_shape_then_dispatches_or_queues_when_runtime_wired`
+  - [tests/test_gateway_nodes_api.py](C:\Users\skull\OneDrive\Documents\OpenZues\tests\test_gateway_nodes_api.py)
+    - `test_gateway_node_method_call_endpoint_supports_wake_now_and_next_heartbeat`
+- Verified the slice with:
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py::test_wake_requires_openclaw_shape_then_dispatches_or_queues_when_runtime_wired tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_wake_now_and_next_heartbeat tests/test_app.py::test_attention_queue_auto_approves_safe_orphan_request tests/test_app.py::test_attention_queue_targeted_signal_skips_safe_approval_sweep tests/test_app.py::test_attention_queue_pauses_long_stale_mission_to_free_queue -q`
+  - `& '.\.venv\Scripts\ruff.exe' check src/openzues/database.py src/openzues/services/gateway_wake.py src/openzues/services/gateway_node_methods.py src/openzues/services/control_chat.py src/openzues/app.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `& '.\.venv\Scripts\python.exe' -m mypy src/openzues/database.py src/openzues/services/gateway_wake.py src/openzues/services/gateway_node_methods.py src/openzues/services/control_chat.py`
+- Result:
+  - the focused wake and attention-tick slice passed (`5 passed`).
+  - Ruff stayed clean.
+  - `src/openzues/database.py`, `src/openzues/services/gateway_wake.py`, `src/openzues/services/gateway_node_methods.py`, and `src/openzues/services/control_chat.py` type-checked cleanly.
+- Verification caveat worth keeping visible:
+  - a broader `& '.\.venv\Scripts\python.exe' -m pytest tests/test_app.py -k attention_queue -q` sweep is not all green right now because `test_attention_queue_does_not_harden_a_hardener_again` is already failing in current tree on `plan_attention_queue(dashboard) is None`; that drift is outside the new wake path, so this checkpoint only claims the focused wake/control-chat slice.
+- Next exact seam:
+  - re-check the remaining admin/runtime methods still hard-coded as unavailable and pick the smallest honest contract next, with `skills.install` / `skills.update` or another explicitly advertised write method as the best current candidates.
+
+### Recovery addendum 2026-04-18 tools.effective parity America/Chicago
+
+- Closed the advertised `tools.effective` read seam instead of leaving it as a hard 503:
+  - `tools.effective({ sessionKey, agentId })` now accepts the OpenClaw-shaped `main` agent id for default control-plane sessions.
+  - the method resolves effective toolsets from the narrowest local substrate OpenZues actually has today:
+    - session metadata toolsets, if present,
+    - then the latest mission bound to that session key,
+    - then the persisted gateway bootstrap toolsets.
+  - the response now returns a bounded OpenClaw-shaped `core` group with built-in tool entries and a derived `profile`.
+- Kept the scope intentionally honest:
+  - OpenClaw's upstream path derives richer plugin/channel-aware effective tool inventory; OpenZues now mirrors the built-in/core portion only.
+  - local tool resolution is still bounded to SQLite-backed session, mission, and bootstrap state rather than a wider runtime/plugin graph.
+  - the `profile` derivation is intentionally minimal and evidence-driven: messaging wins when the effective core tool inventory includes messaging-posture tools, otherwise the response stays coding-oriented.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_tools_catalog.py`
+  - `src/openzues/services/gateway_node_methods.py`
+- Added focused regression proof in:
+  - [tests/test_gateway_node_methods.py](C:\Users\skull\OneDrive\Documents\OpenZues\tests\test_gateway_node_methods.py)
+    - `test_tools_effective_returns_bounded_effective_inventory_from_session_toolsets`
+  - [tests/test_gateway_nodes_api.py](C:\Users\skull\OneDrive\Documents\OpenZues\tests\test_gateway_nodes_api.py)
+    - `test_gateway_node_method_call_endpoint_supports_tools_effective_with_bootstrap_toolsets`
+- Verified the slice with:
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py::test_tools_effective_returns_bounded_effective_inventory_from_session_toolsets tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_tools_effective_with_bootstrap_toolsets -q`
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py::test_tools_catalog_returns_bounded_openzues_toolset_inventory tests/test_gateway_node_methods.py::test_tools_effective_returns_bounded_effective_inventory_from_session_toolsets tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_tools_catalog tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_tools_effective_with_bootstrap_toolsets -q`
+  - `& '.\.venv\Scripts\ruff.exe' check src/openzues/services/gateway_tools_catalog.py src/openzues/services/gateway_node_methods.py`
+  - `& '.\.venv\Scripts\python.exe' -m mypy src/openzues/services/gateway_tools_catalog.py src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused effective-tools pair passed (`2 passed`).
+  - the slightly wider tools-catalog/tools-effective sweep passed (`4 passed`).
+  - Ruff stayed clean.
+  - `src/openzues/services/gateway_tools_catalog.py` and `src/openzues/services/gateway_node_methods.py` type-checked cleanly.
+- Next exact seam:
+  - re-check the remaining explicitly advertised gateway/runtime methods that still hard-503 and keep walking the next smallest honest contract, with `skills.install`, `skills.update`, or richer session/runtime inventory still looking like the best leverage candidates.
+
+### Recovery addendum 2026-04-18 local skills.update config parity America/Chicago
+
+- Closed the local `skills.update` config seam instead of leaving it as a blanket 503:
+  - OpenZues now persists local `skills.entries.<skillKey>`-style overrides in a bounded workspace `.codex` config file.
+  - `skills.update({ skillKey, enabled?, apiKey?, env? })` now returns `{ ok, skillKey, config }` for local config mode.
+  - `skills.status` now applies the persisted `enabled` override, so disabled skills actually show up as disabled after a patch.
+- Kept the scope intentionally honest:
+  - this closes the local config-patching branch only; ClawHub-backed `skills.update` and all `skills.install` paths still remain explicit `UNAVAILABLE` responses.
+  - OpenClaw persists into its broader config model; OpenZues now mirrors the `skills.entries` behavior with a dedicated local workspace config file rather than claiming the entire upstream config/runtime stack.
+  - the status merge is intentionally narrow and currently only honors the persisted `enabled` override, which is the part surfaced in OpenZues' local skill inventory today.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_skill_config.py`
+  - `src/openzues/services/gateway_skill_status.py`
+  - `src/openzues/services/gateway_node_methods.py`
+- Added focused regression proof in:
+  - [tests/test_gateway_node_methods.py](C:\Users\skull\OneDrive\Documents\OpenZues\tests\test_gateway_node_methods.py)
+    - `test_skills_update_persists_local_entry_config_and_status_reflects_enabled_override`
+  - [tests/test_gateway_nodes_api.py](C:\Users\skull\OneDrive\Documents\OpenZues\tests\test_gateway_nodes_api.py)
+    - `test_gateway_node_method_call_endpoint_supports_local_skills_update`
+- Verified the slice with:
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py::test_skills_update_persists_local_entry_config_and_status_reflects_enabled_override tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_local_skills_update -q`
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py::test_skills_status_surfaces_local_skill_inventory_report tests/test_gateway_node_methods.py::test_skills_update_persists_local_entry_config_and_status_reflects_enabled_override tests/test_gateway_node_methods.py::test_known_node_methods_can_fail_as_explicitly_unavailable tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_skills_status tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_local_skills_update tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_surfaces_skills_install_unavailable -q`
+  - `& '.\.venv\Scripts\ruff.exe' check src/openzues/services/gateway_skill_config.py src/openzues/services/gateway_skill_status.py src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `& '.\.venv\Scripts\python.exe' -m mypy src/openzues/services/gateway_skill_config.py src/openzues/services/gateway_skill_status.py src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused local `skills.update` pair passed (`2 passed`).
+  - the wider local skills/status/install sweep passed (`15 passed`).
+  - Ruff stayed clean.
+  - `src/openzues/services/gateway_skill_config.py`, `src/openzues/services/gateway_skill_status.py`, and `src/openzues/services/gateway_node_methods.py` type-checked cleanly.
+- Next exact seam:
+  - keep walking the remaining explicitly advertised hard-503 methods, with local `skills.install` gateway-installer mode, richer status/config surfacing for skill entry secrets/env, or another bounded gateway runtime contract as the next best honest parity target.
+
+### Recovery addendum 2026-04-18 talk.mode local parity America/Chicago
+
+- Closed the advertised `talk.mode` write seam instead of leaving it as another blanket 503:
+  - OpenZues now accepts the OpenClaw-shaped `{ enabled, phase? }` payload and returns the same bounded state back from the gateway dispatcher.
+  - the control plane persists the current talk-mode state in a dedicated local settings file so reconnecting managed nodes can receive the active mode snapshot instead of only seeing one in-memory broadcast.
+  - connected nodes now receive `talk.mode` events when the method is called, and freshly connected managed nodes are replayed the latest saved talk-mode payload during sync.
+- Kept the scope intentionally honest:
+  - this is a control-plane mode/state seam only; `talk.speak` and the deeper TTS synthesis runtime remain explicit `UNAVAILABLE` paths.
+  - OpenClaw's upstream Talk stack includes live speech capture/synthesis clients; OpenZues now mirrors the mode-state and rebroadcast contract without pretending the audio runtime exists yet.
+  - the persisted state is intentionally narrow: `enabled`, `phase`, and `updatedAtMs`.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_talk_mode.py`
+  - `src/openzues/services/gateway_node_methods.py`
+  - `src/openzues/services/gateway_node_service.py`
+  - `src/openzues/app.py`
+- Added focused regression proof in:
+  - [tests/test_gateway_node_methods.py](C:\Users\skull\OneDrive\Documents\OpenZues\tests\test_gateway_node_methods.py)
+    - `test_talk_mode_persists_updates_and_broadcast`
+  - [tests/test_gateway_nodes_api.py](C:\Users\skull\OneDrive\Documents\OpenZues\tests\test_gateway_nodes_api.py)
+    - `test_gateway_node_method_call_endpoint_supports_talk_mode`
+    - `test_create_app_wires_managed_node_talk_mode_snapshot_only_on_fresh_connect`
+- Verified the slice with:
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py::test_talk_mode_persists_updates_and_broadcast tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_talk_mode tests/test_gateway_nodes_api.py::test_create_app_wires_managed_node_talk_mode_snapshot_only_on_fresh_connect -q`
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py::test_voicewake_methods_surface_defaults_persist_updates_and_broadcast tests/test_gateway_node_methods.py::test_talk_mode_persists_updates_and_broadcast tests/test_gateway_node_methods.py::test_known_node_methods_can_fail_as_explicitly_unavailable tests/test_gateway_nodes_api.py::test_create_app_wires_managed_node_voicewake_snapshot_only_on_fresh_connect tests/test_gateway_nodes_api.py::test_create_app_wires_managed_node_talk_mode_snapshot_only_on_fresh_connect tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_talk_config tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_talk_mode tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_talk_speak_fails_as_explicitly_unavailable -q`
+  - `& '.\.venv\Scripts\ruff.exe' check src/openzues/services/gateway_talk_mode.py src/openzues/services/gateway_node_methods.py src/openzues/services/gateway_node_service.py src/openzues/app.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `& '.\.venv\Scripts\python.exe' -m mypy src/openzues/services/gateway_talk_mode.py src/openzues/services/gateway_node_methods.py src/openzues/services/gateway_node_service.py`
+- Result:
+  - the focused talk-mode proof set passed (`3 passed`).
+  - the wider adjacent talk/voicewake sweep passed (`16 passed`).
+  - Ruff stayed clean on the touched files.
+  - `src/openzues/services/gateway_talk_mode.py`, `src/openzues/services/gateway_node_methods.py`, and `src/openzues/services/gateway_node_service.py` type-checked cleanly.
+- Verification caveat worth keeping visible:
+  - `app.py` remains outside a clean standalone mypy envelope in the current tree because of pre-existing dashboard typing debt unrelated to this talk-mode slice, so the type-check claim here is intentionally limited to the new service plus the touched gateway service files.
+- Next exact seam:
+  - keep walking the remaining explicitly advertised hard-503 methods, with `skills.install`, `tts.enable` / `tts.disable` / `tts.setProvider`, or another bounded local gateway runtime contract as the next best honest parity target.
+
+### Recovery addendum 2026-04-18 local TTS prefs parity America/Chicago
+
+- Closed the local TTS preference seam instead of leaving three more advertised write methods as blanket 503s:
+  - `tts.enable` and `tts.disable` now persist the local enabled flag and return the updated status payload.
+  - `tts.setProvider({ provider })` now persists the preferred provider string and returns the updated status payload.
+  - `tts.status` and `tts.providers` now reflect the saved preference state, including a stable local prefs path when OpenZues is running with a data directory.
+- Kept the scope intentionally honest:
+  - this closes only the local preference/state contract; `tts.convert` still remains an explicit `UNAVAILABLE` runtime because OpenZues does not synthesize audio yet.
+  - the visible provider catalog remains intentionally empty because OpenZues still does not own a real live provider inventory. The saved provider is surfaced as the active preference, not as proof that a backing engine exists.
+  - fallback providers, provider states, and actual voice runtime readiness remain bounded/empty until a real synthesis backend is wired.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_tts.py`
+  - `src/openzues/services/gateway_node_methods.py`
+  - `src/openzues/app.py`
+- Added focused regression proof in:
+  - [tests/test_gateway_node_methods.py](C:\Users\skull\OneDrive\Documents\OpenZues\tests\test_gateway_node_methods.py)
+    - `test_tts_pref_methods_persist_local_state_and_surface_status`
+  - [tests/test_gateway_nodes_api.py](C:\Users\skull\OneDrive\Documents\OpenZues\tests\test_gateway_nodes_api.py)
+    - `test_gateway_node_method_call_endpoint_supports_local_tts_pref_mutations`
+- Verified the slice with:
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py::test_tts_pref_methods_persist_local_state_and_surface_status tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_local_tts_pref_mutations -q`
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py::test_voicewake_methods_surface_defaults_persist_updates_and_broadcast tests/test_gateway_node_methods.py::test_talk_mode_persists_updates_and_broadcast tests/test_gateway_node_methods.py::test_tts_status_and_providers_surface_disabled_empty_runtime tests/test_gateway_node_methods.py::test_tts_pref_methods_persist_local_state_and_surface_status tests/test_gateway_node_methods.py::test_known_node_methods_can_fail_as_explicitly_unavailable tests/test_gateway_nodes_api.py::test_create_app_wires_managed_node_voicewake_snapshot_only_on_fresh_connect tests/test_gateway_nodes_api.py::test_create_app_wires_managed_node_talk_mode_snapshot_only_on_fresh_connect tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_talk_config tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_talk_mode tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_tts_status_and_providers tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_local_tts_pref_mutations tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_talk_speak_fails_as_explicitly_unavailable -q`
+  - `& '.\.venv\Scripts\ruff.exe' check src/openzues/services/gateway_talk_mode.py src/openzues/services/gateway_tts.py src/openzues/services/gateway_node_methods.py src/openzues/services/gateway_node_service.py src/openzues/app.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `& '.\.venv\Scripts\python.exe' -m mypy src/openzues/services/gateway_talk_mode.py src/openzues/services/gateway_tts.py src/openzues/services/gateway_node_methods.py src/openzues/services/gateway_node_service.py`
+- Result:
+  - the focused local TTS prefs pair passed (`2 passed`).
+  - the wider adjacent talk/voicewake/TTS sweep passed (`17 passed`).
+  - Ruff stayed clean on the touched files.
+  - `src/openzues/services/gateway_talk_mode.py`, `src/openzues/services/gateway_tts.py`, `src/openzues/services/gateway_node_methods.py`, and `src/openzues/services/gateway_node_service.py` type-checked cleanly.
+- Verification caveat worth keeping visible:
+  - `app.py` still has pre-existing standalone mypy debt outside this slice, so the type-check claim remains intentionally limited to the touched gateway service files.
+- Next exact seam:
+  - the easy local toggle/state seams are mostly exhausted now; the next honest targets look more like `skills.install`, usage analytics (`sessions.usage*`), or another persisted gateway/runtime contract with enough substrate to verify end to end.
+
+### Recovery addendum 2026-04-18 bounded sessions.usage summary parity America/Chicago
+
+- Closed the top-level `sessions.usage` read seam instead of leaving the method as another blanket 503:
+  - OpenZues now returns an OpenClaw-shaped usage envelope with `updatedAt`, `startDate`, `endDate`, `sessions`, `totals`, and `aggregates`.
+  - for the bounded implementation, each session summary is built from the latest persisted OpenZues mission tied to that session key, plus session metadata and persisted control-chat message counts.
+  - the response now surfaces the session key, label, session/thread id, resolved model/provider, total token summary, and user/assistant message counts through the gateway method and API endpoint.
+- Kept the scope intentionally honest:
+  - this is not a fake transcript-cost engine. OpenZues still does not own OpenClaw's full session-cost scanner, per-message usage logs, or daily transcript-derived aggregation runtime.
+  - the returned token summary is the latest persisted mission aggregate for that session, with zeroed cost/cache fields and no synthesized timeseries math.
+  - `sessions.usage.timeseries` and `sessions.usage.logs` remain explicit `UNAVAILABLE` methods until there is real historical usage storage behind them.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - [tests/test_gateway_node_methods.py](C:\Users\skull\OneDrive\Documents\OpenZues\tests\test_gateway_node_methods.py)
+  - [tests/test_gateway_nodes_api.py](C:\Users\skull\OneDrive\Documents\OpenZues\tests\test_gateway_nodes_api.py)
+- Added focused regression proof in:
+  - [tests/test_gateway_node_methods.py](C:\Users\skull\OneDrive\Documents\OpenZues\tests\test_gateway_node_methods.py)
+    - `test_sessions_usage_returns_bounded_summary_from_latest_persisted_mission`
+    - `test_sessions_usage_timeseries_fails_explicitly_until_analytics_runtime_is_wired`
+    - `test_sessions_usage_logs_fails_explicitly_until_analytics_runtime_is_wired`
+  - [tests/test_gateway_nodes_api.py](C:\Users\skull\OneDrive\Documents\OpenZues\tests\test_gateway_nodes_api.py)
+    - `test_gateway_node_method_call_endpoint_sessions_usage_returns_bounded_summary`
+    - `test_gateway_node_method_call_endpoint_sessions_usage_timeseries_fails_explicitly_when_unwired`
+    - `test_gateway_node_method_call_endpoint_sessions_usage_logs_fails_explicitly_when_unwired`
+- Verified the slice with:
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py::test_sessions_usage_returns_bounded_summary_from_latest_persisted_mission tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_sessions_usage_returns_bounded_summary -q`
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py::test_sessions_usage_returns_bounded_summary_from_latest_persisted_mission tests/test_gateway_node_methods.py::test_sessions_usage_timeseries_fails_explicitly_until_analytics_runtime_is_wired tests/test_gateway_node_methods.py::test_sessions_usage_logs_fails_explicitly_until_analytics_runtime_is_wired tests/test_gateway_node_methods.py::test_sessions_get_returns_openclaw_shaped_control_chat_messages tests/test_gateway_node_methods.py::test_sessions_get_filters_control_chat_messages_by_session_key tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_sessions_usage_returns_bounded_summary tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_sessions_usage_timeseries_fails_explicitly_when_unwired tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_sessions_usage_logs_fails_explicitly_when_unwired tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_sessions_get tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_filters_sessions_get_by_session_key -q`
+  - `& '.\.venv\Scripts\ruff.exe' check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `& '.\.venv\Scripts\python.exe' -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused `sessions.usage` pair passed (`2 passed`).
+  - the wider adjacent session sweep passed (`10 passed`).
+  - Ruff stayed clean on the touched files.
+  - `src/openzues/services/gateway_node_methods.py` type-checked cleanly.
+- Next exact seam:
+  - keep walking the remaining advertised hard-503 gateway methods, with `skills.install`, a real usage-history substrate for `sessions.usage.timeseries` / `sessions.usage.logs`, or another persisted control-plane contract that can be proven end to end without inventing runtime state.
+
+### Recovery addendum 2026-04-18 bounded sessions.usage detail parity America/Chicago
+
+- Closed the two remaining `sessions.usage` detail seams instead of leaving them as hard 503s:
+  - `sessions.usage.timeseries({ key })` now returns a bounded OpenClaw-shaped `{ sessionId, points }` payload.
+  - `sessions.usage.logs({ key, limit })` now returns a bounded local wrapper with `{ sessionId, entries }`, where each entry carries the upstream `SessionLogEntry` fields OpenZues can prove today.
+- Kept the scope intentionally honest:
+  - the timeseries is mission-backed, not transcript-cost-scanner-backed. Each point is built from a persisted OpenZues mission tied to the requested session key, using the stored mission token totals and mission timestamps.
+  - the logs are transcript-backed. OpenZues returns stored control-chat user/assistant rows for the session and only attaches `tokens` / `cost` when a log row is directly linked to a persisted mission with bounded usage totals.
+  - OpenZues still does not claim OpenClaw's full per-turn transcript usage parser, cache breakdown recovery, or tool-result log inventory; missing cost stays bounded to `0.0` / omitted where there is no honest source.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - [tests/test_gateway_node_methods.py](C:\Users\skull\OneDrive\Documents\OpenZues\tests\test_gateway_node_methods.py)
+  - [tests/test_gateway_nodes_api.py](C:\Users\skull\OneDrive\Documents\OpenZues\tests\test_gateway_nodes_api.py)
+- Added focused regression proof in:
+  - [tests/test_gateway_node_methods.py](C:\Users\skull\OneDrive\Documents\OpenZues\tests\test_gateway_node_methods.py)
+    - `test_sessions_usage_timeseries_returns_bounded_mission_points_for_session`
+    - `test_sessions_usage_logs_returns_bounded_transcript_entries_with_linked_usage`
+  - [tests/test_gateway_nodes_api.py](C:\Users\skull\OneDrive\Documents\OpenZues\tests\test_gateway_nodes_api.py)
+    - `test_gateway_node_method_call_endpoint_sessions_usage_timeseries_returns_bounded_points`
+    - `test_gateway_node_method_call_endpoint_sessions_usage_logs_returns_bounded_entries`
+- Verified the slice with:
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py::test_sessions_usage_timeseries_returns_bounded_mission_points_for_session tests/test_gateway_node_methods.py::test_sessions_usage_logs_returns_bounded_transcript_entries_with_linked_usage tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_sessions_usage_timeseries_returns_bounded_points tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_sessions_usage_logs_returns_bounded_entries -q`
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py::test_sessions_usage_returns_bounded_summary_from_latest_persisted_mission tests/test_gateway_node_methods.py::test_sessions_usage_timeseries_returns_bounded_mission_points_for_session tests/test_gateway_node_methods.py::test_sessions_usage_logs_returns_bounded_transcript_entries_with_linked_usage tests/test_gateway_node_methods.py::test_sessions_get_returns_openclaw_shaped_control_chat_messages tests/test_gateway_node_methods.py::test_sessions_get_filters_control_chat_messages_by_session_key tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_sessions_usage_returns_bounded_summary tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_sessions_usage_timeseries_returns_bounded_points tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_sessions_usage_logs_returns_bounded_entries tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_sessions_get tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_filters_sessions_get_by_session_key -q`
+  - `& '.\.venv\Scripts\ruff.exe' check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `& '.\.venv\Scripts\python.exe' -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused detail-endpoint proof set passed (`4 passed`).
+  - the wider adjacent session sweep passed (`10 passed`).
+  - Ruff stayed clean on the touched files.
+  - `src/openzues/services/gateway_node_methods.py` type-checked cleanly.
+- Next exact seam:
+  - the remaining hard gaps are now more obviously outside the current bounded usage substrate: `skills.install`, session compaction, and true synthesis runtimes (`talk.speak`, `tts.convert`) are the next seams that need either real host/runtime integration or a smaller truthful control-plane subset.
+
+### Recovery addendum 2026-04-18 bounded TTS provider inventory parity America/Chicago
+
+- Tightened the local TTS contract so OpenZues stops advertising an empty provider world:
+  - `tts.status` now returns a bounded `providerStates` inventory for the providers OpenClaw documents today: `elevenlabs`, `microsoft`, `minimax`, and `openai`.
+  - `tts.providers` now returns the same stable provider id list plus the active saved preference.
+  - `tts.setProvider({ provider })` now normalizes the legacy `edge` alias to `microsoft` before persisting and surfacing the chosen provider back through the gateway/API contract.
+- Kept the scope intentionally honest:
+  - this is still preference and inventory parity, not synthesis parity. `tts.convert` remains an explicit `UNAVAILABLE` runtime because OpenZues still does not synthesize audio.
+  - provider availability remains intentionally bounded. OpenZues only marks `microsoft` as locally available in this contract slice and does not pretend the other providers are wired just because they are documented upstream.
+  - fallback provider routing and real audio backend readiness remain unchanged until a real synthesis runtime exists behind them.
+- Primary file carrying the product change:
+  - `src/openzues/services/gateway_tts.py`
+- Added focused regression proof in:
+  - [tests/test_gateway_node_methods.py](C:\Users\skull\OneDrive\Documents\OpenZues\tests\test_gateway_node_methods.py)
+    - `test_tts_status_and_providers_surface_disabled_empty_runtime`
+    - `test_tts_pref_methods_persist_local_state_and_surface_status`
+  - [tests/test_gateway_nodes_api.py](C:\Users\skull\OneDrive\Documents\OpenZues\tests\test_gateway_nodes_api.py)
+    - `test_gateway_node_method_call_endpoint_supports_tts_status_and_providers`
+    - `test_gateway_node_method_call_endpoint_supports_local_tts_pref_mutations`
+- Verified the slice with:
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py::test_tts_status_and_providers_surface_disabled_empty_runtime tests/test_gateway_node_methods.py::test_tts_pref_methods_persist_local_state_and_surface_status tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_tts_status_and_providers tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_local_tts_pref_mutations -q`
+  - `& '.\.venv\Scripts\python.exe' -m ruff check src/openzues/services/gateway_tts.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `& '.\.venv\Scripts\python.exe' -m mypy src/openzues/services/gateway_tts.py`
+- Result:
+  - the focused TTS proof set passed (`4 passed`).
+  - Ruff stayed clean on the touched service and test files.
+  - `src/openzues/services/gateway_tts.py` type-checked cleanly.
+- Next exact seam:
+  - the remaining TTS/talk gaps are now the true runtime seams, especially `tts.convert` and `talk.speak`, unless we choose a different bounded control-plane contract like `skills.install` first.
+
+### Recovery addendum 2026-04-18 bounded gateway skills.install parity America/Chicago
+
+- Closed the declared gateway-host installer path for local skills instead of leaving the whole method family as a blanket 503:
+  - `skills.install({ name, installId, timeoutMs? })` now resolves the named local skill, reparses its declared `metadata.install` entries, and executes the selected host installer action by `installId`.
+  - the bounded gateway installer path currently supports the directly declared host install kinds OpenZues can execute safely through argv-based subprocesses today: `brew`, `uv`, `go`, and `node`.
+  - the response now returns a concrete execution summary with the selected skill, install id, install kind, bins, host command argv, and working directory.
+- Kept the scope intentionally honest:
+  - ClawHub mode (`{ source: "clawhub", slug, ... }`) is still an explicit `UNAVAILABLE` path because OpenZues still does not own a real ClawHub download/update runtime.
+  - unsupported installer kinds still fail closed with validation errors instead of pretending they ran.
+  - this slice does not claim OpenClaw's dangerous-code scan path yet; it only closes the declared local gateway installer execution seam.
+- Product effect proved end to end:
+  - after a successful declared install action, `skills.status` immediately reflects the newly satisfied binary requirement and flips the skill back to eligible.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_skill_install.py`
+  - `src/openzues/services/gateway_node_methods.py`
+- Added focused regression proof in:
+  - [tests/test_gateway_node_methods.py](C:\Users\skull\OneDrive\Documents\OpenZues\tests\test_gateway_node_methods.py)
+    - `test_skills_install_runs_declared_gateway_installer_and_updates_skill_status`
+  - [tests/test_gateway_nodes_api.py](C:\Users\skull\OneDrive\Documents\OpenZues\tests\test_gateway_nodes_api.py)
+    - `test_gateway_node_method_call_endpoint_supports_gateway_skill_installer_mode`
+    - `test_gateway_node_method_call_endpoint_surfaces_skills_install_unavailable`
+- Verified the slice with:
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py::test_skills_status_surfaces_local_skill_inventory_report tests/test_gateway_node_methods.py::test_skills_update_persists_local_entry_config_and_status_reflects_enabled_override tests/test_gateway_node_methods.py::test_skills_install_runs_declared_gateway_installer_and_updates_skill_status tests/test_gateway_node_methods.py::test_known_node_methods_can_fail_as_explicitly_unavailable tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_skills_status tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_local_skills_update tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_gateway_skill_installer_mode tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_surfaces_skills_install_unavailable -q`
+  - `& '.\.venv\Scripts\python.exe' -m ruff check src/openzues/services/gateway_skill_install.py src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `& '.\.venv\Scripts\python.exe' -m mypy src/openzues/services/gateway_skill_install.py src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the widened adjacent skills proof set passed (`13 passed`).
+  - Ruff stayed clean on the touched files.
+  - `src/openzues/services/gateway_skill_install.py` and `src/openzues/services/gateway_node_methods.py` type-checked cleanly.
+- Next exact seam:
+  - the largest remaining parity gaps in this neighborhood are now the true media/runtime paths: `tts.convert`, `talk.speak`, and the still-unwired ClawHub install/update flow.
+
+### Recovery addendum 2026-04-18 bounded ClawHub skills.install update parity America/Chicago
+
+- Closed the previously hard-503 ClawHub gateway path for workspace skills:
+  - `skills.install({ source: "clawhub", slug, version?, force? })` now shells to the official `clawhub install ... --workdir <workspace> --dir skills --no-input` path and refreshes workspace inventory afterward.
+  - `skills.update({ source: "clawhub", slug|all, version?, force? })` now shells to the matching `clawhub update ...` path and refreshes workspace inventory after the update lands.
+  - both flows now return bounded execution summaries including the resolved command argv, workspace path, skills path, requested version, and force/all flags.
+- Kept the scope intentionally honest:
+  - the bridge only runs when the gateway host actually has the `clawhub` CLI available; otherwise the method fails closed with `503 UNAVAILABLE` and the exact message `ClawHub CLI is not available on the gateway host.`
+  - this slice still does not claim broader ClawHub catalog/search/detail parity, remote download provenance, or anything beyond the bounded install/update bridge.
+- Product effect proved end to end:
+  - after a successful ClawHub install or update, `skills.status` immediately reflects the new workspace skill surface instead of waiting for a restart or manual refresh.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_skill_clawhub.py`
+  - `src/openzues/services/gateway_node_methods.py`
+  - [tests/test_gateway_node_methods.py](C:\Users\skull\OneDrive\Documents\OpenZues\tests\test_gateway_node_methods.py)
+  - [tests/test_gateway_nodes_api.py](C:\Users\skull\OneDrive\Documents\OpenZues\tests\test_gateway_nodes_api.py)
+- Added focused regression proof in:
+  - [tests/test_gateway_node_methods.py](C:\Users\skull\OneDrive\Documents\OpenZues\tests\test_gateway_node_methods.py)
+    - `test_skills_install_clawhub_mode_runs_cli_and_refreshes_workspace_inventory`
+    - `test_skills_update_clawhub_mode_runs_cli_and_refreshes_workspace_inventory`
+    - `test_skills_install_clawhub_mode_fails_closed_when_gateway_host_lacks_cli`
+  - [tests/test_gateway_nodes_api.py](C:\Users\skull\OneDrive\Documents\OpenZues\tests\test_gateway_nodes_api.py)
+    - `test_gateway_node_method_call_endpoint_supports_clawhub_skills_install_mode`
+    - `test_gateway_node_method_call_endpoint_supports_clawhub_skills_update_mode`
+    - `test_gateway_node_method_call_endpoint_surfaces_skills_install_unavailable`
+- Verified the slice with:
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py::test_skills_status_surfaces_local_skill_inventory_report tests/test_gateway_node_methods.py::test_skills_update_persists_local_entry_config_and_status_reflects_enabled_override tests/test_gateway_node_methods.py::test_skills_install_runs_declared_gateway_installer_and_updates_skill_status tests/test_gateway_node_methods.py::test_skills_install_clawhub_mode_runs_cli_and_refreshes_workspace_inventory tests/test_gateway_node_methods.py::test_skills_update_clawhub_mode_runs_cli_and_refreshes_workspace_inventory tests/test_gateway_node_methods.py::test_skills_install_clawhub_mode_fails_closed_when_gateway_host_lacks_cli tests/test_gateway_node_methods.py::test_known_node_methods_can_fail_as_explicitly_unavailable tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_skills_status tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_local_skills_update tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_gateway_skill_installer_mode tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_clawhub_skills_install_mode tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_clawhub_skills_update_mode tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_surfaces_skills_install_unavailable -q`
+  - `& '.\.venv\Scripts\python.exe' -m ruff check src/openzues/services/gateway_skill_clawhub.py src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `& '.\.venv\Scripts\python.exe' -m mypy src/openzues/services/gateway_skill_clawhub.py src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the widened adjacent skills proof set passed (`17 passed`).
+  - Ruff stayed clean on the touched files.
+  - `src/openzues/services/gateway_skill_clawhub.py` and `src/openzues/services/gateway_node_methods.py` type-checked cleanly.
+- Next exact seam:
+  - the remaining parity gap in this neighborhood moved from skill acquisition to real media/runtime behavior, especially `tts.convert` and `talk.speak`.
+
+### Recovery addendum 2026-04-18 bounded local Microsoft speech runtime parity America/Chicago
+
+- Closed the first truthful audio runtime seam instead of leaving both methods as blanket 503s:
+  - `tts.convert({ text, provider?, voiceId?, modelId?, channel? })` now returns an OpenClaw-shaped bounded payload with `{ audioPath, provider, outputFormat, voiceCompatible }`.
+  - `talk.speak({ text, provider?, voiceId?, outputFormat?, rateWpm?, speed? })` now returns inline audio with `{ audioBase64, provider, outputFormat, voiceCompatible, mimeType, fileExtension }`.
+  - both methods currently normalize the legacy `edge` alias to `microsoft` and route through a bounded local Microsoft speech runtime.
+- Kept the scope intentionally honest:
+  - this is a Windows-host, Microsoft-only, WAV-only runtime slice. OpenZues still does not mirror OpenClaw's broader provider registry breadth, cloud-provider configuration, or richer output formats.
+  - when the local speech runtime is disabled or unavailable, both methods still fail closed with explicit `503 UNAVAILABLE` responses instead of pretending synthesis succeeded.
+  - `talk.speak` now validates bounded `speed` / `rateWpm` input resolution, but the runtime is intentionally simple and does not claim full upstream provider-specific tuning parity.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_tts.py`
+  - `src/openzues/services/gateway_tts_runtime.py`
+  - `src/openzues/services/gateway_node_methods.py`
+  - `src/openzues/app.py`
+  - [tests/test_gateway_node_methods.py](C:\Users\skull\OneDrive\Documents\OpenZues\tests\test_gateway_node_methods.py)
+  - [tests/test_gateway_nodes_api.py](C:\Users\skull\OneDrive\Documents\OpenZues\tests\test_gateway_nodes_api.py)
+- Added focused regression proof in:
+  - [tests/test_gateway_node_methods.py](C:\Users\skull\OneDrive\Documents\OpenZues\tests\test_gateway_node_methods.py)
+    - `test_tts_convert_runs_bounded_runtime_when_wired`
+    - `test_tts_convert_fails_closed_when_runtime_is_disabled`
+    - `test_talk_speak_returns_inline_audio_when_runtime_is_wired`
+  - [tests/test_gateway_nodes_api.py](C:\Users\skull\OneDrive\Documents\OpenZues\tests\test_gateway_nodes_api.py)
+    - `test_gateway_node_method_call_endpoint_supports_tts_convert_when_runtime_is_wired`
+    - `test_gateway_node_method_call_endpoint_supports_talk_speak_when_runtime_is_wired`
+    - `test_gateway_node_method_call_endpoint_talk_speak_fails_as_explicitly_unavailable`
+- Verified the slice with:
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py::test_talk_mode_persists_updates_and_broadcast tests/test_gateway_node_methods.py::test_tts_status_and_providers_surface_disabled_empty_runtime tests/test_gateway_node_methods.py::test_tts_pref_methods_persist_local_state_and_surface_status tests/test_gateway_node_methods.py::test_tts_convert_runs_bounded_runtime_when_wired tests/test_gateway_node_methods.py::test_tts_convert_fails_closed_when_runtime_is_disabled tests/test_gateway_node_methods.py::test_talk_speak_returns_inline_audio_when_runtime_is_wired tests/test_gateway_node_methods.py::test_known_node_methods_can_fail_as_explicitly_unavailable tests/test_gateway_nodes_api.py::test_create_app_wires_managed_node_talk_mode_snapshot_only_on_fresh_connect tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_talk_mode tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_tts_status_and_providers tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_local_tts_pref_mutations tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_talk_speak_fails_as_explicitly_unavailable tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_talk_speak_when_runtime_is_wired tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_tts_convert_when_runtime_is_wired -q`
+  - `& '.\.venv\Scripts\python.exe' -m ruff check src/openzues/services/gateway_tts.py src/openzues/services/gateway_tts_runtime.py src/openzues/services/gateway_node_methods.py src/openzues/app.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `& '.\.venv\Scripts\python.exe' -m mypy src/openzues/services/gateway_tts.py src/openzues/services/gateway_tts_runtime.py src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the widened adjacent talk/TTS gateway proof set passed (`17 passed`).
+  - Ruff stayed clean on the touched runtime and test files.
+  - `src/openzues/services/gateway_tts.py`, `src/openzues/services/gateway_tts_runtime.py`, and `src/openzues/services/gateway_node_methods.py` type-checked cleanly.
+- Next exact seam:
+  - the remaining audio parity gap is no longer basic method execution; it is richer provider/config breadth beyond the bounded local Microsoft path, or we can pivot to another still-missing gateway runtime seam outside speech.
+

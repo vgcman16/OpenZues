@@ -17,6 +17,14 @@ from openzues.schemas import (
     TeamCreate,
     TeamView,
 )
+from openzues.services.gateway_method_policy import (
+    ADMIN_GATEWAY_METHOD_SCOPE,
+    APPROVALS_GATEWAY_METHOD_SCOPE,
+    PAIRING_GATEWAY_METHOD_SCOPE,
+    READ_GATEWAY_METHOD_SCOPE,
+    TALK_SECRETS_GATEWAY_METHOD_SCOPE,
+    WRITE_GATEWAY_METHOD_SCOPE,
+)
 
 ROLE_RANK = {"viewer": 0, "operator": 1, "admin": 2, "owner": 3}
 PERMISSION_MIN_ROLE = {
@@ -27,6 +35,17 @@ PERMISSION_MIN_ROLE = {
     "operator.manage": "admin",
     "api_key.issue": "admin",
 }
+_OPERATOR_GATEWAY_METHOD_SCOPES = (
+    READ_GATEWAY_METHOD_SCOPE,
+    WRITE_GATEWAY_METHOD_SCOPE,
+    APPROVALS_GATEWAY_METHOD_SCOPE,
+    PAIRING_GATEWAY_METHOD_SCOPE,
+)
+_ADMIN_GATEWAY_METHOD_SCOPES = (
+    ADMIN_GATEWAY_METHOD_SCOPE,
+    *_OPERATOR_GATEWAY_METHOD_SCOPES,
+    TALK_SECRETS_GATEWAY_METHOD_SCOPE,
+)
 
 
 def _slugify(value: str) -> str:
@@ -50,6 +69,17 @@ def _role_allows(role: str, permission: str) -> bool:
     if required_role is None:
         return False
     return ROLE_RANK.get(role, -1) >= ROLE_RANK[required_role]
+
+
+def resolve_gateway_method_scopes_for_role(role: str) -> tuple[str, ...]:
+    normalized_role = str(role).strip().lower()
+    if normalized_role in {"owner", "admin"}:
+        return _ADMIN_GATEWAY_METHOD_SCOPES
+    if normalized_role == "operator":
+        return _OPERATOR_GATEWAY_METHOD_SCOPES
+    if normalized_role == "viewer":
+        return (READ_GATEWAY_METHOD_SCOPE,)
+    return ()
 
 
 def build_access_posture(

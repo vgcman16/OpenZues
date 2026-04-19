@@ -9,6 +9,8 @@ from typing import Any
 
 import yaml
 
+from openzues.services.gateway_skill_config import GatewaySkillConfigService
+
 _FRONTMATTER_RE = re.compile(r"\A---\s*\r?\n(?P<frontmatter>.*?)\r?\n---\s*\r?\n?", re.DOTALL)
 _PLATFORM_ALIASES = {
     "windows": {"windows", "win32"},
@@ -95,14 +97,25 @@ class GatewaySkillStatusService:
         *,
         codex_home: Path | None = None,
         workspace_root: Path | None = None,
+        skill_config_service: GatewaySkillConfigService | None = None,
     ) -> None:
         self.codex_home = (codex_home or _default_codex_home()).expanduser()
         self.workspace_root = (workspace_root or Path.cwd()).expanduser()
+        self._skill_config_service = skill_config_service or GatewaySkillConfigService(
+            codex_home=self.codex_home,
+            workspace_root=self.workspace_root,
+        )
 
     def build_report(self, *, agent_id: str | None = None) -> dict[str, Any]:
         del agent_id
+        skill_entries = self._skill_config_service.load_entries()
         skills = [
-            self._build_skill_payload(skill_path, source=source, bundled=bundled)
+            self._build_skill_payload(
+                skill_path,
+                source=source,
+                bundled=bundled,
+                skill_entries=skill_entries,
+            )
             for skill_path, source, bundled in self._iter_skill_paths()
         ]
         skills.sort(key=lambda entry: str(entry["name"]).lower())
@@ -118,6 +131,7 @@ class GatewaySkillStatusService:
         *,
         source: str,
         bundled: bool,
+        skill_entries: dict[str, dict[str, Any]],
     ) -> dict[str, Any]:
         frontmatter = _frontmatter_payload(skill_path)
         metadata = frontmatter.get("metadata")
@@ -134,6 +148,7 @@ class GatewaySkillStatusService:
             str(metadata.get("skillKey") or skill_path.parent.name).strip()
             or skill_path.parent.name
         )
+        config_entry = skill_entries.get(skill_key)
         required_bins = list(_string_list(requires.get("bins")))
         any_bins = list(_string_list(requires.get("anyBins")))
         required_env = list(_string_list(requires.get("env")))
@@ -160,6 +175,8 @@ class GatewaySkillStatusService:
             else []
         )
         disabled = bool(metadata.get("disabled") is True or metadata.get("enabled") is False)
+        if isinstance(config_entry, dict) and isinstance(config_entry.get("enabled"), bool):
+            disabled = not bool(config_entry["enabled"])
         eligible = not disabled and not (
             missing_bins or missing_env or required_config or missing_os
         )

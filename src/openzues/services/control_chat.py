@@ -28,6 +28,8 @@ from openzues.services.followups import (
     operator_blocked_missions,
     operator_ready_handoff_missions,
 )
+from openzues.services.gateway_sessions import GatewaySessionsService
+from openzues.services.gateway_wake import GatewayWakeService
 from openzues.services.hub import BroadcastHub
 from openzues.services.manager import RuntimeManager
 from openzues.services.missions import MissionService
@@ -1377,13 +1379,20 @@ class ControlChatService:
         missions: MissionService,
         manager: RuntimeManager,
         hub: BroadcastHub,
+        *,
+        wake_service: GatewayWakeService | None = None,
     ) -> None:
         self.database = database
         self.missions = missions
         self.manager = manager
         self.hub = hub
+        self._gateway_sessions = GatewaySessionsService(database)
+        self._wake_service = wake_service
         self._attention_task: asyncio.Task[None] | None = None
         self._attention_stop_event = asyncio.Event()
+
+    def set_wake_service(self, wake_service: GatewayWakeService | None) -> None:
+        self._wake_service = wake_service
 
     async def start_attention_queue(
         self,
@@ -1562,12 +1571,23 @@ class ControlChatService:
             actions=actions,
         )
 
-    async def submit(self, prompt: str, dashboard: DashboardView) -> ControlChatResponse:
+    async def submit(
+        self,
+        prompt: str,
+        dashboard: DashboardView,
+        *,
+        session_key: str | None = None,
+    ) -> ControlChatResponse:
         text = prompt.strip()
         if not text:
             raise ValueError("Enter a message before sending it to Zues.")
 
-        user_message = await self._append_message(role="user", content=text)
+        resolved_session_key = session_key or await self._gateway_sessions.current_session_key()
+        user_message = await self._append_message(
+            role="user",
+            content=text,
+            session_key=resolved_session_key,
+        )
         plan = plan_control_chat(text, dashboard)
         executed = False
         mission_id = plan.mission_id
@@ -1599,6 +1619,7 @@ class ControlChatService:
             mission_id=mission_id,
             opportunity_id=plan.opportunity_id,
             target_label=target_label,
+            session_key=resolved_session_key,
         )
         await self.hub.publish(
             {
@@ -1629,6 +1650,9 @@ class ControlChatService:
         *,
         target_signal_id: str | None = None,
     ) -> bool:
+        if await self._dispatch_next_wake(dashboard):
+            return True
+
         if target_signal_id is None and await self._sweep_safe_approvals(dashboard):
             return True
 
@@ -1691,6 +1715,21 @@ class ControlChatService:
                 "targetLabel": target_label,
             }
         )
+        return True
+
+    async def _dispatch_next_wake(self, dashboard: DashboardView) -> bool:
+        if self._wake_service is None:
+            return False
+        wake_request = await self._wake_service.claim_next_queued()
+        if wake_request is None:
+            return False
+        request_id = int(wake_request["id"])
+        try:
+            await self.submit(str(wake_request.get("text") or ""), dashboard)
+        except Exception:
+            await self._wake_service.release(request_id)
+            raise
+        await self._wake_service.complete(request_id)
         return True
 
     async def _sweep_safe_approvals(self, dashboard: DashboardView) -> bool:
@@ -1936,6 +1975,7 @@ class ControlChatService:
         mission_id: int | None = None,
         opportunity_id: str | None = None,
         target_label: str | None = None,
+        session_key: str | None = None,
     ) -> ControlChatMessageView:
         message_id = await self.database.append_control_chat_message(
             role=role,
@@ -1944,7 +1984,40 @@ class ControlChatService:
             mission_id=mission_id,
             opportunity_id=opportunity_id,
             target_label=target_label,
+            session_key=session_key,
         )
         row = await self.database.get_control_chat_message(message_id)
         assert row is not None
+        await self._publish_session_message_event(row)
         return ControlChatMessageView.model_validate(row)
+
+    async def _publish_session_message_event(self, message_row: dict[str, Any]) -> None:
+        now_ms = int(datetime.now(UTC).timestamp() * 1000)
+        message_payload = await self._gateway_sessions.build_message_event_payload(
+            message_row=message_row,
+            now_ms=now_ms,
+        )
+        if message_payload is None:
+            return
+        await self.hub.publish(
+            {
+                "type": "gateway_event",
+                "event": "session.message",
+                "payload": message_payload,
+                "createdAt": utcnow(),
+            }
+        )
+        changed_payload = await self._gateway_sessions.build_message_changed_event_payload(
+            message_row=message_row,
+            now_ms=now_ms,
+        )
+        if changed_payload is None:
+            return
+        await self.hub.publish(
+            {
+                "type": "gateway_event",
+                "event": "sessions.changed",
+                "payload": changed_payload,
+                "createdAt": utcnow(),
+            }
+        )

@@ -6,6 +6,8 @@ import secrets
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any, Literal, cast
 from urllib.parse import quote, urlsplit, urlunsplit
 
@@ -44,14 +46,30 @@ from openzues.services.gateway_node_registry import GatewayNodeRegistry, KnownNo
 from openzues.services.gateway_sessions import GatewaySessionsService
 from openzues.services.gateway_skill_bins import GatewaySkillBinsService
 from openzues.services.gateway_skill_catalog import GatewaySkillCatalogService
+from openzues.services.gateway_skill_clawhub import (
+    GatewaySkillClawHubService,
+    GatewaySkillClawHubUnavailableError,
+)
+from openzues.services.gateway_skill_config import GatewaySkillConfigService
+from openzues.services.gateway_skill_install import GatewaySkillInstallService
 from openzues.services.gateway_skill_status import GatewaySkillStatusService
 from openzues.services.gateway_system_presence import GatewaySystemPresenceService
 from openzues.services.gateway_talk_config import GatewayTalkConfigService
+from openzues.services.gateway_talk_mode import GatewayTalkModeService
 from openzues.services.gateway_tools_catalog import GatewayToolsCatalogService
 from openzues.services.gateway_tts import GatewayTtsService
+from openzues.services.gateway_tts_runtime import (
+    GatewayTtsRuntimeService,
+    GatewayTtsRuntimeUnavailableError,
+)
 from openzues.services.gateway_voicewake import GatewayVoiceWakeService
+from openzues.services.gateway_wake import GatewayWakeService
 from openzues.services.hub import BroadcastHub
-from openzues.services.session_keys import resolve_thread_session_keys, session_key_lookup_aliases
+from openzues.services.session_keys import (
+    resolve_agent_id_from_session_key,
+    resolve_thread_session_keys,
+    session_key_lookup_aliases,
+)
 
 _NODE_PENDING_WORK_TYPES = {"status.request", "location.request"}
 _NODE_PENDING_WORK_PRIORITIES = {"normal", "high"}
@@ -63,6 +81,7 @@ _SESSION_PATCH_SUBAGENT_ROLE_VALUES = {"leaf", "orchestrator"}
 _SESSION_PATCH_SUBAGENT_CONTROL_SCOPE_VALUES = {"children", "none"}
 _SESSION_PATCH_SEND_POLICY_VALUES = {"allow", "deny"}
 _SESSION_PATCH_GROUP_ACTIVATION_VALUES = {"always", "mention"}
+_DEFAULT_SESSION_DELETE_ARCHIVE_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
 _YYYY_MM_DD_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _UTC_OFFSET_RE = re.compile(r"^UTC[+-]\d{1,2}(?::[0-5]\d)?$")
 _NODE_ONLY_METHODS = {
@@ -89,6 +108,7 @@ class GatewayNodeMethodError(Exception):
 class GatewayNodeMethodRequester:
     node_id: str | None = None
     caller_scopes: tuple[str, ...] | None = None
+    client_id: str | None = None
 
 
 class GatewayNodeMethodService:
@@ -116,15 +136,21 @@ class GatewayNodeMethodService:
         sessions_service: GatewaySessionsService | None = None,
         system_presence_service: GatewaySystemPresenceService | None = None,
         talk_config_service: GatewayTalkConfigService | None = None,
+        talk_mode_service: GatewayTalkModeService | None = None,
         tts_service: GatewayTtsService | None = None,
+        tts_runtime_service: GatewayTtsRuntimeService | None = None,
         tools_catalog_service: GatewayToolsCatalogService | None = None,
         skill_bins_service: GatewaySkillBinsService | None = None,
         skill_catalog_service: GatewaySkillCatalogService | None = None,
+        skill_clawhub_service: GatewaySkillClawHubService | None = None,
+        skill_config_service: GatewaySkillConfigService | None = None,
+        skill_install_service: GatewaySkillInstallService | None = None,
         skill_status_service: GatewaySkillStatusService | None = None,
         chat_send_service: Callable[..., Awaitable[dict[str, object]]] | None = None,
         chat_abort_service: Callable[..., Awaitable[dict[str, object]]] | None = None,
         status_service: Callable[[], Awaitable[dict[str, object]]] | None = None,
         voicewake_service: GatewayVoiceWakeService | None = None,
+        wake_service: GatewayWakeService | None = None,
         sync: Callable[[], Awaitable[None]] | None = None,
         wake_node: Callable[[str], Awaitable[bool]] | None = None,
     ) -> None:
@@ -170,16 +196,24 @@ class GatewayNodeMethodService:
                 gateway_identity_service=self._gateway_identity_service,
             )
         self._talk_config_service = talk_config_service or GatewayTalkConfigService()
+        self._talk_mode_service = talk_mode_service or GatewayTalkModeService()
         self._tts_service = tts_service or GatewayTtsService()
+        self._tts_runtime_service = tts_runtime_service
         self._tools_catalog_service = tools_catalog_service or GatewayToolsCatalogService()
         self._skill_bins_service = skill_bins_service or GatewaySkillBinsService()
         self._skill_catalog_service = skill_catalog_service or GatewaySkillCatalogService()
-        self._skill_status_service = skill_status_service or GatewaySkillStatusService()
+        self._skill_clawhub_service = skill_clawhub_service or GatewaySkillClawHubService()
+        self._skill_config_service = skill_config_service or GatewaySkillConfigService()
+        self._skill_install_service = skill_install_service or GatewaySkillInstallService()
+        self._skill_status_service = skill_status_service or GatewaySkillStatusService(
+            skill_config_service=self._skill_config_service
+        )
         self._chat_send_service = chat_send_service
         self._chat_abort_service = chat_abort_service
         self._gateway_chat_run_ids_by_session_key: dict[str, str] = {}
         self._status_service = status_service
         self._voicewake_service = voicewake_service
+        self._wake_service = wake_service
         self._sync = sync
         self._wake_node = wake_node
 
@@ -567,23 +601,39 @@ class GatewayNodeMethodService:
 
         if resolved_method == "wake":
             _validate_exact_keys(resolved_method, payload, allowed_keys=("mode", "text"))
-            _require_enum_value(
+            mode = _require_enum_value(
                 payload.get("mode"),
                 label="mode",
                 allowed_values={"next-heartbeat", "now"},
             )
-            _require_non_empty_string(payload.get("text"), label="text")
-            raise GatewayNodeMethodError(
-                code="UNAVAILABLE",
-                message="wake is unavailable until control-plane wake queue is wired",
-                status_code=503,
+            text = _require_non_empty_string(payload.get("text"), label="text")
+            if self._wake_service is None:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message="wake is unavailable until control-plane wake queue is wired",
+                    status_code=503,
+                )
+            return await self._wake_service.wake(
+                mode=cast(Literal["next-heartbeat", "now"], mode),
+                text=text,
             )
 
         if resolved_method == "sessions.list":
             _validate_exact_keys(
                 resolved_method,
                 payload,
-                allowed_keys=("includeGlobal", "includeUnknown", "limit"),
+                allowed_keys=(
+                    "includeGlobal",
+                    "includeUnknown",
+                    "limit",
+                    "activeMinutes",
+                    "label",
+                    "spawnedBy",
+                    "agentId",
+                    "search",
+                    "includeDerivedTitles",
+                    "includeLastMessage",
+                ),
             )
             if self._sessions_service is None:
                 raise GatewayNodeMethodError(
@@ -607,10 +657,36 @@ class GatewayNodeMethodService:
                 minimum=1,
                 maximum=1000,
             )
+            active_minutes = _optional_min_int(
+                payload.get("activeMinutes"),
+                label="activeMinutes",
+                minimum=1,
+            )
+            label = _optional_non_empty_string(payload.get("label"), label="label")
+            spawned_by = _optional_non_empty_string(payload.get("spawnedBy"), label="spawnedBy")
+            agent_id = _optional_non_empty_string(payload.get("agentId"), label="agentId")
+            search = _optional_non_empty_string(payload.get("search"), label="search")
+            include_derived_titles = (
+                _optional_bool(payload.get("includeDerivedTitles"), label="includeDerivedTitles")
+                if "includeDerivedTitles" in payload
+                else False
+            )
+            include_last_message = (
+                _optional_bool(payload.get("includeLastMessage"), label="includeLastMessage")
+                if "includeLastMessage" in payload
+                else False
+            )
             return await self._sessions_service.build_snapshot(
                 include_global=bool(include_global),
                 include_unknown=bool(include_unknown),
                 limit=limit,
+                active_minutes=active_minutes,
+                label=label,
+                spawned_by=spawned_by,
+                agent_id=agent_id,
+                search=search,
+                include_derived_titles=bool(include_derived_titles),
+                include_last_message=bool(include_last_message),
                 now_ms=_timestamp_ms(now_ms),
             )
 
@@ -698,26 +774,45 @@ class GatewayNodeMethodService:
                     "includeContextWeight",
                 ),
             )
-            _optional_non_empty_string(payload.get("key"), label="key")
-            _optional_date_string(payload.get("startDate"), label="startDate")
-            _optional_date_string(payload.get("endDate"), label="endDate")
-            _optional_enum_value(
+            if self._database is None:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message="sessions.usage is unavailable until session usage analytics are wired",
+                    status_code=503,
+                )
+            usage_session_key = _optional_non_empty_string(payload.get("key"), label="key")
+            usage_start_date = _optional_date_string(payload.get("startDate"), label="startDate")
+            usage_end_date = _optional_date_string(payload.get("endDate"), label="endDate")
+            usage_mode = _optional_enum_value(
                 payload.get("mode"),
                 label="mode",
                 allowed_values={"gateway", "specific", "utc"},
             )
-            _optional_utc_offset_string(payload.get("utcOffset"), label="utcOffset")
-            _optional_bounded_int(
+            usage_utc_offset = _optional_utc_offset_string(
+                payload.get("utcOffset"),
+                label="utcOffset",
+            )
+            usage_limit = _optional_bounded_int(
                 payload.get("limit"),
                 label="limit",
                 minimum=1,
                 maximum=1000,
             )
-            _optional_bool(payload.get("includeContextWeight"), label="includeContextWeight")
-            raise GatewayNodeMethodError(
-                code="UNAVAILABLE",
-                message="sessions.usage is unavailable until session usage analytics are wired",
-                status_code=503,
+            usage_include_context_weight = _optional_bool(
+                payload.get("includeContextWeight"),
+                label="includeContextWeight",
+            )
+            return await _build_sessions_usage_payload(
+                self._database,
+                sessions_service=self._sessions_service,
+                session_key=usage_session_key,
+                start_date=usage_start_date,
+                end_date=usage_end_date,
+                mode=cast(Literal["gateway", "specific", "utc"] | None, usage_mode),
+                utc_offset=usage_utc_offset,
+                limit=usage_limit,
+                include_context_weight=bool(usage_include_context_weight),
+                now_ms=_timestamp_ms(now_ms),
             )
 
         if resolved_method == "sessions.usage.timeseries":
@@ -726,14 +821,20 @@ class GatewayNodeMethodService:
                 payload,
                 allowed_keys=("key",),
             )
-            _require_non_empty_string(payload.get("key"), label="key")
-            raise GatewayNodeMethodError(
-                code="UNAVAILABLE",
-                message=(
-                    "sessions.usage.timeseries is unavailable until session usage analytics "
-                    "are wired"
-                ),
-                status_code=503,
+            if self._database is None:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message=(
+                        "sessions.usage.timeseries is unavailable until session usage analytics "
+                        "are wired"
+                    ),
+                    status_code=503,
+                )
+            return await _build_sessions_usage_timeseries_payload(
+                self._database,
+                sessions_service=self._sessions_service,
+                session_key=_require_non_empty_string(payload.get("key"), label="key"),
+                now_ms=_timestamp_ms(now_ms),
             )
 
         if resolved_method == "sessions.usage.logs":
@@ -742,25 +843,40 @@ class GatewayNodeMethodService:
                 payload,
                 allowed_keys=("key", "limit"),
             )
-            _require_non_empty_string(payload.get("key"), label="key")
-            _optional_bounded_int(payload.get("limit"), label="limit", minimum=1, maximum=1000)
-            raise GatewayNodeMethodError(
-                code="UNAVAILABLE",
-                message=(
-                    "sessions.usage.logs is unavailable until session usage analytics are wired"
+            if self._database is None:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message=(
+                        "sessions.usage.logs is unavailable until session usage analytics are wired"
+                    ),
+                    status_code=503,
+                )
+            return await _build_sessions_usage_logs_payload(
+                self._database,
+                sessions_service=self._sessions_service,
+                session_key=_require_non_empty_string(payload.get("key"), label="key"),
+                limit=_optional_bounded_int(
+                    payload.get("limit"),
+                    label="limit",
+                    minimum=1,
+                    maximum=1000,
                 ),
-                status_code=503,
+                now_ms=_timestamp_ms(now_ms),
             )
 
         if resolved_method == "talk.mode":
             _validate_exact_keys(resolved_method, payload, allowed_keys=("enabled", "phase"))
-            _require_bool(payload.get("enabled"), label="enabled")
-            _optional_non_empty_string(payload.get("phase"), label="phase")
-            raise GatewayNodeMethodError(
-                code="UNAVAILABLE",
-                message="Talk mode broadcast is not wired in OpenZues yet",
-                status_code=503,
+            talk_mode = self._talk_mode_service.set_mode(
+                _require_bool(payload.get("enabled"), label="enabled"),
+                phase=_optional_non_empty_string(payload.get("phase"), label="phase"),
+                now_ms=_timestamp_ms(now_ms),
             )
+            mode_payload = talk_mode.to_payload()
+            for known_node in self.registry.list_known_nodes():
+                if known_node.connected:
+                    self.registry.send_event(known_node.node_id, "talk.mode", mode_payload)
+            await self._publish_gateway_event("talk.mode", mode_payload)
+            return mode_payload
 
         if resolved_method == "talk.speak":
             _validate_exact_keys(
@@ -776,42 +892,55 @@ class GatewayNodeMethodService:
                     "voiceId",
                 ),
             )
-            _require_non_empty_string(payload.get("text"), label="text")
-            _optional_non_empty_string(payload.get("provider"), label="provider")
-            _optional_non_empty_string(payload.get("voiceId"), label="voiceId")
-            _optional_non_empty_string(payload.get("modelId"), label="modelId")
-            _optional_non_empty_string(payload.get("outputFormat"), label="outputFormat")
-            _optional_number(payload.get("speed"), label="speed")
-            _optional_number(payload.get("rateWpm"), label="rateWpm")
-            raise GatewayNodeMethodError(
-                code="UNAVAILABLE",
-                message="Talk synthesis runtime not wired in OpenZues yet",
-                status_code=503,
+            text = _require_non_empty_string(payload.get("text"), label="text")
+            provider = _optional_non_empty_string(payload.get("provider"), label="provider")
+            voice_id = _optional_non_empty_string(payload.get("voiceId"), label="voiceId")
+            model_id = _optional_non_empty_string(payload.get("modelId"), label="modelId")
+            output_format = _optional_non_empty_string(
+                payload.get("outputFormat"),
+                label="outputFormat",
             )
+            speed = _optional_number(payload.get("speed"), label="speed")
+            rate_wpm = _optional_number(payload.get("rateWpm"), label="rateWpm")
+            if self._tts_runtime_service is None:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message="Talk synthesis runtime not wired in OpenZues yet",
+                    status_code=503,
+                )
+            try:
+                return await self._tts_runtime_service.speak(
+                    text=text,
+                    provider=provider,
+                    model_id=model_id,
+                    voice_id=voice_id,
+                    output_format=output_format,
+                    speed=speed,
+                    rate_wpm=rate_wpm,
+                )
+            except GatewayTtsRuntimeUnavailableError as exc:
+                message = str(exc).strip() or "Talk synthesis runtime not wired in OpenZues yet"
+                if message.startswith("TTS conversion"):
+                    message = "Talk synthesis runtime not wired in OpenZues yet"
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message=message,
+                    status_code=503,
+                ) from exc
 
         if resolved_method == "tts.enable":
             _validate_exact_keys(resolved_method, payload, allowed_keys=())
-            raise GatewayNodeMethodError(
-                code="UNAVAILABLE",
-                message="TTS runtime not wired in OpenZues yet",
-                status_code=503,
-            )
+            return self._tts_service.set_enabled(True, now_ms=_timestamp_ms(now_ms))
 
         if resolved_method == "tts.disable":
             _validate_exact_keys(resolved_method, payload, allowed_keys=())
-            raise GatewayNodeMethodError(
-                code="UNAVAILABLE",
-                message="TTS runtime not wired in OpenZues yet",
-                status_code=503,
-            )
+            return self._tts_service.set_enabled(False, now_ms=_timestamp_ms(now_ms))
 
         if resolved_method == "tts.setProvider":
             _validate_exact_keys(resolved_method, payload, allowed_keys=("provider",))
-            _require_non_empty_string(payload.get("provider"), label="provider")
-            raise GatewayNodeMethodError(
-                code="UNAVAILABLE",
-                message="TTS runtime not wired in OpenZues yet",
-                status_code=503,
+            return self._tts_service.set_provider(
+                _require_non_empty_string(payload.get("provider"), label="provider"),
+                now_ms=_timestamp_ms(now_ms),
             )
 
         if resolved_method == "tts.convert":
@@ -821,15 +950,30 @@ class GatewayNodeMethodService:
                 allowed_keys=("channel", "modelId", "provider", "text", "voiceId"),
             )
             _require_non_empty_string(payload.get("text"), label="text")
-            _optional_non_empty_string(payload.get("provider"), label="provider")
-            _optional_non_empty_string(payload.get("modelId"), label="modelId")
-            _optional_non_empty_string(payload.get("voiceId"), label="voiceId")
-            _optional_non_empty_string(payload.get("channel"), label="channel")
-            raise GatewayNodeMethodError(
-                code="UNAVAILABLE",
-                message="TTS conversion runtime not wired in OpenZues yet",
-                status_code=503,
-            )
+            provider = _optional_non_empty_string(payload.get("provider"), label="provider")
+            model_id = _optional_non_empty_string(payload.get("modelId"), label="modelId")
+            voice_id = _optional_non_empty_string(payload.get("voiceId"), label="voiceId")
+            channel = _optional_non_empty_string(payload.get("channel"), label="channel")
+            if self._tts_runtime_service is None:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message="TTS conversion runtime not wired in OpenZues yet",
+                    status_code=503,
+                )
+            try:
+                return await self._tts_runtime_service.convert(
+                    text=_require_non_empty_string(payload.get("text"), label="text"),
+                    channel=channel,
+                    provider=provider,
+                    model_id=model_id,
+                    voice_id=voice_id,
+                )
+            except GatewayTtsRuntimeUnavailableError as exc:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message=str(exc),
+                    status_code=503,
+                ) from exc
 
         if resolved_method == "config.get":
             _validate_exact_keys(resolved_method, payload, allowed_keys=())
@@ -884,14 +1028,22 @@ class GatewayNodeMethodService:
                 payload,
                 allowed_keys=("agentId", "sessionKey"),
             )
-            _require_non_empty_string(payload.get("sessionKey"), label="sessionKey")
+            session_key = _require_non_empty_string(payload.get("sessionKey"), label="sessionKey")
             agent_id = _optional_non_empty_string(payload.get("agentId"), label="agentId")
-            if agent_id is not None and agent_id != "openzues":
+            resolved_agent_id = resolve_agent_id_from_session_key(session_key)
+            if agent_id is not None and agent_id != resolved_agent_id:
                 raise ValueError(f'unknown agent id "{agent_id}"')
-            raise GatewayNodeMethodError(
-                code="UNAVAILABLE",
-                message="Effective tool inventory is not wired in OpenZues yet",
-                status_code=503,
+            if self._database is None:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message=(
+                        "tools.effective is unavailable until control-plane persistence is wired"
+                    ),
+                    status_code=503,
+                )
+            return self._tools_catalog_service.build_effective(
+                agent_id=agent_id or resolved_agent_id,
+                toolsets=await self._resolve_effective_toolsets(session_key),
             )
 
         if resolved_method == "chat.history":
@@ -1222,7 +1374,14 @@ class GatewayNodeMethodService:
             deleted = metadata_row is not None or message_count > 0
             if not deleted:
                 return {"ok": True, "key": canonical_key, "deleted": False, "archived": []}
+            archived: list[str] = []
             if message_count and resolved_delete_transcript:
+                archived = await _archive_control_chat_transcript(
+                    self._database,
+                    session_key=canonical_key,
+                    reason="deleted",
+                    now_ms=_timestamp_ms(now_ms),
+                )
                 await self._database.delete_control_chat_messages(session_key=canonical_key)
             if metadata_row is not None:
                 await self._database.delete_gateway_session_metadata(canonical_key)
@@ -1232,7 +1391,7 @@ class GatewayNodeMethodService:
                 reason="delete",
                 now_ms=now_ms,
             )
-            return {"ok": True, "key": canonical_key, "deleted": True, "archived": []}
+            return {"ok": True, "key": canonical_key, "deleted": True, "archived": archived}
 
         if resolved_method == "sessions.compact":
             _validate_exact_keys(
@@ -1400,7 +1559,15 @@ class GatewayNodeMethodService:
                 allowed_keys=("key",),
             )
             session_key = _require_non_empty_string(payload.get("key"), label="key")
-            return {"subscribed": False, "key": _canonical_session_key(session_key)}
+            canonical_key = _canonical_session_key(session_key)
+            if self._hub is None or not resolved_requester.client_id:
+                return {"subscribed": False, "key": canonical_key}
+            subscribed = self._hub.set_session_messages_subscription(
+                client_id=resolved_requester.client_id,
+                session_key=canonical_key,
+                subscribed=True,
+            )
+            return {"subscribed": subscribed, "key": canonical_key}
 
         if resolved_method == "sessions.messages.unsubscribe":
             _validate_exact_keys(
@@ -1409,15 +1576,37 @@ class GatewayNodeMethodService:
                 allowed_keys=("key",),
             )
             session_key = _require_non_empty_string(payload.get("key"), label="key")
-            return {"subscribed": False, "key": _canonical_session_key(session_key)}
+            canonical_key = _canonical_session_key(session_key)
+            if self._hub is None or not resolved_requester.client_id:
+                return {"subscribed": False, "key": canonical_key}
+            subscribed = self._hub.set_session_messages_subscription(
+                client_id=resolved_requester.client_id,
+                session_key=canonical_key,
+                subscribed=False,
+            )
+            return {"subscribed": subscribed, "key": canonical_key}
 
         if resolved_method == "sessions.subscribe":
             _validate_exact_keys(resolved_method, payload, allowed_keys=())
-            return {"subscribed": False}
+            if self._hub is None or not resolved_requester.client_id:
+                return {"subscribed": False}
+            return {
+                "subscribed": self._hub.set_sessions_subscription(
+                    client_id=resolved_requester.client_id,
+                    subscribed=True,
+                )
+            }
 
         if resolved_method == "sessions.unsubscribe":
             _validate_exact_keys(resolved_method, payload, allowed_keys=())
-            return {"subscribed": False}
+            if self._hub is None or not resolved_requester.client_id:
+                return {"subscribed": False}
+            return {
+                "subscribed": self._hub.set_sessions_subscription(
+                    client_id=resolved_requester.client_id,
+                    subscribed=False,
+                )
+            }
 
         if resolved_method == "sessions.create":
             _validate_exact_keys(
@@ -1893,61 +2082,136 @@ class GatewayNodeMethodService:
             )
             source = _optional_non_empty_string(payload.get("source"), label="source")
             if source == "clawhub":
-                _require_non_empty_string(payload.get("slug"), label="slug")
-                _optional_non_empty_string(payload.get("version"), label="version")
-                _optional_bool(payload.get("force"), label="force")
-                raise GatewayNodeMethodError(
-                    code="UNAVAILABLE",
-                    message="ClawHub skill install is not wired in OpenZues yet",
-                    status_code=503,
-                )
+                slug = _require_non_empty_string(payload.get("slug"), label="slug")
+                version = _optional_non_empty_string(payload.get("version"), label="version")
+                force = bool(_optional_bool(payload.get("force"), label="force"))
+                try:
+                    return await self._skill_clawhub_service.install(
+                        slug=slug,
+                        version=version,
+                        force=force,
+                    )
+                except GatewaySkillClawHubUnavailableError as exc:
+                    raise GatewayNodeMethodError(
+                        code="UNAVAILABLE",
+                        message=str(exc),
+                        status_code=503,
+                    ) from exc
+                except RuntimeError as exc:
+                    raise GatewayNodeMethodError(
+                        code="INSTALL_FAILED",
+                        message=str(exc),
+                        status_code=500,
+                    ) from exc
             _require_non_empty_string(payload.get("name"), label="name")
             _require_non_empty_string(payload.get("installId"), label="installId")
-            _optional_bool(
+            dangerously_force_unsafe_install = _optional_bool(
                 payload.get("dangerouslyForceUnsafeInstall"),
                 label="dangerouslyForceUnsafeInstall",
             )
-            _optional_bounded_int(
+            timeout_ms = _optional_bounded_int(
                 payload.get("timeoutMs"),
                 label="timeoutMs",
                 minimum=1,
                 maximum=2_592_000_000,
             )
-            raise GatewayNodeMethodError(
-                code="UNAVAILABLE",
-                message="Gateway-host skill installers are not wired in OpenZues yet",
-                status_code=503,
-            )
+            try:
+                return await self._skill_install_service.install(
+                    name=_require_non_empty_string(payload.get("name"), label="name"),
+                    install_id=_require_non_empty_string(
+                        payload.get("installId"),
+                        label="installId",
+                    ),
+                    dangerously_force_unsafe_install=bool(dangerously_force_unsafe_install),
+                    timeout_ms=timeout_ms,
+                )
+            except RuntimeError as exc:
+                raise GatewayNodeMethodError(
+                    code="INSTALL_FAILED",
+                    message=str(exc),
+                    status_code=500,
+                ) from exc
 
         if resolved_method == "skills.update":
             _validate_exact_keys(
                 resolved_method,
                 payload,
-                allowed_keys=("all", "apiKey", "enabled", "env", "skillKey", "slug", "source"),
+                allowed_keys=(
+                    "all",
+                    "apiKey",
+                    "enabled",
+                    "env",
+                    "force",
+                    "skillKey",
+                    "slug",
+                    "source",
+                    "version",
+                ),
             )
             source = _optional_non_empty_string(payload.get("source"), label="source")
             if source == "clawhub" or "slug" in payload or "all" in payload:
-                if "slug" in payload:
+                clawhub_slug = (
                     _optional_non_empty_string(payload.get("slug"), label="slug")
-                if "all" in payload:
-                    _optional_bool(payload.get("all"), label="all")
-                raise GatewayNodeMethodError(
-                    code="UNAVAILABLE",
-                    message="ClawHub skill update is not wired in OpenZues yet",
-                    status_code=503,
+                    if "slug" in payload
+                    else None
                 )
-            _require_non_empty_string(payload.get("skillKey"), label="skillKey")
-            if "enabled" in payload:
+                all_installed = (
+                    bool(_optional_bool(payload.get("all"), label="all"))
+                    if "all" in payload
+                    else False
+                )
+                version = (
+                    _optional_non_empty_string(payload.get("version"), label="version")
+                    if "version" in payload
+                    else None
+                )
+                force = (
+                    bool(_optional_bool(payload.get("force"), label="force"))
+                    if "force" in payload
+                    else False
+                )
+                try:
+                    return await self._skill_clawhub_service.update(
+                        slug=clawhub_slug,
+                        all_installed=all_installed,
+                        version=version,
+                        force=force,
+                    )
+                except GatewaySkillClawHubUnavailableError as exc:
+                    raise GatewayNodeMethodError(
+                        code="UNAVAILABLE",
+                        message=str(exc),
+                        status_code=503,
+                    ) from exc
+                except RuntimeError as exc:
+                    raise GatewayNodeMethodError(
+                        code="UPDATE_FAILED",
+                        message=str(exc),
+                        status_code=500,
+                    ) from exc
+            skill_key = _require_non_empty_string(payload.get("skillKey"), label="skillKey")
+            enabled_flag = (
                 _optional_bool(payload.get("enabled"), label="enabled")
-            if "apiKey" in payload:
-                _optional_non_empty_string(payload.get("apiKey"), label="apiKey")
-            if "env" in payload:
-                _require_string_mapping(payload.get("env"), label="env")
-            raise GatewayNodeMethodError(
-                code="UNAVAILABLE",
-                message="Skill config patching is not wired in OpenZues yet",
-                status_code=503,
+                if "enabled" in payload
+                else None
             )
+            api_key_value = (
+                _require_string(payload.get("apiKey"), label="apiKey")
+                if "apiKey" in payload
+                else None
+            )
+            env_mapping = (
+                _require_string_mapping(payload.get("env"), label="env")
+                if "env" in payload
+                else None
+            )
+            updated_config = self._skill_config_service.update_entry(
+                skill_key=skill_key,
+                enabled=enabled_flag,
+                api_key=api_key_value,
+                env=env_mapping,
+            )
+            return {"ok": True, "skillKey": skill_key, "config": updated_config}
 
         if resolved_method == "node.pair.list":
             _validate_exact_keys(resolved_method, payload, allowed_keys=())
@@ -2459,6 +2723,29 @@ class GatewayNodeMethodService:
 
         raise ValueError(f"unsupported method: {resolved_method}")
 
+    async def _resolve_effective_toolsets(self, session_key: str) -> list[str]:
+        if self._database is None:
+            return []
+
+        metadata_row = await self._database.get_gateway_session_metadata(session_key)
+        metadata = metadata_row.get("metadata") if metadata_row is not None else None
+        metadata_toolsets = _toolsets_from_value(
+            metadata.get("toolsets") if isinstance(metadata, dict) else None
+        )
+        if metadata_toolsets:
+            return metadata_toolsets
+
+        mission = await self._database.get_latest_mission_by_session_key(
+            session_key,
+            require_thread=False,
+        )
+        mission_toolsets = _toolsets_from_value(mission.get("toolsets") if mission else None)
+        if mission_toolsets:
+            return mission_toolsets
+
+        gateway = await self._database.get_gateway_bootstrap()
+        return _toolsets_from_value(gateway.get("toolsets") if gateway else None)
+
     async def _publish_gateway_event(self, event: str, payload: dict[str, Any]) -> None:
         if self._hub is None:
             return
@@ -2598,6 +2885,25 @@ def _bool_or_none(value: object) -> bool | None:
     return None
 
 
+def _int_or_none(value: object) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    return None
+
+
+def _iso8601_to_timestamp_ms(value: object) -> int | None:
+    text = _string_or_none(value)
+    if text is None:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return int(parsed.timestamp() * 1000)
+
+
 def _mint_canvas_capability_token() -> str:
     return secrets.token_urlsafe(18)
 
@@ -2644,6 +2950,630 @@ async def _build_sessions_get_payload(
     return {"messages": history["messages"]}
 
 
+async def _build_sessions_usage_payload(
+    database: Database,
+    *,
+    sessions_service: GatewaySessionsService | None,
+    session_key: str | None,
+    start_date: str | None,
+    end_date: str | None,
+    mode: Literal["gateway", "specific", "utc"] | None,
+    utc_offset: str | None,
+    limit: int | None,
+    include_context_weight: bool,
+    now_ms: int,
+) -> dict[str, Any]:
+    resolved_start_date, resolved_end_date = _resolve_sessions_usage_date_range(
+        start_date=start_date,
+        end_date=end_date,
+        mode=mode,
+        utc_offset=utc_offset,
+        now_ms=now_ms,
+    )
+    bounded_limit = max(1, min(limit or 50, 1000))
+    requested_session_key = (
+        [_canonical_session_key(session_key)] if session_key is not None else None
+    )
+    session_payloads = await _usage_session_payloads_by_key(
+        database,
+        sessions_service=sessions_service,
+        requested_session_keys=requested_session_key,
+        limit=bounded_limit,
+        now_ms=now_ms,
+    )
+
+    sessions: list[dict[str, Any]] = []
+    totals = _empty_usage_totals()
+    aggregate_messages = _empty_usage_message_counts()
+    aggregate_tools = _empty_usage_tool_summary()
+    by_model: dict[tuple[str | None, str | None], dict[str, Any]] = {}
+    by_provider: dict[str | None, dict[str, Any]] = {}
+
+    for session_payload in session_payloads:
+        usage_entry = await _build_single_session_usage_entry(
+            database,
+            session_payload=session_payload,
+            include_context_weight=include_context_weight,
+            now_ms=now_ms,
+        )
+        if usage_entry is None:
+            continue
+        sessions.append(usage_entry)
+        usage_payload = usage_entry.get("usage")
+        if isinstance(usage_payload, dict):
+            _add_usage_totals(totals, usage_payload)
+            message_counts = usage_payload.get("messageCounts")
+            if isinstance(message_counts, dict):
+                _add_usage_message_counts(aggregate_messages, message_counts)
+            tool_usage = usage_payload.get("toolUsage")
+            if isinstance(tool_usage, dict):
+                _add_usage_tool_summary(aggregate_tools, tool_usage)
+            _record_usage_model_aggregates(
+                by_model,
+                by_provider,
+                provider=_string_or_none(usage_entry.get("modelProvider")),
+                model=_string_or_none(usage_entry.get("model")),
+                usage_payload=usage_payload,
+            )
+
+    return {
+        "updatedAt": now_ms,
+        "startDate": resolved_start_date,
+        "endDate": resolved_end_date,
+        "sessions": sessions,
+        "totals": totals,
+        "aggregates": {
+            "messages": aggregate_messages,
+            "tools": aggregate_tools,
+            "byModel": list(by_model.values()),
+            "byProvider": list(by_provider.values()),
+            "byAgent": [],
+            "byChannel": [],
+            "daily": [],
+        },
+    }
+
+
+async def _build_sessions_usage_timeseries_payload(
+    database: Database,
+    *,
+    sessions_service: GatewaySessionsService | None,
+    session_key: str,
+    now_ms: int,
+) -> dict[str, Any]:
+    canonical_key = _canonical_session_key(session_key)
+    session_payload = await _single_usage_session_payload(
+        database,
+        sessions_service=sessions_service,
+        session_key=canonical_key,
+        now_ms=now_ms,
+    )
+    missions = await _usage_missions_for_session(database, session_key=canonical_key)
+    points: list[dict[str, Any]] = []
+    cumulative_tokens = 0
+    cumulative_cost = 0.0
+
+    for mission in missions:
+        usage_payload = _usage_totals_from_mission(mission)
+        if usage_payload is None:
+            continue
+        total_tokens = int(usage_payload.get("totalTokens") or 0)
+        total_cost = float(usage_payload.get("totalCost") or 0.0)
+        if total_tokens <= 0 and total_cost <= 0:
+            continue
+        cumulative_tokens += total_tokens
+        cumulative_cost += total_cost
+        points.append(
+            {
+                "timestamp": (
+                    _iso8601_to_timestamp_ms(mission.get("updated_at"))
+                    or _iso8601_to_timestamp_ms(mission.get("created_at"))
+                    or now_ms
+                ),
+                "input": int(usage_payload.get("input") or 0),
+                "output": int(usage_payload.get("output") or 0),
+                "cacheRead": int(usage_payload.get("cacheRead") or 0),
+                "cacheWrite": int(usage_payload.get("cacheWrite") or 0),
+                "totalTokens": total_tokens,
+                "cost": total_cost,
+                "cumulativeTokens": cumulative_tokens,
+                "cumulativeCost": cumulative_cost,
+            }
+        )
+
+    latest_mission = missions[-1] if missions else None
+    return {
+        "sessionId": _usage_session_id(
+            session_payload=session_payload,
+            mission=latest_mission,
+        ),
+        "points": points,
+    }
+
+
+async def _build_sessions_usage_logs_payload(
+    database: Database,
+    *,
+    sessions_service: GatewaySessionsService | None,
+    session_key: str,
+    limit: int | None,
+    now_ms: int,
+) -> dict[str, Any]:
+    canonical_key = _canonical_session_key(session_key)
+    session_payload = await _single_usage_session_payload(
+        database,
+        sessions_service=sessions_service,
+        session_key=canonical_key,
+        now_ms=now_ms,
+    )
+    bounded_limit = max(1, min(limit or 200, 1000))
+    rows = await database.list_control_chat_messages(
+        limit=bounded_limit,
+        session_key=canonical_key,
+    )
+    mission_ids = {
+        mission_id
+        for row in rows
+        if (mission_id := _int_or_none(row.get("mission_id"))) is not None
+    }
+    mission_by_id = {
+        mission_id: await database.get_mission(mission_id)
+        for mission_id in sorted(mission_ids)
+    }
+
+    entries: list[dict[str, Any]] = []
+    for row in rows:
+        role = str(row.get("role") or "").strip()
+        if role not in {"user", "assistant", "tool", "toolResult"}:
+            continue
+        entry: dict[str, Any] = {
+            "timestamp": _iso8601_to_timestamp_ms(row.get("created_at")) or now_ms,
+            "role": role,
+            "content": str(row.get("content") or ""),
+        }
+        mission_id = _int_or_none(row.get("mission_id"))
+        mission = mission_by_id.get(mission_id) if mission_id is not None else None
+        usage_payload = _usage_totals_from_mission(mission)
+        if usage_payload is not None:
+            total_tokens = int(usage_payload.get("totalTokens") or 0)
+            total_cost = float(usage_payload.get("totalCost") or 0.0)
+            if total_tokens > 0:
+                entry["tokens"] = total_tokens
+            if total_cost > 0:
+                entry["cost"] = total_cost
+        entries.append(entry)
+
+    latest_mission = next(
+        (
+            mission
+            for mission in reversed(list(mission_by_id.values()))
+            if mission is not None
+        ),
+        None,
+    )
+    if latest_mission is None:
+        latest_mission = await database.get_latest_mission_by_session_key(
+            canonical_key,
+            require_thread=False,
+        )
+
+    return {
+        "sessionId": _usage_session_id(
+            session_payload=session_payload,
+            mission=latest_mission,
+        ),
+        "entries": entries,
+    }
+
+
+async def _single_usage_session_payload(
+    database: Database,
+    *,
+    sessions_service: GatewaySessionsService | None,
+    session_key: str,
+    now_ms: int,
+) -> dict[str, Any]:
+    payloads = await _usage_session_payloads_by_key(
+        database,
+        sessions_service=sessions_service,
+        requested_session_keys=[session_key],
+        limit=1,
+        now_ms=now_ms,
+    )
+    return payloads[0] if payloads else {"key": session_key}
+
+
+async def _usage_session_payloads_by_key(
+    database: Database,
+    *,
+    sessions_service: GatewaySessionsService | None,
+    requested_session_keys: list[str] | None,
+    limit: int,
+    now_ms: int,
+) -> list[dict[str, Any]]:
+    ordered_keys: list[str] = []
+    payload_by_key: dict[str, dict[str, Any]] = {}
+
+    def remember(key: str, payload: dict[str, Any] | None = None) -> None:
+        canonical_key = _canonical_session_key(key)
+        if canonical_key in payload_by_key:
+            if payload is not None:
+                payload_by_key[canonical_key].update(payload)
+            return
+        if payload is None:
+            payload = {"key": canonical_key}
+        payload_by_key[canonical_key] = dict(payload)
+        ordered_keys.append(canonical_key)
+
+    if sessions_service is not None:
+        if requested_session_keys is None:
+            snapshot = await sessions_service.build_snapshot(
+                include_global=True,
+                include_unknown=True,
+                limit=limit,
+                active_minutes=None,
+                label=None,
+                spawned_by=None,
+                agent_id=None,
+                search=None,
+                include_derived_titles=False,
+                include_last_message=False,
+                now_ms=now_ms,
+            )
+            for session_payload in snapshot.get("sessions", []):
+                if not isinstance(session_payload, dict):
+                    continue
+                key = _string_or_none(session_payload.get("key"))
+                if key is None:
+                    continue
+                remember(key, session_payload)
+        else:
+            for requested_key in requested_session_keys:
+                session_payload = await sessions_service.build_session_payload_for_key(
+                    session_key=requested_key,
+                    now_ms=now_ms,
+                )
+                remember(requested_key, session_payload)
+
+    if requested_session_keys is None:
+        for key in await database.list_control_chat_session_keys():
+            remember(key)
+    else:
+        for key in requested_session_keys:
+            remember(key)
+
+    return [payload_by_key[key] for key in ordered_keys[:limit]]
+
+
+async def _usage_missions_for_session(
+    database: Database,
+    *,
+    session_key: str,
+) -> list[dict[str, Any]]:
+    aliases = set(_session_key_aliases(session_key))
+    missions = [
+        mission
+        for mission in await database.list_missions()
+        if str(mission.get("session_key") or "").strip().lower() in aliases
+    ]
+    return sorted(
+        missions,
+        key=lambda mission: (
+            _iso8601_to_timestamp_ms(mission.get("updated_at"))
+            or _iso8601_to_timestamp_ms(mission.get("created_at"))
+            or 0,
+            int(mission.get("id") or 0),
+        ),
+    )
+
+
+async def _build_single_session_usage_entry(
+    database: Database,
+    *,
+    session_payload: dict[str, Any],
+    include_context_weight: bool,
+    now_ms: int,
+) -> dict[str, Any] | None:
+    session_key = _string_or_none(session_payload.get("key"))
+    if session_key is None:
+        return None
+    canonical_key = _canonical_session_key(session_key)
+    metadata_row = await database.get_gateway_session_metadata(canonical_key)
+    metadata: dict[str, Any] = {}
+    if isinstance(metadata_row, dict):
+        metadata_value = metadata_row.get("metadata")
+        if isinstance(metadata_value, dict):
+            metadata = dict(metadata_value)
+    mission = await database.get_latest_mission_by_session_key(
+        canonical_key,
+        require_thread=False,
+    )
+    message_count = await database.count_control_chat_messages(session_key=canonical_key)
+    rows = (
+        await database.list_control_chat_messages(
+            limit=max(1, message_count),
+            session_key=canonical_key,
+        )
+        if message_count
+        else []
+    )
+    has_session_payload_data = any(key != "key" for key in session_payload)
+    if mission is None and not rows and not metadata and not has_session_payload_data:
+        return None
+
+    updated_at = _usage_session_updated_at_ms(
+        session_payload=session_payload,
+        mission=mission,
+        metadata_row=metadata_row,
+        rows=rows,
+        now_ms=now_ms,
+    )
+    resolved_model = _string_or_none(metadata.get("model")) or _string_or_none(
+        session_payload.get("model")
+    )
+    message_counts = _usage_message_counts(rows)
+    usage_payload = _usage_totals_from_mission(mission) or _empty_usage_totals()
+    usage_payload["sessionId"] = (
+        _string_or_none(session_payload.get("sessionId"))
+        or _string_or_none(mission.get("thread_id") if mission is not None else None)
+    )
+    usage_payload["lastActivity"] = updated_at
+    usage_payload["messageCounts"] = message_counts
+    usage_payload["toolUsage"] = _empty_usage_tool_summary()
+
+    entry: dict[str, Any] = {
+        "key": canonical_key,
+        "label": _string_or_none(metadata.get("label"))
+        or _string_or_none(session_payload.get("label")),
+        "sessionId": _string_or_none(session_payload.get("sessionId"))
+        or _string_or_none(mission.get("thread_id") if mission is not None else None),
+        "updatedAt": updated_at,
+        "modelProvider": (
+            _string_or_none(session_payload.get("modelProvider"))
+            or ("openai" if resolved_model is not None else None)
+        ),
+        "model": resolved_model,
+        "usage": usage_payload,
+    }
+    if include_context_weight:
+        entry["contextWeight"] = None
+    return entry
+
+
+def _resolve_sessions_usage_date_range(
+    *,
+    start_date: str | None,
+    end_date: str | None,
+    mode: Literal["gateway", "specific", "utc"] | None,
+    utc_offset: str | None,
+    now_ms: int,
+) -> tuple[str, str]:
+    tz = _sessions_usage_timezone(mode=mode, utc_offset=utc_offset)
+    now = datetime.fromtimestamp(now_ms / 1000, tz=tz)
+    resolved_end = (
+        datetime.strptime(end_date, "%Y-%m-%d").date() if end_date is not None else now.date()
+    )
+    resolved_start = (
+        datetime.strptime(start_date, "%Y-%m-%d").date()
+        if start_date is not None
+        else resolved_end - timedelta(days=29)
+    )
+    return (resolved_start.isoformat(), resolved_end.isoformat())
+
+
+def _sessions_usage_timezone(
+    *,
+    mode: Literal["gateway", "specific", "utc"] | None,
+    utc_offset: str | None,
+) -> timezone:
+    if mode == "gateway":
+        local_tz = datetime.now().astimezone().tzinfo
+        if isinstance(local_tz, timezone):
+            return local_tz
+        if local_tz is not None:
+            current_offset = datetime.now().astimezone().utcoffset()
+            if current_offset is not None:
+                return timezone(current_offset)
+        return UTC
+    if mode == "specific":
+        utc_offset_minutes = _utc_offset_minutes(utc_offset)
+        if utc_offset_minutes is not None:
+            return timezone(timedelta(minutes=utc_offset_minutes))
+    return UTC
+
+
+def _utc_offset_minutes(value: str | None) -> int | None:
+    if value is None:
+        return None
+    match = _UTC_OFFSET_RE.match(value.strip())
+    if match is None:
+        return None
+    sign = 1 if "+" in value else -1
+    hours_part, _, minutes_part = value[3:].partition(":")
+    hours = abs(int(hours_part))
+    minutes = int(minutes_part or "0")
+    return sign * (hours * 60 + minutes)
+
+
+def _usage_session_updated_at_ms(
+    *,
+    session_payload: dict[str, Any],
+    mission: dict[str, Any] | None,
+    metadata_row: dict[str, Any] | None,
+    rows: list[dict[str, Any]],
+    now_ms: int,
+) -> int:
+    candidates: list[int] = []
+    session_payload_updated_at = _int_or_none(session_payload.get("updatedAt"))
+    if session_payload_updated_at is not None:
+        candidates.append(session_payload_updated_at)
+    mission_updated_at = _iso8601_to_timestamp_ms(
+        mission.get("updated_at") if mission is not None else None
+    )
+    if mission_updated_at is not None:
+        candidates.append(mission_updated_at)
+    metadata_updated_at = _iso8601_to_timestamp_ms(
+        metadata_row.get("updated_at") if metadata_row is not None else None
+    )
+    if metadata_updated_at is not None:
+        candidates.append(metadata_updated_at)
+    if rows:
+        latest_message_at = _iso8601_to_timestamp_ms(rows[-1].get("created_at"))
+        if latest_message_at is not None:
+            candidates.append(latest_message_at)
+    return max(candidates) if candidates else now_ms
+
+
+def _usage_totals_from_mission(mission: dict[str, Any] | None) -> dict[str, Any] | None:
+    if mission is None:
+        return None
+    total_tokens = int(mission.get("total_tokens") or 0)
+    output_tokens = int(mission.get("output_tokens") or 0)
+    bounded_output_tokens = min(output_tokens, total_tokens)
+    return {
+        "input": max(total_tokens - bounded_output_tokens, 0),
+        "output": bounded_output_tokens,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "totalTokens": total_tokens,
+        "totalCost": 0.0,
+        "inputCost": 0.0,
+        "outputCost": 0.0,
+        "cacheReadCost": 0.0,
+        "cacheWriteCost": 0.0,
+        "missingCostEntries": 1 if total_tokens or bounded_output_tokens else 0,
+    }
+
+
+def _usage_session_id(
+    *,
+    session_payload: dict[str, Any],
+    mission: dict[str, Any] | None,
+) -> str | None:
+    return _string_or_none(session_payload.get("sessionId")) or _string_or_none(
+        mission.get("thread_id") if mission is not None else None
+    )
+
+
+def _empty_usage_totals() -> dict[str, Any]:
+    return {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "totalTokens": 0,
+        "totalCost": 0.0,
+        "inputCost": 0.0,
+        "outputCost": 0.0,
+        "cacheReadCost": 0.0,
+        "cacheWriteCost": 0.0,
+        "missingCostEntries": 0,
+    }
+
+
+def _add_usage_totals(target: dict[str, Any], source: dict[str, Any]) -> None:
+    for field in (
+        "input",
+        "output",
+        "cacheRead",
+        "cacheWrite",
+        "totalTokens",
+        "totalCost",
+        "inputCost",
+        "outputCost",
+        "cacheReadCost",
+        "cacheWriteCost",
+        "missingCostEntries",
+    ):
+        target[field] = target.get(field, 0) + source.get(field, 0)
+
+
+def _usage_message_counts(rows: list[dict[str, Any]]) -> dict[str, int]:
+    counts = _empty_usage_message_counts()
+    for row in rows:
+        role = str(row.get("role") or "").strip()
+        if role not in {"user", "assistant"}:
+            continue
+        counts["total"] += 1
+        counts[role] += 1
+    return counts
+
+
+def _empty_usage_message_counts() -> dict[str, int]:
+    return {
+        "total": 0,
+        "user": 0,
+        "assistant": 0,
+        "toolCalls": 0,
+        "toolResults": 0,
+        "errors": 0,
+    }
+
+
+def _add_usage_message_counts(target: dict[str, int], source: dict[str, Any]) -> None:
+    for field in ("total", "user", "assistant", "toolCalls", "toolResults", "errors"):
+        target[field] += int(source.get(field) or 0)
+
+
+def _empty_usage_tool_summary() -> dict[str, Any]:
+    return {"totalCalls": 0, "uniqueTools": 0, "tools": []}
+
+
+def _add_usage_tool_summary(target: dict[str, Any], source: dict[str, Any]) -> None:
+    target["totalCalls"] += int(source.get("totalCalls") or 0)
+    existing_tools = {
+        str(tool.get("name")): int(tool.get("count") or 0)
+        for tool in target.get("tools", [])
+        if isinstance(tool, dict) and tool.get("name")
+    }
+    for tool in source.get("tools", []):
+        if not isinstance(tool, dict):
+            continue
+        name = _string_or_none(tool.get("name"))
+        if name is None:
+            continue
+        existing_tools[name] = existing_tools.get(name, 0) + int(tool.get("count") or 0)
+    target["tools"] = [
+        {"name": name, "count": count}
+        for name, count in sorted(existing_tools.items(), key=lambda item: item[0])
+    ]
+    target["uniqueTools"] = len(target["tools"])
+
+
+def _record_usage_model_aggregates(
+    by_model: dict[tuple[str | None, str | None], dict[str, Any]],
+    by_provider: dict[str | None, dict[str, Any]],
+    *,
+    provider: str | None,
+    model: str | None,
+    usage_payload: dict[str, Any],
+) -> None:
+    totals_payload = _empty_usage_totals()
+    _add_usage_totals(totals_payload, usage_payload)
+
+    model_key = (provider, model)
+    if model_key not in by_model:
+        by_model[model_key] = {
+            "provider": provider,
+            "model": model,
+            "count": 0,
+            "totals": _empty_usage_totals(),
+        }
+    by_model_entry = by_model[model_key]
+    by_model_entry["count"] += 1
+    _add_usage_totals(by_model_entry["totals"], totals_payload)
+
+    if provider not in by_provider:
+        by_provider[provider] = {
+            "provider": provider,
+            "count": 0,
+            "totals": _empty_usage_totals(),
+        }
+    by_provider_entry = by_provider[provider]
+    by_provider_entry["count"] += 1
+    _add_usage_totals(by_provider_entry["totals"], totals_payload)
+
+
 def _project_control_chat_messages(
     rows: list[dict[str, Any]],
     *,
@@ -2674,6 +3604,89 @@ def _project_control_chat_messages(
         break
     bounded.reverse()
     return bounded
+
+
+async def _archive_control_chat_transcript(
+    database: Database,
+    *,
+    session_key: str,
+    reason: str,
+    now_ms: int,
+) -> list[str]:
+    message_count = await database.count_control_chat_messages(session_key=session_key)
+    if message_count <= 0:
+        return []
+    rows = await database.list_control_chat_messages(
+        limit=max(1, message_count),
+        session_key=session_key,
+    )
+    if not rows:
+        return []
+
+    archive_dir = Path(database.path).resolve().parent / "gateway-session-archives"
+    archive_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.fromtimestamp(now_ms / 1000, tz=UTC).strftime("%Y%m%dT%H%M%SZ")
+    archive_path = archive_dir / f"{_session_archive_slug(session_key)}-{reason}-{timestamp}.jsonl"
+    with archive_path.open("w", encoding="utf-8", newline="\n") as handle:
+        for row in rows:
+            record = {
+                "id": row.get("id"),
+                "sessionKey": session_key,
+                "role": row.get("role"),
+                "content": row.get("content"),
+                "createdAt": row.get("created_at"),
+                "missionId": row.get("mission_id"),
+                "reason": reason,
+            }
+            handle.write(json.dumps(record, sort_keys=True))
+            handle.write("\n")
+    _cleanup_archived_control_chat_transcripts(
+        archive_dir,
+        reason=reason,
+        older_than_ms=_DEFAULT_SESSION_DELETE_ARCHIVE_RETENTION_MS,
+        now_ms=now_ms,
+    )
+    return [str(archive_path)]
+
+
+def _session_archive_slug(session_key: str) -> str:
+    slug = re.sub(r"[^A-Za-z0-9._-]+", "-", session_key).strip("-").lower()
+    return slug or "session"
+
+
+def _cleanup_archived_control_chat_transcripts(
+    archive_dir: Path,
+    *,
+    reason: str,
+    older_than_ms: int,
+    now_ms: int,
+) -> None:
+    if older_than_ms < 0:
+        return
+    for entry in archive_dir.iterdir():
+        if not entry.is_file():
+            continue
+        archived_at_ms = _session_archive_timestamp_ms(entry.name, reason=reason)
+        if archived_at_ms is None:
+            continue
+        if now_ms - archived_at_ms <= older_than_ms:
+            continue
+        try:
+            entry.unlink()
+        except OSError:
+            continue
+
+
+def _session_archive_timestamp_ms(filename: str, *, reason: str) -> int | None:
+    pattern = rf"^.+-{re.escape(reason)}-(\d{{8}}T\d{{6}}Z)\.jsonl$"
+    match = re.match(pattern, filename)
+    if match is None:
+        return None
+    try:
+        parsed = datetime.strptime(match.group(1), "%Y%m%dT%H%M%SZ").replace(tzinfo=UTC)
+    except ValueError:
+        return None
+    return int(parsed.timestamp() * 1000)
 
 
 def _chat_history_message_payload(role: str, text: str) -> dict[str, Any]:
@@ -2998,6 +4011,23 @@ def _optional_error_payload(
         "code": code if isinstance(code, str) else None,
         "message": message if isinstance(message, str) else None,
     }
+
+
+def _toolsets_from_value(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    toolsets: list[str] = []
+    seen: set[str] = set()
+    for entry in value:
+        if not isinstance(entry, str):
+            continue
+        trimmed = entry.strip()
+        normalized = trimmed.lower()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        toolsets.append(trimmed)
+    return toolsets
 
 
 def _build_node_command_rejection_hint(

@@ -23,6 +23,7 @@ class FakeManager:
         start_thread_error: Exception | None = None,
         start_turn_error: Exception | None = None,
         list_views_result: list[SimpleNamespace] | None = None,
+        mcp_server_status_result: list[dict[str, object]] | None = None,
     ) -> None:
         self.thread_result = (
             {"thread": {"id": "thread-boot-123"}} if thread_result is None else thread_result
@@ -30,6 +31,9 @@ class FakeManager:
         self.start_thread_error = start_thread_error
         self.start_turn_error = start_turn_error
         self.list_views_result = [] if list_views_result is None else list_views_result
+        self.mcp_server_status_result = (
+            [] if mcp_server_status_result is None else mcp_server_status_result
+        )
         self.start_thread_calls: list[dict[str, object]] = []
         self.start_turn_calls: list[dict[str, object]] = []
 
@@ -83,6 +87,15 @@ class FakeManager:
 
     async def list_views(self) -> list[SimpleNamespace]:
         return self.list_views_result
+
+    async def list_mcp_server_status(
+        self,
+        instance_id: int,
+        *,
+        limit: int = 50,
+        refresh: bool = True,
+    ) -> list[dict[str, object]]:
+        return [dict(item) for item in self.mcp_server_status_result]
 
 
 class FakeLaunchRouting:
@@ -350,6 +363,9 @@ async def test_get_view_marks_connected_local_bootstrap_ready_without_remote_api
         cwd=str(workspace_dir.resolve()),
         connected=True,
         error=None,
+        apps=[{"name": "Slack"}],
+        plugins=[{"name": "GitHub"}],
+        mcp_servers=[{"name": "filesystem"}],
     )
     service, _, _manager = await _build_service(
         tmp_path,
@@ -433,6 +449,469 @@ async def test_get_view_marks_connected_local_bootstrap_ready_without_remote_api
     assert view.operator is not None
     assert "local-only" in view.operator.detail
     assert not any("active API key" in warning for warning in view.warnings)
+    assert view.runtime_inventory is not None
+    assert view.runtime_inventory.app_names == ["Slack"]
+    assert view.runtime_inventory.plugin_names == ["GitHub"]
+    assert view.runtime_inventory.mcp_server_names == ["filesystem"]
+    assert view.runtime_inventory.base_method_count == len(view.runtime_inventory.base_methods)
+    assert view.runtime_inventory.base_method_count > 0
+    assert view.runtime_inventory.method_catalog is not None
+    assert (
+        view.runtime_inventory.method_catalog.tool_count
+        == view.runtime_inventory.base_method_count
+    )
+    assert view.runtime_inventory.method_catalog.tools == view.runtime_inventory.base_methods
+
+
+@pytest.mark.asyncio
+async def test_get_view_surfaces_live_plugin_published_gateway_methods_in_runtime_inventory(
+    tmp_path: Path,
+) -> None:
+    workspace_dir = tmp_path / "workspace"
+    connected_instance = SimpleNamespace(
+        id=41,
+        name="Local Lane",
+        transport="desktop",
+        cwd=str(workspace_dir.resolve()),
+        connected=True,
+        error=None,
+        apps=[{"name": "Slack"}],
+        plugins=[{"name": "GitHub"}],
+        mcp_servers=[{"name": "filesystem"}],
+    )
+    manager = FakeManager(
+        list_views_result=[connected_instance],
+        mcp_server_status_result=[
+            {
+                "name": "filesystem",
+                "tools": [
+                    {"name": "github.pulls.comment", "scope": "operator.write"},
+                    {"name": "status"},
+                ],
+            }
+        ],
+    )
+    service, _, _ = await _build_service(
+        tmp_path,
+        manager=manager,
+        save_bootstrap=False,
+    )
+
+    project_id = await service.database.create_project(
+        path=str(workspace_dir.resolve()),
+        label="Local Workspace",
+    )
+    task_id = await service.database.create_task_blueprint(
+        name="Local Loop",
+        summary="Keep the local workspace moving.",
+        project_id=project_id,
+        instance_id=connected_instance.id,
+        cadence_minutes=60,
+        enabled=True,
+        payload={
+            "objective_template": "Ship the next verified local slice.",
+            "conversation_target": None,
+            "instance_id": connected_instance.id,
+            "project_id": project_id,
+            "cadence_minutes": 60,
+            "run_until_complete": False,
+            "continuation_cooldown_minutes": 10,
+            "completion_marker": None,
+            "cwd": str(workspace_dir.resolve()),
+            "model": "gpt-5.4",
+            "reasoning_effort": None,
+            "collaboration_mode": None,
+            "max_turns": 4,
+            "use_builtin_agents": True,
+            "run_verification": True,
+            "auto_commit": False,
+            "pause_on_approval": True,
+            "allow_auto_reflexes": True,
+            "auto_recover": True,
+            "auto_recover_limit": 2,
+            "reflex_cooldown_seconds": 900,
+            "allow_failover": True,
+            "toolsets": ["hermes-cli"],
+            "enabled": True,
+        },
+    )
+    bootstrap_roles, bootstrap_scopes = default_device_bootstrap_profile()
+    await service.database.upsert_gateway_bootstrap(
+        setup_mode="local",
+        setup_flow="quickstart",
+        route_binding_mode="saved_lane",
+        preferred_instance_id=connected_instance.id,
+        preferred_project_id=project_id,
+        team_id=1,
+        operator_id=1,
+        task_blueprint_id=task_id,
+        last_route_instance_id=None,
+        last_route_resolved_at=None,
+        default_cwd=str(workspace_dir.resolve()),
+        bootstrap_roles=bootstrap_roles,
+        bootstrap_scopes=bootstrap_scopes,
+        model="gpt-5.4",
+        max_turns=4,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        toolsets=["hermes-cli"],
+    )
+
+    view = await service.get_view()
+
+    assert view.runtime_inventory is not None
+    assert view.runtime_inventory.resolved_method_count > view.runtime_inventory.base_method_count
+    assert "github.pulls.comment" in view.runtime_inventory.resolved_methods
+    assert view.runtime_inventory.method_catalog is not None
+    assert view.runtime_inventory.method_catalog.server_count == 1
+    assert view.runtime_inventory.method_catalog.lane_count == 1
+    assert "plugin-published" in view.runtime_inventory.method_catalog.summary
+
+
+@pytest.mark.asyncio
+async def test_get_view_surfaces_browser_service_inventory_from_runtime_status(
+    tmp_path: Path,
+) -> None:
+    workspace_dir = tmp_path / "workspace"
+    connected_instance = SimpleNamespace(
+        id=41,
+        name="Local Lane",
+        transport="desktop",
+        cwd=str(workspace_dir.resolve()),
+        connected=True,
+        error=None,
+        apps=[],
+        plugins=[],
+        mcp_servers=[{"name": "browser-runtime"}],
+    )
+    manager = FakeManager(
+        list_views_result=[connected_instance],
+        mcp_server_status_result=[
+            {
+                "name": "browser-runtime",
+                "source": "browser",
+                "tools": [
+                    {"name": "browser.request", "scope": "operator.write"},
+                ],
+                "services": [{"service": {"id": "browser-control"}}],
+            }
+        ],
+    )
+    service, _, _ = await _build_service(
+        tmp_path,
+        manager=manager,
+        save_bootstrap=False,
+    )
+
+    project_id = await service.database.create_project(
+        path=str(workspace_dir.resolve()),
+        label="Browser Workspace",
+    )
+    task_id = await service.database.create_task_blueprint(
+        name="Browser Loop",
+        summary="Keep the browser lane moving.",
+        project_id=project_id,
+        instance_id=connected_instance.id,
+        cadence_minutes=60,
+        enabled=True,
+        payload={
+            "objective_template": "Ship the next verified browser slice.",
+            "conversation_target": None,
+            "instance_id": connected_instance.id,
+            "project_id": project_id,
+            "cadence_minutes": 60,
+            "run_until_complete": False,
+            "continuation_cooldown_minutes": 10,
+            "completion_marker": None,
+            "cwd": str(workspace_dir.resolve()),
+            "model": "gpt-5.4",
+            "reasoning_effort": None,
+            "collaboration_mode": None,
+            "max_turns": 4,
+            "use_builtin_agents": True,
+            "run_verification": True,
+            "auto_commit": False,
+            "pause_on_approval": True,
+            "allow_auto_reflexes": True,
+            "auto_recover": True,
+            "auto_recover_limit": 2,
+            "reflex_cooldown_seconds": 900,
+            "allow_failover": True,
+            "toolsets": ["hermes-cli"],
+            "enabled": True,
+        },
+    )
+    bootstrap_roles, bootstrap_scopes = default_device_bootstrap_profile()
+    await service.database.upsert_gateway_bootstrap(
+        setup_mode="local",
+        setup_flow="quickstart",
+        route_binding_mode="saved_lane",
+        preferred_instance_id=connected_instance.id,
+        preferred_project_id=project_id,
+        team_id=1,
+        operator_id=1,
+        task_blueprint_id=task_id,
+        last_route_instance_id=None,
+        last_route_resolved_at=None,
+        default_cwd=str(workspace_dir.resolve()),
+        bootstrap_roles=bootstrap_roles,
+        bootstrap_scopes=bootstrap_scopes,
+        model="gpt-5.4",
+        max_turns=4,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        toolsets=["hermes-cli"],
+    )
+
+    view = await service.get_view()
+
+    assert view.runtime_inventory is not None
+    assert "browser.request" in view.runtime_inventory.resolved_methods
+    assert view.runtime_inventory.plugin_names == ["browser"]
+    assert view.runtime_inventory.service_count == 1
+    assert view.runtime_inventory.service_names == ["browser-control"]
+    assert view.runtime_inventory.browser_runtime is not None
+    assert view.runtime_inventory.browser_runtime.status == "ready"
+    assert view.runtime_inventory.browser_runtime.method_count == 1
+    assert view.runtime_inventory.browser_runtime.service_count == 1
+    assert view.runtime_inventory.browser_runtime.methods == ["browser.request"]
+    assert view.runtime_inventory.browser_runtime.services == ["browser-control"]
+    assert view.runtime_inventory.browser_runtime.plugins == ["browser"]
+    assert view.runtime_inventory.browser_runtime.servers == ["browser-runtime"]
+
+
+@pytest.mark.asyncio
+async def test_get_view_omits_browser_inventory_when_runtime_status_does_not_publish_it(
+    tmp_path: Path,
+) -> None:
+    workspace_dir = tmp_path / "workspace"
+    connected_instance = SimpleNamespace(
+        id=41,
+        name="Local Lane",
+        transport="desktop",
+        cwd=str(workspace_dir.resolve()),
+        connected=True,
+        error=None,
+        apps=[],
+        plugins=[],
+        mcp_servers=[{"name": "browser-runtime"}],
+    )
+    manager = FakeManager(
+        list_views_result=[connected_instance],
+        mcp_server_status_result=[],
+    )
+    service, _, _ = await _build_service(
+        tmp_path,
+        manager=manager,
+        save_bootstrap=False,
+    )
+
+    project_id = await service.database.create_project(
+        path=str(workspace_dir.resolve()),
+        label="Browser Workspace",
+    )
+    task_id = await service.database.create_task_blueprint(
+        name="Browser Loop",
+        summary="Keep the browser lane moving.",
+        project_id=project_id,
+        instance_id=connected_instance.id,
+        cadence_minutes=60,
+        enabled=True,
+        payload={
+            "objective_template": "Ship the next verified browser slice.",
+            "conversation_target": None,
+            "instance_id": connected_instance.id,
+            "project_id": project_id,
+            "cadence_minutes": 60,
+            "run_until_complete": False,
+            "continuation_cooldown_minutes": 10,
+            "completion_marker": None,
+            "cwd": str(workspace_dir.resolve()),
+            "model": "gpt-5.4",
+            "reasoning_effort": None,
+            "collaboration_mode": None,
+            "max_turns": 4,
+            "use_builtin_agents": True,
+            "run_verification": True,
+            "auto_commit": False,
+            "pause_on_approval": True,
+            "allow_auto_reflexes": True,
+            "auto_recover": True,
+            "auto_recover_limit": 2,
+            "reflex_cooldown_seconds": 900,
+            "allow_failover": True,
+            "toolsets": ["hermes-cli"],
+            "enabled": True,
+        },
+    )
+    bootstrap_roles, bootstrap_scopes = default_device_bootstrap_profile()
+    await service.database.upsert_gateway_bootstrap(
+        setup_mode="local",
+        setup_flow="quickstart",
+        route_binding_mode="saved_lane",
+        preferred_instance_id=connected_instance.id,
+        preferred_project_id=project_id,
+        team_id=1,
+        operator_id=1,
+        task_blueprint_id=task_id,
+        last_route_instance_id=None,
+        last_route_resolved_at=None,
+        default_cwd=str(workspace_dir.resolve()),
+        bootstrap_roles=bootstrap_roles,
+        bootstrap_scopes=bootstrap_scopes,
+        model="gpt-5.4",
+        max_turns=4,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        toolsets=["hermes-cli"],
+    )
+
+    view = await service.get_view()
+
+    assert view.runtime_inventory is not None
+    assert "browser.request" not in view.runtime_inventory.resolved_methods
+    assert view.runtime_inventory.plugin_names == []
+    assert view.runtime_inventory.service_count == 0
+    assert view.runtime_inventory.service_names == []
+    assert view.runtime_inventory.browser_runtime is not None
+    assert view.runtime_inventory.browser_runtime.status == "info"
+    assert view.runtime_inventory.browser_runtime.method_count == 0
+    assert view.runtime_inventory.browser_runtime.service_count == 0
+    assert view.runtime_inventory.browser_runtime.methods == []
+    assert view.runtime_inventory.browser_runtime.services == []
+    assert view.runtime_inventory.browser_runtime.plugins == []
+    assert view.runtime_inventory.browser_runtime.servers == []
+
+
+@pytest.mark.asyncio
+async def test_get_view_uses_cached_mcp_plugin_source_when_instance_plugin_metadata_is_missing(
+    tmp_path: Path,
+) -> None:
+    workspace_dir = tmp_path / "workspace"
+    connected_instance = SimpleNamespace(
+        id=41,
+        name="Local Lane",
+        transport="desktop",
+        cwd=str(workspace_dir.resolve()),
+        connected=True,
+        error=None,
+        apps=[{"name": "Slack"}],
+        plugins=[],
+        mcp_servers=[{"name": "filesystem"}],
+    )
+    manager = FakeManager(
+        list_views_result=[connected_instance],
+        mcp_server_status_result=[
+            {
+                "name": "filesystem",
+                "source": "GitHub",
+                "tools": [
+                    {"name": "github.pulls.comment", "scope": "operator.write"},
+                    {"name": "status"},
+                ],
+            }
+        ],
+    )
+    service, _, _ = await _build_service(
+        tmp_path,
+        manager=manager,
+        save_bootstrap=False,
+    )
+
+    project_id = await service.database.create_project(
+        path=str(workspace_dir.resolve()),
+        label="Local Workspace",
+    )
+    task_id = await service.database.create_task_blueprint(
+        name="Local Loop",
+        summary="Keep the local workspace moving.",
+        project_id=project_id,
+        instance_id=connected_instance.id,
+        cadence_minutes=60,
+        enabled=True,
+        payload={
+            "objective_template": "Ship the next verified local slice.",
+            "conversation_target": None,
+            "instance_id": connected_instance.id,
+            "project_id": project_id,
+            "cadence_minutes": 60,
+            "run_until_complete": False,
+            "continuation_cooldown_minutes": 10,
+            "completion_marker": None,
+            "cwd": str(workspace_dir.resolve()),
+            "model": "gpt-5.4",
+            "reasoning_effort": None,
+            "collaboration_mode": None,
+            "max_turns": 4,
+            "use_builtin_agents": True,
+            "run_verification": True,
+            "auto_commit": False,
+            "pause_on_approval": True,
+            "allow_auto_reflexes": True,
+            "auto_recover": True,
+            "auto_recover_limit": 2,
+            "reflex_cooldown_seconds": 900,
+            "allow_failover": True,
+            "toolsets": ["hermes-cli"],
+            "enabled": True,
+        },
+    )
+    bootstrap_roles, bootstrap_scopes = default_device_bootstrap_profile()
+    await service.database.upsert_gateway_bootstrap(
+        setup_mode="local",
+        setup_flow="quickstart",
+        route_binding_mode="saved_lane",
+        preferred_instance_id=connected_instance.id,
+        preferred_project_id=project_id,
+        team_id=1,
+        operator_id=1,
+        task_blueprint_id=task_id,
+        last_route_instance_id=None,
+        last_route_resolved_at=None,
+        default_cwd=str(workspace_dir.resolve()),
+        bootstrap_roles=bootstrap_roles,
+        bootstrap_scopes=bootstrap_scopes,
+        model="gpt-5.4",
+        max_turns=4,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        toolsets=["hermes-cli"],
+    )
+
+    view = await service.get_view()
+
+    assert view.runtime_inventory is not None
+    assert view.runtime_inventory.plugin_names == ["GitHub"]
+    assert view.runtime_inventory.plugin_count == 1
+    assert "github.pulls.comment" in view.runtime_inventory.resolved_methods
 
 
 @pytest.mark.asyncio

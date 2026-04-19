@@ -22,6 +22,7 @@ const heroStatsEl = document.querySelector("#hero-stats");
 const briefHeadlineEl = document.querySelector("#brief-headline");
 const briefSummaryEl = document.querySelector("#brief-summary");
 const briefActionsEl = document.querySelector("#brief-actions");
+const briefBrowserPostureEl = document.querySelector("#brief-browser-posture");
 const chatHeadlineEl = document.querySelector("#chat-headline");
 const chatSummaryEl = document.querySelector("#chat-summary");
 const chatPresenceEl = document.querySelector("#chat-presence");
@@ -775,10 +776,14 @@ function booleanBadge(enabled, label) {
 
 function renderBrief() {
   const brief = state.dashboard?.brief;
+  const browserPosture = state.dashboard?.browser_posture;
   if (!brief) {
     briefHeadlineEl.textContent = "Waiting for dashboard data...";
     briefSummaryEl.textContent = "";
     briefActionsEl.innerHTML = "";
+    if (briefBrowserPostureEl) {
+      briefBrowserPostureEl.innerHTML = "";
+    }
     return;
   }
   briefHeadlineEl.textContent = brief.headline;
@@ -786,6 +791,43 @@ function renderBrief() {
   briefActionsEl.innerHTML = brief.next_actions.length
     ? brief.next_actions.map((action) => `<span class="brief-action">${escapeHtml(action)}</span>`).join("")
     : `<span class="brief-action">No immediate operator action needed.</span>`;
+  if (!briefBrowserPostureEl) {
+    return;
+  }
+  if (!browserPosture) {
+    briefBrowserPostureEl.innerHTML = "";
+    return;
+  }
+  const browserTone =
+    browserPosture.status === "ready"
+      ? "ok"
+      : browserPosture.status === "warn"
+        ? "warn"
+        : "";
+  const localTool = browserPosture.local_agent_browser || {};
+  const savedRuntime = browserPosture.saved_launch_browser_runtime || {};
+  briefBrowserPostureEl.innerHTML = `
+    <div class="small-muted">${escapeHtml(browserPosture.summary || "")}</div>
+    <div class="pill-row">
+      ${pill(`browser ${browserPosture.status || "info"}`, browserTone)}
+      ${pill(localTool.available ? "agent-browser ready" : "agent-browser missing", localTool.available ? "ok" : "warn")}
+      ${
+        savedRuntime.method_count
+          ? pill(`${savedRuntime.method_count} browser methods`, "ok")
+          : pill("no browser methods", "warn")
+      }
+      ${
+        savedRuntime.service_count
+          ? pill(`${savedRuntime.service_count} browser services`, "ok")
+          : pill("no browser services", "warn")
+      }
+    </div>
+    ${
+      browserPosture.recommended_action
+        ? `<div class="action-text">${escapeHtml(browserPosture.recommended_action)}</div>`
+        : ""
+    }
+  `;
 }
 
 function renderLaunchpad() {
@@ -1857,6 +1899,9 @@ function renderGatewayBootstrapProfile() {
     profile.operator,
     profile.task_blueprint,
   ].filter(Boolean);
+  const runtimeInventory = profile.runtime_inventory;
+  const runtimeMethodCatalog = runtimeInventory?.method_catalog;
+  const runtimeBrowser = runtimeInventory?.browser_runtime;
   gatewayBootstrapProfileEl.innerHTML = `
     <article class="bootstrap-result gateway-bootstrap-profile">
       <div class="section-header">
@@ -1888,6 +1933,54 @@ function renderGatewayBootstrapProfile() {
         ${renderToolsetPills(profile.tool_policy || { toolsets: profile.toolsets || [] })}
       </div>
       <p class="small-muted">${escapeHtml(profile.launch_defaults_summary)}</p>
+      ${
+        runtimeInventory
+          ? `
+              <div class="small-muted">${escapeHtml(runtimeInventory.summary || "")}</div>
+              <div class="pill-row">
+                ${pill(`${runtimeInventory.app_count} apps`)}
+                ${pill(`${runtimeInventory.plugin_count} plugins`, runtimeInventory.plugin_count ? "ok" : "")}
+                ${pill(`${runtimeInventory.service_count} services`, runtimeInventory.service_count ? "ok" : "warn")}
+                ${pill(`${runtimeInventory.resolved_method_count} methods`, runtimeInventory.resolved_method_count ? "ok" : "warn")}
+              </div>
+            `
+          : ""
+      }
+      ${
+        runtimeBrowser
+          ? `
+              <div class="small-muted">${escapeHtml(runtimeBrowser.summary || "")}</div>
+              <div class="pill-row">
+                ${pill(
+                  `browser ${runtimeBrowser.status}`,
+                  runtimeBrowser.status === "ready"
+                    ? "ok"
+                    : runtimeBrowser.status === "warn"
+                      ? "warn"
+                      : "",
+                )}
+                ${pill(
+                  `${runtimeBrowser.method_count} methods`,
+                  runtimeBrowser.method_count ? "ok" : "warn",
+                )}
+                ${pill(
+                  `${runtimeBrowser.service_count} services`,
+                  runtimeBrowser.service_count ? "ok" : "warn",
+                )}
+              </div>
+              ${
+                runtimeBrowser.recommended_action
+                  ? `<div class="small-muted">${escapeHtml(runtimeBrowser.recommended_action)}</div>`
+                  : ""
+              }
+            `
+          : ""
+      }
+      ${
+        runtimeMethodCatalog
+          ? `<div class="small-muted">${escapeHtml(runtimeMethodCatalog.summary || "")}</div>`
+          : ""
+      }
       ${
         profile.tool_policy?.summary
           ? `<p class="small-muted">${escapeHtml(profile.tool_policy.summary)}</p>`
@@ -1940,6 +2033,7 @@ function renderGatewayCapabilitySummary() {
   const memoryProof = capability.inventory.memory_proof_reference;
   const memoryProofContinuity = capability.inventory.memory_proof_continuity;
   const methodCatalog = capability.inventory.method_catalog;
+  const browserRuntime = capability.inventory.browser_runtime;
   const canOpenMemoryProofMission = Boolean(
     memoryProof?.mission_id && getMissionById(memoryProof.mission_id),
   );
@@ -1976,6 +2070,57 @@ function renderGatewayCapabilitySummary() {
         <div class="small-muted">${escapeHtml(capability.connected_lane_health.summary)}</div>
         <div class="small-muted">${escapeHtml(capability.inventory.summary)}</div>
         <div class="small-muted">${escapeHtml(capability.inventory.memory_summary || "")}</div>
+        ${
+          browserRuntime
+            ? `
+                <div class="small-muted">${escapeHtml(browserRuntime.summary || "")}</div>
+                <div class="pill-row">
+                  ${pill(
+                    `browser ${browserRuntime.status}`,
+                    browserRuntime.status === "ready"
+                      ? "ok"
+                      : browserRuntime.status === "warn"
+                        ? "warn"
+                        : "",
+                  )}
+                  ${pill(
+                    `${browserRuntime.ready_lane_count}/${browserRuntime.lane_count} lanes ready`,
+                    browserRuntime.ready_lane_count ? "ok" : "warn",
+                  )}
+                  ${pill(
+                    `${browserRuntime.method_count} methods`,
+                    browserRuntime.method_count ? "ok" : "warn",
+                  )}
+                  ${pill(
+                    `${browserRuntime.service_count} services`,
+                    browserRuntime.service_count ? "ok" : "warn",
+                  )}
+                </div>
+                ${
+                  Array.isArray(browserRuntime.lanes) && browserRuntime.lanes.length
+                    ? `
+                        <div class="pill-row">
+                          ${browserRuntime.lanes
+                            .slice(0, 4)
+                            .map((lane) =>
+                              pill(
+                                `${lane.instance_name}: ${lane.ready ? "live" : lane.connected ? "partial" : "offline"}`,
+                                lane.ready ? "ok" : lane.connected ? "warn" : "",
+                              ),
+                            )
+                            .join("")}
+                        </div>
+                      `
+                    : ""
+                }
+                ${
+                  browserRuntime.recommended_action
+                    ? `<div class="small-muted">${escapeHtml(browserRuntime.recommended_action)}</div>`
+                    : ""
+                }
+              `
+            : ""
+        }
         ${
           methodCatalog
             ? `

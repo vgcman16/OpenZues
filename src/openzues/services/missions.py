@@ -55,6 +55,7 @@ from openzues.services.scope_enforcer import ScopeAssessment, build_scope_assess
 from openzues.services.session_keys import (
     canonicalize_session_key,
     resolve_thread_parent_session_key,
+    session_key_lookup_aliases,
 )
 from openzues.services.skillbook import build_prompt_skill_lines, resolve_skill_profile
 from openzues.services.swarm import (
@@ -90,6 +91,42 @@ def _conversation_target_key(
     return (channel, account_id, peer_kind, peer_id)
 
 
+def _parse_mission_updated_at(value: Any) -> datetime | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _select_freshest_unique_mission(
+    matches: Sequence[dict[str, Any]],
+) -> dict[str, Any] | None:
+    if not matches:
+        return None
+    if len(matches) == 1:
+        return matches[0]
+    sorted_matches = sorted(
+        matches,
+        key=lambda match: (
+            _parse_mission_updated_at(match.get("updated_at")) or datetime.min.replace(tzinfo=UTC),
+            int(match.get("id") or 0),
+        ),
+        reverse=True,
+    )
+    freshest = sorted_matches[0]
+    second_freshest = sorted_matches[1]
+    freshest_updated_at = _parse_mission_updated_at(freshest.get("updated_at"))
+    second_freshest_updated_at = _parse_mission_updated_at(second_freshest.get("updated_at"))
+    if freshest_updated_at is None:
+        return None
+    if second_freshest_updated_at is None or freshest_updated_at > second_freshest_updated_at:
+        return freshest
+    return None
+
+
 def _mission_swarm_runtime(mission: dict[str, Any]) -> MissionSwarmRuntimeView | None:
     payload = mission.get("swarm")
     if not isinstance(payload, dict):
@@ -102,9 +139,13 @@ CONTINUITY_SNAPSHOT_MIN_SECONDS = 5 * 60
 CONTINUITY_SNAPSHOT_KIND = "continuity_auto"
 RESTART_SAFE_SNAPSHOT_MIN_SECONDS = 90
 RESTART_SAFE_SNAPSHOT_KIND = "restart_safe"
+LIVE_SNAPSHOT_OVERBURN_MIN_SECONDS = 20
+LIVE_SNAPSHOT_OVERBURN_COMMAND_DELTA = 4
+LIVE_SNAPSHOT_OVERBURN_TOKEN_DELTA = 250_000
 REPORTING_ORBIT_MIN_SECONDS = 2 * 60
 REPORTING_ORBIT_MIN_COMMENTARY_DELTAS = 12
 REPORTING_ORBIT_EVENT_LIMIT = 120
+COMMAND_STATE_EVENT_LIMIT = 1200
 EXECUTING_STALL_EVENT_LIMIT = 240
 PARITY_REPORTING_ORBIT_MIN_SECONDS = 30
 PARITY_REPORTING_ORBIT_MIN_COMMENTARY_DELTAS = 6
@@ -121,6 +162,12 @@ LONG_RUNNING_INSPECTION_EXECUTION_SECONDS = 3 * 60
 LONG_RUNNING_INSPECTION_OUTPUT_DELTA_MIN = 6
 PARITY_NAMESPACE_INVENTORY_SECONDS = 45
 PARITY_NAMESPACE_INVENTORY_OUTPUT_DELTA_MIN = 4
+PARITY_SAME_FILE_INSPECTION_SECONDS = 30
+PARITY_SAME_FILE_INSPECTION_COMMAND_MIN = 3
+PARITY_SAME_FILE_INSPECTION_OUTPUT_DELTA_MIN = 4
+PARITY_LEDGER_WINDOW_ORBIT_SECONDS = 10
+PARITY_LEDGER_WINDOW_ORBIT_COMMAND_MIN = 2
+PARITY_LEDGER_WINDOW_ORBIT_OUTPUT_DELTA_MIN = 2
 INSPECTION_COMMAND_ORBIT_SECONDS = 2 * 60
 INSPECTION_COMMAND_ORBIT_COMMAND_MIN = 6
 INSPECTION_COMMAND_ORBIT_OUTPUT_DELTA_MIN = 8
@@ -135,7 +182,7 @@ CHECKPOINT_NOW_PARITY_INVALID_SOURCE_ROOT_SECONDS = 12
 CHECKPOINT_NOW_PARITY_INVALID_SOURCE_ROOT_OUTPUT_DELTA_MIN = 1
 CHECKPOINT_NOW_PARITY_SOURCE_TREE_SWEEP_SECONDS = 18
 CHECKPOINT_NOW_PARITY_SOURCE_TREE_SWEEP_OUTPUT_DELTA_MIN = 2
-RECOVERED_PARITY_LEDGER_REPEAT_SECONDS = 30
+RECOVERED_PARITY_LEDGER_REPEAT_SECONDS = 12
 RECOVERED_PARITY_LEDGER_REPEAT_OUTPUT_DELTA_MIN = 1
 RECOVERED_PARITY_CONTEXT_SWEEP_SECONDS = 25
 RECOVERED_PARITY_CONTEXT_SWEEP_OUTPUT_DELTA_MIN = 1
@@ -178,6 +225,10 @@ VERIFICATION_FAIL_PATTERNS = (
     re.compile(r"=+\s*failures\s*=+", re.IGNORECASE),
     re.compile(r"\bassertionerror\b", re.IGNORECASE),
     re.compile(r"\btraceback \(most recent call last\)\b", re.IGNORECASE),
+)
+LIVE_SNAPSHOT_PROGRESS_RE = re.compile(
+    r"after (?P<commands>\d+) commands and (?P<tokens>[\d,]+) tokens\.",
+    re.IGNORECASE,
 )
 STALE_BLOCKER_PATTERNS = (
     re.compile(r"\bnot fully green\b", re.IGNORECASE),
@@ -344,6 +395,12 @@ PARITY_LEDGER_WIDE_TAIL_PATTERNS = (
     re.compile(r"(?:-tail|-last)\s+(\d+)", re.I),
     re.compile(r"\btail\s+-n\s+(\d+)", re.I),
 )
+PARITY_FILE_TARGET_PATTERN = re.compile(
+    r"(?P<path>(?:[a-z]:)?(?:\.\.?\\|[^\"'\s|])+?\.(?:"
+    r"py|ts|tsx|js|jsx|json|md|toml|ya?ml|swift|kt|java|rs|mjs|cjs|css|html"
+    r"))",
+    re.IGNORECASE,
+)
 PARITY_RECOVERY_FORBIDDEN_RECALL_MARKERS = (
     *PARITY_LEDGER_CHECKPOINT_KIND_MARKERS,
     "reflex_auto",
@@ -384,6 +441,66 @@ OPENCLAW_PARITY_RECALL_DOMAIN_MARKERS = (
     "onboarding",
     "skills",
     "parity re-anchor",
+)
+PARITY_NEXT_STEP_MARKERS = (
+    "next step:",
+    "next smallest step:",
+    "next best slice:",
+    "resume target:",
+    "next bounded slice:",
+    "next bounded slice remains",
+)
+PARITY_NAMED_STEP_MISMATCH_SECONDS = 12
+PARITY_NAMED_STEP_MISMATCH_OUTPUT_DELTA_MIN = 4
+PARITY_STEP_FAMILY_HINTS: dict[str, tuple[str, ...]] = {
+    "gateway": (
+        "gateway",
+        "bootstrap",
+        "method registry",
+        "method-registry",
+        "server-startup-plugins",
+        "server-methods",
+        "server-http",
+        "gateway_bootstrap",
+        "gateway_method_policy",
+    ),
+    "routing": (
+        "routing/session-key",
+        "routing",
+        "session-key",
+        "session key",
+        "launch_routing",
+        "resolve-route",
+    ),
+    "browser": ("browser", "chrom", "control-service"),
+    "canvas": ("canvas", "a2ui"),
+    "nodes": ("nodes", "node pairing", "camera", "audio", "location"),
+    "voice": ("voice", "talk mode", "wake"),
+    "packaging": ("packag", "docker", "appcast", "release-channel"),
+    "channels": ("channel", "slack", "discord", "telegram", "whatsapp", "email"),
+    "onboarding": ("onboard", "wizard", "setup flow", "channel-setup"),
+    "skills": ("skill", "clawhub", "skillbook", "workspace skills"),
+    "companion": ("companion", "android", "ios", "macos", "openclawkit"),
+}
+PARITY_STEP_FAMILY_LABELS: dict[str, str] = {
+    "gateway": "gateway bootstrap or method-registry",
+    "routing": "routing/session-key",
+    "browser": "browser runtime",
+    "canvas": "canvas runtime",
+    "nodes": "nodes runtime",
+    "voice": "voice surfaces",
+    "packaging": "packaging/release-channel",
+    "channels": "channel runtime",
+    "onboarding": "onboarding/config mutation",
+    "skills": "skills ecosystem",
+    "companion": "companion apps",
+}
+PARITY_NEUTRAL_SUPPORT_FILE_MARKERS = (
+    "src\\openzues\\services\\missions.py",
+    "src\\openzues\\services\\manager.py",
+    "src\\openzues\\app.py",
+    "tests\\test_app.py",
+    "tests\\test_manager.py",
 )
 
 
@@ -500,6 +617,14 @@ def _runtime_is_ready(runtime: Any) -> bool:
     if hasattr(runtime, "client") and getattr(runtime, "client", None) is None:
         return False
     return True
+
+
+def _mission_is_passive_queue_placeholder(mission: dict[str, Any]) -> bool:
+    status = str(mission.get("status") or "")
+    if status not in {"blocked", "paused"}:
+        return False
+    last_error = str(mission.get("last_error") or "")
+    return last_error.startswith("Queued behind mission:")
 
 
 def _mission_needs_runner_reconcile(mission: dict[str, Any]) -> bool:
@@ -638,6 +763,76 @@ def _command_is_wide_parity_ledger_tail_read(command: str | None) -> bool:
             if int(match.group(1)) >= 40:
                 return True
     return False
+
+
+def _canonicalize_parity_file_target(path: str | None) -> str | None:
+    rendered = _normalize_command_render(path).strip("\"' ")
+    if not rendered:
+        return None
+    rendered = re.sub(r"^(?:\.\.?\\)+", "", rendered)
+    if "src\\openzues\\" in rendered:
+        return rendered[rendered.index("src\\openzues\\") :]
+    if "openclaw-main\\src\\" in rendered:
+        return rendered[rendered.index("openclaw-main\\src\\") :]
+    if rendered.startswith("src\\") and not rendered.startswith("src\\openzues\\"):
+        return rendered
+    src_index = rendered.find("\\src\\")
+    if src_index >= 0 and "src\\openzues\\" not in rendered:
+        return rendered[src_index + 1 :]
+    return rendered
+
+
+def _command_primary_file_target(command: str | None) -> str | None:
+    rendered = _normalize_command_render(command)
+    if not rendered:
+        return None
+    candidates = [
+        _canonicalize_parity_file_target(match.group("path"))
+        for match in PARITY_FILE_TARGET_PATTERN.finditer(rendered)
+    ]
+    filtered = [candidate for candidate in candidates if candidate]
+    if not filtered:
+        return None
+
+    def _score(candidate: str) -> tuple[int, int]:
+        if candidate.startswith("src\\openzues\\"):
+            return (4, len(candidate))
+        if candidate.startswith("openclaw-main\\src\\"):
+            return (3, len(candidate))
+        if candidate.startswith("src\\"):
+            return (2, len(candidate))
+        return (1, len(candidate))
+
+    return max(filtered, key=_score)
+
+
+def _file_target_is_parity_seam(target: str | None) -> bool:
+    rendered = str(target or "").strip().lower()
+    if not rendered:
+        return False
+    return rendered.startswith("src\\openzues\\") or rendered.startswith(
+        "openclaw-main\\src\\"
+    ) or (rendered.startswith("src\\") and not rendered.startswith("src\\openzues\\")) or (
+        rendered.startswith("tests\\")
+    )
+
+
+def _command_is_specific_file_inspection(command: str | None) -> bool:
+    rendered = _normalize_command_render(command)
+    if not rendered or not _command_is_inspection_only(rendered):
+        return False
+    if _command_primary_file_target(rendered) is None:
+        return False
+    return any(
+        marker in rendered
+        for marker in (
+            "get-content",
+            "select-string",
+            "rg -n",
+            "findstr",
+            "git diff",
+        )
+    )
 
 
 def _command_is_parity_recovery_context_sweep(command: str | None) -> bool:
@@ -866,6 +1061,9 @@ def _executing_stall_summary_fragment(stall_signal: dict[str, Any]) -> str:
     if mode in {
         "checkpoint_landing_drift",
         "inspection_command_orbit",
+        "parity_named_step_mismatch",
+        "parity_ledger_window_orbit",
+        "parity_same_file_inspection_orbit",
         "parity_invalid_source_root_guess",
         "parity_relay_artifact_inspection",
         "parity_workspace_docs_inventory",
@@ -891,6 +1089,24 @@ def _executing_stall_summary_fragment(stall_signal: dict[str, Any]) -> str:
                 duration_label
                 + f"{int(stall_signal['elapsed_seconds'])} seconds of back-to-back "
                 "inspection-command churn."
+            )
+        if mode == "parity_named_step_mismatch":
+            return (
+                duration_label
+                + f"{int(stall_signal['elapsed_seconds'])} seconds of parity recovery "
+                "inspection on the wrong named seam."
+            )
+        if mode == "parity_ledger_window_orbit":
+            return (
+                duration_label
+                + f"{int(stall_signal['elapsed_seconds'])} seconds of back-to-back "
+                "parity-ledger window churn."
+            )
+        if mode == "parity_same_file_inspection_orbit":
+            return (
+                duration_label
+                + f"{int(stall_signal['elapsed_seconds'])} seconds of repeated "
+                "same-file parity seam inspection."
             )
         if mode == "parity_recall_query_drift":
             return (
@@ -1044,6 +1260,33 @@ def _compact_parity_objective_text(value: str | None) -> str:
     return compacted
 
 
+def _parity_recovery_reentry_lines(mission: dict[str, Any]) -> list[str]:
+    lines = [
+        "Mission re-entry brief:",
+        "Primary objective:",
+        _rendered_objective_for_turn(mission),
+        "",
+        "Recovery execution rules:",
+        (
+            "- Do not restate the full mission skillbook, runtime posture, or delegation "
+            "doctrine on this recovery thread."
+        ),
+        "- Lock one seam, verify one concrete claim, and end with a durable checkpoint.",
+    ]
+    if bool(mission.get("run_verification")):
+        lines.append("- Run the minimum meaningful proof before broadening scope again.")
+    if bool(mission.get("use_builtin_agents")):
+        lines.append(
+            "- Built-in agents are available, but only delegate after the exact seam and "
+            "owned files are explicit."
+        )
+    if mission.get("cwd"):
+        lines.append(
+            f"- Treat `{mission['cwd']}` as the primary workspace for this recovery turn."
+        )
+    return lines
+
+
 def _openclaw_parity_toolsets(
     *,
     use_builtin_agents: bool,
@@ -1103,10 +1346,115 @@ def _parity_summary_names_next_step(value: str | None) -> bool:
     summary = str(value or "").strip().lower()
     if not summary or _is_low_signal_parity_recovery_summary(summary):
         return False
-    return any(
-        marker in summary
-        for marker in ("next step:", "next smallest step:", "next best slice:", "resume target:")
-    )
+    return _parity_named_step_clause(value) is not None
+
+
+def _parity_named_step_clause(value: str | None) -> str | None:
+    for raw_line in str(value or "").splitlines():
+        line = raw_line.strip().lstrip("-* ").strip()
+        if not line:
+            continue
+        lowered = line.lower()
+        for marker in PARITY_NEXT_STEP_MARKERS:
+            index = lowered.find(marker)
+            if index < 0:
+                continue
+            clause = line[index + len(marker) :].strip(" -:.")
+            return clause or line
+    return None
+
+
+def _parity_named_step_targets(value: str | None) -> tuple[str, ...]:
+    clause = _parity_named_step_clause(value)
+    if clause is None:
+        return ()
+    targets: list[str] = []
+    for match in PARITY_FILE_TARGET_PATTERN.finditer(_normalize_command_render(clause)):
+        candidate = _canonicalize_parity_file_target(match.group("path"))
+        if candidate and candidate not in targets:
+            targets.append(candidate)
+    return tuple(targets)
+
+
+def _parity_step_families_from_text(value: str | None) -> tuple[str, ...]:
+    clause = _parity_named_step_clause(value)
+    if clause is None:
+        return ()
+    rendered = _normalize_command_render(clause)
+    families: list[str] = []
+    for family, hints in PARITY_STEP_FAMILY_HINTS.items():
+        if any(hint in rendered for hint in hints) and family not in families:
+            families.append(family)
+    return tuple(families)
+
+
+def _parity_expected_step_families(
+    mission: dict[str, Any],
+    *,
+    checkpoints: Sequence[dict[str, Any]] | None = None,
+) -> tuple[str, ...]:
+    families: list[str] = []
+    values = [
+        mission.get("last_checkpoint"),
+        *(checkpoint.get("summary") for checkpoint in checkpoints or ()),
+    ]
+    for value in values:
+        for family in _parity_step_families_from_text(str(value or "") or None):
+            if family not in families:
+                families.append(family)
+    return tuple(families)
+
+
+def _parity_expected_step_hint(
+    mission: dict[str, Any],
+    *,
+    checkpoints: Sequence[dict[str, Any]] | None = None,
+) -> str | None:
+    values = [
+        mission.get("last_checkpoint"),
+        *(checkpoint.get("summary") for checkpoint in checkpoints or ()),
+    ]
+    best_target: str | None = None
+
+    def _score(candidate: str) -> tuple[int, int]:
+        if candidate.startswith("src\\openzues\\"):
+            return (4, len(candidate))
+        if candidate.startswith("openclaw-main\\src\\"):
+            return (3, len(candidate))
+        if candidate.startswith("tests\\"):
+            return (2, len(candidate))
+        return (1, len(candidate))
+
+    for value in values:
+        targets = _parity_named_step_targets(str(value or "") or None)
+        if targets:
+            candidate = max(targets, key=_score)
+            if best_target is None or _score(candidate) > _score(best_target):
+                best_target = candidate
+    if best_target is not None:
+        return best_target
+    for value in values:
+        clause = _parity_named_step_clause(str(value or "") or None)
+        if clause:
+            return _truncate_text(clause, 180)
+    return None
+
+
+def _parity_target_step_family(
+    target: str | None,
+    *,
+    command: str | None = None,
+) -> str | None:
+    rendered_target = _normalize_command_render(target)
+    if any(marker in rendered_target for marker in PARITY_NEUTRAL_SUPPORT_FILE_MARKERS):
+        return None
+    for rendered in (rendered_target, _normalize_command_render(command)):
+        if not rendered:
+            continue
+        for family, hints in PARITY_STEP_FAMILY_HINTS.items():
+            if any(hint in rendered for hint in hints):
+                return family
+    return None
 
 
 def _parity_checkpoint_has_named_step(
@@ -1578,6 +1926,73 @@ def _build_tool_evidence_summary(
     return (
         "No declared toolsets have explicit runtime evidence yet. "
         f"Armed posture: {rendered}."
+    )
+
+
+def _mission_requires_deep_view(mission: dict[str, Any]) -> bool:
+    status = str(mission.get("status") or "").strip().lower()
+    return status in {"active", "blocked"} or bool(mission.get("in_progress"))
+
+
+def _resolved_or_stored_toolsets(
+    mission: dict[str, Any],
+    *,
+    resolver: Callable[[], list[str]],
+    summary_mode: bool,
+) -> list[str]:
+    if not summary_mode:
+        return resolver()
+    return [
+        str(toolset).strip()
+        for toolset in mission.get("toolsets", [])
+        if str(toolset).strip()
+    ]
+
+
+def _build_summary_live_telemetry(mission: dict[str, Any]) -> MissionLiveTelemetryView:
+    thread_id = str(mission.get("thread_id") or "").strip()
+    if not thread_id:
+        return MissionLiveTelemetryView(summary="Thread not created yet.")
+    status = str(mission.get("status") or "").strip().lower()
+    phase = str(mission.get("phase") or "").strip().lower()
+    last_activity_at = str(mission.get("last_activity_at") or "").strip() or None
+    last_activity_age_seconds = _seconds_since(last_activity_at)
+    in_progress = bool(mission.get("in_progress"))
+    return MissionLiveTelemetryView(
+        streaming=bool(status == "active" and in_progress),
+        thread_status=phase or None,
+        last_thread_event_at=last_activity_at,
+        last_thread_event_age_seconds=last_activity_age_seconds,
+        token_rollup_pending=False,
+        summary=(
+            "Archived mission view omits live thread metrics; open the mission for fresh "
+            "runtime telemetry."
+        ),
+    )
+
+
+def _build_summary_tool_evidence(
+    mission: dict[str, Any],
+    *,
+    toolsets: list[str],
+) -> MissionToolEvidenceView:
+    if not toolsets:
+        return MissionToolEvidenceView(
+            proof_ready=True,
+            summary="No explicit toolsets are declared for this mission.",
+        )
+    return MissionToolEvidenceView(
+        expected_toolsets=list(toolsets),
+        observed_toolsets=[],
+        unproven_toolsets=list(toolsets),
+        summary=(
+            "Archived mission view omits runtime tool proof scans; open the mission thread or "
+            "re-run the slice to refresh explicit tool evidence."
+        ),
+        items=[
+            MissionToolEvidenceItemView(toolset=toolset, status="unproven")
+            for toolset in toolsets
+        ],
     )
 
 
@@ -2659,6 +3074,94 @@ def _inspection_command_orbit_window(
     }
 
 
+def _same_file_parity_inspection_window(
+    windows: list[dict[str, Any]],
+    *,
+    current_command: str,
+) -> dict[str, Any] | None:
+    current_target = _command_primary_file_target(current_command)
+    if current_target is None or not _file_target_is_parity_seam(current_target):
+        return None
+    if _canonicalize_parity_file_target(OPENCLAW_PARITY_CHECKPOINT_LEDGER) == current_target:
+        return None
+    if not _command_is_specific_file_inspection(current_command):
+        return None
+
+    trailing_windows: list[dict[str, Any]] = []
+    for window in reversed(windows):
+        command = str(window.get("command") or "")
+        if not bool(window.get("inspection_only")):
+            break
+        if not _command_is_specific_file_inspection(command):
+            break
+        if _command_primary_file_target(command) != current_target:
+            break
+        trailing_windows.append(window)
+    trailing_windows.reverse()
+    if len(trailing_windows) < PARITY_SAME_FILE_INSPECTION_COMMAND_MIN:
+        return None
+
+    summary = _command_execution_window_summary(trailing_windows)
+    if summary is None:
+        return None
+    if int(summary["elapsed_seconds"]) < PARITY_SAME_FILE_INSPECTION_SECONDS:
+        return None
+    if (
+        int(summary["output_delta_count"])
+        < PARITY_SAME_FILE_INSPECTION_OUTPUT_DELTA_MIN
+    ):
+        return None
+
+    return {
+        **summary,
+        "command_count": len(trailing_windows),
+        "target": current_target,
+    }
+
+
+def _parity_ledger_window_orbit_window(
+    windows: list[dict[str, Any]],
+    *,
+    current_command: str,
+) -> dict[str, Any] | None:
+    if not (
+        _command_is_full_parity_ledger_read(current_command)
+        or _command_is_wide_parity_ledger_tail_read(current_command)
+    ):
+        return None
+
+    trailing_windows: list[dict[str, Any]] = []
+    for window in reversed(windows):
+        command = str(window.get("command") or "")
+        if not bool(window.get("inspection_only")):
+            break
+        if not (
+            _command_is_full_parity_ledger_read(command)
+            or _command_is_wide_parity_ledger_tail_read(command)
+        ):
+            break
+        trailing_windows.append(window)
+    trailing_windows.reverse()
+    if len(trailing_windows) < PARITY_LEDGER_WINDOW_ORBIT_COMMAND_MIN:
+        return None
+
+    summary = _command_execution_window_summary(trailing_windows)
+    if summary is None:
+        return None
+    if int(summary["elapsed_seconds"]) < PARITY_LEDGER_WINDOW_ORBIT_SECONDS:
+        return None
+    if (
+        int(summary["output_delta_count"])
+        < PARITY_LEDGER_WINDOW_ORBIT_OUTPUT_DELTA_MIN
+    ):
+        return None
+
+    return {
+        **summary,
+        "command_count": len(trailing_windows),
+    }
+
+
 def _command_execution_windows(
     events: list[dict[str, Any]],
     *,
@@ -2723,7 +3226,7 @@ def _command_execution_windows(
         item_id = _thread_event_command_item_id(event)
         command = _thread_event_command(event)
         completed_window: dict[str, Any] | None = (
-            active_by_item_id.pop(item_id or "") if item_id else None
+            active_by_item_id.pop(item_id or "", None) if item_id else None
         )
         if completed_window is None and command:
             completed_window = _latest_open_window_for_command(command)
@@ -2808,6 +3311,71 @@ def _checkpoint_now_command_drift_window(
         "inspection_command_count": sum(
             1 for window in windows if bool(window.get("inspection_only"))
         ),
+    }
+
+
+def _snapshot_progress_counts(summary: Any) -> tuple[int, int] | None:
+    match = LIVE_SNAPSHOT_PROGRESS_RE.search(str(summary or ""))
+    if match is None:
+        return None
+    return (
+        int(match.group("commands")),
+        int(match.group("tokens").replace(",", "")),
+    )
+
+
+def _live_snapshot_overburn(
+    mission: dict[str, Any],
+    *,
+    checkpoints: Sequence[dict[str, Any]],
+) -> dict[str, Any] | None:
+    if bool(mission.get("last_checkpoint")):
+        return None
+
+    current_turn_id = str(mission.get("last_turn_id") or "").strip()
+    if not current_turn_id:
+        return None
+
+    snapshot = next(
+        (
+            checkpoint
+            for checkpoint in checkpoints
+            if str(checkpoint.get("kind") or "")
+            in {CONTINUITY_SNAPSHOT_KIND, RESTART_SAFE_SNAPSHOT_KIND}
+            and str(checkpoint.get("turn_id") or "").strip() == current_turn_id
+        ),
+        None,
+    )
+    if snapshot is None:
+        return None
+
+    age_seconds = _seconds_since(snapshot.get("created_at"))
+    if age_seconds is None or age_seconds < LIVE_SNAPSHOT_OVERBURN_MIN_SECONDS:
+        return None
+
+    progress = _snapshot_progress_counts(snapshot.get("summary"))
+    if progress is None:
+        return None
+
+    snapshot_commands, snapshot_tokens = progress
+    current_commands = int(mission.get("command_count") or 0)
+    current_tokens = int(mission.get("total_tokens") or 0)
+    if current_commands < snapshot_commands or current_tokens < snapshot_tokens:
+        return None
+
+    command_delta = current_commands - snapshot_commands
+    token_delta = current_tokens - snapshot_tokens
+    if (
+        command_delta < LIVE_SNAPSHOT_OVERBURN_COMMAND_DELTA
+        and token_delta < LIVE_SNAPSHOT_OVERBURN_TOKEN_DELTA
+    ):
+        return None
+
+    return {
+        "kind": str(snapshot.get("kind") or ""),
+        "command_delta": command_delta,
+        "token_delta": token_delta,
+        "age_seconds": age_seconds,
     }
 
 
@@ -3180,12 +3748,14 @@ class MissionService:
 
         async def build(row: dict[str, Any]) -> MissionView:
             async with semaphore:
+                summary_mode = not _mission_requires_deep_view(row)
                 return await self._build_view(
                     row,
                     projects_by_id=projects_by_id,
                     tasks_by_id=tasks_by_id,
                     preferred_memory_provider=preferred_memory_provider,
                     preferred_executor=preferred_executor,
+                    summary_mode=summary_mode,
                 )
 
         return list(await asyncio.gather(*(build(row) for row in rows)))
@@ -3261,6 +3831,7 @@ class MissionService:
             mission
             for mission in await self.database.list_missions()
             if mission["status"] in {"active", "blocked", "paused"}
+            and not _mission_is_passive_queue_placeholder(mission)
         ]
         if payload.task_blueprint_id is not None:
             candidates = [
@@ -3304,11 +3875,24 @@ class MissionService:
         canonical_session_key = canonicalize_session_key(original_session_key)
         if canonical_session_key is not None and canonical_session_key != payload.session_key:
             payload = payload.model_copy(update={"session_key": canonical_session_key})
+        reused_session_key = payload.session_key
         latest = await self.database.get_latest_mission_by_session_key(
             payload.session_key,
             instance_id=payload.instance_id,
             require_thread=True,
         )
+        if latest is None:
+            latest_thread_child = await self._select_reusable_thread_child_mission(
+                payload.session_key,
+                instance_id=payload.instance_id,
+            )
+            if latest_thread_child is not None:
+                stored_session_key = canonicalize_session_key(
+                    latest_thread_child.get("session_key")
+                ) or str(latest_thread_child.get("session_key") or "").strip()
+                if stored_session_key:
+                    latest = latest_thread_child
+                    reused_session_key = stored_session_key
         if latest is None:
             parent_session_key = resolve_thread_parent_session_key(original_session_key)
             canonical_parent_session_key = canonicalize_session_key(parent_session_key)
@@ -3327,7 +3911,37 @@ class MissionService:
         thread_id = str(latest.get("thread_id") or "").strip()
         if not thread_id:
             return payload
-        return payload.model_copy(update={"thread_id": thread_id})
+        return payload.model_copy(
+            update={"thread_id": thread_id, "session_key": reused_session_key}
+        )
+
+    async def _select_reusable_thread_child_mission(
+        self,
+        parent_session_key: str,
+        *,
+        instance_id: int,
+    ) -> dict[str, Any] | None:
+        parent_aliases = set(session_key_lookup_aliases(parent_session_key))
+        if not parent_aliases:
+            return None
+        child_matches = await self.database.list_thread_child_missions_by_parent_session_key(
+            parent_session_key,
+            instance_id=instance_id,
+            require_thread=True,
+        )
+        structural_matches: list[dict[str, Any]] = []
+        for match in child_matches:
+            stored_session_key = canonicalize_session_key(match.get("session_key")) or str(
+                match.get("session_key") or ""
+            ).strip()
+            if not stored_session_key:
+                continue
+            stored_parent_session_key = canonicalize_session_key(
+                resolve_thread_parent_session_key(stored_session_key)
+            )
+            if stored_parent_session_key in parent_aliases:
+                structural_matches.append(match)
+        return _select_freshest_unique_mission(structural_matches)
 
     async def create(self, payload: MissionCreate) -> MissionView:
         await self.manager.get(payload.instance_id)
@@ -3528,8 +4142,14 @@ class MissionService:
             return
 
         mission_id = int(mission["id"])
-        updates: dict[str, Any] = {"last_activity_at": utcnow()}
         method = event["method"]
+        if (
+            str(mission.get("status") or "") == "completed"
+            and await self._has_final_answer_checkpoint(mission_id)
+        ):
+            if method not in {"turn/completed", "thread/tokenUsage/updated"}:
+                return
+        updates: dict[str, Any] = {"last_activity_at": utcnow()}
         params = event["params"]
         event_turn_id = extract_turn_id(params)
         live_thread_signal = self._event_proves_thread_is_live(method, params)
@@ -3715,7 +4335,7 @@ class MissionService:
             events = await self.database.list_thread_events(
                 instance_id=instance_id,
                 thread_id=thread_id,
-                limit=EXECUTING_STALL_EVENT_LIMIT,
+                limit=COMMAND_STATE_EVENT_LIMIT,
                 compact=True,
                 methods=COMPACT_COMMAND_WINDOW_EVENT_METHODS,
             )
@@ -3937,7 +4557,7 @@ class MissionService:
         events = await self.database.list_thread_events(
             instance_id=int(mission["instance_id"]),
             thread_id=thread_id,
-            limit=EXECUTING_STALL_EVENT_LIMIT,
+            limit=COMMAND_STATE_EVENT_LIMIT,
             compact=True,
             methods=COMPACT_TRACE_EVENT_METHODS,
         )
@@ -4266,6 +4886,16 @@ class MissionService:
             if str(checkpoint.get("kind") or "") == kind:
                 return checkpoint
         return None
+
+    async def _has_final_answer_checkpoint(self, mission_id: int) -> bool:
+        return (
+            await self._latest_checkpoint_of_kind(
+                mission_id,
+                kind="final_answer",
+                limit=64,
+            )
+            is not None
+        )
 
     async def _recent_thread_trace_lines(
         self,
@@ -4619,7 +5249,7 @@ class MissionService:
             events = await self.database.list_thread_events(
                 instance_id=int(mission["instance_id"]),
                 thread_id=thread_id,
-                limit=EXECUTING_STALL_EVENT_LIMIT,
+                limit=COMMAND_STATE_EVENT_LIMIT,
                 compact=True,
                 methods=COMPACT_COMMAND_WINDOW_EVENT_METHODS,
             )
@@ -4678,6 +5308,114 @@ class MissionService:
                     "threshold_seconds": INSPECTION_COMMAND_ORBIT_SECONDS,
                     "thread_untracked": thread_untracked,
                 }
+            parity_mode = _mission_targets_openclaw_parity(mission)
+            if parity_mode:
+                recent_checkpoints = await self.database.list_mission_checkpoints(
+                    int(mission["id"]),
+                    limit=8,
+                )
+                checkpoint_has_named_step = _parity_checkpoint_has_named_step(
+                    mission,
+                    checkpoints=recent_checkpoints,
+                )
+                repeated_after_recovery = any(
+                    str(checkpoint.get("kind") or "") in RECOVERY_REBIND_KINDS
+                    for checkpoint in recent_checkpoints
+                )
+                checkpoint_landing_guard = (
+                    str(mission.get("last_reflex_kind") or "") == "checkpoint_now"
+                    and _parse_timestamp(str(mission.get("last_reflex_at") or "") or None)
+                    is not None
+                )
+                parity_guard_armed = repeated_after_recovery or checkpoint_landing_guard
+                current_target = _command_primary_file_target(current_command)
+                expected_families = _parity_expected_step_families(
+                    mission,
+                    checkpoints=recent_checkpoints,
+                )
+                current_family = _parity_target_step_family(
+                    current_target,
+                    command=current_command,
+                )
+                expected_hint = _parity_expected_step_hint(
+                    mission,
+                    checkpoints=recent_checkpoints,
+                )
+                if (
+                    checkpoint_has_named_step
+                    and parity_guard_armed
+                    and current_target is not None
+                    and current_family is not None
+                    and expected_families
+                    and current_family not in expected_families
+                    and int(open_window["elapsed_seconds"])
+                    >= PARITY_NAMED_STEP_MISMATCH_SECONDS
+                    and int(open_window["output_delta_count"])
+                    >= PARITY_NAMED_STEP_MISMATCH_OUTPUT_DELTA_MIN
+                ):
+                    return {
+                        "mode": "parity_named_step_mismatch",
+                        "elapsed_seconds": int(open_window["elapsed_seconds"]),
+                        "elapsed_lower_bound": bool(open_window["elapsed_lower_bound"]),
+                        "output_delta_count": int(open_window["output_delta_count"]),
+                        "command": current_command,
+                        "inspection_only": True,
+                        "target": current_target,
+                        "current_family": current_family,
+                        "expected_families": list(expected_families),
+                        "expected_hint": expected_hint,
+                        "threshold_seconds": PARITY_NAMED_STEP_MISMATCH_SECONDS,
+                        "thread_untracked": thread_untracked,
+                    }
+                same_file_inspection = _same_file_parity_inspection_window(
+                    command_windows,
+                    current_command=current_command,
+                )
+                ledger_window_orbit = _parity_ledger_window_orbit_window(
+                    command_windows,
+                    current_command=current_command,
+                )
+                if (
+                    checkpoint_has_named_step
+                    and parity_guard_armed
+                    and ledger_window_orbit is not None
+                ):
+                    return {
+                        "mode": "parity_ledger_window_orbit",
+                        "elapsed_seconds": int(ledger_window_orbit["elapsed_seconds"]),
+                        "elapsed_lower_bound": bool(
+                            ledger_window_orbit["elapsed_lower_bound"]
+                        ),
+                        "output_delta_count": int(
+                            ledger_window_orbit["output_delta_count"]
+                        ),
+                        "command_count": int(ledger_window_orbit["command_count"]),
+                        "command": current_command,
+                        "inspection_only": True,
+                        "threshold_seconds": PARITY_LEDGER_WINDOW_ORBIT_SECONDS,
+                        "thread_untracked": thread_untracked,
+                    }
+                if (
+                    checkpoint_has_named_step
+                    and parity_guard_armed
+                    and same_file_inspection is not None
+                ):
+                    return {
+                        "mode": "parity_same_file_inspection_orbit",
+                        "elapsed_seconds": int(same_file_inspection["elapsed_seconds"]),
+                        "elapsed_lower_bound": bool(
+                            same_file_inspection["elapsed_lower_bound"]
+                        ),
+                        "output_delta_count": int(
+                            same_file_inspection["output_delta_count"]
+                        ),
+                        "command_count": int(same_file_inspection["command_count"]),
+                        "command": current_command,
+                        "inspection_only": True,
+                        "target": str(same_file_inspection["target"]),
+                        "threshold_seconds": PARITY_SAME_FILE_INSPECTION_SECONDS,
+                        "thread_untracked": thread_untracked,
+                    }
             parity_ledger_read = _command_is_full_parity_ledger_read(current_command)
             parity_ledger_wide_tail_read = _command_is_wide_parity_ledger_tail_read(
                 current_command
@@ -4707,9 +5445,9 @@ class MissionService:
             parity_ledger_keyword_sweep = _command_is_parity_ledger_keyword_sweep(
                 current_command
             )
-            parity_recall_query_drift = _mission_targets_openclaw_parity(
-                mission
-            ) and _command_is_forbidden_parity_recall_query(current_command)
+            parity_recall_query_drift = parity_mode and _command_is_forbidden_parity_recall_query(
+                current_command
+            )
             if (
                 parity_ledger_read
                 or parity_ledger_wide_tail_read
@@ -5209,7 +5947,10 @@ class MissionService:
                     parity_mode=parity_mode,
                 )
             )
-        instructions.extend(["", "Mission re-entry brief:", rendered_base_prompt])
+        if parity_mode:
+            instructions.extend(["", *_parity_recovery_reentry_lines(mission)])
+        else:
+            instructions.extend(["", "Mission re-entry brief:", rendered_base_prompt])
         return "\n".join(instructions)
 
     def _build_executing_stall_recovery_prompt(
@@ -5264,6 +6005,120 @@ class MissionService:
                     (
                         "- Mission control treated that as anchor drift. Do not search the ledger "
                         "with broad keyword unions or raw checkpoint-kind labels on this path."
+                    ),
+                ]
+            )
+        elif str(stall_signal.get("mode") or "") == "parity_ledger_window_orbit":
+            duration_label = (
+                "at least"
+                if bool(stall_signal.get("elapsed_lower_bound"))
+                else "about"
+            )
+            instructions.extend(
+                [
+                    (
+                        "- The fresh recovery lane kept stepping through numbered parity-ledger "
+                        f"windows across {int(stall_signal.get('command_count') or 0)} read-only "
+                        f"commands for {duration_label} {int(stall_signal['elapsed_seconds'])} "
+                        f"seconds while streaming {int(stall_signal['output_delta_count'])} output "
+                        "updates:"
+                    ),
+                    f"  {command}",
+                    (
+                        "- Mission control treated that as ledger-window orbit, not as seam "
+                        "progress."
+                    ),
+                    (
+                        "- Do not open another `$start/$end`, `-Skip/-First`, `-Tail`, or "
+                        "`Select-String` window on the parity ledger on this recovery path."
+                    ),
+                    (
+                        "- The next repo command must target a non-ledger OpenZues file or one "
+                        "concrete OpenClaw source-of-truth file named by the anchor."
+                    ),
+                ]
+            )
+        elif str(stall_signal.get("mode") or "") == "parity_named_step_mismatch":
+            duration_label = (
+                "at least"
+                if bool(stall_signal.get("elapsed_lower_bound"))
+                else "about"
+            )
+            target = (
+                str(stall_signal.get("target") or "").strip()
+                or "the reopened parity seam file"
+            )
+            current_family = str(stall_signal.get("current_family") or "").strip()
+            current_family_label = (
+                PARITY_STEP_FAMILY_LABELS.get(current_family, current_family)
+                if current_family
+                else "the reopened seam family"
+            )
+            expected_families = tuple(
+                str(entry).strip()
+                for entry in stall_signal.get("expected_families") or []
+                if str(entry).strip()
+            )
+            expected_label = ", ".join(
+                PARITY_STEP_FAMILY_LABELS.get(entry, entry) for entry in expected_families
+            ) or "the named checkpoint slice"
+            expected_hint = str(stall_signal.get("expected_hint") or "").strip()
+            instructions.extend(
+                [
+                    (
+                        "- The fresh recovery lane reopened a file from "
+                        f"`{current_family_label}` for {duration_label} "
+                        f"{int(stall_signal['elapsed_seconds'])} seconds while the saved "
+                        f"checkpoint already pointed at `{expected_label}`:"
+                    ),
+                    f"  {command}",
+                    (
+                        "- Mission control treated that as named-step mismatch, not as forward "
+                        "parity progress."
+                    ),
+                    (
+                        f"- Do not reopen `{target}` again on this recovery path unless the "
+                        "checkpoint explicitly points back there."
+                    ),
+                    (
+                        f"- Your next repo command must target `{expected_hint}` or one directly "
+                        "adjacent support file for that same named slice."
+                        if expected_hint
+                        else "- Your next repo command must target the checkpoint's named slice "
+                        "directly instead of drifting back into an older seam family."
+                    ),
+                ]
+            )
+        elif str(stall_signal.get("mode") or "") == "parity_same_file_inspection_orbit":
+            duration_label = (
+                "at least"
+                if bool(stall_signal.get("elapsed_lower_bound"))
+                else "about"
+            )
+            target = (
+                str(stall_signal.get("target") or "").strip()
+                or "the same parity seam file"
+            )
+            instructions.extend(
+                [
+                    (
+                        "- The fresh recovery lane reopened the same parity seam file across "
+                        f"{int(stall_signal.get('command_count') or 0)} read-only commands for "
+                        f"{duration_label} {int(stall_signal['elapsed_seconds'])} seconds while "
+                        f"streaming {int(stall_signal['output_delta_count'])} output updates:"
+                    ),
+                    f"  {command}",
+                    (
+                        "- Mission control treated that as same-file seam orbit, not as a new "
+                        "recovery insight."
+                    ),
+                    (
+                        f"- Do not reopen `{target}` with another numbered line window, "
+                        "Select-String pass, or `rg -n` sweep on this recovery path."
+                    ),
+                    (
+                        "- Either edit that file now, inspect one directly adjacent dependency "
+                        "file once, run a focused proof command, or checkpoint the bounded gap."
                     ),
                 ]
             )
@@ -5603,6 +6458,11 @@ class MissionService:
                 "- The stalled command was read-only inspection. Do not keep rereading the same "
                 "files unless the recovery packet proves a specific unanswered gap."
             )
+            if parity_mode:
+                instructions.append(
+                    "- After one exact lookup, your next meaningful move must be an edit, "
+                    "a focused proof command, or the checkpoint itself."
+                )
         else:
             instructions.append(
                 "- Treat the interrupted command as inconclusive until you confirm whether a "
@@ -5685,7 +6545,10 @@ class MissionService:
                     parity_mode=parity_mode,
                 )
             )
-        instructions.extend(["", "Mission re-entry brief:", rendered_base_prompt])
+        if parity_mode:
+            instructions.extend(["", *_parity_recovery_reentry_lines(mission)])
+        else:
+            instructions.extend(["", "Mission re-entry brief:", rendered_base_prompt])
         return "\n".join(instructions)
 
     async def _attempt_reporting_orbit_recovery(
@@ -6465,6 +7328,8 @@ class MissionService:
         mission: dict[str, Any],
         *,
         reporting_orbit: bool = False,
+        checkpoints: Sequence[dict[str, Any]] | None = None,
+        live_snapshot_overburn: dict[str, Any] | None = None,
     ) -> MissionReflexRun:
         recall_entrypoint = openzues_recall_entrypoint(
             str(mission.get("cwd") or "").strip() or None
@@ -6479,8 +7344,28 @@ class MissionService:
             ),
             "Stop broadening the task.",
         ]
+        if live_snapshot_overburn is not None:
+            snapshot_label = (
+                "live continuity snapshot"
+                if live_snapshot_overburn.get("kind") == CONTINUITY_SNAPSHOT_KIND
+                else "restart-safe recovery packet"
+            )
+            prompt_lines.extend(
+                [
+                    (
+                        "OpenZues already emitted a "
+                        f"{snapshot_label} for this same turn, but the mission still burned "
+                        f"{int(live_snapshot_overburn['command_delta'])} more command(s) and "
+                        f"{int(live_snapshot_overburn['token_delta']):,} more tokens after it."
+                    ),
+                    "Treat that live packet as the anchor and land this turn now.",
+                ]
+            )
         if _mission_targets_openclaw_parity(mission):
-            checkpoint_has_named_step = _parity_checkpoint_has_named_step(mission)
+            checkpoint_has_named_step = _parity_checkpoint_has_named_step(
+                mission,
+                checkpoints=checkpoints,
+            )
             prompt_lines.extend(
                 [
                     (
@@ -6616,6 +7501,11 @@ class MissionService:
         thread_id = str(mission.get("thread_id") or "").strip()
         if thread_id and await self._has_recent_final_answer_progress(mission):
             return None
+        checkpoints = await self.database.list_mission_checkpoints(mission_id, limit=8)
+        live_snapshot_overburn = _live_snapshot_overburn(
+            mission,
+            checkpoints=checkpoints,
+        )
         if await self._turn_has_open_live_model_work(mission):
             return None
         recent_model_work_age = await self._recent_model_turn_work_age(mission)
@@ -6623,12 +7513,18 @@ class MissionService:
             recent_model_work_age is not None
             and recent_model_work_age < IN_PROGRESS_GOVERNOR_QUIET_SECONDS
         ):
-            return None
+            if live_snapshot_overburn is None:
+                return None
         if await self._turn_started_without_model_work(mission):
             return None
         if int(mission.get("command_count") or 0) < self._orbit_threshold(mission):
             return None
-        return self._build_checkpoint_now_reflex(mission, reporting_orbit=True)
+        return self._build_checkpoint_now_reflex(
+            mission,
+            reporting_orbit=True,
+            checkpoints=checkpoints,
+            live_snapshot_overburn=live_snapshot_overburn,
+        )
 
     async def _has_recent_final_answer_progress(self, mission: dict[str, Any]) -> bool:
         thread_id = str(mission.get("thread_id") or "").strip()
@@ -7461,6 +8357,30 @@ class MissionService:
         lock = self._locks[mission_id]
         async with lock:
             mission = await self.require_mission(mission_id)
+            current_command = str(mission.get("current_command") or "").strip()
+            if await self._has_final_answer_checkpoint(mission_id) and (
+                str(mission.get("status") or "") == "completed"
+                or (
+                    str(mission.get("status") or "") == "active"
+                    and (bool(mission.get("in_progress")) or bool(current_command))
+                )
+            ):
+                terminal_updates: dict[str, Any] = {}
+                if str(mission.get("status") or "") != "completed":
+                    terminal_updates["status"] = "completed"
+                if str(mission.get("phase") or "") != "completed":
+                    terminal_updates["phase"] = "completed"
+                if bool(mission.get("in_progress")):
+                    terminal_updates["in_progress"] = 0
+                if current_command:
+                    terminal_updates["current_command"] = None
+                if mission.get("last_error") is not None:
+                    terminal_updates["last_error"] = None
+                if terminal_updates:
+                    terminal_updates["last_activity_at"] = utcnow()
+                    await self.database.update_mission(mission_id, **terminal_updates)
+                    mission.update(terminal_updates)
+                return
             _preferred_memory_provider, preferred_executor = await load_saved_runtime_preferences(
                 self.database
             )
@@ -7618,6 +8538,45 @@ class MissionService:
                             heal_updates["in_progress"] = 0
                         await self.database.update_mission(mission_id, **heal_updates)
                         mission.update(heal_updates)
+                    recovery_state = await self._recent_thread_recovery_state(mission)
+                    recovery_command = (
+                        str(recovery_state.get("current_command") or "").strip()
+                        if recovery_state is not None
+                        else ""
+                    )
+                    mission_command = str(mission.get("current_command") or "").strip()
+                    if (
+                        thread_status in {"active", "idle"}
+                        and recovery_state is not None
+                        and (recovery_command or mission_command)
+                        and (
+                            str(mission.get("status") or "") == "active"
+                            or allow_completed_recovery
+                            or allow_failed_recovery
+                            or _live_thread_failure_can_heal(mission.get("last_error"))
+                        )
+                    ):
+                        state_updates = {
+                            key: value
+                            for key, value in recovery_state.items()
+                            if mission.get(key) != value
+                        }
+                        if state_updates:
+                            if (
+                                allow_completed_recovery
+                                or allow_failed_recovery
+                                or _live_thread_failure_can_heal(mission.get("last_error"))
+                            ):
+                                state_updates.setdefault("status", "active")
+                                state_updates.setdefault("last_error", None)
+                            await self.database.update_mission(mission_id, **state_updates)
+                            mission.update(state_updates)
+                            thread_status = (
+                                "active" if bool(mission.get("in_progress")) else "idle"
+                            )
+                            last_activity_seconds = _seconds_since(
+                                mission.get("last_activity_at")
+                            )
                     if allow_completed_recovery and (
                         bool(mission.get("in_progress"))
                         or bool(str(mission.get("current_command") or "").strip())
@@ -7903,6 +8862,7 @@ class MissionService:
         tasks_by_id: dict[int, dict[str, Any]] | None = None,
         preferred_memory_provider: str | None = None,
         preferred_executor: str | None = None,
+        summary_mode: bool = False,
     ) -> MissionView:
         rendered_objective = _rendered_objective_for_turn(mission)
         scoped_mission = {**mission, "objective": rendered_objective}
@@ -7924,19 +8884,31 @@ class MissionService:
             else:
                 task = await self.database.get_task_blueprint(task_id)
         runtime = self.manager.instances.get(int(mission["instance_id"]))
+        checkpoint_limit = 2 if summary_mode else 5
         checkpoints = [
             MissionCheckpointView.model_validate(item)
-            for item in await self.database.list_mission_checkpoints(int(mission["id"]), limit=5)
+            for item in await self.database.list_mission_checkpoints(
+                int(mission["id"]),
+                limit=checkpoint_limit,
+            )
         ]
         scope = build_scope_assessment(scoped_mission, checkpoints=checkpoints)
-        live_telemetry = await self._build_live_telemetry(mission, runtime=runtime)
+        live_telemetry = (
+            _build_summary_live_telemetry(mission)
+            if summary_mode
+            else await self._build_live_telemetry(mission, runtime=runtime)
+        )
         swarm_runtime = _mission_swarm_runtime(mission)
         trace_lines: list[str] = []
         thread_id = str(mission.get("thread_id") or "").strip()
-        if thread_id and (
-            mission.get("last_commentary")
-            or mission.get("current_command")
-            or str(mission.get("status") or "") == "active"
+        if (
+            not summary_mode
+            and thread_id
+            and (
+                mission.get("last_commentary")
+                or mission.get("current_command")
+                or str(mission.get("status") or "") == "active"
+            )
         ):
             trace_lines = await self._recent_thread_trace_lines(
                 instance_id=int(mission["instance_id"]),
@@ -7953,11 +8925,19 @@ class MissionService:
                 live_telemetry=live_telemetry,
             )
         )
-        toolsets = self._resolve_toolsets(mission, project=project, task=task)
-        tool_evidence = await self._build_tool_evidence(
+        toolsets = _resolved_or_stored_toolsets(
             mission,
-            project=project,
-            task=task,
+            resolver=lambda: self._resolve_toolsets(mission, project=project, task=task),
+            summary_mode=summary_mode,
+        )
+        tool_evidence = (
+            _build_summary_tool_evidence(mission, toolsets=toolsets)
+            if summary_mode
+            else await self._build_tool_evidence(
+                mission,
+                project=project,
+                task=task,
+            )
         )
         tool_policy = build_hermes_tool_policy(toolsets, setup_mode="local")
         if preferred_memory_provider is None or preferred_executor is None:

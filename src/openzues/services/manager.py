@@ -3,8 +3,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import sys
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Literal, cast
 
 from openzues.database import Database, utcnow
@@ -67,29 +69,57 @@ def _ordered_names(items: list[str]) -> list[str]:
     return ordered
 
 
+def _catalog_item_name(item: object) -> str | None:
+    if isinstance(item, str):
+        name = item.strip()
+        return name or None
+    if not isinstance(item, dict):
+        return None
+    for key in ("name", "id", "uri", "method", "title", "serviceId"):
+        raw = item.get(key)
+        if isinstance(raw, str) and raw.strip():
+            return raw.strip()
+    nested_service = item.get("service")
+    if isinstance(nested_service, dict):
+        for key in ("name", "id", "uri", "title"):
+            raw = nested_service.get(key)
+            if isinstance(raw, str) and raw.strip():
+                return raw.strip()
+    return None
+
+
 def _catalog_names(value: Any) -> list[str]:
     if isinstance(value, dict):
         return _ordered_names([str(key) for key in value])
     if isinstance(value, list):
         names: list[str] = []
         for item in value:
-            if isinstance(item, str):
-                names.append(item)
-                continue
-            if not isinstance(item, dict):
-                continue
-            for key in ("name", "id", "uri", "method", "title"):
-                raw = item.get(key)
-                if isinstance(raw, str) and raw.strip():
-                    names.append(raw)
-                    break
+            if name := _catalog_item_name(item):
+                names.append(name)
         return _ordered_names(names)
     return []
 
 
+def _should_stage_windows_codex_command(command: str | None, default_command: str | None) -> bool:
+    raw = str(command or "").strip().strip('"')
+    if not raw:
+        return False
+    normalized = raw.replace("/", "\\").lower()
+    name = Path(raw).name.lower()
+    if name not in {"codex", "codex.exe"}:
+        return False
+    default_value = str(default_command or "").strip().strip('"')
+    normalized_default = default_value.replace("/", "\\").lower()
+    return (
+        normalized in {"codex", "codex.exe"}
+        or (normalized_default and normalized == normalized_default)
+        or "\\windowsapps\\" in normalized
+    )
+
+
 def _summarize_mcp_server_status(item: dict[str, Any]) -> dict[str, Any]:
     summary = _pick_fields(item, ("name", "status", "source", "authStatus"))
-    for key in ("tools", "resources", "resourceTemplates"):
+    for key in ("tools", "resources", "resourceTemplates", "services"):
         names = _catalog_names(item.get(key))
         if names:
             summary[key] = names
@@ -271,6 +301,30 @@ def _compact_command_actions(actions: Any) -> list[dict[str, Any]] | None:
     return compacted
 
 
+def _compact_message_content(
+    content: Any,
+) -> tuple[list[dict[str, Any]], int, bool] | None:
+    if not isinstance(content, list):
+        return None
+    compacted: list[dict[str, Any]] = []
+    for entry in content[:2]:
+        if not isinstance(entry, dict):
+            continue
+        summary = _pick_fields(entry, ("type", "mimeType", "source", "url"))
+        text = entry.get("text")
+        if isinstance(text, str):
+            clipped, original_length = _clip_event_text(
+                text,
+                limit=EVENT_TEXT_PREVIEW_LIMIT,
+            )
+            summary["text"] = clipped
+            if original_length is not None:
+                summary["textLength"] = original_length
+        if summary:
+            compacted.append(summary)
+    return compacted, len(content), len(content) > len(compacted)
+
+
 def _compact_event_item(item: dict[str, Any]) -> dict[str, Any]:
     compact_item = dict(item)
     item_type = str(item.get("type") or "")
@@ -312,6 +366,13 @@ def _compact_event_item(item: dict[str, Any]) -> dict[str, Any]:
             compact_item["text"] = clipped
             if original_length is not None:
                 compact_item["textLength"] = original_length
+        compact_content = _compact_message_content(item.get("content"))
+        if compact_content is not None:
+            entries, content_count, truncated = compact_content
+            compact_item["content"] = entries
+            compact_item["contentCount"] = content_count
+            if truncated:
+                compact_item["contentTruncated"] = True
         return compact_item
 
     return compact_item
@@ -773,10 +834,17 @@ class RuntimeManager:
                 args=self.default_stdio_args,
                 websocket_url=None,
                 cwd=normalized_cwd,
-                auto_connect=False,
+                auto_connect=auto_connect,
             )
-        elif not matching.cwd:
-            matching.cwd = normalized_cwd
+        else:
+            if not matching.cwd:
+                matching.cwd = normalized_cwd
+            if matching.auto_connect != auto_connect:
+                matching.auto_connect = auto_connect
+                await self.database.update_instance_auto_connect(
+                    matching.instance_id,
+                    auto_connect=auto_connect,
+                )
 
         if auto_connect and not matching.connected:
             matching = await self.connect_instance(matching.instance_id)
@@ -1568,6 +1636,25 @@ class RuntimeManager:
             launch = self.desktop_service.resolve_launch()
             note = launch.note if launch.version is None else f"{launch.note} ({launch.version})"
             return ("stdio", launch.command, launch.args, None, note)
+        if (
+            runtime.transport == "stdio"
+            and sys.platform.startswith("win")
+            and self.desktop_service is not None
+            and _should_stage_windows_codex_command(
+                runtime.command,
+                self.default_stdio_command,
+            )
+        ):
+            launch = self.desktop_service.resolve_launch()
+            launch_note = (
+                launch.note if launch.version is None else f"{launch.note} ({launch.version})"
+            )
+            resolved_args = runtime.args
+            if not str(resolved_args or "").strip() or str(resolved_args).strip() == str(
+                self.default_stdio_args
+            ).strip():
+                resolved_args = launch.args
+            return ("stdio", launch.command, resolved_args, None, launch_note)
         return (
             runtime.transport,
             runtime.command,

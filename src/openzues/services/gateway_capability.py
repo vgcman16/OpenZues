@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
@@ -12,16 +12,20 @@ from openzues.schemas import (
     DiagnosticCheck,
     GatewayBootstrapView,
     GatewayCapabilityApprovalPostureView,
+    GatewayCapabilityBrowserLaneView,
+    GatewayCapabilityBrowserRuntimeView,
     GatewayCapabilityConnectedLaneHealthView,
     GatewayCapabilityDiagnosticsView,
     GatewayCapabilityEventCatalogView,
     GatewayCapabilityInventoryItemView,
     GatewayCapabilityInventoryView,
+    GatewayCapabilityKnownNodeView,
     GatewayCapabilityLaneView,
     GatewayCapabilityLaunchPolicyView,
     GatewayCapabilityMemoryProofReferenceView,
     GatewayCapabilityMethodCatalogView,
     GatewayCapabilityMethodScopeView,
+    GatewayCapabilityNodeCatalogView,
     GatewayCapabilityView,
     InstanceView,
     IntegrationView,
@@ -47,6 +51,11 @@ from openzues.services.gateway_method_policy import (
     is_reserved_admin_gateway_method,
     list_known_gateway_events,
     list_known_gateway_methods,
+)
+from openzues.services.gateway_node_registry import (
+    GatewayNodeConnect,
+    GatewayNodeRegistry,
+    KnownNode,
 )
 from openzues.services.manager import RuntimeManager
 from openzues.services.memory_protocol import (
@@ -83,6 +92,14 @@ class _MemoryProofLaunchTarget:
     def session_key(self) -> str:
         scope = self.project_id if self.project_id is not None else "global"
         return f"gateway:memory-proof:{self.instance_id}:{scope}"
+
+
+@dataclass(slots=True)
+class _GatewayCapabilityNodeConnection:
+    conn_id: str
+
+    def send_gateway_event(self, event: str, payload: object) -> None:
+        return None
 
 
 def _unique(items: list[str]) -> list[str]:
@@ -123,6 +140,53 @@ def _clip_text(value: str | None, *, limit: int = 220) -> str | None:
     return cleaned[:limit] + ("..." if len(cleaned) > limit else "")
 
 
+def _catalog_item_name(item: object) -> str | None:
+    if isinstance(item, str):
+        name = item.strip()
+        return name or None
+    if not isinstance(item, dict):
+        return None
+    for key in ("name", "id", "uri", "method", "title", "serviceId"):
+        raw = item.get(key)
+        if isinstance(raw, str) and raw.strip():
+            return raw.strip()
+    nested_service = item.get("service")
+    if isinstance(nested_service, dict):
+        for key in ("name", "id", "uri", "title"):
+            raw = nested_service.get(key)
+            if isinstance(raw, str) and raw.strip():
+                return raw.strip()
+    return None
+
+
+def _plugin_entry_name(entry: object) -> str | None:
+    if not isinstance(entry, dict):
+        return None
+    value = entry.get("name") or entry.get("id") or entry.get("source")
+    if value is None:
+        return None
+    name = str(value).strip()
+    return name or None
+
+
+def _lane_plugin_names(
+    instance: InstanceView,
+    status_entries: list[dict[str, Any]] | None = None,
+) -> list[str]:
+    names: dict[str, str] = {}
+    for entry in instance.plugins:
+        if (name := _plugin_entry_name(entry)) is not None:
+            names.setdefault(name.lower(), name)
+    for entry in status_entries or []:
+        source = entry.get("source")
+        if source is None:
+            continue
+        name = str(source).strip()
+        if name:
+            names.setdefault(name.lower(), name)
+    return sorted(names.values(), key=str.lower)
+
+
 def _parse_timestamp(value: str | None) -> datetime | None:
     if not value:
         return None
@@ -156,16 +220,8 @@ def _catalog_names(value: Any) -> list[str]:
     names: list[str] = []
     if isinstance(value, list):
         for item in value:
-            if isinstance(item, str) and item.strip():
-                names.append(item.strip())
-                continue
-            if not isinstance(item, dict):
-                continue
-            for key in ("name", "id", "uri", "method", "title"):
-                raw = item.get(key)
-                if isinstance(raw, str) and raw.strip():
-                    names.append(raw.strip())
-                    break
+            if name := _catalog_item_name(item):
+                names.append(name)
         return names
     if isinstance(value, dict):
         return [str(key).strip() for key in value if str(key).strip()]
@@ -205,6 +261,289 @@ def _catalog_method_scope_entries(value: Any) -> list[tuple[str, str | None]]:
             )
             entries.append((name, scope))
     return entries
+
+
+def _instance_connected_at_ms(instance: InstanceView) -> int:
+    parsed = _parse_timestamp(instance.last_event_at)
+    if parsed is None:
+        return 0
+    return int(parsed.timestamp() * 1000)
+
+
+def _remembered_instance_node(instance: InstanceView) -> KnownNode:
+    return KnownNode(
+        node_id=str(instance.id),
+        display_name=instance.name,
+        platform=instance.transport,
+        client_id=str(instance.id),
+        client_mode=instance.transport,
+        path_env=instance.cwd,
+        paired=True,
+        connected=False,
+    )
+
+
+def _build_known_node_catalog(instances: list[InstanceView]) -> GatewayCapabilityNodeCatalogView:
+    registry = GatewayNodeRegistry()
+    for instance in instances:
+        registry.remember(_remembered_instance_node(instance))
+        if not instance.connected:
+            continue
+        registry.register(
+            _GatewayCapabilityNodeConnection(conn_id=f"gateway-capability:{instance.id}"),
+            GatewayNodeConnect(
+                client_id=str(instance.id),
+                device_id=str(instance.id),
+                client_mode=instance.transport,
+                display_name=instance.name,
+                platform=instance.transport,
+                version=None,
+                core_version=None,
+                ui_version=None,
+                device_family=None,
+                model_identifier=None,
+                caps=(),
+                commands=(),
+                permissions=None,
+                path_env=instance.cwd,
+            ),
+            connected_at_ms=_instance_connected_at_ms(instance),
+        )
+
+    known_nodes = registry.list_known_nodes()
+    nodes = [
+        GatewayCapabilityKnownNodeView.model_validate(
+            asdict(registry.describe_known_node(node.node_id) or node)
+        )
+        for node in known_nodes
+    ]
+    node_count = len(nodes)
+    connected_count = sum(1 for node in nodes if node.connected)
+    paired_count = sum(1 for node in nodes if node.paired)
+    if not nodes:
+        return GatewayCapabilityNodeCatalogView(
+            headline="Gateway node registry is staged",
+            summary="No saved or connected node catalog is visible yet.",
+            node_count=0,
+            connected_count=0,
+            paired_count=0,
+            nodes=[],
+        )
+
+    return GatewayCapabilityNodeCatalogView(
+        headline="Gateway known node catalog is visible",
+        summary=(
+            f"{node_count} known node(s) are visible; {connected_count} currently connected "
+            f"and {paired_count} saved in the lane roster."
+        ),
+        node_count=node_count,
+        connected_count=connected_count,
+        paired_count=paired_count,
+        nodes=nodes,
+    )
+
+
+def _is_browser_runtime_name(value: str | None) -> bool:
+    text = str(value or "").strip().lower()
+    return bool(text) and "browser" in text
+
+
+def _build_browser_runtime_view(
+    instances: list[InstanceView],
+    mcp_server_status_by_instance: dict[int, list[dict[str, Any]]],
+) -> GatewayCapabilityBrowserRuntimeView | None:
+    lane_views: list[GatewayCapabilityBrowserLaneView] = []
+    methods_by_name: dict[str, str] = {}
+    services_by_name: dict[str, str] = {}
+    plugins_by_name: dict[str, str] = {}
+    servers_by_name: dict[str, str] = {}
+
+    for instance in instances:
+        status_entries = mcp_server_status_by_instance.get(instance.id, [])
+        browser_methods = sorted(
+            {
+                method_name
+                for entry in status_entries
+                for method_name, _scope in _catalog_method_scope_entries(entry.get("tools"))
+                if _is_browser_runtime_name(method_name)
+                or method_name.lower().startswith("browser.")
+            },
+            key=str.lower,
+        )
+        browser_services = sorted(
+            {
+                service_name
+                for entry in status_entries
+                for service_name in _catalog_names(entry.get("services"))
+                if _is_browser_runtime_name(service_name)
+            },
+            key=str.lower,
+        )
+        browser_plugins = [
+            name
+            for name in _lane_plugin_names(instance, status_entries)
+            if _is_browser_runtime_name(name)
+        ]
+        browser_servers = sorted(
+            {
+                name
+                for entry in [*instance.mcp_servers, *status_entries]
+                if isinstance(entry, dict)
+                and _is_browser_runtime_name(
+                    str(entry.get("name") or entry.get("id") or entry.get("source") or "")
+                )
+                and (
+                    name := str(
+                        entry.get("name") or entry.get("id") or entry.get("source") or ""
+                    ).strip()
+                )
+            },
+            key=str.lower,
+        )
+
+        if not (
+            browser_methods
+            or browser_services
+            or browser_plugins
+            or browser_servers
+        ):
+            continue
+
+        for method_name in browser_methods:
+            methods_by_name.setdefault(method_name.lower(), method_name)
+        for service_name in browser_services:
+            services_by_name.setdefault(service_name.lower(), service_name)
+        for plugin_name in browser_plugins:
+            plugins_by_name.setdefault(plugin_name.lower(), plugin_name)
+        for server_name in browser_servers:
+            servers_by_name.setdefault(server_name.lower(), server_name)
+
+        ready = instance.connected and bool(browser_methods) and bool(browser_services)
+        if ready:
+            level: SignalLevel = "ready"
+            summary = (
+                f"{instance.name} publishes {len(browser_methods)} browser method(s) and "
+                f"{len(browser_services)} browser service(s)."
+            )
+        elif instance.connected:
+            level = "warn"
+            summary_parts = []
+            if browser_methods:
+                summary_parts.append(f"{len(browser_methods)} method(s)")
+            if browser_services:
+                summary_parts.append(f"{len(browser_services)} service(s)")
+            if browser_plugins:
+                summary_parts.append(f"{len(browser_plugins)} plugin signal(s)")
+            if browser_servers:
+                summary_parts.append(f"{len(browser_servers)} MCP server signal(s)")
+            summary = (
+                f"{instance.name} publishes {_join_list(summary_parts)}, but the full "
+                "browser-control contract is not complete yet."
+            )
+        else:
+            level = "info"
+            summary = (
+                f"{instance.name} shows browser runtime signals on an offline lane."
+            )
+
+        lane_views.append(
+            GatewayCapabilityBrowserLaneView(
+                instance_id=instance.id,
+                instance_name=instance.name,
+                connected=instance.connected,
+                level=level,
+                ready=ready,
+                method_count=len(browser_methods),
+                service_count=len(browser_services),
+                methods=browser_methods,
+                services=browser_services,
+                plugins=browser_plugins,
+                servers=browser_servers,
+                summary=summary,
+            )
+        )
+
+    if not lane_views:
+        return None
+
+    lane_views.sort(key=lambda lane: (not lane.connected, lane.instance_name.lower()))
+    lane_count = len(lane_views)
+    connected_lane_count = sum(lane.connected for lane in lane_views)
+    ready_lane_count = sum(lane.ready for lane in lane_views)
+    partial_connected_count = sum(lane.connected and not lane.ready for lane in lane_views)
+    methods = sorted(methods_by_name.values(), key=str.lower)
+    services = sorted(services_by_name.values(), key=str.lower)
+    plugins = sorted(plugins_by_name.values(), key=str.lower)
+    servers = sorted(servers_by_name.values(), key=str.lower)
+
+    if ready_lane_count and not partial_connected_count:
+        status: SignalLevel = "ready"
+        headline = "Browser runtime is live"
+        summary = (
+            f"{ready_lane_count} connected lane(s) publish {len(methods)} browser method(s) "
+            f"and {len(services)} browser service(s)."
+        )
+        recommended_action = (
+            "Use the live browser lane when parity work needs browser-led verification or "
+            "browser-control execution."
+        )
+    elif ready_lane_count:
+        status = "warn"
+        headline = "Browser runtime is live with gaps"
+        summary = (
+            f"{ready_lane_count} connected lane(s) publish the browser-control contract, "
+            f"but {partial_connected_count} connected lane(s) still expose only part of it."
+        )
+        recommended_action = (
+            "Refresh the partial browser lanes so methods and browser-control services "
+            "publish together."
+        )
+    elif connected_lane_count:
+        status = "warn"
+        headline = "Browser runtime is partial"
+        summary = (
+            f"Browser runtime signals are visible on {connected_lane_count} connected lane(s), "
+            "but no connected lane currently publishes both callable browser methods and "
+            "browser-control services."
+        )
+        recommended_action = (
+            "Refresh the connected browser lane so the callable browser methods and "
+            "browser-control service publish together before relying on it."
+        )
+    else:
+        status = "info"
+        headline = "Browser runtime is only visible on offline lanes"
+        summary = (
+            f"{lane_count} offline lane(s) still advertise browser runtime signals, but no "
+            "connected lane is ready right now."
+        )
+        recommended_action = (
+            "Reconnect the browser lane before relying on browser-control parity."
+        )
+
+    if plugins:
+        summary += f" Plugin signals: {_join_list(plugins[:3])}."
+    if servers:
+        summary += f" MCP servers: {_join_list(servers[:3])}."
+
+    return GatewayCapabilityBrowserRuntimeView(
+        headline=headline,
+        summary=summary,
+        status=status,
+        lane_count=lane_count,
+        connected_lane_count=connected_lane_count,
+        ready_lane_count=ready_lane_count,
+        method_count=len(methods),
+        service_count=len(services),
+        plugin_count=len(plugins),
+        server_count=len(servers),
+        methods=methods,
+        services=services,
+        plugins=plugins,
+        servers=servers,
+        recommended_action=recommended_action,
+        lanes=lane_views,
+    )
 
 
 def _build_mempalace_tool_proof(
@@ -1072,7 +1411,10 @@ class GatewayCapabilityService:
             remote_requests=remote_requests,
         )
 
-        connected_lane_health = self._build_lane_health(instances)
+        connected_lane_health = self._build_lane_health(
+            instances,
+            mcp_server_status_by_instance=mcp_server_status_by_instance,
+        )
         inventory = self._build_inventory(
             instances,
             ops_view.integrations_inventory,
@@ -1430,6 +1772,8 @@ class GatewayCapabilityService:
     def _build_lane_health(
         self,
         instances: list[InstanceView],
+        *,
+        mcp_server_status_by_instance: dict[int, list[dict[str, Any]]],
     ) -> GatewayCapabilityConnectedLaneHealthView:
         lanes: list[GatewayCapabilityLaneView] = []
         connected_count = 0
@@ -1441,7 +1785,11 @@ class GatewayCapabilityService:
             lane_approvals = len(instance.unresolved_requests)
             approval_count += lane_approvals
             app_count = len(instance.apps)
-            plugin_count = len(instance.plugins)
+            plugin_names = _lane_plugin_names(
+                instance,
+                mcp_server_status_by_instance.get(instance.id, []),
+            )
+            plugin_count = len(plugin_names)
             mcp_server_count = len(instance.mcp_servers)
             warnings: list[str] = []
             level: SignalLevel
@@ -1551,10 +1899,23 @@ class GatewayCapabilityService:
     ) -> GatewayCapabilityInventoryView:
         catalog: dict[tuple[str, str], dict[str, Any]] = {}
         for instance in instances:
+            status_entries = mcp_server_status_by_instance.get(instance.id, [])
             for kind, entries in (
                 ("app", instance.apps),
-                ("plugin", instance.plugins),
+                (
+                    "plugin",
+                    [{"name": name} for name in _lane_plugin_names(instance, status_entries)],
+                ),
                 ("mcp_server", instance.mcp_servers),
+                (
+                    "service",
+                    [
+                        {"name": service_name}
+                        for entry in status_entries
+                        if isinstance(entry, dict)
+                        for service_name in _catalog_names(entry.get("services"))
+                    ],
+                ),
             ):
                 for entry in entries:
                     name = str(
@@ -1600,12 +1961,18 @@ class GatewayCapabilityService:
         app_count = sum(item.kind == "app" for item in items)
         plugin_count = sum(item.kind == "plugin" for item in items)
         mcp_server_count = sum(item.kind == "mcp_server" for item in items)
+        service_count = sum(item.kind == "service" for item in items)
         tracked_ready_count = int(integrations_inventory.ready_count)
         tracked_gap_count = int(integrations_inventory.gap_count)
         tracked_count = int(integrations_inventory.tracked_count)
         observed_count = int(integrations_inventory.observed_count)
         method_catalog = _build_callable_method_catalog(instances, mcp_server_status_by_instance)
         event_catalog = _build_gateway_event_catalog()
+        node_catalog = _build_known_node_catalog(instances)
+        browser_runtime = _build_browser_runtime_view(
+            instances,
+            mcp_server_status_by_instance,
+        )
         tracked_memory_items = [
             item
             for item in integrations_inventory.items
@@ -1915,14 +2282,14 @@ class GatewayCapabilityService:
             headline = "Gateway inventory is active"
             summary = (
                 f"{tracked_ready_count} tracked capability(ies) are ready; "
-                f"{app_count} app(s), {plugin_count} plugin(s), and "
-                f"{mcp_server_count} MCP server(s) "
+                f"{app_count} app(s), {plugin_count} plugin(s), "
+                f"{service_count} service(s), and {mcp_server_count} MCP server(s) "
                 "are visible across live lane catalogs."
             )
         else:
             headline = "Gateway inventory is idle"
             summary = (
-                "No lane-published apps, plugins, MCP servers, or tracked "
+                "No lane-published apps, plugins, services, MCP servers, or tracked "
                 "integrations are visible yet."
             )
 
@@ -1938,6 +2305,7 @@ class GatewayCapabilityService:
             app_count=app_count,
             plugin_count=plugin_count,
             mcp_server_count=mcp_server_count,
+            service_count=service_count,
             tracked_ready_count=tracked_ready_count,
             tracked_gap_count=tracked_gap_count,
             tracked_count=tracked_count,
@@ -1957,6 +2325,8 @@ class GatewayCapabilityService:
             ),
             method_catalog=method_catalog,
             event_catalog=event_catalog,
+            node_catalog=node_catalog,
+            browser_runtime=browser_runtime,
             items=items,
         )
 

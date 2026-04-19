@@ -164,7 +164,11 @@ from openzues.services.gateway_node_methods import (
 )
 from openzues.services.gateway_node_pairing import GatewayNodePairingService
 from openzues.services.gateway_node_service import GatewayNodeService
+from openzues.services.gateway_talk_mode import GatewayTalkModeService
+from openzues.services.gateway_tts import GatewayTtsService
+from openzues.services.gateway_tts_runtime import GatewayTtsRuntimeService
 from openzues.services.gateway_voicewake import GatewayVoiceWakeService
+from openzues.services.gateway_wake import GatewayWakeService
 from openzues.services.github import GitHubService
 from openzues.services.hermes_platform import HermesPlatformService
 from openzues.services.hermes_runtime_profile import (
@@ -1650,6 +1654,7 @@ def create_app(
     gateway_bootstrap_service: GatewayBootstrapService | None = None,
     remote_ops_service: RemoteOpsService | None = None,
     control_chat_service: ControlChatService | None = None,
+    gateway_wake_service: GatewayWakeService | None = None,
     control_plane_lease: ControlPlaneLease | None = None,
 ) -> FastAPI:
     active_settings = app_settings or settings
@@ -1682,6 +1687,12 @@ def create_app(
     )
     active_gateway_node_pairing_service = GatewayNodePairingService(active_database)
     active_gateway_identity_service = GatewayIdentityService(active_settings.data_dir)
+    active_gateway_talk_mode_service = GatewayTalkModeService(active_settings.data_dir)
+    active_gateway_tts_service = GatewayTtsService(active_settings.data_dir)
+    active_gateway_tts_runtime_service = GatewayTtsRuntimeService(
+        active_settings.data_dir,
+        provider_loader=active_gateway_tts_service.current_provider,
+    )
     active_gateway_voicewake_service = GatewayVoiceWakeService(active_settings.data_dir)
     active_gateway_config_service = GatewayConfigService(
         assistant_name=active_settings.app_name,
@@ -1708,6 +1719,7 @@ def create_app(
     active_gateway_node_service = gateway_node_service or GatewayNodeService(
         active_manager,
         pairing_service=active_gateway_node_pairing_service,
+        talk_mode_service=active_gateway_talk_mode_service,
         voicewake_service=active_gateway_voicewake_service,
     )
 
@@ -1823,6 +1835,16 @@ def create_app(
         active_hub,
     )
 
+    async def dispatch_gateway_wake_now(text: str) -> None:
+        dashboard_view = await build_dashboard()
+        await active_control_chat_service.submit(text, dashboard_view)
+
+    active_gateway_wake_service = gateway_wake_service or GatewayWakeService(
+        active_database,
+        dispatch_now=dispatch_gateway_wake_now,
+    )
+    active_control_chat_service.set_wake_service(active_gateway_wake_service)
+
     async def submit_gateway_chat_message(
         *,
         session_key: str,
@@ -1832,10 +1854,42 @@ def create_app(
         deliver: bool | None,
         timeout_ms: int | None,
     ) -> dict[str, object]:
-        del session_key, thinking, deliver, timeout_ms
+        del thinking, deliver, timeout_ms
         dashboard_view = await build_dashboard()
-        await active_control_chat_service.submit(message, dashboard_view)
+        await active_control_chat_service.submit(
+            message,
+            dashboard_view,
+            session_key=session_key,
+        )
         return {"runId": idempotency_key, "status": "ok"}
+
+    async def abort_gateway_chat_run(
+        *,
+        session_key: str,
+        run_id: str | None,
+    ) -> dict[str, object]:
+        del run_id
+        mission = await active_database.get_latest_mission_by_session_key(
+            session_key,
+            require_thread=True,
+        )
+        if mission is None:
+            mission = await active_database.get_latest_thread_child_mission_by_parent_session_key(
+                session_key,
+                require_thread=True,
+            )
+        if mission is None:
+            return {"ok": False, "reason": "no_active_turn"}
+        if str(mission.get("status") or "").strip().lower() != "active":
+            return {"ok": False, "reason": "no_active_turn"}
+        thread_id = str(mission.get("thread_id") or "").strip()
+        if not thread_id:
+            return {"ok": False, "reason": "no_active_turn"}
+        raw_instance_id = mission.get("instance_id")
+        if isinstance(raw_instance_id, bool) or not isinstance(raw_instance_id, int):
+            return {"ok": False, "reason": "no_active_turn"}
+        instance_id = raw_instance_id
+        return await active_manager.interrupt_turn(instance_id, thread_id)
 
     if active_gateway_node_method_service is None:
         active_gateway_node_method_service = GatewayNodeMethodService(
@@ -1849,8 +1903,16 @@ def create_app(
             gateway_identity_service=active_gateway_identity_service,
             models_service=GatewayModelsService(list_instance_views=active_manager.list_views),
             chat_send_service=submit_gateway_chat_message,
+            chat_abort_service=abort_gateway_chat_run,
+            create_task_blueprint=getattr(active_ops_mesh_service, "create_task_blueprint", None),
+            run_task_blueprint_now=active_ops_mesh_service.run_task_blueprint_now,
+            delete_task_blueprint=active_ops_mesh_service.delete_task_blueprint,
             status_service=load_gateway_status,
+            talk_mode_service=active_gateway_talk_mode_service,
+            tts_service=active_gateway_tts_service,
+            tts_runtime_service=active_gateway_tts_runtime_service,
             voicewake_service=active_gateway_voicewake_service,
+            wake_service=active_gateway_wake_service,
             sync=active_gateway_node_service.sync,
             wake_node=active_gateway_node_service.wake_node,
         )
@@ -2540,15 +2602,24 @@ def create_app(
             return
         await require_remote_operator(request, permission)
 
+    def extract_gateway_client_id_from_request(request: Request) -> str | None:
+        client_id = str(request.query_params.get("clientId") or "").strip()
+        if client_id:
+            return client_id
+        header_value = str(request.headers.get("x-openzues-client-id") or "").strip()
+        return header_value or None
+
     async def resolve_gateway_node_method_requester(
         request: Request,
     ) -> GatewayNodeMethodRequester:
+        client_id = extract_gateway_client_id_from_request(request)
         host = request.client.host if request.client is not None else None
         if _is_loopback_host(host):
-            return GatewayNodeMethodRequester()
+            return GatewayNodeMethodRequester(client_id=client_id)
         auth = await require_remote_operator(request, "dashboard.read")
         return GatewayNodeMethodRequester(
-            caller_scopes=resolve_gateway_method_scopes_for_role(auth.operator.role)
+            caller_scopes=resolve_gateway_method_scopes_for_role(auth.operator.role),
+            client_id=client_id,
         )
 
     def extract_gateway_node_token(headers: dict[str, str]) -> str | None:
@@ -2565,9 +2636,10 @@ def create_app(
         request: Request,
         node_id: str,
     ) -> GatewayNodeMethodRequester:
+        client_id = extract_gateway_client_id_from_request(request)
         host = request.client.host if request.client is not None else None
         if _is_loopback_host(host):
-            return GatewayNodeMethodRequester(node_id=node_id)
+            return GatewayNodeMethodRequester(node_id=node_id, client_id=client_id)
         token = extract_gateway_node_token(dict(request.headers))
         if not token:
             raise HTTPException(
@@ -2580,7 +2652,7 @@ def create_app(
         verification = await active_gateway_node_pairing_service.verify(node_id, token)
         if verification.get("ok") is not True:
             raise HTTPException(status_code=401, detail="Unknown node token.")
-        return GatewayNodeMethodRequester(node_id=node_id)
+        return GatewayNodeMethodRequester(node_id=node_id, client_id=client_id)
 
     def build_readiness_payload() -> dict[str, Any]:
         ready = fastapi_app.state.control_plane_role == "leader"
@@ -3484,7 +3556,11 @@ def create_app(
     @fastapi_app.websocket("/ws")
     async def websocket_events(websocket: WebSocket) -> None:
         await websocket.accept()
-        async with active_hub.subscribe() as queue:
+        client_id = str(websocket.query_params.get("clientId") or "").strip() or None
+        if client_id is None:
+            header_value = str(websocket.headers.get("x-openzues-client-id") or "").strip()
+            client_id = header_value or None
+        async with active_hub.subscribe(client_id=client_id) as queue:
             try:
                 while True:
                     event = await queue.get()

@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import json
 import os
 import shutil
-from datetime import UTC, datetime
+import sqlite3
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -12,13 +15,21 @@ from fastapi.testclient import TestClient
 
 from openzues.app import create_app
 from openzues.database import Database
+from openzues.schemas import DashboardView
 from openzues.services.ecc_catalog import configure_ecc_catalog
+from openzues.services.gateway_node_methods import GatewayNodeMethodService
 from openzues.services.gateway_node_registry import (
     GatewayNodeConnect,
     GatewayNodeRegistry,
     KnownNode,
 )
 from openzues.services.gateway_node_service import GatewayNodeService
+from openzues.services.gateway_skill_clawhub import GatewaySkillClawHubService
+from openzues.services.gateway_skill_install import GatewaySkillInstallService
+from openzues.services.gateway_tts_runtime import (
+    GatewayTtsRuntimeService,
+    GatewayTtsSynthesisResult,
+)
 from openzues.services.gateway_voicewake import GatewayVoiceWakeService
 from openzues.services.hermes_skills import configure_hermes_skill_catalog
 from openzues.services.hub import BroadcastHub
@@ -504,6 +515,85 @@ def test_create_app_wires_managed_node_voicewake_snapshot_only_on_fresh_connect(
             "node_id": "7",
             "event": "voicewake.changed",
             "payload": {"triggers": ["zues", "builder"]},
+        },
+    ]
+
+
+def test_create_app_wires_managed_node_talk_mode_snapshot_only_on_fresh_connect(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+    manager = app.state.manager
+    manager.instances[7] = InstanceRuntime(
+        instance_id=7,
+        name="Managed Talk Mode Node",
+        transport="stdio",
+        command="codex",
+        args="app-server",
+        websocket_url=None,
+        cwd=str(tmp_path),
+        auto_connect=False,
+    )
+    runtime = manager.instances[7]
+    with TestClient(app, client=("testclient", 50000)) as client:
+        sent_events: list[dict[str, object | None]] = []
+        original_send_event = client.app.state.gateway_node_service.registry.send_event
+
+        def spy_send_event(
+            node_id: str,
+            event: str,
+            payload: object | None = None,
+        ) -> bool:
+            sent_events.append({"node_id": node_id, "event": event, "payload": payload})
+            return original_send_event(node_id, event, payload)
+
+        monkeypatch.setattr(
+            client.app.state.gateway_node_service.registry,
+            "send_event",
+            spy_send_event,
+        )
+
+        set_result = client.portal.call(
+            client.app.state.gateway_node_method_service.call,
+            "talk.mode",
+            {"enabled": True, "phase": "listening"},
+        )
+        assert set_result == {
+            "enabled": True,
+            "phase": "listening",
+        }
+
+        runtime.connected = True
+        client.portal.call(client.app.state.gateway_node_service.sync)
+        client.portal.call(client.app.state.gateway_node_service.sync)
+        runtime.connected = False
+        client.portal.call(client.app.state.gateway_node_service.sync)
+        runtime.connected = True
+        client.portal.call(client.app.state.gateway_node_service.sync)
+
+    talk_mode_events = [entry for entry in sent_events if entry["event"] == "talk.mode"]
+
+    assert talk_mode_events == [
+        {
+            "node_id": "7",
+            "event": "talk.mode",
+            "payload": {
+                "enabled": True,
+                "phase": "listening",
+            },
+        },
+        {
+            "node_id": "7",
+            "event": "talk.mode",
+            "payload": {
+                "enabled": True,
+                "phase": "listening",
+            },
         },
     ]
 
@@ -1252,6 +1342,30 @@ def test_gateway_node_method_call_endpoint_talk_config_enforces_secret_scope(tmp
     assert owner_talk_response.json() == {"config": {}}
 
 
+def test_gateway_node_method_call_endpoint_supports_talk_mode(tmp_path) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "talk.mode",
+                "params": {"enabled": True, "phase": "listening"},
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "enabled": True,
+        "phase": "listening",
+    }
+
+
 def test_gateway_node_method_call_endpoint_supports_tts_status_and_providers(tmp_path) -> None:
     app_settings = Settings(
         data_dir=tmp_path / "data",
@@ -1277,17 +1391,42 @@ def test_gateway_node_method_call_endpoint_supports_tts_status_and_providers(tmp
     assert status_payload["provider"] is None
     assert status_payload["fallbackProvider"] is None
     assert status_payload["fallbackProviders"] == []
-    assert status_payload["providerStates"] == []
+    assert status_payload["providerStates"] == [
+        {
+            "id": "elevenlabs",
+            "label": "ElevenLabs",
+            "available": False,
+            "selected": False,
+        },
+        {
+            "id": "microsoft",
+            "label": "Microsoft",
+            "available": True,
+            "selected": False,
+        },
+        {
+            "id": "minimax",
+            "label": "MiniMax",
+            "available": False,
+            "selected": False,
+        },
+        {
+            "id": "openai",
+            "label": "OpenAI",
+            "available": False,
+            "selected": False,
+        },
+    ]
     assert "prefsPath" in status_payload
 
     assert providers_response.status_code == 200
     assert providers_response.json() == {
-        "providers": [],
+        "providers": ["elevenlabs", "microsoft", "minimax", "openai"],
         "active": None,
     }
 
 
-def test_gateway_node_method_call_endpoint_tts_enable_fails_as_explicitly_unavailable(
+def test_gateway_node_method_call_endpoint_supports_local_tts_pref_mutations(
     tmp_path,
 ) -> None:
     app_settings = Settings(
@@ -1298,13 +1437,40 @@ def test_gateway_node_method_call_endpoint_tts_enable_fails_as_explicitly_unavai
 
     with TestClient(app, client=("testclient", 50000)) as client:
         _allow_mutating_api_requests(client)
-        response = client.post(
+        enable_response = client.post(
             "/api/gateway/node-methods/call",
             json={"method": "tts.enable", "params": {}},
         )
+        provider_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={"method": "tts.setProvider", "params": {"provider": "edge"}},
+        )
 
-    assert response.status_code == 503
-    assert response.json()["detail"] == "TTS runtime not wired in OpenZues yet"
+    reloaded_app = create_app(app_settings)
+    with TestClient(reloaded_app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        status_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={"method": "tts.status", "params": {}},
+        )
+        providers_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={"method": "tts.providers", "params": {}},
+        )
+
+    assert enable_response.status_code == 200
+    assert enable_response.json()["enabled"] is True
+    assert enable_response.json()["auto"] == "on"
+    assert provider_response.status_code == 200
+    assert provider_response.json()["provider"] == "microsoft"
+    assert status_response.status_code == 200
+    assert status_response.json()["enabled"] is True
+    assert status_response.json()["provider"] == "microsoft"
+    assert providers_response.status_code == 200
+    assert providers_response.json() == {
+        "providers": ["elevenlabs", "microsoft", "minimax", "openai"],
+        "active": "microsoft",
+    }
 
 
 def test_gateway_node_method_call_endpoint_supports_models_list(tmp_path) -> None:
@@ -1346,7 +1512,13 @@ def test_gateway_node_method_call_endpoint_talk_speak_fails_as_explicitly_unavai
         data_dir=tmp_path / "data",
         db_path=tmp_path / "data" / "openzues-test.db",
     )
-    app = create_app(app_settings)
+    app = create_app(
+        app_settings,
+        gateway_node_method_service=GatewayNodeMethodService(
+            GatewayNodeRegistry(),
+            tts_runtime_service=GatewayTtsRuntimeService(enabled=False),
+        ),
+    )
 
     with TestClient(app, client=("testclient", 50000)) as client:
         _allow_mutating_api_requests(client)
@@ -1357,6 +1529,165 @@ def test_gateway_node_method_call_endpoint_talk_speak_fails_as_explicitly_unavai
 
     assert response.status_code == 503
     assert response.json()["detail"] == "Talk synthesis runtime not wired in OpenZues yet"
+
+
+def test_gateway_node_method_call_endpoint_supports_talk_speak_when_runtime_is_wired(
+    tmp_path,
+) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    synthesized_path = tmp_path / "spoken.wav"
+    synthesized_bytes = b"RIFFtalk-api"
+    synthesized_path.write_bytes(synthesized_bytes)
+    observed: dict[str, object] = {}
+
+    def fake_convert(
+        *,
+        text: str,
+        channel: str | None,
+        provider: str | None,
+        model_id: str | None,
+        voice_id: str | None,
+    ) -> GatewayTtsSynthesisResult:
+        observed.update(
+            {
+                "text": text,
+                "channel": channel,
+                "provider": provider,
+                "model_id": model_id,
+                "voice_id": voice_id,
+            }
+        )
+        return GatewayTtsSynthesisResult(
+            audio_path=str(synthesized_path),
+            provider="microsoft",
+            output_format="wav",
+            voice_compatible=True,
+        )
+
+    app = create_app(
+        app_settings,
+        gateway_node_method_service=GatewayNodeMethodService(
+            GatewayNodeRegistry(),
+            tts_runtime_service=GatewayTtsRuntimeService(
+                data_dir=tmp_path / "data",
+                convert_runner=fake_convert,
+            ),
+        ),
+    )
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "talk.speak",
+                "params": {
+                    "text": "Hello from talk mode.",
+                    "provider": "edge",
+                    "voiceId": "Microsoft Zira Desktop",
+                    "outputFormat": "wav",
+                    "rateWpm": 180,
+                },
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "audioBase64": base64.b64encode(synthesized_bytes).decode("ascii"),
+        "provider": "microsoft",
+        "outputFormat": "wav",
+        "voiceCompatible": True,
+        "mimeType": "audio/wav",
+        "fileExtension": ".wav",
+    }
+    assert observed == {
+        "text": "Hello from talk mode.",
+        "channel": None,
+        "provider": "microsoft",
+        "model_id": None,
+        "voice_id": "Microsoft Zira Desktop",
+    }
+
+
+def test_gateway_node_method_call_endpoint_supports_tts_convert_when_runtime_is_wired(
+    tmp_path,
+) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    synthesized_path = tmp_path / "converted.wav"
+    synthesized_path.write_bytes(b"RIFFconverted-wave")
+    observed: dict[str, object] = {}
+
+    def fake_convert(
+        *,
+        text: str,
+        channel: str | None,
+        provider: str | None,
+        model_id: str | None,
+        voice_id: str | None,
+    ) -> GatewayTtsSynthesisResult:
+        observed.update(
+            {
+                "text": text,
+                "channel": channel,
+                "provider": provider,
+                "model_id": model_id,
+                "voice_id": voice_id,
+            }
+        )
+        return GatewayTtsSynthesisResult(
+            audio_path=str(synthesized_path),
+            provider="microsoft",
+            output_format="wav",
+            voice_compatible=True,
+        )
+
+    app = create_app(
+        app_settings,
+        gateway_node_method_service=GatewayNodeMethodService(
+            GatewayNodeRegistry(),
+            tts_runtime_service=GatewayTtsRuntimeService(
+                data_dir=tmp_path / "data",
+                convert_runner=fake_convert,
+            ),
+        ),
+    )
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "tts.convert",
+                "params": {
+                    "text": "Hello from API TTS",
+                    "channel": "assistant",
+                    "provider": "edge",
+                    "modelId": "ignored-local-model",
+                    "voiceId": "Microsoft Zira Desktop",
+                },
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "audioPath": str(synthesized_path),
+        "provider": "microsoft",
+        "outputFormat": "wav",
+        "voiceCompatible": True,
+    }
+    assert observed == {
+        "text": "Hello from API TTS",
+        "channel": "assistant",
+        "provider": "microsoft",
+        "model_id": "ignored-local-model",
+        "voice_id": "Microsoft Zira Desktop",
+    }
 
 
 def test_gateway_node_method_call_endpoint_supports_config_schema_and_lookup(tmp_path) -> None:
@@ -1443,7 +1774,7 @@ def test_gateway_node_method_call_endpoint_supports_tools_catalog(tmp_path) -> N
     assert any(tool["id"] == "tts" for tool in group["tools"])
 
 
-def test_gateway_node_method_call_endpoint_tools_effective_is_explicitly_unavailable(
+def test_gateway_node_method_call_endpoint_supports_tools_effective_with_bootstrap_toolsets(
     tmp_path,
 ) -> None:
     app_settings = Settings(
@@ -1454,16 +1785,60 @@ def test_gateway_node_method_call_endpoint_tools_effective_is_explicitly_unavail
 
     with TestClient(app, client=("testclient", 50000)) as client:
         _allow_mutating_api_requests(client)
+        asyncio.run(
+            client.app.state.database.upsert_gateway_bootstrap(
+                setup_mode="local",
+                setup_flow="quickstart",
+                route_binding_mode="saved_lane",
+                preferred_instance_id=None,
+                preferred_project_id=None,
+                team_id=None,
+                operator_id=None,
+                task_blueprint_id=None,
+                default_cwd=str(tmp_path),
+                bootstrap_roles=[],
+                bootstrap_scopes=[],
+                model="gpt-5.4",
+                max_turns=4,
+                use_builtin_agents=True,
+                run_verification=True,
+                auto_commit=False,
+                pause_on_approval=True,
+                allow_auto_reflexes=True,
+                auto_recover=True,
+                auto_recover_limit=2,
+                reflex_cooldown_seconds=900,
+                allow_failover=True,
+                toolsets=["messaging", "clarify"],
+            )
+        )
         response = client.post(
             "/api/gateway/node-methods/call",
             json={
                 "method": "tools.effective",
-                "params": {"sessionKey": "openzues:thread:demo"},
+                "params": {
+                    "sessionKey": build_launch_session_key(
+                        mode="saved_lane",
+                        preferred_instance_id=None,
+                        task_id=None,
+                        project_id=None,
+                        operator_id=None,
+                    ),
+                    "agentId": "main",
+                },
             },
         )
 
-    assert response.status_code == 503
-    assert response.json()["detail"] == "Effective tool inventory is not wired in OpenZues yet"
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["agentId"] == "main"
+    assert payload["profile"] == "messaging"
+    assert len(payload["groups"]) == 1
+    assert payload["groups"][0]["id"] == "core"
+    assert [tool["id"] for tool in payload["groups"][0]["tools"]] == [
+        "messaging",
+        "clarify",
+    ]
 
 
 def test_gateway_node_method_call_endpoint_supports_chat_history() -> None:
@@ -2158,7 +2533,7 @@ def test_gateway_node_method_call_endpoint_publishes_phase_message_changed_after
     assert isinstance(second_payload["updatedAt"], int)
 
 
-def test_gateway_node_method_call_endpoint_sessions_usage_fails_explicitly_when_unwired() -> None:
+def test_gateway_node_method_call_endpoint_sessions_usage_returns_bounded_summary() -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-usage-api"
     shutil.rmtree(tmp_path, ignore_errors=True)
     tmp_path.mkdir(parents=True, exist_ok=True)
@@ -2170,12 +2545,79 @@ def test_gateway_node_method_call_endpoint_sessions_usage_fails_explicitly_when_
 
     with TestClient(app, client=("testclient", 50000)) as client:
         _allow_mutating_api_requests(client)
+        database = client.app.state.database
+        main_session_key = build_launch_session_key(
+            mode="workspace_affinity",
+            preferred_instance_id=None,
+            task_id=None,
+            project_id=None,
+            operator_id=None,
+        )
+        session_key = resolve_thread_session_keys(
+            base_session_key=main_session_key,
+            thread_id="thread-usage-api",
+        ).session_key
+        asyncio.run(
+            database.upsert_gateway_session_metadata(
+                session_key=session_key,
+                metadata={"label": "Parity Usage API Session"},
+            )
+        )
+        asyncio.run(
+            database.append_control_chat_message(
+                role="user",
+                content="Summarize the usage totals through the gateway API.",
+                session_key=session_key,
+            )
+        )
+        asyncio.run(
+            database.append_control_chat_message(
+                role="assistant",
+                content="The gateway usage summary is ready.",
+                session_key=session_key,
+            )
+        )
+        mission_id = asyncio.run(
+            database.create_mission(
+                name="Usage parity API summary",
+                objective="Summarize the current API usage seam.",
+                status="completed",
+                instance_id=7,
+                project_id=None,
+                thread_id="thread-usage-api",
+                session_key=session_key,
+                conversation_target=None,
+                cwd="C:/workspace",
+                model="gpt-5.4",
+                reasoning_effort=None,
+                collaboration_mode=None,
+                max_turns=None,
+                use_builtin_agents=True,
+                run_verification=True,
+                auto_commit=False,
+                pause_on_approval=True,
+                allow_auto_reflexes=True,
+                auto_recover=True,
+                auto_recover_limit=2,
+                reflex_cooldown_seconds=900,
+                allow_failover=True,
+                toolsets=[],
+            )
+        )
+        asyncio.run(
+            database.update_mission(
+                mission_id,
+                total_tokens=1200,
+                output_tokens=220,
+                reasoning_tokens=90,
+            )
+        )
         response = client.post(
             "/api/gateway/node-methods/call",
             json={
                 "method": "sessions.usage",
                 "params": {
-                    "key": "openzues:thread:demo",
+                    "key": session_key,
                     "startDate": "2026-04-01",
                     "endDate": "2026-04-18",
                     "mode": "specific",
@@ -2186,10 +2628,28 @@ def test_gateway_node_method_call_endpoint_sessions_usage_fails_explicitly_when_
             },
         )
 
-    assert response.status_code == 503
-    assert response.json()["detail"] == (
-        "sessions.usage is unavailable until session usage analytics are wired"
-    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["startDate"] == "2026-04-01"
+    assert payload["endDate"] == "2026-04-18"
+    assert payload["totals"]["totalTokens"] == 1200
+    assert payload["aggregates"]["messages"] == {
+        "total": 2,
+        "user": 1,
+        "assistant": 1,
+        "toolCalls": 0,
+        "toolResults": 0,
+        "errors": 0,
+    }
+    assert len(payload["sessions"]) == 1
+    session_payload = payload["sessions"][0]
+    assert session_payload["key"] == session_key
+    assert session_payload["label"] == "Parity Usage API Session"
+    assert session_payload["sessionId"] == "thread-usage-api"
+    assert session_payload["modelProvider"] == "openai"
+    assert session_payload["model"] == "gpt-5.4"
+    assert session_payload["usage"]["totalTokens"] == 1200
+    assert session_payload["usage"]["output"] == 220
 
 
 def test_gateway_node_method_call_endpoint_sessions_reset_clears_transcript() -> None:
@@ -2364,6 +2824,14 @@ def test_gateway_node_method_call_endpoint_sessions_delete_removes_metadata_sess
         base_session_key=main_session_key,
         thread_id="thread-other-api",
     ).session_key
+    archive_dir = app_settings.db_path.parent / "gateway-session-archives"
+    archive_dir.mkdir(parents=True, exist_ok=True)
+    stale_archive = archive_dir / "other-session-deleted-20260301T000000Z.jsonl"
+    recent_archive = archive_dir / "other-session-deleted-20260417T000000Z.jsonl"
+    ignored_file = archive_dir / "readme.txt"
+    stale_archive.write_text("stale\n", encoding="utf-8")
+    recent_archive.write_text("recent\n", encoding="utf-8")
+    ignored_file.write_text("ignore\n", encoding="utf-8")
 
     with TestClient(app, client=("testclient", 50000)) as client:
         _allow_mutating_api_requests(client)
@@ -2429,12 +2897,22 @@ def test_gateway_node_method_call_endpoint_sessions_delete_removes_metadata_sess
         )
 
     assert response.status_code == 200
-    assert response.json() == {
-        "ok": True,
-        "key": session_key,
-        "deleted": True,
-        "archived": [],
-    }
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["key"] == session_key
+    assert payload["deleted"] is True
+    assert len(payload["archived"]) == 1
+    archived_path = Path(payload["archived"][0])
+    assert archived_path.exists()
+    archived_lines = archived_path.read_text(encoding="utf-8").splitlines()
+    assert len(archived_lines) == 2
+    archived_records = [json.loads(line) for line in archived_lines]
+    assert [record["role"] for record in archived_records] == ["user", "assistant"]
+    assert all(record["sessionKey"] == session_key for record in archived_records)
+    assert all(record["reason"] == "deleted" for record in archived_records)
+    assert not stale_archive.exists()
+    assert recent_archive.exists()
+    assert ignored_file.exists()
 
     assert history_response.status_code == 200
     assert history_response.json()["messages"] == []
@@ -2709,6 +3187,31 @@ def test_sessions_messages_subscribe_api_returns_stateless_ack_without_connectio
     assert response.json() == {"subscribed": False, "key": "agent:main:main"}
 
 
+def test_sessions_messages_subscribe_api_acknowledges_client_scoped_subscription() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-messages-subscribe-client-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            headers={"X-OpenZues-Client-Id": "client-1"},
+            json={
+                "method": "sessions.messages.subscribe",
+                "params": {"key": "  MAIN  "},
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {"subscribed": True, "key": "agent:main:main"}
+
+
 def test_sessions_messages_unsubscribe_api_returns_stateless_ack_without_connection_context() -> (
     None
 ):
@@ -2754,6 +3257,163 @@ def test_sessions_subscribe_api_returns_stateless_ack_without_connection_context
 
     assert response.status_code == 200
     assert response.json() == {"subscribed": False}
+
+
+def test_sessions_messages_subscribe_api_filters_websocket_delivery_by_client_id() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-message-websocket-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+    session_key = "openzues:thread:demo"
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        asyncio.run(
+            client.app.state.database.create_mission(
+                name="Gateway Session Message Subscription Loop",
+                objective="Inspect websocket session message subscription parity.",
+                status="active",
+                instance_id=7,
+                project_id=None,
+                thread_id="thread-session-message-subscription-1",
+                session_key=session_key,
+                cwd=str(tmp_path),
+                model="gpt-5.4",
+                reasoning_effort=None,
+                collaboration_mode=None,
+                max_turns=None,
+                use_builtin_agents=False,
+                run_verification=False,
+                auto_commit=False,
+                pause_on_approval=True,
+                allow_auto_reflexes=True,
+                auto_recover=True,
+                auto_recover_limit=2,
+                reflex_cooldown_seconds=900,
+                allow_failover=True,
+            )
+        )
+
+        with client.websocket_connect("/ws?clientId=client-message") as websocket:
+            subscribe_response = client.post(
+                "/api/gateway/node-methods/call",
+                headers={"X-OpenZues-Client-Id": "client-message"},
+                json={
+                    "method": "sessions.messages.subscribe",
+                    "params": {"key": session_key},
+                },
+            )
+            send_response = client.post(
+                "/api/gateway/node-methods/call",
+                json={
+                    "method": "sessions.send",
+                    "params": {
+                        "key": session_key,
+                        "message": "status",
+                        "idempotencyKey": "run-session-message-subscription-1",
+                    },
+                },
+            )
+            event = websocket.receive_json()
+
+    assert subscribe_response.status_code == 200
+    assert subscribe_response.json() == {"subscribed": True, "key": session_key}
+    assert send_response.status_code == 200
+    assert send_response.json() == {"runId": "run-session-message-subscription-1", "status": "ok"}
+    assert event["type"] == "gateway_event"
+    assert event["event"] == "session.message"
+    assert event["payload"]["sessionKey"] == session_key
+
+
+def test_sessions_subscribe_api_acknowledges_client_scoped_subscription() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-subscribe-client-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            headers={"X-OpenZues-Client-Id": "client-1"},
+            json={"method": "sessions.subscribe", "params": {}},
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {"subscribed": True}
+
+
+def test_sessions_subscribe_api_filters_websocket_delivery_by_client_id() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-changed-websocket-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+    main_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+    )
+    session_key = resolve_thread_session_keys(
+        base_session_key=main_session_key,
+        thread_id="thread-subscribe-websocket-delete",
+    ).session_key
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        asyncio.run(
+            client.app.state.database.upsert_gateway_session_metadata(
+                session_key=session_key,
+                metadata={"label": "Parity Subscribe Session"},
+            )
+        )
+        asyncio.run(
+            client.app.state.database.append_control_chat_message(
+                role="assistant",
+                content="Delete this transcript after subscribing.",
+                session_key=session_key,
+            )
+        )
+
+        with client.websocket_connect("/ws?clientId=client-session") as websocket:
+            subscribe_response = client.post(
+                "/api/gateway/node-methods/call",
+                headers={"X-OpenZues-Client-Id": "client-session"},
+                json={"method": "sessions.subscribe", "params": {}},
+            )
+            delete_response = client.post(
+                "/api/gateway/node-methods/call",
+                json={"method": "sessions.delete", "params": {"key": session_key}},
+            )
+            event = websocket.receive_json()
+
+    assert subscribe_response.status_code == 200
+    assert subscribe_response.json() == {"subscribed": True}
+    assert delete_response.status_code == 200
+    delete_payload = delete_response.json()
+    assert delete_payload["ok"] is True
+    assert delete_payload["key"] == session_key
+    assert delete_payload["deleted"] is True
+    assert len(delete_payload["archived"]) == 1
+    archived_path = Path(delete_payload["archived"][0])
+    assert archived_path.exists()
+    assert event["type"] == "gateway_event"
+    assert event["event"] == "sessions.changed"
+    assert event["payload"]["sessionKey"] == session_key
+    assert event["payload"]["reason"] == "delete"
 
 
 def test_sessions_unsubscribe_api_returns_stateless_ack_without_connection_context() -> None:
@@ -3005,8 +3665,9 @@ def test_sessions_patch_api_persists_current_session_metadata_and_surfaces_it() 
     assert history_response.json()["verboseLevel"] == "high"
 
 
-def test_gateway_node_method_call_endpoint_sessions_usage_timeseries_fails_explicitly_when_unwired(
-) -> None:
+def test_gateway_node_method_call_endpoint_sessions_usage_timeseries_returns_bounded_points() -> (
+    None
+):
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-usage-timeseries-api"
     shutil.rmtree(tmp_path, ignore_errors=True)
     tmp_path.mkdir(parents=True, exist_ok=True)
@@ -3018,22 +3679,109 @@ def test_gateway_node_method_call_endpoint_sessions_usage_timeseries_fails_expli
 
     with TestClient(app, client=("testclient", 50000)) as client:
         _allow_mutating_api_requests(client)
+        database = client.app.state.database
+        main_session_key = build_launch_session_key(
+            mode="workspace_affinity",
+            preferred_instance_id=None,
+            task_id=None,
+            project_id=None,
+            operator_id=None,
+        )
+        session_key = resolve_thread_session_keys(
+            base_session_key=main_session_key,
+            thread_id="thread-usage-timeseries-api",
+        ).session_key
+        first_mission_id = asyncio.run(
+            database.create_mission(
+                name="Usage timeseries API first slice",
+                objective="Record the first API usage point.",
+                status="completed",
+                instance_id=7,
+                project_id=None,
+                thread_id="thread-usage-timeseries-api",
+                session_key=session_key,
+                conversation_target=None,
+                cwd="C:/workspace",
+                model="gpt-5.4",
+                reasoning_effort=None,
+                collaboration_mode=None,
+                max_turns=None,
+                use_builtin_agents=True,
+                run_verification=True,
+                auto_commit=False,
+                pause_on_approval=True,
+                allow_auto_reflexes=True,
+                auto_recover=True,
+                auto_recover_limit=2,
+                reflex_cooldown_seconds=900,
+                allow_failover=True,
+                toolsets=[],
+            )
+        )
+        asyncio.run(
+            database.update_mission(
+                first_mission_id,
+                total_tokens=300,
+                output_tokens=80,
+            )
+        )
+        second_mission_id = asyncio.run(
+            database.create_mission(
+                name="Usage timeseries API second slice",
+                objective="Record the second API usage point.",
+                status="completed",
+                instance_id=7,
+                project_id=None,
+                thread_id="thread-usage-timeseries-api",
+                session_key=session_key,
+                conversation_target=None,
+                cwd="C:/workspace",
+                model="gpt-5.4",
+                reasoning_effort=None,
+                collaboration_mode=None,
+                max_turns=None,
+                use_builtin_agents=True,
+                run_verification=True,
+                auto_commit=False,
+                pause_on_approval=True,
+                allow_auto_reflexes=True,
+                auto_recover=True,
+                auto_recover_limit=2,
+                reflex_cooldown_seconds=900,
+                allow_failover=True,
+                toolsets=[],
+            )
+        )
+        asyncio.run(
+            database.update_mission(
+                second_mission_id,
+                total_tokens=700,
+                output_tokens=180,
+            )
+        )
         response = client.post(
             "/api/gateway/node-methods/call",
             json={
                 "method": "sessions.usage.timeseries",
-                "params": {"key": "openzues:thread:demo"},
+                "params": {"key": session_key},
             },
         )
 
-    assert response.status_code == 503
-    assert response.json()["detail"] == (
-        "sessions.usage.timeseries is unavailable until session usage analytics are wired"
-    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["sessionId"] == "thread-usage-timeseries-api"
+    assert len(payload["points"]) == 2
+    assert payload["points"][0]["input"] == 220
+    assert payload["points"][0]["output"] == 80
+    assert payload["points"][0]["totalTokens"] == 300
+    assert payload["points"][0]["cumulativeTokens"] == 300
+    assert payload["points"][1]["input"] == 520
+    assert payload["points"][1]["output"] == 180
+    assert payload["points"][1]["totalTokens"] == 700
+    assert payload["points"][1]["cumulativeTokens"] == 1000
 
 
-def test_gateway_node_method_call_endpoint_sessions_usage_logs_fails_explicitly_when_unwired(
-) -> None:
+def test_gateway_node_method_call_endpoint_sessions_usage_logs_returns_bounded_entries() -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-usage-logs-api"
     shutil.rmtree(tmp_path, ignore_errors=True)
     tmp_path.mkdir(parents=True, exist_ok=True)
@@ -3045,18 +3793,91 @@ def test_gateway_node_method_call_endpoint_sessions_usage_logs_fails_explicitly_
 
     with TestClient(app, client=("testclient", 50000)) as client:
         _allow_mutating_api_requests(client)
+        database = client.app.state.database
+        main_session_key = build_launch_session_key(
+            mode="workspace_affinity",
+            preferred_instance_id=None,
+            task_id=None,
+            project_id=None,
+            operator_id=None,
+        )
+        session_key = resolve_thread_session_keys(
+            base_session_key=main_session_key,
+            thread_id="thread-usage-logs-api",
+        ).session_key
+        asyncio.run(
+            database.append_control_chat_message(
+                role="user",
+                content="Please show the API usage logs.",
+                session_key=session_key,
+            )
+        )
+        mission_id = asyncio.run(
+            database.create_mission(
+                name="Usage log API slice",
+                objective="Link the API reply back to bounded mission usage.",
+                status="completed",
+                instance_id=7,
+                project_id=None,
+                thread_id="thread-usage-logs-api",
+                session_key=session_key,
+                conversation_target=None,
+                cwd="C:/workspace",
+                model="gpt-5.4",
+                reasoning_effort=None,
+                collaboration_mode=None,
+                max_turns=None,
+                use_builtin_agents=True,
+                run_verification=True,
+                auto_commit=False,
+                pause_on_approval=True,
+                allow_auto_reflexes=True,
+                auto_recover=True,
+                auto_recover_limit=2,
+                reflex_cooldown_seconds=900,
+                allow_failover=True,
+                toolsets=[],
+            )
+        )
+        asyncio.run(
+            database.update_mission(
+                mission_id,
+                total_tokens=640,
+                output_tokens=160,
+            )
+        )
+        asyncio.run(
+            database.append_control_chat_message(
+                role="assistant",
+                content="Here is the bounded API usage log entry.",
+                mission_id=mission_id,
+                session_key=session_key,
+            )
+        )
         response = client.post(
             "/api/gateway/node-methods/call",
             json={
                 "method": "sessions.usage.logs",
-                "params": {"key": "openzues:thread:demo", "limit": 200},
+                "params": {"key": session_key, "limit": 200},
             },
         )
 
-    assert response.status_code == 503
-    assert response.json()["detail"] == (
-        "sessions.usage.logs is unavailable until session usage analytics are wired"
-    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["sessionId"] == "thread-usage-logs-api"
+    assert payload["entries"] == [
+        {
+            "timestamp": payload["entries"][0]["timestamp"],
+            "role": "user",
+            "content": "Please show the API usage logs.",
+        },
+        {
+            "timestamp": payload["entries"][1]["timestamp"],
+            "role": "assistant",
+            "content": "Here is the bounded API usage log entry.",
+            "tokens": 640,
+        },
+    ]
 
 
 def test_gateway_node_method_call_endpoint_chat_abort_interrupts_tracked_runtime(
@@ -3796,7 +4617,7 @@ def test_gateway_node_method_call_endpoint_supports_cron_update() -> None:
     assert jobs[0]["enabled"] is False
 
 
-def test_gateway_node_method_call_endpoint_surfaces_wake_as_explicit_unavailable(tmp_path) -> None:
+def test_gateway_node_method_call_endpoint_supports_wake_now_and_next_heartbeat(tmp_path) -> None:
     app_settings = Settings(
         data_dir=tmp_path / "data",
         db_path=tmp_path / "data" / "openzues-test.db",
@@ -3805,7 +4626,7 @@ def test_gateway_node_method_call_endpoint_surfaces_wake_as_explicit_unavailable
 
     with TestClient(app, client=("testclient", 50000)) as client:
         _allow_mutating_api_requests(client)
-        response = client.post(
+        now_response = client.post(
             "/api/gateway/node-methods/call",
             json={
                 "method": "wake",
@@ -3815,11 +4636,44 @@ def test_gateway_node_method_call_endpoint_surfaces_wake_as_explicit_unavailable
                 },
             },
         )
+        messages_after_now = asyncio.run(client.app.state.database.list_control_chat_messages())
+        queued_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "wake",
+                "params": {
+                    "mode": "next-heartbeat",
+                    "text": "Check the queued parity nudge on the next heartbeat.",
+                },
+            },
+        )
+        messages_before_tick = asyncio.run(client.app.state.database.list_control_chat_messages())
+        dashboard = DashboardView.model_validate(client.get("/api/dashboard").json())
+        acted = asyncio.run(client.app.state.control_chat_service.tick_attention_queue(dashboard))
+        messages_after_tick = asyncio.run(client.app.state.database.list_control_chat_messages())
+        wake_requests = asyncio.run(client.app.state.database.list_gateway_wake_requests())
 
-    assert response.status_code == 503
-    assert response.json()["detail"] == (
-        "wake is unavailable until control-plane wake queue is wired"
-    )
+    assert now_response.status_code == 200
+    assert now_response.json() == {"ok": True}
+    assert [message["content"] for message in messages_after_now if message["role"] == "user"] == [
+        "Resume parity from the latest checkpoint."
+    ]
+
+    assert queued_response.status_code == 200
+    assert queued_response.json() == {"ok": True}
+    assert [
+        message["content"] for message in messages_before_tick if message["role"] == "user"
+    ] == ["Resume parity from the latest checkpoint."]
+
+    assert acted is True
+    assert [
+        message["content"] for message in messages_after_tick if message["role"] == "user"
+    ] == [
+        "Resume parity from the latest checkpoint.",
+        "Check the queued parity nudge on the next heartbeat.",
+    ]
+    assert len(wake_requests) == 1
+    assert wake_requests[0]["status"] == "dispatched"
 
 
 def test_gateway_node_method_call_endpoint_supports_agents_files_list_and_get(
@@ -4126,6 +4980,503 @@ def test_gateway_node_method_call_endpoint_sessions_list_includes_metadata_sessi
     assert payload["sessions"][1]["updatedAt"] > 0
 
 
+def test_gateway_node_method_call_endpoint_sessions_list_hides_unknown_session_unless_requested(
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-list-unknown-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+    main_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+    )
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        asyncio.run(
+            client.app.state.database.upsert_gateway_session_metadata(
+                session_key="unknown",
+                metadata={"label": "Unknown Session"},
+            )
+        )
+        hidden_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.list",
+                "params": {"includeGlobal": True, "includeUnknown": False, "limit": 10},
+            },
+        )
+        visible_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.list",
+                "params": {"includeGlobal": True, "includeUnknown": True, "limit": 10},
+            },
+        )
+
+    assert hidden_response.status_code == 200
+    assert [session["key"] for session in hidden_response.json()["sessions"]] == [main_session_key]
+    assert visible_response.status_code == 200
+    assert [session["key"] for session in visible_response.json()["sessions"]] == [
+        main_session_key,
+        "unknown",
+    ]
+
+
+def test_gateway_node_method_call_endpoint_sessions_list_supports_label_and_spawned_by_filters(
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-list-filters-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+    main_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+    )
+    parity_worker_key = resolve_thread_session_keys(
+        base_session_key=main_session_key,
+        thread_id="thread-parity-worker",
+    ).session_key
+    other_worker_key = resolve_thread_session_keys(
+        base_session_key=main_session_key,
+        thread_id="thread-other-worker",
+    ).session_key
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        asyncio.run(
+            client.app.state.database.upsert_gateway_session_metadata(
+                session_key=parity_worker_key,
+                metadata={
+                    "label": "Parity Worker",
+                    "spawnedBy": "parity-conductor",
+                },
+            )
+        )
+        asyncio.run(
+            client.app.state.database.upsert_gateway_session_metadata(
+                session_key=other_worker_key,
+                metadata={
+                    "label": "Other Worker",
+                    "spawnedBy": "other-conductor",
+                },
+            )
+        )
+        label_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.list",
+                "params": {
+                    "includeGlobal": True,
+                    "includeUnknown": False,
+                    "limit": 10,
+                    "label": "Parity Worker",
+                },
+            },
+        )
+        spawned_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.list",
+                "params": {
+                    "includeGlobal": True,
+                    "includeUnknown": True,
+                    "limit": 10,
+                    "spawnedBy": "parity-conductor",
+                },
+            },
+        )
+
+    assert label_response.status_code == 200
+    assert [session["key"] for session in label_response.json()["sessions"]] == [parity_worker_key]
+    assert spawned_response.status_code == 200
+    assert [session["key"] for session in spawned_response.json()["sessions"]] == [
+        parity_worker_key
+    ]
+
+
+def test_gateway_node_method_call_endpoint_sessions_list_supports_agent_id_filter() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-list-agent-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+    main_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+    )
+    thread_session_key = resolve_thread_session_keys(
+        base_session_key=main_session_key,
+        thread_id="thread-agent-filter",
+    ).session_key
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        asyncio.run(
+            client.app.state.database.upsert_gateway_session_metadata(
+                session_key=thread_session_key,
+                metadata={"label": "Agent Filter Worker"},
+            )
+        )
+        allowed_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.list",
+                "params": {
+                    "includeGlobal": True,
+                    "includeUnknown": False,
+                    "limit": 10,
+                    "agentId": "main",
+                },
+            },
+        )
+        rejected_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.list",
+                "params": {
+                    "includeGlobal": True,
+                    "includeUnknown": False,
+                    "agentId": "other-agent",
+                },
+            },
+        )
+
+    assert allowed_response.status_code == 200
+    assert [session["key"] for session in allowed_response.json()["sessions"]] == [
+        main_session_key,
+        thread_session_key,
+    ]
+    assert rejected_response.status_code == 400
+    assert rejected_response.json()["detail"] == 'unknown agent id "other-agent"'
+
+
+def test_gateway_node_method_call_endpoint_sessions_list_supports_active_minutes_filter() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-list-active-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+    main_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+    )
+    stale_session_key = resolve_thread_session_keys(
+        base_session_key=main_session_key,
+        thread_id="thread-stale-active-filter",
+    ).session_key
+    reference_time = datetime.now(UTC)
+    stale_updated_at = (reference_time - timedelta(minutes=20)).isoformat().replace("+00:00", "Z")
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        asyncio.run(
+            client.app.state.database.upsert_gateway_session_metadata(
+                session_key=stale_session_key,
+                metadata={"label": "Stale Worker"},
+            )
+        )
+        with sqlite3.connect(app_settings.db_path) as db:
+            db.execute(
+                "UPDATE gateway_session_metadata SET updated_at = ? WHERE session_key = ?",
+                (stale_updated_at, stale_session_key),
+            )
+            db.commit()
+        tight_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.list",
+                "params": {
+                    "includeGlobal": True,
+                    "includeUnknown": False,
+                    "limit": 10,
+                    "activeMinutes": 5,
+                },
+            },
+        )
+        wide_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.list",
+                "params": {
+                    "includeGlobal": True,
+                    "includeUnknown": False,
+                    "limit": 10,
+                    "activeMinutes": 30,
+                },
+            },
+        )
+
+    assert tight_response.status_code == 200
+    assert [session["key"] for session in tight_response.json()["sessions"]] == [main_session_key]
+    assert wide_response.status_code == 200
+    assert [session["key"] for session in wide_response.json()["sessions"]] == [
+        main_session_key,
+        stale_session_key,
+    ]
+
+
+def test_gateway_node_method_call_endpoint_sessions_list_supports_search_filter() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-list-search-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+    main_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+    )
+    target_session_key = resolve_thread_session_keys(
+        base_session_key=main_session_key,
+        thread_id="thread-search-target",
+    ).session_key
+    other_session_key = resolve_thread_session_keys(
+        base_session_key=main_session_key,
+        thread_id="thread-search-other",
+    ).session_key
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        asyncio.run(
+            client.app.state.database.upsert_gateway_session_metadata(
+                session_key=target_session_key,
+                metadata={"label": "Parity Search Worker"},
+            )
+        )
+        asyncio.run(
+            client.app.state.database.upsert_gateway_session_metadata(
+                session_key=other_session_key,
+                metadata={"label": "Background Worker"},
+            )
+        )
+        label_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.list",
+                "params": {
+                    "includeGlobal": True,
+                    "includeUnknown": False,
+                    "limit": 10,
+                    "search": "parity",
+                },
+            },
+        )
+        key_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.list",
+                "params": {
+                    "includeGlobal": True,
+                    "includeUnknown": False,
+                    "limit": 10,
+                    "search": "thread-search-other",
+                },
+            },
+        )
+
+    assert label_response.status_code == 200
+    assert [session["key"] for session in label_response.json()["sessions"]] == [target_session_key]
+    assert key_response.status_code == 200
+    assert [session["key"] for session in key_response.json()["sessions"]] == [other_session_key]
+
+
+def test_gateway_node_method_call_endpoint_sessions_list_supports_include_last_message_preview(
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-list-last-message-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+    main_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+    )
+    preview_session_key = resolve_thread_session_keys(
+        base_session_key=main_session_key,
+        thread_id="thread-last-message-preview",
+    ).session_key
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        asyncio.run(
+            client.app.state.database.upsert_gateway_session_metadata(
+                session_key=preview_session_key,
+                metadata={"label": "Preview Worker"},
+            )
+        )
+        asyncio.run(
+            client.app.state.database.append_control_chat_message(
+                role="user",
+                content="First preview message.",
+                session_key=preview_session_key,
+            )
+        )
+        asyncio.run(
+            client.app.state.database.append_control_chat_message(
+                role="assistant",
+                content="Latest preview message.",
+                session_key=preview_session_key,
+            )
+        )
+        hidden_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.list",
+                "params": {
+                    "includeGlobal": False,
+                    "includeUnknown": False,
+                    "includeLastMessage": False,
+                    "label": "Preview Worker",
+                    "limit": 10,
+                },
+            },
+        )
+        visible_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.list",
+                "params": {
+                    "includeGlobal": False,
+                    "includeUnknown": False,
+                    "includeLastMessage": True,
+                    "label": "Preview Worker",
+                    "limit": 10,
+                },
+            },
+        )
+
+    assert hidden_response.status_code == 200
+    assert [session["key"] for session in hidden_response.json()["sessions"]] == [
+        preview_session_key
+    ]
+    assert "lastMessagePreview" not in hidden_response.json()["sessions"][0]
+    assert visible_response.status_code == 200
+    assert [session["key"] for session in visible_response.json()["sessions"]] == [
+        preview_session_key
+    ]
+    assert visible_response.json()["sessions"][0]["lastMessagePreview"] == "Latest preview message."
+
+
+def test_gateway_node_method_call_endpoint_sessions_list_supports_include_derived_titles() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-list-derived-title-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+    main_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+    )
+    preview_session_key = resolve_thread_session_keys(
+        base_session_key=main_session_key,
+        thread_id="thread-derived-title",
+    ).session_key
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        asyncio.run(
+            client.app.state.database.upsert_gateway_session_metadata(
+                session_key=preview_session_key,
+                metadata={"label": "Preview Worker"},
+            )
+        )
+        asyncio.run(
+            client.app.state.database.append_control_chat_message(
+                role="user",
+                content="First derived title message.",
+                session_key=preview_session_key,
+            )
+        )
+        asyncio.run(
+            client.app.state.database.append_control_chat_message(
+                role="assistant",
+                content="Latest preview message.",
+                session_key=preview_session_key,
+            )
+        )
+        hidden_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.list",
+                "params": {
+                    "includeGlobal": False,
+                    "includeUnknown": False,
+                    "includeDerivedTitles": False,
+                    "label": "Preview Worker",
+                    "limit": 10,
+                },
+            },
+        )
+        visible_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.list",
+                "params": {
+                    "includeGlobal": False,
+                    "includeUnknown": False,
+                    "includeDerivedTitles": True,
+                    "label": "Preview Worker",
+                    "limit": 10,
+                },
+            },
+        )
+
+    assert hidden_response.status_code == 200
+    assert [session["key"] for session in hidden_response.json()["sessions"]] == [
+        preview_session_key
+    ]
+    assert "derivedTitle" not in hidden_response.json()["sessions"][0]
+    assert visible_response.status_code == 200
+    assert [session["key"] for session in visible_response.json()["sessions"]] == [
+        preview_session_key
+    ]
+    assert visible_response.json()["sessions"][0]["derivedTitle"] == "First derived title message."
+
+
 def test_gateway_node_method_call_endpoint_supports_sessions_get() -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-get-api"
     shutil.rmtree(tmp_path, ignore_errors=True)
@@ -4331,6 +5682,48 @@ def test_gateway_node_method_call_endpoint_supports_sessions_resolve_by_spawned_
     assert response.json() == {"ok": True, "key": current_session_key}
 
 
+def test_gateway_node_method_call_endpoint_hides_current_session_label_when_global_is_excluded(
+) -> None:
+    tmp_path = (
+        Path.cwd()
+        / ".tmp-pytest-local"
+        / "gateway-sessions-resolve-label-excludes-global-api"
+    )
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+    current_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+    )
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        asyncio.run(
+            client.app.state.database.upsert_gateway_session_metadata(
+                session_key=current_session_key,
+                metadata={"label": "Parity Session"},
+            )
+        )
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.resolve",
+                "params": {"label": "Parity Session", "includeGlobal": False},
+            },
+        )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "unknown session label"
+
+
 def test_gateway_node_method_call_endpoint_supports_sessions_resolve_by_metadata_known_spawned_by(
 ) -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-resolve-metadata-spawned-by-api"
@@ -4371,6 +5764,202 @@ def test_gateway_node_method_call_endpoint_supports_sessions_resolve_by_metadata
 
     assert response.status_code == 200
     assert response.json() == {"ok": True, "key": thread_session_key}
+
+
+def test_gateway_node_method_call_endpoint_supports_sessions_resolve_by_session_id() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-resolve-session-id-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+    main_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+    )
+    thread_session_key = resolve_thread_session_keys(
+        base_session_key=main_session_key,
+        thread_id="thread-session-id-api",
+    ).session_key
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        asyncio.run(
+            client.app.state.database.upsert_gateway_session_metadata(
+                session_key=thread_session_key,
+                metadata={"label": "Session Id API"},
+            )
+        )
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.resolve",
+                "params": {"sessionId": "thread-session-id-api"},
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True, "key": thread_session_key}
+
+
+def test_gateway_node_method_call_endpoint_hides_global_session_id_when_global_is_excluded(
+) -> None:
+    tmp_path = (
+        Path.cwd()
+        / ".tmp-pytest-local"
+        / "gateway-sessions-resolve-session-id-excludes-global-api"
+    )
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+    current_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+    )
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        asyncio.run(
+            client.app.state.database.create_mission(
+                name="Global Session Id",
+                objective="Prove global sessionId visibility filtering.",
+                status="completed",
+                instance_id=9,
+                project_id=None,
+                thread_id="global-session-id-parity-api",
+                session_key=current_session_key,
+                cwd="C:/workspace",
+                model="gpt-5.4",
+                reasoning_effort=None,
+                collaboration_mode=None,
+                max_turns=None,
+                use_builtin_agents=False,
+                run_verification=False,
+                auto_commit=False,
+                pause_on_approval=True,
+                allow_auto_reflexes=True,
+                auto_recover=True,
+                auto_recover_limit=2,
+                reflex_cooldown_seconds=900,
+                allow_failover=True,
+                task_blueprint_id=None,
+            )
+        )
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.resolve",
+                "params": {
+                    "sessionId": "global-session-id-parity-api",
+                    "includeGlobal": False,
+                },
+            },
+        )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "unknown sessionId"
+
+
+def test_gateway_node_method_call_endpoint_supports_sessions_resolve_by_transcript_only_session_id(
+) -> None:
+    tmp_path = (
+        Path.cwd()
+        / ".tmp-pytest-local"
+        / "gateway-sessions-resolve-transcript-session-id-api"
+    )
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+    session_key = resolve_thread_session_keys(
+        base_session_key="launch:mode:workspace_affinity",
+        thread_id="thread-transcript-session-id-api",
+    ).session_key
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        asyncio.run(
+            client.app.state.database.append_control_chat_message(
+                role="assistant",
+                content="Transcript-only session evidence.",
+                session_key=session_key,
+            )
+        )
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.resolve",
+                "params": {"sessionId": "thread-transcript-session-id-api"},
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True, "key": session_key}
+
+
+def test_gateway_node_method_call_endpoint_sessions_resolve_by_key_respects_spawned_by_filter(
+) -> None:
+    tmp_path = (
+        Path.cwd()
+        / ".tmp-pytest-local"
+        / "gateway-sessions-resolve-key-spawned-by-filter-api"
+    )
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+    visible_parent_key = "agent:main:subagent:visible-parent"
+    hidden_parent_key = "agent:main:subagent:hidden-parent"
+    child_key = "agent:main:subagent:shared-child-key-filter"
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        asyncio.run(
+            client.app.state.database.upsert_gateway_session_metadata(
+                session_key=visible_parent_key,
+                metadata={"spawnedBy": "agent:main:main"},
+            )
+        )
+        asyncio.run(
+            client.app.state.database.upsert_gateway_session_metadata(
+                session_key=hidden_parent_key,
+                metadata={"spawnedBy": "agent:main:main"},
+            )
+        )
+        asyncio.run(
+            client.app.state.database.upsert_gateway_session_metadata(
+                session_key=child_key,
+                metadata={"spawnedBy": hidden_parent_key},
+            )
+        )
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.resolve",
+                "params": {"key": child_key, "spawnedBy": visible_parent_key},
+            },
+        )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "unknown session key"
 
 
 def test_gateway_node_method_call_endpoint_supports_config_get(tmp_path) -> None:
@@ -4708,6 +6297,101 @@ Body
     }
 
 
+def test_gateway_node_method_call_endpoint_supports_local_skills_update(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    codex_home = tmp_path / ".codex-home"
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    monkeypatch.chdir(tmp_path)
+    skill_path = codex_home / "skills" / "skills-update-test" / "SKILL.md"
+    skill_path.parent.mkdir(parents=True, exist_ok=True)
+    skill_path.write_text(
+        """---
+name: skills-update-test
+description: skills update api test
+platforms:
+  - windows
+metadata:
+  skillKey: skills-update
+---
+Body
+""",
+        encoding="utf-8",
+    )
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        update_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "skills.update",
+                "params": {
+                    "skillKey": "skills-update",
+                    "enabled": False,
+                    "apiKey": "abc\r\ndef",
+                    "env": {
+                        " OPENZUES_TOKEN ": "  ready  ",
+                        "REMOVE_ME": "   ",
+                    },
+                },
+            },
+        )
+        status_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={"method": "skills.status", "params": {}},
+        )
+
+    assert update_response.status_code == 200
+    assert update_response.json() == {
+        "ok": True,
+        "skillKey": "skills-update",
+        "config": {
+            "enabled": False,
+            "apiKey": "abcdef",
+            "env": {"OPENZUES_TOKEN": "ready"},
+        },
+    }
+    assert status_response.status_code == 200
+    assert status_response.json()["skills"] == [
+        {
+            "name": "skills-update-test",
+            "description": "skills update api test",
+            "source": "codex-home",
+            "bundled": True,
+            "filePath": str(skill_path),
+            "baseDir": str(skill_path.parent),
+            "skillKey": "skills-update",
+            "primaryEnv": None,
+            "emoji": None,
+            "homepage": None,
+            "always": False,
+            "disabled": True,
+            "blockedByAllowlist": False,
+            "eligible": False,
+            "requirements": {
+                "bins": [],
+                "env": [],
+                "config": [],
+                "os": ["windows"],
+            },
+            "missing": {
+                "bins": [],
+                "env": [],
+                "config": [],
+                "os": [],
+            },
+            "configChecks": [],
+            "install": [],
+        }
+    ]
+
+
 def test_gateway_node_method_call_endpoint_supports_skills_search_and_detail(
     tmp_path,
     monkeypatch,
@@ -4792,14 +6476,20 @@ Body
     }
 
 
-def test_gateway_node_method_call_endpoint_surfaces_skills_install_update_unavailable(
+def test_gateway_node_method_call_endpoint_surfaces_skills_install_unavailable(
     tmp_path,
 ) -> None:
     app_settings = Settings(
         data_dir=tmp_path / "data",
         db_path=tmp_path / "data" / "openzues-test.db",
     )
-    app = create_app(app_settings)
+    app = create_app(
+        app_settings,
+        gateway_node_method_service=GatewayNodeMethodService(
+            GatewayNodeRegistry(),
+            skill_clawhub_service=GatewaySkillClawHubService(resolve_launcher=False),
+        ),
+    )
 
     with TestClient(app, client=("testclient", 50000)) as client:
         _allow_mutating_api_requests(client)
@@ -4810,21 +6500,458 @@ def test_gateway_node_method_call_endpoint_surfaces_skills_install_update_unavai
                 "params": {"source": "clawhub", "slug": "openclaw/example"},
             },
         )
-        update_response = client.post(
-            "/api/gateway/node-methods/call",
-            json={
-                "method": "skills.update",
-                "params": {"skillKey": "example-skill", "enabled": True},
-            },
-        )
 
     assert install_response.status_code == 503
     assert (
         install_response.json()["detail"]
-        == "ClawHub skill install is not wired in OpenZues yet"
+        == "ClawHub CLI is not available on the gateway host."
     )
-    assert update_response.status_code == 503
-    assert update_response.json()["detail"] == "Skill config patching is not wired in OpenZues yet"
+
+
+def test_gateway_node_method_call_endpoint_supports_gateway_skill_installer_mode(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    codex_home = tmp_path / ".codex-home"
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+    monkeypatch.chdir(tmp_path)
+    skill_path = codex_home / "skills" / "skills-install-test" / "SKILL.md"
+    skill_path.parent.mkdir(parents=True, exist_ok=True)
+    skill_path.write_text(
+        """---
+name: skills-install-test
+description: skills install api test
+platforms:
+  - windows
+metadata:
+  skillKey: skills-install
+  requires:
+    bins:
+      - missing-bin
+  install:
+    - id: node
+      kind: node
+      label: Install skills-install-test
+      package: demo-skill
+      bins:
+        - missing-bin
+---
+Body
+""",
+        encoding="utf-8",
+    )
+    observed: dict[str, object] = {}
+
+    async def fake_command_runner(
+        argv: tuple[str, ...],
+        *,
+        cwd: Path,
+        timeout_ms: int | None,
+    ) -> tuple[int, str, str]:
+        observed["argv"] = argv
+        observed["cwd"] = str(cwd)
+        observed["timeout_ms"] = timeout_ms
+        shim_path = bin_dir / "missing-bin.cmd"
+        shim_path.write_text("@echo off\r\necho installed\r\n", encoding="utf-8")
+        return (0, "installed", "")
+
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    gateway_node_method_service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        skill_install_service=GatewaySkillInstallService(command_runner=fake_command_runner),
+    )
+    app = create_app(
+        app_settings,
+        gateway_node_method_service=gateway_node_method_service,
+    )
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        install_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "skills.install",
+                "params": {
+                    "name": "skills-install-test",
+                    "installId": "node",
+                    "timeoutMs": 45_000,
+                },
+            },
+        )
+        status_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={"method": "skills.status", "params": {}},
+        )
+
+    assert install_response.status_code == 200
+    assert install_response.json() == {
+        "ok": True,
+        "name": "skills-install-test",
+        "skillKey": "skills-install",
+        "installId": "node",
+        "kind": "node",
+        "label": "Install skills-install-test",
+        "bins": ["missing-bin"],
+        "command": ["npm", "install", "-g", "demo-skill"],
+        "cwd": str(skill_path.parent),
+    }
+    assert observed == {
+        "argv": ("npm", "install", "-g", "demo-skill"),
+        "cwd": str(skill_path.parent),
+        "timeout_ms": 45_000,
+    }
+    assert status_response.status_code == 200
+    assert status_response.json()["skills"] == [
+        {
+            "name": "skills-install-test",
+            "description": "skills install api test",
+            "source": "codex-home",
+            "bundled": True,
+            "filePath": str(skill_path),
+            "baseDir": str(skill_path.parent),
+            "skillKey": "skills-install",
+            "primaryEnv": None,
+            "emoji": None,
+            "homepage": None,
+            "always": False,
+            "disabled": False,
+            "blockedByAllowlist": False,
+            "eligible": True,
+            "requirements": {
+                "bins": ["missing-bin"],
+                "env": [],
+                "config": [],
+                "os": ["windows"],
+            },
+            "missing": {
+                "bins": [],
+                "env": [],
+                "config": [],
+                "os": [],
+            },
+            "configChecks": [],
+            "install": [
+                {
+                    "id": "node",
+                    "kind": "node",
+                    "label": "Install skills-install-test",
+                    "bins": ["missing-bin"],
+                }
+            ],
+        }
+    ]
+
+
+def test_gateway_node_method_call_endpoint_supports_clawhub_skills_install_mode(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    codex_home = tmp_path / ".codex-home"
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    monkeypatch.chdir(tmp_path)
+    observed: dict[str, object] = {}
+
+    async def fake_command_runner(
+        argv: tuple[str, ...],
+        *,
+        cwd: Path,
+        timeout_ms: int | None,
+    ) -> tuple[int, str, str]:
+        observed["argv"] = argv
+        observed["cwd"] = str(cwd)
+        observed["timeout_ms"] = timeout_ms
+        skill_path = tmp_path / "skills" / "demo-skill" / "SKILL.md"
+        skill_path.parent.mkdir(parents=True, exist_ok=True)
+        skill_path.write_text(
+            """---
+name: demo-skill
+description: installed from clawhub api
+platforms:
+  - windows
+metadata:
+  skillKey: demo-skill
+---
+Body
+""",
+            encoding="utf-8",
+        )
+        return (0, "installed", "")
+
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    gateway_node_method_service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        skill_clawhub_service=GatewaySkillClawHubService(
+            launcher=("clawhub",),
+            command_runner=fake_command_runner,
+        ),
+    )
+    app = create_app(
+        app_settings,
+        gateway_node_method_service=gateway_node_method_service,
+    )
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        install_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "skills.install",
+                "params": {
+                    "source": "clawhub",
+                    "slug": "demo-skill",
+                    "version": "1.2.3",
+                    "force": True,
+                },
+            },
+        )
+        status_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={"method": "skills.status", "params": {}},
+        )
+
+    assert install_response.status_code == 200
+    assert install_response.json() == {
+        "ok": True,
+        "source": "clawhub",
+        "action": "install",
+        "slug": "demo-skill",
+        "version": "1.2.3",
+        "force": True,
+        "command": [
+            "clawhub",
+            "install",
+            "demo-skill",
+            "--workdir",
+            str(tmp_path),
+            "--dir",
+            "skills",
+            "--no-input",
+            "--version",
+            "1.2.3",
+            "--force",
+        ],
+        "workspaceDir": str(tmp_path),
+        "skillsDir": str(tmp_path / "skills"),
+    }
+    assert observed == {
+        "argv": (
+            "clawhub",
+            "install",
+            "demo-skill",
+            "--workdir",
+            str(tmp_path),
+            "--dir",
+            "skills",
+            "--no-input",
+            "--version",
+            "1.2.3",
+            "--force",
+        ),
+        "cwd": str(tmp_path),
+        "timeout_ms": None,
+    }
+    assert status_response.status_code == 200
+    assert status_response.json()["skills"] == [
+        {
+            "name": "demo-skill",
+            "description": "installed from clawhub api",
+            "source": "workspace",
+            "bundled": False,
+            "filePath": str(tmp_path / "skills" / "demo-skill" / "SKILL.md"),
+            "baseDir": str(tmp_path / "skills" / "demo-skill"),
+            "skillKey": "demo-skill",
+            "primaryEnv": None,
+            "emoji": None,
+            "homepage": None,
+            "always": False,
+            "disabled": False,
+            "blockedByAllowlist": False,
+            "eligible": True,
+            "requirements": {
+                "bins": [],
+                "env": [],
+                "config": [],
+                "os": ["windows"],
+            },
+            "missing": {
+                "bins": [],
+                "env": [],
+                "config": [],
+                "os": [],
+            },
+            "configChecks": [],
+            "install": [],
+        }
+    ]
+
+
+def test_gateway_node_method_call_endpoint_supports_clawhub_skills_update_mode(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    codex_home = tmp_path / ".codex-home"
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    monkeypatch.chdir(tmp_path)
+    skill_path = tmp_path / "skills" / "demo-skill" / "SKILL.md"
+    skill_path.parent.mkdir(parents=True, exist_ok=True)
+    skill_path.write_text(
+        """---
+name: demo-skill
+description: before clawhub update api
+platforms:
+  - windows
+metadata:
+  skillKey: demo-skill
+---
+Body
+""",
+        encoding="utf-8",
+    )
+    observed: dict[str, object] = {}
+
+    async def fake_command_runner(
+        argv: tuple[str, ...],
+        *,
+        cwd: Path,
+        timeout_ms: int | None,
+    ) -> tuple[int, str, str]:
+        observed["argv"] = argv
+        observed["cwd"] = str(cwd)
+        observed["timeout_ms"] = timeout_ms
+        skill_path.write_text(
+            """---
+name: demo-skill
+description: updated from clawhub api
+platforms:
+  - windows
+metadata:
+  skillKey: demo-skill
+---
+Body
+""",
+            encoding="utf-8",
+        )
+        return (0, "updated", "")
+
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    gateway_node_method_service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        skill_clawhub_service=GatewaySkillClawHubService(
+            launcher=("clawhub",),
+            command_runner=fake_command_runner,
+        ),
+    )
+    app = create_app(
+        app_settings,
+        gateway_node_method_service=gateway_node_method_service,
+    )
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        update_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "skills.update",
+                "params": {
+                    "source": "clawhub",
+                    "slug": "demo-skill",
+                    "version": "1.2.4",
+                    "force": True,
+                },
+            },
+        )
+        status_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={"method": "skills.status", "params": {}},
+        )
+
+    assert update_response.status_code == 200
+    assert update_response.json() == {
+        "ok": True,
+        "source": "clawhub",
+        "action": "update",
+        "slug": "demo-skill",
+        "version": "1.2.4",
+        "force": True,
+        "all": False,
+        "command": [
+            "clawhub",
+            "update",
+            "demo-skill",
+            "--workdir",
+            str(tmp_path),
+            "--dir",
+            "skills",
+            "--no-input",
+            "--version",
+            "1.2.4",
+            "--force",
+        ],
+        "workspaceDir": str(tmp_path),
+        "skillsDir": str(tmp_path / "skills"),
+    }
+    assert observed == {
+        "argv": (
+            "clawhub",
+            "update",
+            "demo-skill",
+            "--workdir",
+            str(tmp_path),
+            "--dir",
+            "skills",
+            "--no-input",
+            "--version",
+            "1.2.4",
+            "--force",
+        ),
+        "cwd": str(tmp_path),
+        "timeout_ms": None,
+    }
+    assert status_response.status_code == 200
+    assert status_response.json()["skills"] == [
+        {
+            "name": "demo-skill",
+            "description": "updated from clawhub api",
+            "source": "workspace",
+            "bundled": False,
+            "filePath": str(skill_path),
+            "baseDir": str(skill_path.parent),
+            "skillKey": "demo-skill",
+            "primaryEnv": None,
+            "emoji": None,
+            "homepage": None,
+            "always": False,
+            "disabled": False,
+            "blockedByAllowlist": False,
+            "eligible": True,
+            "requirements": {
+                "bins": [],
+                "env": [],
+                "config": [],
+                "os": ["windows"],
+            },
+            "missing": {
+                "bins": [],
+                "env": [],
+                "config": [],
+                "os": [],
+            },
+            "configChecks": [],
+            "install": [],
+        }
+    ]
 
 
 def test_gateway_node_scoped_method_call_endpoint_surfaces_node_role_methods(tmp_path) -> None:

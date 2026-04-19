@@ -13,6 +13,11 @@ from openzues.services.session_keys import (
 
 _CONTROL_CHAT_PATH = "/api/control-chat"
 _DEFAULT_MODEL = "gpt-5.4"
+_CONTROL_CHAT_GLOBAL_DISPLAY_NAME = "OpenZues Control Chat"
+_CONTROL_CHAT_THREAD_DISPLAY_NAME = "OpenZues Control Chat Thread"
+_CONTROL_CHAT_SUBJECT_FALLBACK = "Operator control chat"
+_DERIVED_TITLE_MAX_LEN = 60
+_DERIVED_TITLE_ELLIPSIS = "\u2026"
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,19 +39,38 @@ class GatewaySessionsService:
         include_global: bool,
         include_unknown: bool,
         limit: int | None,
+        active_minutes: int | None,
+        label: str | None,
+        spawned_by: str | None,
+        agent_id: str | None,
+        search: str | None,
+        include_derived_titles: bool,
+        include_last_message: bool,
         now_ms: int,
     ) -> dict[str, Any]:
-        del include_unknown
-
+        if agent_id is not None and agent_id != "main":
+            raise ValueError(f'unknown agent id "{agent_id}"')
         sessions: list[dict[str, Any]] = []
         session = await self._current_control_chat_session()
         current_session_canonical = canonicalize_session_key(session.current_session_key)
-        is_global_session = session.current_session_key == session.main_session_key
-        current_session_payload = await self._session_payload(
+        current_session_payload = await self._snapshot_session_payload(
             session=session,
+            include_derived_titles=include_derived_titles,
+            include_last_message=include_last_message,
             now_ms=now_ms,
         )
-        if include_global or not is_global_session:
+        if self._session_matches_visibility(
+            session,
+            include_global=include_global,
+            include_unknown=include_unknown,
+        ) and self._session_matches_agent(
+            session.current_session_key,
+            agent_id=agent_id,
+        ) and await self._session_matches_filters(
+            session.current_session_key,
+            label=label,
+            spawned_by=spawned_by,
+        ):
             sessions.append(current_session_payload)
 
         seen_session_keys = {
@@ -63,15 +87,58 @@ class GatewaySessionsService:
             if canonical_key in seen_session_keys:
                 continue
             known_session = await self._session_for_key(session_key, default_session=session)
-            if (
-                not include_global
-                and known_session.current_session_key == known_session.main_session_key
+            if not self._session_matches_visibility(
+                known_session,
+                include_global=include_global,
+                include_unknown=include_unknown,
             ):
                 continue
-            sessions.append(await self._session_payload(session=known_session, now_ms=now_ms))
+            if not self._session_matches_agent(
+                known_session.current_session_key,
+                agent_id=agent_id,
+            ):
+                continue
+            if not await self._session_matches_filters(
+                known_session.current_session_key,
+                label=label,
+                spawned_by=spawned_by,
+            ):
+                continue
+            sessions.append(
+                await self._snapshot_session_payload(
+                    session=known_session,
+                    include_derived_titles=include_derived_titles,
+                    include_last_message=include_last_message,
+                    now_ms=now_ms,
+                )
+            )
             seen_session_keys.add(canonical_key)
-            if limit is not None and len(sessions) >= limit:
-                break
+
+        if active_minutes is not None:
+            cutoff = now_ms - active_minutes * 60_000
+            sessions = [
+                session_payload
+                for session_payload in sessions
+                if _int_or_none(session_payload.get("updatedAt")) is not None
+                and int(session_payload["updatedAt"]) >= cutoff
+            ]
+
+        if search is not None:
+            normalized_search = search.lower()
+            sessions = [
+                session_payload
+                for session_payload in sessions
+                if any(
+                    isinstance(field, str) and normalized_search in field.lower()
+                    for field in (
+                        session_payload.get("displayName"),
+                        session_payload.get("label"),
+                        session_payload.get("subject"),
+                        session_payload.get("sessionId"),
+                        session_payload.get("key"),
+                    )
+                )
+            ]
 
         if limit is not None:
             sessions = sessions[:limit]
@@ -87,6 +154,28 @@ class GatewaySessionsService:
             },
             "sessions": sessions,
         }
+
+    async def _snapshot_session_payload(
+        self,
+        *,
+        session: _CurrentControlChatSession,
+        include_derived_titles: bool,
+        include_last_message: bool,
+        now_ms: int,
+    ) -> dict[str, Any]:
+        payload = await self._session_payload(session=session, now_ms=now_ms)
+        if include_last_message:
+            last_message_preview = await self._last_message_preview(session.current_session_key)
+            if last_message_preview is not None:
+                payload["lastMessagePreview"] = last_message_preview
+        if include_derived_titles:
+            derived_title = _derive_session_title(
+                payload,
+                first_user_message=await self._first_user_message(session.current_session_key),
+            )
+            if derived_title is not None:
+                payload["derivedTitle"] = derived_title
+        return payload
 
     async def current_session_key(self) -> str:
         session = await self._current_control_chat_session()
@@ -282,10 +371,8 @@ class GatewaySessionsService:
         include_global: bool,
         include_unknown: bool,
     ) -> dict[str, Any]:
-        del include_global, include_unknown
-
         session = await self._current_control_chat_session()
-        if label is not None or spawned_by is not None:
+        if (label is not None or spawned_by is not None) and key is None and session_id is None:
             matched_session_key = await self._metadata_lookup_session_key(
                 label=label,
                 spawned_by=spawned_by,
@@ -302,8 +389,42 @@ class GatewaySessionsService:
             if matched_session is None:
                 raise ValueError("unknown session key")
             session = matched_session
-        if session_id is not None and session_id != session.current_session_id:
-            raise ValueError("unknown sessionId")
+        if session_id is not None:
+            matched_session = await self._known_session_for_session_id(
+                session_id,
+                default_session=session,
+            )
+            if matched_session is None:
+                raise ValueError("unknown sessionId")
+            if (
+                (key is not None or label is not None or spawned_by is not None)
+                and matched_session.current_session_key != session.current_session_key
+            ):
+                raise ValueError("unknown sessionId")
+            session = matched_session
+        if not await self._session_matches_filters(
+            session.current_session_key,
+            label=label,
+            spawned_by=spawned_by,
+        ):
+            if key is not None:
+                raise ValueError("unknown session key")
+            if session_id is not None:
+                raise ValueError("unknown sessionId")
+            if label is not None:
+                raise ValueError("unknown session label")
+            raise ValueError("unknown spawnedBy")
+        if key is None and not self._session_matches_visibility(
+            session,
+            include_global=include_global,
+            include_unknown=include_unknown,
+        ):
+            if session_id is not None:
+                raise ValueError("unknown sessionId")
+            if label is not None:
+                raise ValueError("unknown session label")
+            if spawned_by is not None:
+                raise ValueError("unknown spawnedBy")
 
         return {"ok": True, "key": session.current_session_key}
 
@@ -325,7 +446,9 @@ class GatewaySessionsService:
             "key": session.current_session_key,
             "kind": "global" if is_global_session else "thread",
             "displayName": (
-                "OpenZues Control Chat" if is_global_session else "OpenZues Control Chat Thread"
+                _CONTROL_CHAT_GLOBAL_DISPLAY_NAME
+                if is_global_session
+                else _CONTROL_CHAT_THREAD_DISPLAY_NAME
             ),
             "surface": "control-chat",
             "subject": (
@@ -333,7 +456,7 @@ class GatewaySessionsService:
                 if session.current_mission is not None
                 else None
             )
-            or "Operator control chat",
+            or _CONTROL_CHAT_SUBJECT_FALLBACK,
             "room": None,
             "space": None,
             "updatedAt": updated_at_ms,
@@ -482,6 +605,24 @@ class GatewaySessionsService:
             model=_string_or_none(mission.get("model")) or session.model,
         )
 
+    async def _last_message_preview(self, session_key: str) -> str | None:
+        latest_messages = await self._database.list_control_chat_messages(
+            limit=1,
+            session_key=session_key,
+        )
+        if not latest_messages:
+            return None
+        return _string_or_none(latest_messages[-1].get("content"))
+
+    async def _first_user_message(self, session_key: str) -> str | None:
+        first_message = await self._database.get_first_control_chat_message(
+            session_key=session_key,
+            role="user",
+        )
+        if first_message is None:
+            return None
+        return _string_or_none(first_message.get("content"))
+
     async def _message_sequence(self, message_row: dict[str, Any]) -> int | None:
         stored_session_key = _string_or_none(message_row.get("session_key"))
         message_id = _int_or_none(message_row.get("id"))
@@ -552,6 +693,48 @@ class GatewaySessionsService:
         metadata = row.get("metadata")
         return metadata if isinstance(metadata, dict) else {}
 
+    async def _known_session_for_session_id(
+        self,
+        session_id: str,
+        *,
+        default_session: _CurrentControlChatSession,
+    ) -> _CurrentControlChatSession | None:
+        if session_id == default_session.current_session_id:
+            return default_session
+
+        metadata_rows = await self._database.list_gateway_session_metadata_rows()
+        seen_session_keys: set[str] = set()
+        for row in metadata_rows:
+            session_key = _string_or_none(row.get("session_key"))
+            if session_key is None or session_key in seen_session_keys:
+                continue
+            seen_session_keys.add(session_key)
+            known_session = await self._session_for_key(
+                session_key,
+                default_session=default_session,
+            )
+            if known_session.current_session_id == session_id:
+                return known_session
+
+        missions = await self._database.list_missions()
+        for mission in reversed(missions):
+            if _string_or_none(mission.get("thread_id")) != session_id:
+                continue
+            session_key = _string_or_none(mission.get("session_key"))
+            if session_key is None or session_key in seen_session_keys:
+                continue
+            return await self._session_for_key(session_key, default_session=default_session)
+
+        transcript_session_keys = await self._database.list_control_chat_session_keys()
+        for session_key in transcript_session_keys:
+            if session_key in seen_session_keys:
+                continue
+            parsed = parse_thread_session_suffix(session_key)
+            if _string_or_none(parsed.thread_id) != session_id:
+                continue
+            return await self._session_for_key(session_key, default_session=default_session)
+        return None
+
     async def _metadata_lookup_session_key(
         self,
         *,
@@ -570,6 +753,40 @@ class GatewaySessionsService:
                 continue
             return session_key
         return None
+
+    async def _session_matches_filters(
+        self,
+        session_key: str,
+        *,
+        label: str | None,
+        spawned_by: str | None,
+    ) -> bool:
+        if label is None and spawned_by is None:
+            return True
+        metadata = await self._session_metadata(session_key)
+        if label is not None and _string_or_none(metadata.get("label")) != label:
+            return False
+        if spawned_by is not None and _string_or_none(metadata.get("spawnedBy")) != spawned_by:
+            return False
+        return True
+
+    def _session_matches_visibility(
+        self,
+        session: _CurrentControlChatSession,
+        *,
+        include_global: bool,
+        include_unknown: bool,
+    ) -> bool:
+        if not include_global and session.current_session_key == session.main_session_key:
+            return False
+        if not include_unknown and session.current_session_key == "unknown":
+            return False
+        return True
+
+    def _session_matches_agent(self, session_key: str, *, agent_id: str | None) -> bool:
+        if agent_id is None:
+            return True
+        return session_key != "unknown"
 
 
 def _main_session_key_from_gateway(gateway: dict[str, Any] | None) -> str:
@@ -596,6 +813,61 @@ def _route_binding_mode(
         return cast(Literal["task_lane", "saved_lane", "workspace_affinity"], route_binding_mode)
     setup_mode = str(gateway.get("setup_mode") or "local")
     return "workspace_affinity" if setup_mode == "remote" else "saved_lane"
+
+
+def _derive_session_title(
+    session_payload: dict[str, Any],
+    *,
+    first_user_message: str | None,
+) -> str | None:
+    display_name = _normalized_title_value(session_payload.get("displayName"))
+    if display_name not in {
+        None,
+        _CONTROL_CHAT_GLOBAL_DISPLAY_NAME,
+        _CONTROL_CHAT_THREAD_DISPLAY_NAME,
+    }:
+        return display_name
+
+    subject = _normalized_title_value(session_payload.get("subject"))
+    if subject not in {None, _CONTROL_CHAT_SUBJECT_FALLBACK}:
+        return subject
+
+    if first_user_message is not None:
+        return _truncate_title(first_user_message, _DERIVED_TITLE_MAX_LEN)
+
+    session_id = _string_or_none(session_payload.get("sessionId"))
+    if session_id is None:
+        return None
+    return _format_session_id_prefix(
+        session_id,
+        updated_at_ms=_int_or_none(session_payload.get("updatedAt")),
+    )
+
+
+def _normalized_title_value(value: object) -> str | None:
+    text = _string_or_none(value)
+    if text is None:
+        return None
+    return " ".join(text.split())
+
+
+def _format_session_id_prefix(session_id: str, *, updated_at_ms: int | None) -> str:
+    prefix = session_id[:8]
+    if updated_at_ms is not None and updated_at_ms > 0:
+        updated_at = datetime.fromtimestamp(updated_at_ms / 1000, tz=UTC).date().isoformat()
+        return f"{prefix} ({updated_at})"
+    return prefix
+
+
+def _truncate_title(text: str, max_len: int) -> str:
+    normalized = _normalized_title_value(text)
+    if normalized is None or len(normalized) <= max_len:
+        return normalized or ""
+    cut = normalized[: max_len - len(_DERIVED_TITLE_ELLIPSIS)]
+    last_space = cut.rfind(" ")
+    if last_space > max_len * 0.6:
+        return cut[:last_space] + _DERIVED_TITLE_ELLIPSIS
+    return cut + _DERIVED_TITLE_ELLIPSIS
 
 
 def _string_or_none(value: object) -> str | None:

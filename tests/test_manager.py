@@ -7,6 +7,7 @@ import pytest
 
 import openzues.services.manager as manager_module
 from openzues.database import Database
+from openzues.services.codex_desktop import DesktopLaunchConfig
 from openzues.services.hub import BroadcastHub
 from openzues.services.manager import InstanceRuntime, RuntimeManager, compact_event_payload
 
@@ -171,6 +172,103 @@ def test_compact_event_payload_clips_long_delta_events() -> None:
 
     assert compact["delta"].endswith("... [truncated]")
     assert compact["deltaLength"] == len(delta)
+
+
+def test_compact_event_payload_clips_user_message_content() -> None:
+    long_text = "recovery packet detail " * 80
+
+    compact = compact_event_payload(
+        "item/completed",
+        {
+            "item": {
+                "type": "userMessage",
+                "id": "msg_1",
+                "content": [
+                    {"type": "text", "text": long_text},
+                    {"type": "text", "text": "second note"},
+                    {"type": "text", "text": "third note"},
+                ],
+            }
+        },
+    )
+
+    item = compact["item"]
+    assert item["contentCount"] == 3
+    assert item["contentTruncated"] is True
+    assert len(item["content"]) == 2
+    assert item["content"][0]["text"].endswith("... [truncated]")
+    assert item["content"][0]["textLength"] == len(long_text)
+
+
+def test_resolve_connection_stages_windows_codex_stdio_launch(monkeypatch, tmp_path) -> None:
+    class StubDesktopService:
+        def resolve_launch(self) -> DesktopLaunchConfig:
+            return DesktopLaunchConfig(
+                command="C:/runtime/codex.exe",
+                args="-a never -s danger-full-access app-server",
+                note="staged from desktop package",
+                version="0.119.0",
+            )
+
+    database = Database(tmp_path / "manager.db")
+    manager = RuntimeManager(database, BroadcastHub(), desktop_service=StubDesktopService())
+    runtime = InstanceRuntime(
+        instance_id=1,
+        name="Workspace Shell",
+        transport="stdio",
+        command="codex",
+        args="app-server",
+        websocket_url=None,
+        cwd="C:/workspace",
+        auto_connect=False,
+    )
+
+    monkeypatch.setattr(manager_module.sys, "platform", "win32")
+
+    transport, command, args, websocket_url, note = manager._resolve_connection(runtime)
+
+    assert transport == "stdio"
+    assert command == "C:/runtime/codex.exe"
+    assert args == "-a never -s danger-full-access app-server"
+    assert websocket_url is None
+    assert note == "staged from desktop package (0.119.0)"
+
+
+def test_resolve_connection_keeps_custom_stdio_args_when_staging_codex(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    class StubDesktopService:
+        def resolve_launch(self) -> DesktopLaunchConfig:
+            return DesktopLaunchConfig(
+                command="C:/runtime/codex.exe",
+                args="-a never -s danger-full-access app-server",
+                note="staged from desktop package",
+                version=None,
+            )
+
+    database = Database(tmp_path / "manager.db")
+    manager = RuntimeManager(database, BroadcastHub(), desktop_service=StubDesktopService())
+    runtime = InstanceRuntime(
+        instance_id=1,
+        name="Workspace Shell",
+        transport="stdio",
+        command=r"C:\Program Files\WindowsApps\OpenAI.Codex_26.409\app\resources\codex.exe",
+        args="--log-level debug app-server",
+        websocket_url=None,
+        cwd="C:/workspace",
+        auto_connect=False,
+    )
+
+    monkeypatch.setattr(manager_module.sys, "platform", "win32")
+
+    transport, command, args, websocket_url, note = manager._resolve_connection(runtime)
+
+    assert transport == "stdio"
+    assert command == "C:/runtime/codex.exe"
+    assert args == "--log-level debug app-server"
+    assert websocket_url is None
+    assert note == "staged from desktop package"
 
 
 @pytest.mark.asyncio
@@ -1145,6 +1243,7 @@ async def test_list_mcp_server_status_summarizes_tool_catalogs(tmp_path) -> None
                 },
                 "resources": [{"name": "Memory Journal"}],
                 "resourceTemplates": [{"uri": "mempalace://entries/{id}"}],
+                "services": [{"service": {"id": "browser-control"}}],
             }
         ]
     )
@@ -1177,6 +1276,7 @@ async def test_list_mcp_server_status_summarizes_tool_catalogs(tmp_path) -> None
             ],
             "resources": ["Memory Journal"],
             "resourceTemplates": ["mempalace://entries/{id}"],
+            "services": ["browser-control"],
         }
     ]
     assert runtime.mcp_server_status == payload
@@ -1499,3 +1599,29 @@ async def test_close_awaits_cancelled_refresh_tasks(tmp_path) -> None:
 
     assert cancelled.is_set()
     assert runtime.refresh_task is None
+
+
+@pytest.mark.asyncio
+async def test_ensure_workspace_shell_instance_persists_auto_connect_requested(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    database = Database(tmp_path / "manager.db")
+    await database.initialize()
+    manager = RuntimeManager(database, BroadcastHub())
+
+    async def fake_connect_instance(instance_id: int) -> InstanceRuntime:
+        runtime = await manager.get(instance_id)
+        runtime.connected = True
+        runtime.initialized = True
+        return runtime
+
+    monkeypatch.setattr(manager, "connect_instance", fake_connect_instance)
+
+    runtime = await manager.ensure_workspace_shell_instance(cwd="C:/workspace", auto_connect=True)
+    row = await database.get_instance(runtime.instance_id)
+
+    assert runtime.auto_connect is True
+    assert runtime.connected is True
+    assert row is not None
+    assert bool(row["auto_connect"]) is True

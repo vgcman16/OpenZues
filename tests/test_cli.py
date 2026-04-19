@@ -15,8 +15,10 @@ import openzues.cli as cli_module
 from openzues.app import create_app
 from openzues.cli import (
     _append_watch_log,
+    _close_services,
     _emit_attention_queue_action,
     _emit_continue_action,
+    _emit_gateway_bootstrap,
     _emit_gateway_capability,
     _emit_status,
     _summarize_browser_snapshot,
@@ -59,6 +61,41 @@ def _bootstrap_cli_workspace(tmp_path, monkeypatch, *, task_name: str = "CLI Gat
         ],
     )
     assert bootstrap.exit_code == 0, bootstrap.stdout
+
+
+def test_close_services_shuts_down_background_service_loops() -> None:
+    events: list[str] = []
+
+    class _AsyncRecorder:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        async def close(self) -> None:
+            events.append(self.name)
+
+    class _ControlChatRecorder:
+        async def close_attention_queue(self) -> None:
+            events.append("control_chat")
+
+    services = SimpleNamespace(
+        control_chat=_ControlChatRecorder(),
+        runtime_updates=_AsyncRecorder("runtime_updates"),
+        hermes_platform=_AsyncRecorder("hermes_platform"),
+        ops_mesh=_AsyncRecorder("ops_mesh"),
+        mission_service=_AsyncRecorder("mission_service"),
+        manager=_AsyncRecorder("manager"),
+    )
+
+    asyncio.run(_close_services(services))
+
+    assert events == [
+        "control_chat",
+        "runtime_updates",
+        "hermes_platform",
+        "ops_mesh",
+        "mission_service",
+        "manager",
+    ]
 
 
 def _watch_dashboard_payload(*, mission_status: str = "paused") -> dict[str, object]:
@@ -268,7 +305,7 @@ def test_gateway_doctor_prefers_live_gateway_view_when_available(tmp_path, monke
     assert payload["summary"] == "Live gateway summary"
 
 
-def test_control_plane_base_url_prefers_lease_metadata(tmp_path) -> None:
+def test_control_plane_base_url_prefers_lease_metadata(tmp_path, monkeypatch) -> None:
     data_dir = tmp_path / "data"
     data_dir.mkdir(parents=True, exist_ok=True)
     (data_dir / "control-plane.lock.meta.json").write_text(
@@ -276,8 +313,30 @@ def test_control_plane_base_url_prefers_lease_metadata(tmp_path) -> None:
         encoding="utf-8",
     )
     cli_settings = Settings(data_dir=data_dir, db_path=data_dir / "openzues.db", port=8765)
+    monkeypatch.setattr(
+        cli_module,
+        "_control_plane_metadata_endpoint_is_reachable",
+        lambda host, port: True,
+    )
 
     assert cli_module._control_plane_base_url(cli_settings) == "http://127.0.0.1:8884"
+
+
+def test_control_plane_base_url_ignores_stale_local_lease_metadata(tmp_path, monkeypatch) -> None:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    (data_dir / "control-plane.lock.meta.json").write_text(
+        json.dumps({"pid": 42, "host": "127.0.0.1", "port": 8884}),
+        encoding="utf-8",
+    )
+    cli_settings = Settings(data_dir=data_dir, db_path=data_dir / "openzues.db", port=8765)
+    monkeypatch.setattr(
+        cli_module,
+        "_control_plane_metadata_endpoint_is_reachable",
+        lambda host, port: False,
+    )
+
+    assert cli_module._control_plane_base_url(cli_settings) == "http://127.0.0.1:8765"
 
 
 def test_serve_sets_openzues_host_and_port_env(monkeypatch) -> None:
@@ -545,6 +604,384 @@ def test_emit_gateway_capability_surfaces_staged_local_method_registry_summary(c
     ) in output
 
 
+def test_emit_gateway_capability_surfaces_browser_runtime_contract(capsys) -> None:
+    _emit_gateway_capability(
+        {
+            "headline": "Gateway capability is operator-ready",
+            "summary": "Control plane is aligned.",
+            "connected_lane_health": {"summary": "1/1 lane(s) connected."},
+            "inventory": {
+                "summary": "Tracked inventory is healthy.",
+                "memory_summary": "Idle.",
+                "browser_runtime": {
+                    "summary": (
+                        "1 connected lane(s) publish 1 browser method(s) and 1 browser "
+                        "service(s). Plugin signals: browser. MCP servers: browser-runtime."
+                    ),
+                    "status": "ready",
+                    "lane_count": 1,
+                    "connected_lane_count": 1,
+                    "ready_lane_count": 1,
+                    "method_count": 1,
+                    "service_count": 1,
+                    "methods": ["browser.request"],
+                    "services": ["browser-control"],
+                    "recommended_action": (
+                        "Use the live browser lane when parity work needs browser-led "
+                        "verification or browser-control execution."
+                    ),
+                },
+            },
+            "approval_posture": {"summary": "No approvals waiting."},
+            "launch_policy": {"summary": "Saved local launch policy."},
+            "diagnostics": {"summary": "Diagnostics are clean."},
+        },
+        json_output=False,
+    )
+
+    output = capsys.readouterr().out
+    assert "browser runtime: 1 connected lane(s) publish 1 browser method(s)" in output
+    assert "browser methods: browser.request" in output
+    assert "browser services: browser-control" in output
+    assert "browser action: Use the live browser lane" in output
+
+
+def test_emit_gateway_bootstrap_surfaces_runtime_browser_contract(capsys) -> None:
+    _emit_gateway_bootstrap(
+        {
+            "headline": "Gateway bootstrap is launch-ready",
+            "summary": "Saved launch lane is aligned.",
+            "launch_defaults_summary": "Verification on, built-in agents on, approvals paused.",
+            "launch_route": {"summary": "Saved lane will be reused."},
+            "runtime_inventory": {
+                "summary": "1 plugin, 1 service, and 1 browser method are visible on the lane.",
+                "browser_runtime": {
+                    "summary": (
+                        "Browser Lane publishes 1 browser method(s) and 1 browser service(s) "
+                        "for the saved launch lane."
+                    ),
+                    "methods": ["browser.request"],
+                    "services": ["browser-control"],
+                    "recommended_action": (
+                        "Use this saved launch lane for browser-led verification and "
+                        "browser-control work."
+                    ),
+                },
+                "method_catalog": {
+                    "summary": "1 plugin-published gateway method is resolved on the lane."
+                },
+            },
+        },
+        json_output=False,
+    )
+
+    output = capsys.readouterr().out
+    assert "launch defaults: Verification on, built-in agents on, approvals paused." in output
+    assert "launch route: Saved lane will be reused." in output
+    assert "runtime inventory: 1 plugin, 1 service, and 1 browser method are visible" in output
+    assert "browser runtime: Browser Lane publishes 1 browser method(s)" in output
+    assert "browser methods: browser.request" in output
+    assert "browser services: browser-control" in output
+    assert "browser action: Use this saved launch lane" in output
+    assert "method catalog: 1 plugin-published gateway method is resolved on the lane." in output
+
+
+def test_browser_status_json_surfaces_saved_launch_and_local_browser(tmp_path, monkeypatch) -> None:
+    _bootstrap_cli_workspace(tmp_path, monkeypatch, task_name="CLI Browser Loop")
+    monkeypatch.setattr(
+        "openzues.services.browser_posture.find_agent_browser_command",
+        lambda: "agent-browser.cmd",
+    )
+
+    result = runner.invoke(app, ["browser", "status", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["control_plane_url"].startswith("http://")
+    assert payload["local_agent_browser"]["available"] is True
+    assert payload["local_agent_browser"]["command"] == "agent-browser.cmd"
+    assert payload["saved_launch_browser_runtime"] is not None
+    assert payload["saved_launch"]["status"] in {"ready", "warn", "info", "staged"}
+
+
+def test_browser_doctor_json_surfaces_posture_without_verify(tmp_path, monkeypatch) -> None:
+    _bootstrap_cli_workspace(tmp_path, monkeypatch, task_name="CLI Browser Doctor")
+    monkeypatch.setattr(
+        "openzues.services.browser_posture.find_agent_browser_command",
+        lambda: "agent-browser.cmd",
+    )
+
+    result = runner.invoke(app, ["browser", "doctor", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["status"] in {"ready", "warn", "info"}
+    assert payload["control_plane_url"].startswith("http://")
+    assert payload["local_agent_browser"]["available"] is True
+    assert payload.get("verification") is None
+
+
+def test_browser_doctor_verify_json_embeds_verification_result(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("OPENZUES_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setattr(
+        "openzues.cli._control_plane_base_url",
+        lambda _settings: "http://watch.test",
+    )
+
+    async def fake_build_browser_status_payload(_services) -> dict[str, object]:
+        return {
+            "status": "ready",
+            "headline": "Browser control is operator-ready",
+            "summary": "Local agent-browser and the lane browser runtime are aligned.",
+            "control_plane_url": "http://watch.test",
+            "local_agent_browser": {
+                "available": True,
+                "command": "agent-browser.cmd",
+                "summary": "agent-browser is available at agent-browser.cmd.",
+            },
+            "recommended_action": "Use the connected browser lane for live verification.",
+        }
+
+    def fake_browser_verify(*, browser_url: str, session_name: str):
+        assert browser_url == "http://watch.test"
+        assert session_name == "openzues-browser"
+        return {
+            "ok": True,
+            "status": "ready",
+            "summary": "url http://watch.test, content visible, no overlay, 0 page error(s).",
+            "url": browser_url,
+            "title": "OpenZues",
+        }
+
+    monkeypatch.setattr(
+        "openzues.cli._build_browser_status_payload",
+        fake_build_browser_status_payload,
+    )
+    monkeypatch.setattr(
+        "openzues.cli._watch_browser_verify_guarded",
+        fake_browser_verify,
+    )
+
+    result = runner.invoke(app, ["browser", "doctor", "--verify", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "ready"
+    assert payload["verification"]["ok"] is True
+    assert payload["verification"]["status"] == "ready"
+    assert payload["verification"]["url"] == "http://watch.test"
+    assert payload["verification"]["session"] == "openzues-browser"
+
+
+def test_browser_doctor_verify_exits_nonzero_when_verify_fails(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("OPENZUES_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setattr(
+        "openzues.cli._control_plane_base_url",
+        lambda _settings: "http://watch.test",
+    )
+
+    async def fake_build_browser_status_payload(_services) -> dict[str, object]:
+        return {
+            "status": "ready",
+            "headline": "Browser control is operator-ready",
+            "summary": "Local agent-browser and the lane browser runtime are aligned.",
+            "control_plane_url": "http://watch.test",
+            "local_agent_browser": {
+                "available": True,
+                "command": "agent-browser.cmd",
+                "summary": "agent-browser is available at agent-browser.cmd.",
+            },
+            "recommended_action": "Use the connected browser lane for live verification.",
+        }
+
+    def fake_browser_verify(*, browser_url: str, session_name: str):
+        assert browser_url == "http://watch.test"
+        assert session_name == "openzues-browser"
+        raise RuntimeError("browser verification timed out after 45s.")
+
+    monkeypatch.setattr(
+        "openzues.cli._build_browser_status_payload",
+        fake_build_browser_status_payload,
+    )
+    monkeypatch.setattr(
+        "openzues.cli._watch_browser_verify_guarded",
+        fake_browser_verify,
+    )
+
+    result = runner.invoke(app, ["browser", "doctor", "--verify", "--json"])
+
+    assert result.exit_code == 1
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "warn"
+    assert payload["verification"]["ok"] is False
+    assert payload["verification"]["summary"] == "browser verification timed out after 45s."
+    assert payload["verification"]["url"] == "http://watch.test"
+
+
+def test_browser_verify_json_defaults_to_control_plane_url(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "openzues.cli._control_plane_base_url",
+        lambda _settings: "http://watch.test",
+    )
+
+    def fake_browser_verify(*, browser_url: str, session_name: str):
+        assert browser_url == "http://watch.test"
+        assert session_name == "openzues-browser"
+        return {
+            "ok": True,
+            "status": "ready",
+            "summary": "url http://watch.test, content visible, no overlay, 0 page error(s).",
+            "url": browser_url,
+            "title": "OpenZues",
+        }
+
+    monkeypatch.setattr(
+        "openzues.cli._watch_browser_verify_guarded",
+        fake_browser_verify,
+    )
+
+    result = runner.invoke(app, ["browser", "verify", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "ready"
+    assert payload["ok"] is True
+    assert payload["session"] == "openzues-browser"
+    assert payload["url"] == "http://watch.test"
+
+
+def test_browser_verify_exits_nonzero_when_guarded_verify_fails(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "openzues.cli._control_plane_base_url",
+        lambda _settings: "http://watch.test",
+    )
+
+    def fake_browser_verify(*, browser_url: str, session_name: str):
+        assert browser_url == "http://watch.test"
+        assert session_name == "openzues-browser"
+        raise RuntimeError("browser verification timed out after 45s.")
+
+    monkeypatch.setattr(
+        "openzues.cli._watch_browser_verify_guarded",
+        fake_browser_verify,
+    )
+
+    result = runner.invoke(app, ["browser", "verify", "--json"])
+
+    assert result.exit_code == 1
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "warn"
+    assert payload["ok"] is False
+    assert payload["summary"] == "browser verification timed out after 45s."
+    assert payload["url"] == "http://watch.test"
+
+
+def test_browser_open_json_uses_agent_browser_session_and_target(monkeypatch) -> None:
+    calls: list[tuple[list[str], str, float, bool]] = []
+
+    def fake_run_browser_command(
+        args: list[str],
+        *,
+        session_name: str,
+        timeout_seconds: float = 60.0,
+        allow_failure: bool = False,
+    ) -> str:
+        calls.append((args, session_name, timeout_seconds, allow_failure))
+        return ""
+
+    monkeypatch.setattr("openzues.cli._run_browser_command", fake_run_browser_command)
+
+    result = runner.invoke(app, ["browser", "open", "https://example.com", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "ready"
+    assert payload["url"] == "https://example.com"
+    assert payload["session"] == "openzues-browser"
+    assert calls == [(["open", "https://example.com"], "openzues-browser", 15.0, False)]
+
+
+def test_browser_snapshot_json_summarizes_snapshot_output(monkeypatch) -> None:
+    def fake_run_browser_command(
+        args: list[str],
+        *,
+        session_name: str,
+        timeout_seconds: float = 60.0,
+        allow_failure: bool = False,
+    ) -> str:
+        assert args == ["snapshot", "-i"]
+        assert session_name == "openzues-browser"
+        assert timeout_seconds == 6.0
+        assert allow_failure is False
+        return "\n".join(
+            [
+                '[document] "OpenZues"',
+                '- heading "Parity Control"',
+                '- button "Continue parity work"',
+            ]
+        )
+
+    monkeypatch.setattr("openzues.cli._run_browser_command", fake_run_browser_command)
+
+    result = runner.invoke(app, ["browser", "snapshot", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "ready"
+    assert payload["session"] == "openzues-browser"
+    assert "Parity Control" in payload["snapshot_summary"]
+
+
+def test_browser_console_json_returns_lines(monkeypatch) -> None:
+    def fake_run_browser_command(
+        args: list[str],
+        *,
+        session_name: str,
+        timeout_seconds: float = 60.0,
+        allow_failure: bool = False,
+    ) -> str:
+        assert args == ["console"]
+        assert session_name == "openzues-browser"
+        assert timeout_seconds == 5.0
+        assert allow_failure is False
+        return "\n".join(["console: ready", "console: parity pulse"])
+
+    monkeypatch.setattr("openzues.cli._run_browser_command", fake_run_browser_command)
+
+    result = runner.invoke(app, ["browser", "console", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "ready"
+    assert payload["line_count"] == 2
+    assert payload["lines"] == ["console: ready", "console: parity pulse"]
+
+
+def test_browser_errors_json_returns_lines(monkeypatch) -> None:
+    def fake_run_browser_command(
+        args: list[str],
+        *,
+        session_name: str,
+        timeout_seconds: float = 60.0,
+        allow_failure: bool = False,
+    ) -> str:
+        assert args == ["errors"]
+        assert session_name == "openzues-browser"
+        assert timeout_seconds == 5.0
+        assert allow_failure is False
+        return "TypeError: parity probe failed"
+
+    monkeypatch.setattr("openzues.cli._run_browser_command", fake_run_browser_command)
+
+    result = runner.invoke(app, ["browser", "errors", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "ready"
+    assert payload["line_count"] == 1
+    assert payload["lines"] == ["TypeError: parity probe failed"]
+
+
 def test_continue_plan_uses_gateway_aware_repair_first_posture(tmp_path, monkeypatch) -> None:
     _bootstrap_cli_workspace(tmp_path, monkeypatch)
 
@@ -650,6 +1087,10 @@ def test_gateway_doctor_human_output_summarizes_sections(tmp_path, monkeypatch) 
 def test_status_json_reuses_gateway_contract_and_surfaces_queue_plan(tmp_path, monkeypatch) -> None:
     data_dir = tmp_path / "data"
     _bootstrap_cli_workspace(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        "openzues.services.browser_posture.find_agent_browser_command",
+        lambda: "agent-browser.cmd",
+    )
 
     result = runner.invoke(app, ["status", "--json"])
 
@@ -671,6 +1112,8 @@ def test_status_json_reuses_gateway_contract_and_surfaces_queue_plan(tmp_path, m
 
     assert payload["headline"]
     assert payload["status_plan"]["action_kind"] == "observe"
+    assert payload["browser_posture"]["local_agent_browser"]["available"] is True
+    assert payload["browser_posture"]["saved_launch_browser_runtime"] is not None
     assert payload["queue_plan"] is not None
     assert payload["queue_plan"]["signal_id"] is not None
     assert "Gateway Doctor says" in payload["queue_plan"]["reply"]
@@ -2435,6 +2878,10 @@ def test_status_human_output_includes_gateway_radar_launchpad_and_queue(
     tmp_path, monkeypatch
 ) -> None:
     _bootstrap_cli_workspace(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        "openzues.services.browser_posture.find_agent_browser_command",
+        lambda: "agent-browser.cmd",
+    )
 
     result = runner.invoke(app, ["status"])
 
@@ -2443,6 +2890,7 @@ def test_status_human_output_includes_gateway_radar_launchpad_and_queue(
     assert "lanes:" in result.stdout
     assert "status:" in result.stdout
     assert "gateway:" in result.stdout
+    assert "browser:" in result.stdout
     assert "lane health:" in result.stdout
     assert "inventory:" in result.stdout
     assert "approvals:" in result.stdout

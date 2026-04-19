@@ -6,6 +6,7 @@ import json
 import os
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -26,6 +27,7 @@ from openzues.database import Database
 from openzues.schemas import (
     ConversationTargetView,
     DashboardView,
+    GatewayBootstrapView,
     GatewayCapabilityView,
     HermesDoctorView,
     HermesRuntimeProfileUpdate,
@@ -36,6 +38,7 @@ from openzues.schemas import (
     SetupWizardSessionUpdate,
 )
 from openzues.services.access import AccessService
+from openzues.services.browser_posture import build_browser_posture
 from openzues.services.codex_desktop import CodexDesktopService
 from openzues.services.control_chat import (
     ControlChatService,
@@ -73,6 +76,7 @@ _ATTENTION_QUEUE_IDLE_REPLY = (
     "The attention queue is clear right now. There is no bounded move to fire."
 )
 _DEFAULT_WATCH_TASK_NAME = "OpenClaw Total Parity Program"
+_DEFAULT_BROWSER_SESSION = "openzues-browser"
 _DEFAULT_BROWSER_WATCH_SESSION = "openzues-watch"
 _BROWSER_RENDERED_SCREENSHOT_MIN_BYTES = 32_768
 _BROWSER_BLANK_SCREENSHOT_MAX_BYTES = 8_192
@@ -86,6 +90,7 @@ def _coerce_int(value: object) -> int:
 
 
 gateway_app = typer.Typer(help="Inspect and stamp the saved gateway bootstrap profile.")
+browser_app = typer.Typer(help="Inspect and run the browser verification/runtime surface.")
 hermes_app = typer.Typer(help="Inspect and tune Hermes runtime posture.")
 routes_app = typer.Typer(help="Inspect and test notification routes.")
 hermes_profile_app = typer.Typer(
@@ -102,6 +107,7 @@ setup_wizard_app = typer.Typer(
     invoke_without_command=True,
 )
 app.add_typer(gateway_app, name="gateway")
+app.add_typer(browser_app, name="browser")
 app.add_typer(hermes_app, name="hermes")
 app.add_typer(routes_app, name="routes")
 hermes_app.add_typer(hermes_profile_app, name="profile")
@@ -135,10 +141,41 @@ def _control_plane_base_url(app_settings: Settings) -> str:
                 port_number = int(port_value)
             except (TypeError, ValueError):
                 port_number = 0
-            if host_value and port_number > 0:
+            if (
+                host_value
+                and port_number > 0
+                and _control_plane_metadata_endpoint_is_reachable(host_value, port_number)
+            ):
                 return _watch_base_url(url=None, host=host_value, port=port_number)
 
     return _watch_base_url(url=None, host=app_settings.host, port=app_settings.port)
+
+
+def _control_plane_metadata_endpoint_is_reachable(
+    host: str,
+    port: int,
+    *,
+    timeout_seconds: float = 0.35,
+) -> bool:
+    normalized_host = _normalize_local_control_plane_host(host)
+    if normalized_host is None:
+        return True
+    try:
+        with socket.create_connection((normalized_host, port), timeout=timeout_seconds):
+            return True
+    except OSError:
+        return False
+
+
+def _normalize_local_control_plane_host(host: str) -> str | None:
+    value = str(host or "").strip().lower()
+    if not value:
+        return None
+    if value in {"localhost", "127.0.0.1", "0.0.0.0"}:
+        return "127.0.0.1"
+    if value in {"::1", "[::1]", "::"}:
+        return "::1"
+    return None
 
 
 def _try_live_api_model(
@@ -198,6 +235,20 @@ async def _try_live_gateway_capability_view(
         timeout_seconds=15.0,
     )
     return cast("GatewayCapabilityView | None", result)
+
+
+async def _try_live_gateway_bootstrap_view(
+    app_settings: Settings,
+) -> GatewayBootstrapView | None:
+    base_url = _control_plane_base_url(app_settings)
+    result = await asyncio.to_thread(
+        _try_live_api_model,
+        base_url,
+        "/api/gateway/bootstrap",
+        GatewayBootstrapView,
+        timeout_seconds=15.0,
+    )
+    return cast("GatewayBootstrapView | None", result)
 
 
 async def _try_live_hermes_doctor_view(app_settings: Settings) -> HermesDoctorView | None:
@@ -347,6 +398,10 @@ def _run(coro):
 
 async def _close_services(services: CliServices) -> None:
     await services.control_chat.close_attention_queue()
+    await services.runtime_updates.close()
+    await services.hermes_platform.close()
+    await services.ops_mesh.close()
+    await services.mission_service.close()
     await services.manager.close()
 
 
@@ -380,6 +435,54 @@ def _emit_payload(payload: object, *, json_output: bool) -> None:
     typer.echo(str(payload))
 
 
+def _emit_gateway_bootstrap(payload: dict[str, object], *, json_output: bool) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+
+    _emit_payload(payload, json_output=False)
+    launch_defaults_summary = str(payload.get("launch_defaults_summary") or "").strip()
+    if launch_defaults_summary:
+        typer.echo("launch defaults: " + launch_defaults_summary)
+    launch_route = payload.get("launch_route")
+    if isinstance(launch_route, dict):
+        summary = str(launch_route.get("summary") or "").strip()
+        if summary:
+            typer.echo("launch route: " + summary)
+    runtime_inventory = payload.get("runtime_inventory")
+    if isinstance(runtime_inventory, dict):
+        typer.echo("runtime inventory: " + str(runtime_inventory.get("summary") or ""))
+        browser_runtime = runtime_inventory.get("browser_runtime")
+        if isinstance(browser_runtime, dict):
+            typer.echo("browser runtime: " + str(browser_runtime.get("summary") or ""))
+            browser_methods = browser_runtime.get("methods")
+            if isinstance(browser_methods, list) and browser_methods:
+                typer.echo(
+                    "browser methods: "
+                    + ", ".join(
+                        str(method_name)
+                        for method_name in browser_methods[:6]
+                        if str(method_name).strip()
+                    )
+                )
+            browser_services = browser_runtime.get("services")
+            if isinstance(browser_services, list) and browser_services:
+                typer.echo(
+                    "browser services: "
+                    + ", ".join(
+                        str(service_name)
+                        for service_name in browser_services[:6]
+                        if str(service_name).strip()
+                    )
+                )
+            recommended_action = str(browser_runtime.get("recommended_action") or "").strip()
+            if recommended_action:
+                typer.echo("browser action: " + recommended_action)
+        method_catalog = runtime_inventory.get("method_catalog")
+        if isinstance(method_catalog, dict):
+            typer.echo("method catalog: " + str(method_catalog.get("summary") or ""))
+
+
 def _emit_gateway_capability(payload: dict[str, object], *, json_output: bool) -> None:
     if json_output:
         _emit_payload(payload, json_output=True)
@@ -393,6 +496,32 @@ def _emit_gateway_capability(payload: dict[str, object], *, json_output: bool) -
     if isinstance(inventory, dict):
         typer.echo("inventory: " + str(inventory.get("summary") or ""))
         typer.echo("memory: " + str(inventory.get("memory_summary") or ""))
+        browser_runtime = inventory.get("browser_runtime")
+        if isinstance(browser_runtime, dict):
+            typer.echo("browser runtime: " + str(browser_runtime.get("summary") or ""))
+            browser_methods = browser_runtime.get("methods")
+            if isinstance(browser_methods, list) and browser_methods:
+                typer.echo(
+                    "browser methods: "
+                    + ", ".join(
+                        str(method_name)
+                        for method_name in browser_methods[:6]
+                        if str(method_name).strip()
+                    )
+                )
+            browser_services = browser_runtime.get("services")
+            if isinstance(browser_services, list) and browser_services:
+                typer.echo(
+                    "browser services: "
+                    + ", ".join(
+                        str(service_name)
+                        for service_name in browser_services[:6]
+                        if str(service_name).strip()
+                    )
+                )
+            recommended_action = str(browser_runtime.get("recommended_action") or "").strip()
+            if recommended_action:
+                typer.echo("browser action: " + recommended_action)
         method_catalog = inventory.get("method_catalog")
         if isinstance(method_catalog, dict):
             typer.echo("method catalog: " + str(method_catalog.get("summary") or ""))
@@ -475,6 +604,196 @@ def _emit_gateway_capability(payload: dict[str, object], *, json_output: bool) -
     diagnostics = payload.get("diagnostics")
     if isinstance(diagnostics, dict):
         typer.echo("diagnostics: " + str(diagnostics.get("summary") or ""))
+
+
+def _emit_browser_status(payload: dict[str, object], *, json_output: bool) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+
+    _emit_payload(payload, json_output=False)
+    control_plane_url = str(payload.get("control_plane_url") or "").strip()
+    if control_plane_url:
+        typer.echo("control plane: " + control_plane_url)
+    local_agent_browser = payload.get("local_agent_browser")
+    if isinstance(local_agent_browser, dict):
+        typer.echo("local browser: " + str(local_agent_browser.get("summary") or ""))
+    saved_launch = payload.get("saved_launch")
+    if isinstance(saved_launch, dict):
+        typer.echo("saved launch: " + str(saved_launch.get("summary") or ""))
+    saved_launch_browser_runtime = payload.get("saved_launch_browser_runtime")
+    if isinstance(saved_launch_browser_runtime, dict):
+        typer.echo(
+            "saved browser runtime: "
+            + str(saved_launch_browser_runtime.get("summary") or "")
+        )
+    live_gateway_browser_runtime = payload.get("live_gateway_browser_runtime")
+    if isinstance(live_gateway_browser_runtime, dict):
+        typer.echo(
+            "live browser runtime: "
+            + str(live_gateway_browser_runtime.get("summary") or "")
+        )
+    recommended_action = str(payload.get("recommended_action") or "").strip()
+    if recommended_action:
+        typer.echo("browser action: " + recommended_action)
+
+
+def _emit_browser_verify(payload: dict[str, object], *, json_output: bool) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+
+    _emit_payload(payload, json_output=False)
+    url = str(payload.get("url") or "").strip()
+    session = str(payload.get("session") or "").strip()
+    title = str(payload.get("title") or "").strip()
+    snapshot_summary = str(payload.get("snapshot_summary") or "").strip()
+    screenshot_path = str(payload.get("screenshot_path") or "").strip()
+    if url:
+        typer.echo("url: " + url)
+    if session:
+        typer.echo("session: " + session)
+    if title:
+        typer.echo("title: " + title)
+    if snapshot_summary:
+        typer.echo("snapshot: " + snapshot_summary)
+    if screenshot_path:
+        typer.echo("screenshot: " + screenshot_path)
+
+
+def _emit_browser_stream(payload: dict[str, object], *, json_output: bool) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+
+    _emit_payload(payload, json_output=False)
+    session = str(payload.get("session") or "").strip()
+    if session:
+        typer.echo("session: " + session)
+    lines = payload.get("lines")
+    if isinstance(lines, list):
+        for line in lines:
+            text = str(line).strip()
+            if text:
+                typer.echo(text)
+
+
+def _emit_browser_doctor(payload: dict[str, object], *, json_output: bool) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+
+    _emit_browser_status(payload, json_output=False)
+    verification = payload.get("verification")
+    if not isinstance(verification, dict):
+        return
+
+    status = str(verification.get("status") or "").strip()
+    summary = str(verification.get("summary") or "").strip()
+    if status or summary:
+        typer.echo(
+            "browser verify: " + " / ".join(part for part in (status, summary) if part)
+        )
+    url = str(verification.get("url") or "").strip()
+    if url:
+        typer.echo("verify url: " + url)
+    session = str(verification.get("session") or "").strip()
+    if session:
+        typer.echo("verify session: " + session)
+    title = str(verification.get("title") or "").strip()
+    if title:
+        typer.echo("verify title: " + title)
+    screenshot_path = str(verification.get("screenshot_path") or "").strip()
+    if screenshot_path:
+        typer.echo("verify screenshot: " + screenshot_path)
+
+
+def _browser_verify_payload(
+    *,
+    verification: dict[str, object],
+    resolved_url: str,
+    session: str,
+) -> dict[str, object]:
+    ok = bool(verification.get("ok"))
+    return {
+        **verification,
+        "ok": ok,
+        "status": str(verification.get("status") or ("ready" if ok else "warn")).strip()
+        or ("ready" if ok else "warn"),
+        "headline": (
+            "Browser verification passed"
+            if ok
+            else "Browser verification found issues"
+        ),
+        "summary": str(verification.get("summary") or "").strip(),
+        "url": str(verification.get("url") or resolved_url).strip() or resolved_url,
+        "session": session,
+    }
+
+
+def _browser_verify_error_payload(
+    *,
+    summary: str,
+    resolved_url: str,
+    session: str,
+) -> dict[str, object]:
+    return {
+        "ok": False,
+        "status": "warn",
+        "headline": "Browser verification needs attention",
+        "summary": summary,
+        "url": resolved_url,
+        "session": session,
+    }
+
+
+def _browser_command_status_payload() -> dict[str, object]:
+    try:
+        command = _browser_command()
+    except RuntimeError as exc:
+        return {
+            "available": False,
+            "command": None,
+            "summary": str(exc),
+        }
+    return {
+        "available": True,
+        "command": command,
+        "summary": f"agent-browser is available at {command}.",
+    }
+
+
+async def _build_browser_status_payload(services: CliServices) -> dict[str, object]:
+    control_plane_url = _control_plane_base_url(services.settings)
+    bootstrap_view = await _try_live_gateway_bootstrap_view(services.settings)
+    if bootstrap_view is None:
+        bootstrap_view = await services.gateway_bootstrap.get_view()
+    capability_view = await _try_live_gateway_capability_view(services.settings)
+    if capability_view is None:
+        capability_view = await services.gateway_capability.get_view()
+    return build_browser_posture(
+        control_plane_url=control_plane_url,
+        gateway_bootstrap=bootstrap_view,
+        gateway_capability=capability_view,
+    ).model_dump(mode="json")
+
+
+def _browser_stream_payload(
+    *,
+    label: str,
+    session: str,
+    output: str,
+) -> dict[str, object]:
+    lines = [line.strip() for line in output.splitlines() if line.strip()]
+    return {
+        "ok": True,
+        "status": "ready",
+        "headline": f"Browser {label} captured",
+        "summary": f"Captured {len(lines)} {label} line(s) from session {session}.",
+        "session": session,
+        "line_count": len(lines),
+        "lines": lines,
+    }
 
 
 def _emit_memory_proof_mission(payload: dict[str, object], *, json_output: bool) -> None:
@@ -722,6 +1041,16 @@ def _emit_status(payload: dict[str, object], *, json_output: bool) -> None:
             f"{instance_summary.get('connected_count', 0)} connected / "
             f"{instance_summary.get('total_count', 0)} total"
         )
+
+    browser_posture = payload.get("browser_posture")
+    if isinstance(browser_posture, dict):
+        typer.echo("browser: " + str(browser_posture.get("summary") or ""))
+        local_agent_browser = browser_posture.get("local_agent_browser")
+        if isinstance(local_agent_browser, dict):
+            typer.echo("browser tool: " + str(local_agent_browser.get("summary") or ""))
+        recommended_action = str(browser_posture.get("recommended_action") or "").strip()
+        if recommended_action:
+            typer.echo("browser action: " + recommended_action)
 
     gateway_capability = payload.get("gateway_capability")
     if isinstance(gateway_capability, dict):
@@ -2284,6 +2613,11 @@ def _build_status_payload(dashboard: SimpleNamespace) -> dict[str, object]:
             "connected_count": connected_count,
             "total_count": len(dashboard.instances),
         },
+        "browser_posture": (
+            dashboard.browser_posture.model_dump(mode="json")
+            if getattr(dashboard, "browser_posture", None) is not None
+            else None
+        ),
         "gateway_capability": dashboard.gateway_capability.model_dump(mode="json"),
         "radar": dashboard.radar.model_dump(mode="json"),
         "launchpad": dashboard.launchpad.model_dump(mode="json"),
@@ -2303,6 +2637,7 @@ async def _build_operator_dashboard(services: CliServices) -> DashboardView | Si
     missions = await services.mission_service.list_views()
     doctrines = build_doctrines(missions, projects)
     gateway_capability = await services.gateway_capability.get_view()
+    gateway_bootstrap = await services.gateway_bootstrap.get_view()
     preferred_memory_provider, preferred_executor = await load_saved_runtime_preferences(
         services.database
     )
@@ -2315,8 +2650,18 @@ async def _build_operator_dashboard(services: CliServices) -> DashboardView | Si
         preferred_memory_provider=preferred_memory_provider,
         preferred_executor=preferred_executor,
     )
+    browser_posture = build_browser_posture(
+        control_plane_url=_control_plane_base_url(services.settings),
+        gateway_bootstrap=gateway_bootstrap,
+        gateway_capability=gateway_capability,
+    )
     return SimpleNamespace(
-        brief=build_brief(instances, missions, projects),
+        brief=build_brief(
+            instances,
+            missions,
+            projects,
+            browser_posture=browser_posture,
+        ),
         instances=instances,
         missions=missions,
         projects=projects,
@@ -2325,9 +2670,12 @@ async def _build_operator_dashboard(services: CliServices) -> DashboardView | Si
             instances,
             missions,
             projects,
+            browser_posture=browser_posture,
             gateway_capability=gateway_capability,
         ),
+        browser_posture=browser_posture,
         gateway_capability=gateway_capability,
+        gateway_bootstrap=gateway_bootstrap,
         ops_mesh=SimpleNamespace(skillbooks=[]),
     )
 
@@ -2759,6 +3107,289 @@ def watch_command(
     except KeyboardInterrupt as exc:
         typer.echo("watch stopped")
         raise typer.Exit(code=130) from exc
+
+
+@browser_app.command("status")
+def browser_status(
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit the browser runtime/operator posture as JSON.",
+    ),
+) -> None:
+    payload = _run(_run_with_services(_build_browser_status_payload))
+    _emit_browser_status(payload, json_output=json_output)
+
+
+@browser_app.command("doctor")
+def browser_doctor(
+    verify: bool = typer.Option(
+        False,
+        "--verify",
+        help="Also run a bounded browser verification against the control-plane URL.",
+    ),
+    url: str | None = typer.Option(
+        None,
+        "--url",
+        help="Explicit URL for the optional verification run.",
+    ),
+    session: str = typer.Option(
+        _DEFAULT_BROWSER_SESSION,
+        "--session",
+        help="agent-browser session name for the optional verification run.",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit the browser doctor result as JSON.",
+    ),
+) -> None:
+    async def _action(services: CliServices) -> dict[str, object]:
+        payload = await _build_browser_status_payload(services)
+        if not verify:
+            return {**payload, "verification": None}
+
+        resolved_url = url or _control_plane_base_url(services.settings)
+        try:
+            verification = _watch_browser_verify_guarded(
+                browser_url=resolved_url,
+                session_name=session,
+            )
+        except RuntimeError as exc:
+            verification_payload = _browser_verify_error_payload(
+                summary=str(exc),
+                resolved_url=resolved_url,
+                session=session,
+            )
+            return {
+                **payload,
+                "status": "warn",
+                "headline": "Browser doctor found repair work",
+                "summary": str(exc),
+                "verification": verification_payload,
+            }
+
+        verification_payload = _browser_verify_payload(
+            verification=verification,
+            resolved_url=resolved_url,
+            session=session,
+        )
+        if not bool(verification_payload.get("ok")):
+            return {
+                **payload,
+                "status": "warn",
+                "headline": "Browser doctor found repair work",
+                "summary": str(verification_payload.get("summary") or payload.get("summary") or ""),
+                "verification": verification_payload,
+            }
+        return {**payload, "verification": verification_payload}
+
+    payload = _run(_run_with_services(_action))
+    _emit_browser_doctor(payload, json_output=json_output)
+    verification = payload.get("verification")
+    if verify and isinstance(verification, dict) and not bool(verification.get("ok")):
+        raise typer.Exit(code=1)
+
+
+@browser_app.command("verify")
+def browser_verify(
+    url: str | None = typer.Option(
+        None,
+        "--url",
+        help="Explicit URL to verify. Defaults to the current OpenZues control-plane URL.",
+    ),
+    session: str = typer.Option(
+        _DEFAULT_BROWSER_SESSION,
+        "--session",
+        help="agent-browser session name for the verification run.",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit the browser verification result as JSON.",
+    ),
+) -> None:
+    resolved_url = url or _control_plane_base_url(_runtime_settings())
+    try:
+        verification = _watch_browser_verify_guarded(
+            browser_url=resolved_url,
+            session_name=session,
+        )
+    except RuntimeError as exc:
+        payload = _browser_verify_error_payload(
+            summary=str(exc),
+            resolved_url=resolved_url,
+            session=session,
+        )
+        _emit_browser_verify(payload, json_output=json_output)
+        raise typer.Exit(code=1) from exc
+
+    payload = _browser_verify_payload(
+        verification=verification,
+        resolved_url=resolved_url,
+        session=session,
+    )
+    _emit_browser_verify(payload, json_output=json_output)
+    if not bool(payload.get("ok")):
+        raise typer.Exit(code=1)
+
+
+@browser_app.command("open")
+def browser_open(
+    target: str = typer.Argument(..., help="URL to open in the agent-browser session."),
+    session: str = typer.Option(
+        _DEFAULT_BROWSER_SESSION,
+        "--session",
+        help="agent-browser session name for the browser tab.",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit the browser open result as JSON.",
+    ),
+) -> None:
+    try:
+        _run_browser_command(
+            ["open", target],
+            session_name=session,
+            timeout_seconds=15.0,
+        )
+    except RuntimeError as exc:
+        payload = {
+            "ok": False,
+            "status": "warn",
+            "headline": "Browser open failed",
+            "summary": str(exc),
+            "url": target,
+            "session": session,
+        }
+        _emit_browser_verify(payload, json_output=json_output)
+        raise typer.Exit(code=1) from exc
+
+    payload = {
+        "ok": True,
+        "status": "ready",
+        "headline": "Browser page opened",
+        "summary": f"Opened {target} in agent-browser session {session}.",
+        "url": target,
+        "session": session,
+    }
+    _emit_browser_verify(payload, json_output=json_output)
+
+
+@browser_app.command("snapshot")
+def browser_snapshot(
+    session: str = typer.Option(
+        _DEFAULT_BROWSER_SESSION,
+        "--session",
+        help="agent-browser session name to inspect.",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit the browser snapshot result as JSON.",
+    ),
+) -> None:
+    try:
+        snapshot_output = _run_browser_command(
+            ["snapshot", "-i"],
+            session_name=session,
+            timeout_seconds=6.0,
+        )
+    except RuntimeError as exc:
+        payload = {
+            "ok": False,
+            "status": "warn",
+            "headline": "Browser snapshot failed",
+            "summary": str(exc),
+            "session": session,
+        }
+        _emit_browser_verify(payload, json_output=json_output)
+        raise typer.Exit(code=1) from exc
+
+    snapshot_summary = _summarize_browser_snapshot(snapshot_output)
+    payload = {
+        "ok": True,
+        "status": "ready",
+        "headline": "Browser snapshot captured",
+        "summary": snapshot_summary,
+        "session": session,
+        "snapshot_summary": snapshot_summary,
+        "snapshot_output": snapshot_output,
+    }
+    _emit_browser_verify(payload, json_output=json_output)
+
+
+@browser_app.command("console")
+def browser_console(
+    session: str = typer.Option(
+        _DEFAULT_BROWSER_SESSION,
+        "--session",
+        help="agent-browser session name to inspect.",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit the browser console lines as JSON.",
+    ),
+) -> None:
+    try:
+        output = _run_browser_command(
+            ["console"],
+            session_name=session,
+            timeout_seconds=5.0,
+        )
+    except RuntimeError as exc:
+        payload = {
+            "ok": False,
+            "status": "warn",
+            "headline": "Browser console read failed",
+            "summary": str(exc),
+            "session": session,
+            "line_count": 0,
+            "lines": [],
+        }
+        _emit_browser_stream(payload, json_output=json_output)
+        raise typer.Exit(code=1) from exc
+
+    payload = _browser_stream_payload(label="console", session=session, output=output)
+    _emit_browser_stream(payload, json_output=json_output)
+
+
+@browser_app.command("errors")
+def browser_errors(
+    session: str = typer.Option(
+        _DEFAULT_BROWSER_SESSION,
+        "--session",
+        help="agent-browser session name to inspect.",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit the browser page errors as JSON.",
+    ),
+) -> None:
+    try:
+        output = _run_browser_command(
+            ["errors"],
+            session_name=session,
+            timeout_seconds=5.0,
+        )
+    except RuntimeError as exc:
+        payload = {
+            "ok": False,
+            "status": "warn",
+            "headline": "Browser error read failed",
+            "summary": str(exc),
+            "session": session,
+            "line_count": 0,
+            "lines": [],
+        }
+        _emit_browser_stream(payload, json_output=json_output)
+        raise typer.Exit(code=1) from exc
+
+    payload = _browser_stream_payload(label="error", session=session, output=output)
+    _emit_browser_stream(payload, json_output=json_output)
 
 
 @app.command("launch")
@@ -3414,7 +4045,7 @@ def gateway_show(
     payload = _run(
         _run_with_services(lambda services: services.gateway_bootstrap.get_view())
     ).model_dump(mode="json")
-    _emit_payload(payload, json_output=json_output)
+    _emit_gateway_bootstrap(payload, json_output=json_output)
 
 
 @gateway_app.command("doctor")
