@@ -238,6 +238,7 @@ class GatewaySessionsService:
                 "abortedLastRun": session_payload["abortedLastRun"],
                 "thinkingLevel": session_payload["thinkingLevel"],
                 "verboseLevel": session_payload["verboseLevel"],
+                "traceLevel": session_payload["traceLevel"],
                 "inputTokens": session_payload["inputTokens"],
                 "outputTokens": session_payload["outputTokens"],
                 "totalTokens": session_payload["totalTokens"],
@@ -273,6 +274,14 @@ class GatewaySessionsService:
         spawn_depth = _int_or_none(session_payload.get("spawnDepth"))
         if spawn_depth is not None:
             payload["spawnDepth"] = spawn_depth
+        compaction_checkpoint_count = _int_or_none(
+            session_payload.get("compactionCheckpointCount")
+        )
+        if compaction_checkpoint_count is not None:
+            payload["compactionCheckpointCount"] = compaction_checkpoint_count
+        latest_compaction_checkpoint = session_payload.get("latestCompactionCheckpoint")
+        if isinstance(latest_compaction_checkpoint, dict):
+            payload["latestCompactionCheckpoint"] = latest_compaction_checkpoint
         return payload
 
     async def build_message_event_payload(
@@ -305,6 +314,7 @@ class GatewaySessionsService:
             "abortedLastRun": session_payload["abortedLastRun"],
             "thinkingLevel": session_payload["thinkingLevel"],
             "verboseLevel": session_payload["verboseLevel"],
+            "traceLevel": session_payload["traceLevel"],
             "inputTokens": session_payload["inputTokens"],
             "outputTokens": session_payload["outputTokens"],
             "totalTokens": session_payload["totalTokens"],
@@ -346,6 +356,7 @@ class GatewaySessionsService:
             "abortedLastRun": session_payload["abortedLastRun"],
             "thinkingLevel": session_payload["thinkingLevel"],
             "verboseLevel": session_payload["verboseLevel"],
+            "traceLevel": session_payload["traceLevel"],
             "inputTokens": session_payload["inputTokens"],
             "outputTokens": session_payload["outputTokens"],
             "totalTokens": session_payload["totalTokens"],
@@ -465,6 +476,7 @@ class GatewaySessionsService:
             "abortedLastRun": None,
             "thinkingLevel": _string_or_none(metadata.get("thinkingLevel")),
             "verboseLevel": _string_or_none(metadata.get("verboseLevel")),
+            "traceLevel": _string_or_none(metadata.get("traceLevel")),
             "inputTokens": None,
             "outputTokens": None,
             "totalTokens": None,
@@ -498,6 +510,19 @@ class GatewaySessionsService:
         spawn_depth = _int_or_none(metadata.get("spawnDepth"))
         if spawn_depth is not None:
             payload["spawnDepth"] = spawn_depth
+        compaction_checkpoint_count = (
+            await self._database.count_control_chat_compaction_checkpoints(
+                session_key=session.current_session_key
+            )
+        )
+        if compaction_checkpoint_count > 0:
+            payload["compactionCheckpointCount"] = compaction_checkpoint_count
+            latest_checkpoint = await self._database.list_control_chat_compaction_checkpoints(
+                session_key=session.current_session_key,
+                limit=1,
+            )
+            if latest_checkpoint:
+                payload["latestCompactionCheckpoint"] = latest_checkpoint[0]
         return payload
 
     async def _updated_at_ms(

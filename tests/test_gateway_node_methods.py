@@ -12,7 +12,12 @@ from pathlib import Path
 import pytest
 
 from openzues.database import Database, utcnow
-from openzues.schemas import ConversationTargetView, NotificationRouteView, TaskBlueprintCreate
+from openzues.schemas import (
+    ConversationTargetView,
+    IntegrationView,
+    NotificationRouteView,
+    TaskBlueprintCreate,
+)
 from openzues.services.gateway_agent_files import GatewayAgentFilesService
 from openzues.services.gateway_channels import GatewayChannelsService
 from openzues.services.gateway_config import GatewayConfigService
@@ -539,6 +544,28 @@ async def test_tts_pref_methods_persist_local_state_and_surface_status(tmp_path)
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("provider", ["   ", "not-a-real-provider"])
+async def test_tts_set_provider_rejects_blank_or_unknown_provider_ids(
+    tmp_path,
+    provider: str,
+) -> None:
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        tts_service=GatewayTtsService(tmp_path),
+    )
+
+    with pytest.raises(
+        GatewayNodeMethodError,
+        match="Invalid provider\\. Use a registered TTS provider id\\.",
+    ) as exc_info:
+        await service.call("tts.setProvider", {"provider": provider})
+
+    assert exc_info.value.code == "INVALID_REQUEST"
+    assert exc_info.value.status_code == 400
+    assert (await service.call("tts.status", {}))["provider"] is None
+
+
+@pytest.mark.asyncio
 async def test_models_list_returns_bounded_catalog_defaults() -> None:
     service = GatewayNodeMethodService(GatewayNodeRegistry())
 
@@ -559,6 +586,294 @@ async def test_models_list_returns_bounded_catalog_defaults() -> None:
             },
         ]
     }
+
+
+@pytest.mark.asyncio
+async def test_models_auth_status_returns_validated_unavailable_contract() -> None:
+    service = GatewayNodeMethodService(GatewayNodeRegistry())
+
+    with pytest.raises(GatewayNodeMethodError) as exc_info:
+        await service.call("models.authStatus", {"refresh": True})
+
+    assert exc_info.value.code == "UNAVAILABLE"
+    assert exc_info.value.status_code == 503
+    assert str(exc_info.value) == (
+        "models.authStatus is unavailable until model auth health runtime is wired"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method", "params", "message"),
+    [
+        (
+            "device.pair.list",
+            {},
+            "device.pair.list is unavailable until device auth pairing runtime is wired",
+        ),
+        (
+            "device.pair.approve",
+            {"requestId": "device-request-1"},
+            "device.pair.approve is unavailable until device auth pairing runtime is wired",
+        ),
+        (
+            "device.pair.reject",
+            {"requestId": "device-request-1"},
+            "device.pair.reject is unavailable until device auth pairing runtime is wired",
+        ),
+        (
+            "device.pair.remove",
+            {"deviceId": "device-1"},
+            "device.pair.remove is unavailable until device auth pairing runtime is wired",
+        ),
+        (
+            "device.token.rotate",
+            {
+                "deviceId": "device-1",
+                "role": "operator",
+                "scopes": ["operator.read"],
+            },
+            "device.token.rotate is unavailable until device auth token runtime is wired",
+        ),
+        (
+            "device.token.revoke",
+            {"deviceId": "device-1", "role": "operator"},
+            "device.token.revoke is unavailable until device auth token runtime is wired",
+        ),
+    ],
+)
+async def test_device_family_returns_explicit_unavailable_contract(
+    method: str,
+    params: dict[str, object],
+    message: str,
+) -> None:
+    service = GatewayNodeMethodService(GatewayNodeRegistry())
+
+    with pytest.raises(GatewayNodeMethodError) as exc_info:
+        await service.call(method, params)
+
+    assert exc_info.value.code == "UNAVAILABLE"
+    assert exc_info.value.status_code == 503
+    assert str(exc_info.value) == message
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method", "params", "message"),
+    [
+        (
+            "plugin.approval.list",
+            {},
+            "plugin.approval.list is unavailable until plugin approval runtime is wired",
+        ),
+        (
+            "plugin.approval.request",
+            {
+                "pluginId": "alpha-plugin",
+                "title": "Install alpha plugin",
+                "description": "Approve installation of the alpha plugin bundle.",
+                "severity": "warning",
+                "toolName": "plugin.install",
+                "toolCallId": "call-1",
+                "agentId": "agent-1",
+                "sessionKey": "session-1",
+                "turnSourceChannel": "slack",
+                "turnSourceTo": "ops",
+                "turnSourceAccountId": "acct-1",
+                "turnSourceThreadId": 42,
+                "timeoutMs": 30_000,
+                "twoPhase": True,
+            },
+            "plugin.approval.request is unavailable until plugin approval runtime is wired",
+        ),
+        (
+            "plugin.approval.waitDecision",
+            {"id": "plugin:approval-1"},
+            "plugin.approval.waitDecision is unavailable until plugin approval runtime is wired",
+        ),
+        (
+            "plugin.approval.resolve",
+            {"id": "plugin:approval-1", "decision": "allow-once"},
+            "plugin.approval.resolve is unavailable until plugin approval runtime is wired",
+        ),
+    ],
+)
+async def test_plugin_approval_family_returns_explicit_unavailable_contract(
+    method: str,
+    params: dict[str, object],
+    message: str,
+) -> None:
+    service = GatewayNodeMethodService(GatewayNodeRegistry())
+
+    with pytest.raises(GatewayNodeMethodError) as exc_info:
+        await service.call(method, params)
+
+    assert exc_info.value.code == "UNAVAILABLE"
+    assert exc_info.value.status_code == 503
+    assert str(exc_info.value) == message
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method", "params", "message"),
+    [
+        (
+            "exec.approval.get",
+            {"id": "approval-1"},
+            "exec.approval.get is unavailable until exec approval runtime is wired",
+        ),
+        (
+            "exec.approval.list",
+            {},
+            "exec.approval.list is unavailable until exec approval runtime is wired",
+        ),
+        (
+            "exec.approval.request",
+            {
+                "id": "approval-1",
+                "command": "npm test",
+                "commandArgv": ["npm", "test"],
+                "env": {"CI": "1"},
+                "cwd": "C:/workspace",
+                "host": "desktop",
+                "security": "strict",
+                "ask": "manual",
+                "agentId": "agent-1",
+                "resolvedPath": "C:/workspace/package.json",
+                "sessionKey": "session-1",
+                "turnSourceChannel": "slack",
+                "turnSourceTo": "ops",
+                "turnSourceAccountId": "acct-1",
+                "turnSourceThreadId": "thread-1",
+                "timeoutMs": 30_000,
+                "twoPhase": True,
+            },
+            "exec.approval.request is unavailable until exec approval runtime is wired",
+        ),
+        (
+            "exec.approval.waitDecision",
+            {"id": "approval-1"},
+            "exec.approval.waitDecision is unavailable until exec approval runtime is wired",
+        ),
+        (
+            "exec.approval.resolve",
+            {"id": "approval-1", "decision": "allow-once"},
+            "exec.approval.resolve is unavailable until exec approval runtime is wired",
+        ),
+    ],
+)
+async def test_exec_approval_family_returns_explicit_unavailable_contract(
+    method: str,
+    params: dict[str, object],
+    message: str,
+) -> None:
+    service = GatewayNodeMethodService(GatewayNodeRegistry())
+
+    with pytest.raises(GatewayNodeMethodError) as exc_info:
+        await service.call(method, params)
+
+    assert exc_info.value.code == "UNAVAILABLE"
+    assert exc_info.value.status_code == 503
+    assert str(exc_info.value) == message
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method", "params", "message"),
+    [
+        (
+            "exec.approvals.get",
+            {},
+            "exec.approvals.get is unavailable until exec approval policy config runtime is wired",
+        ),
+        (
+            "exec.approvals.set",
+            {
+                "file": {
+                    "version": 1,
+                    "socket": {"path": "C:/tmp/approvals.sock", "token": "secret-token"},
+                    "defaults": {
+                        "security": "strict",
+                        "ask": "manual",
+                        "askFallback": "deny",
+                        "autoAllowSkills": True,
+                    },
+                    "agents": {
+                        "main": {
+                            "security": "strict",
+                            "ask": "manual",
+                            "askFallback": "deny",
+                            "autoAllowSkills": False,
+                            "allowlist": [
+                                {
+                                    "id": "entry-1",
+                                    "pattern": "npm",
+                                    "argPattern": "test",
+                                    "lastUsedAt": 1,
+                                    "lastUsedCommand": "npm test",
+                                    "lastResolvedPath": "C:/workspace/package.json",
+                                }
+                            ],
+                        }
+                    },
+                },
+                "baseHash": "abc123",
+            },
+            "exec.approvals.set is unavailable until exec approval policy config runtime is wired",
+        ),
+        (
+            "exec.approvals.node.get",
+            {"nodeId": "node-1"},
+            "exec.approvals.node.get is unavailable until exec approval policy "
+            "config runtime is wired",
+        ),
+        (
+            "exec.approvals.node.set",
+            {
+                "nodeId": "node-1",
+                "file": {
+                    "version": 1,
+                    "defaults": {
+                        "security": "strict",
+                        "ask": "manual",
+                        "askFallback": "deny",
+                        "autoAllowSkills": True,
+                    },
+                },
+                "baseHash": "node-hash",
+            },
+            "exec.approvals.node.set is unavailable until exec approval policy "
+            "config runtime is wired",
+        ),
+    ],
+)
+async def test_exec_approvals_family_returns_explicit_unavailable_contract(
+    method: str,
+    params: dict[str, object],
+    message: str,
+) -> None:
+    service = GatewayNodeMethodService(GatewayNodeRegistry())
+
+    with pytest.raises(GatewayNodeMethodError) as exc_info:
+        await service.call(method, params)
+
+    assert exc_info.value.code == "UNAVAILABLE"
+    assert exc_info.value.status_code == 503
+    assert str(exc_info.value) == message
+
+
+@pytest.mark.asyncio
+async def test_set_heartbeats_returns_explicit_unavailable_contract() -> None:
+    service = GatewayNodeMethodService(GatewayNodeRegistry())
+
+    with pytest.raises(GatewayNodeMethodError) as exc_info:
+        await service.call("set-heartbeats", {"enabled": True})
+
+    assert exc_info.value.code == "UNAVAILABLE"
+    assert exc_info.value.status_code == 503
+    assert str(exc_info.value) == (
+        "set-heartbeats is unavailable until gateway heartbeat toggle runtime is wired"
+    )
 
 
 @pytest.mark.asyncio
@@ -806,6 +1121,7 @@ async def test_chat_history_returns_openclaw_shaped_control_chat_projection() ->
         "thinkingLevel": None,
         "fastMode": None,
         "verboseLevel": None,
+        "traceLevel": None,
     }
 
 
@@ -892,6 +1208,122 @@ async def test_chat_send_returns_run_ack_from_injected_control_chat_bridge() -> 
         "timeout_ms": 30_000,
     }
     assert payload == {"runId": "run-chat-send-1", "status": "ok"}
+
+
+@pytest.mark.asyncio
+async def test_chat_inject_appends_assistant_message_and_publishes_session_message_event() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-chat-inject-service"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-chat-inject.db")
+    await database.initialize()
+
+    class _RecordingBroadcastHub(BroadcastHub):
+        def __init__(self) -> None:
+            super().__init__()
+            self.published_events: list[dict[str, object]] = []
+
+        async def publish(self, event: dict[str, object]) -> None:
+            self.published_events.append(dict(event))
+            await super().publish(event)
+
+    hub = _RecordingBroadcastHub()
+    session_key = resolve_thread_session_keys(
+        base_session_key=build_launch_session_key(
+            mode="workspace_affinity",
+            preferred_instance_id=None,
+            task_id=None,
+            project_id=None,
+            operator_id=None,
+        ),
+        thread_id="thread-chat-inject-1",
+    ).session_key
+    await database.create_mission(
+        name="Gateway Chat Inject Loop",
+        objective="Inspect transcript injection parity.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread-chat-inject-1",
+        session_key=session_key,
+        cwd=str(tmp_path),
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=False,
+        run_verification=False,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+    )
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        hub=hub,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    with pytest.raises(ValueError, match="sessionKey must be a non-empty string"):
+        await service.call("chat.inject", {})
+
+    with pytest.raises(ValueError, match="session not found"):
+        await service.call(
+            "chat.inject",
+            {
+                "sessionKey": "launch:mode:workspace_affinity:thread:missing",
+                "message": "Injected parity note",
+            },
+        )
+
+    payload = await service.call(
+        "chat.inject",
+        {
+            "sessionKey": session_key,
+            "message": "Injected parity note",
+            "label": "Parity Note",
+        },
+        now_ms=444,
+    )
+
+    assert payload == {"ok": True, "messageId": "1"}
+    rows = await database.list_control_chat_messages(limit=10, session_key=session_key)
+    assert len(rows) == 1
+    assert rows[0]["id"] == 1
+    assert rows[0]["role"] == "assistant"
+    assert rows[0]["content"] == "Injected parity note"
+    assert rows[0]["target_label"] == "Parity Note"
+    assert rows[0]["session_key"] == session_key
+
+    session_message_events = [
+        event
+        for event in hub.published_events
+        if event.get("type") == "gateway_event" and event.get("event") == "session.message"
+    ]
+    assert len(session_message_events) == 1
+    assert session_message_events[0]["payload"]["sessionKey"] == session_key
+    assert session_message_events[0]["payload"]["messageId"] == "1"
+    assert session_message_events[0]["payload"]["messageSeq"] == 1
+    assert session_message_events[0]["payload"]["message"] == {
+        "id": "1",
+        "role": "assistant",
+        "content": [{"type": "text", "text": "Injected parity note"}],
+    }
+
+    sessions_changed_events = [
+        event
+        for event in hub.published_events
+        if event.get("type") == "gateway_event" and event.get("event") == "sessions.changed"
+    ]
+    assert len(sessions_changed_events) == 1
+    assert sessions_changed_events[0]["payload"]["sessionKey"] == session_key
+    assert sessions_changed_events[0]["payload"]["phase"] == "message"
+    assert sessions_changed_events[0]["payload"]["messageId"] == "1"
 
 
 @pytest.mark.asyncio
@@ -1000,6 +1432,56 @@ async def test_chat_abort_interrupts_tracked_gateway_run_with_injected_runtime()
 
 
 @pytest.mark.asyncio
+async def test_chat_abort_treats_empty_run_id_as_session_scoped_abort() -> None:
+    observed_interrupt: dict[str, str | None] = {}
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        del session_key, message, thinking, deliver, timeout_ms
+        return {"runId": idempotency_key, "status": "ok"}
+
+    async def fake_chat_abort_service(
+        *,
+        session_key: str,
+        run_id: str | None,
+    ) -> dict[str, object]:
+        observed_interrupt.update({"session_key": session_key, "run_id": run_id})
+        return {"ok": True}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        chat_send_service=fake_chat_send_service,
+        chat_abort_service=fake_chat_abort_service,
+    )
+
+    await service.call(
+        "chat.send",
+        {
+            "sessionKey": "openzues:thread:demo",
+            "message": "status",
+            "idempotencyKey": "run-chat-send-1",
+        },
+    )
+    payload = await service.call(
+        "chat.abort",
+        {"sessionKey": "openzues:thread:demo", "runId": ""},
+    )
+
+    assert observed_interrupt == {
+        "session_key": "openzues:thread:demo",
+        "run_id": None,
+    }
+    assert payload == {"ok": True, "aborted": True, "runIds": ["run-chat-send-1"]}
+
+
+@pytest.mark.asyncio
 async def test_sessions_send_publishes_openclaw_sessions_changed_gateway_event() -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-send-event-service"
     shutil.rmtree(tmp_path, ignore_errors=True)
@@ -1023,6 +1505,10 @@ async def test_sessions_send_publishes_openclaw_sessions_changed_gateway_event()
         task_id=None,
         project_id=None,
         operator_id=None,
+    )
+    await database.upsert_gateway_session_metadata(
+        session_key=session_key,
+        metadata={"traceLevel": "verbose"},
     )
 
     async def fake_chat_send_service(
@@ -1065,7 +1551,7 @@ async def test_sessions_send_publishes_openclaw_sessions_changed_gateway_event()
         "sessionKey": session_key,
         "reason": "send",
         "ts": 111,
-        "updatedAt": 111,
+        "updatedAt": sessions_changed[0]["payload"]["updatedAt"],
         "sessionId": None,
         "kind": "global",
         "subject": "Operator control chat",
@@ -1074,6 +1560,7 @@ async def test_sessions_send_publishes_openclaw_sessions_changed_gateway_event()
         "abortedLastRun": None,
         "thinkingLevel": None,
         "verboseLevel": None,
+        "traceLevel": "verbose",
         "inputTokens": None,
         "outputTokens": None,
         "totalTokens": None,
@@ -1083,6 +1570,7 @@ async def test_sessions_send_publishes_openclaw_sessions_changed_gateway_event()
         "space": None,
     }
     assert isinstance(sessions_changed[0]["createdAt"], str)
+    assert isinstance(sessions_changed[0]["payload"]["updatedAt"], int)
 
 
 @pytest.mark.asyncio
@@ -1955,6 +2443,10 @@ async def test_sessions_compaction_restore_rehydrates_snapshot_and_publishes_eve
     database = Database(tmp_path / "gateway-sessions-compaction-restore.db")
     await database.initialize()
     session_key = "openzues:thread:demo"
+    await database.upsert_gateway_session_metadata(
+        session_key=session_key,
+        metadata={"traceLevel": "verbose"},
+    )
     await database.append_control_chat_message(
         role="user",
         content="Alpha line 1\nAlpha line 2",
@@ -2033,6 +2525,7 @@ async def test_sessions_compaction_restore_rehydrates_snapshot_and_publishes_eve
     assert restored["checkpoint"] == checkpoint_payload["checkpoint"]
     assert restored["entry"]["key"] == session_key
     assert restored["entry"]["kind"] == "thread"
+    assert restored["entry"]["traceLevel"] == "verbose"
     assert isinstance(restored["entry"]["updatedAt"], int)
     assert restored["entry"]["updatedAt"] > 0
     assert [message["content"] for message in restored_messages] == [
@@ -2050,6 +2543,7 @@ async def test_sessions_compaction_restore_rehydrates_snapshot_and_publishes_eve
         "checkpoint-restore",
     ]
     assert sessions_changed[-1]["payload"]["sessionKey"] == session_key
+    assert sessions_changed[-1]["payload"]["traceLevel"] == "verbose"
 
 
 @pytest.mark.asyncio
@@ -2284,12 +2778,12 @@ async def test_sessions_preview_returns_current_session_items_and_missing_unknow
 
 
 @pytest.mark.asyncio
-async def test_push_test_fails_as_explicitly_unavailable() -> None:
+async def test_push_test_fails_as_missing_apns_registration() -> None:
     service = GatewayNodeMethodService(GatewayNodeRegistry())
 
     with pytest.raises(
         GatewayNodeMethodError,
-        match="push.test is unavailable until APNS push runtime is wired",
+        match=r"node ios-node-1 has no APNs registration \(connect iOS node first\)",
     ) as exc_info:
         await service.call(
             "push.test",
@@ -2301,8 +2795,8 @@ async def test_push_test_fails_as_explicitly_unavailable() -> None:
             },
         )
 
-    assert exc_info.value.code == "UNAVAILABLE"
-    assert exc_info.value.status_code == 503
+    assert exc_info.value.code == "INVALID_REQUEST"
+    assert exc_info.value.status_code == 400
 
 
 @pytest.mark.asyncio
@@ -2358,6 +2852,83 @@ async def test_web_login_methods_fail_as_explicit_provider_unavailable(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method", "params"),
+    [
+        (
+            "web.login.start",
+            {
+                "force": True,
+                "timeoutMs": 30_000,
+                "verbose": True,
+                "accountId": "   ",
+            },
+        ),
+        (
+            "web.login.wait",
+            {
+                "timeoutMs": 30_000,
+                "accountId": "   ",
+            },
+        ),
+    ],
+)
+async def test_web_login_methods_allow_blank_account_id(
+    method: str,
+    params: dict[str, object],
+) -> None:
+    service = GatewayNodeMethodService(GatewayNodeRegistry())
+
+    with pytest.raises(
+        GatewayNodeMethodError,
+        match="web login provider is not available",
+    ) as exc_info:
+        await service.call(method, params)
+
+    assert exc_info.value.code == "INVALID_REQUEST"
+    assert exc_info.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_channels_logout_allows_blank_account_id() -> None:
+    service = GatewayNodeMethodService(GatewayNodeRegistry())
+
+    with pytest.raises(
+        GatewayNodeMethodError,
+        match="channel telegram does not support logout",
+    ) as exc_info:
+        await service.call(
+            "channels.logout",
+            {
+                "channel": "telegram",
+                "accountId": "   ",
+            },
+        )
+
+    assert exc_info.value.code == "INVALID_REQUEST"
+    assert exc_info.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_channels_logout_rejects_blank_channel_as_invalid_params() -> None:
+    service = GatewayNodeMethodService(GatewayNodeRegistry())
+
+    with pytest.raises(
+        GatewayNodeMethodError,
+        match=r"invalid channels\.logout params:",
+    ) as exc_info:
+        await service.call(
+            "channels.logout",
+            {
+                "channel": "   ",
+            },
+        )
+
+    assert exc_info.value.code == "INVALID_REQUEST"
+    assert exc_info.value.status_code == 400
+
+
+@pytest.mark.asyncio
 async def test_channels_logout_fails_as_explicit_unsupported_channel() -> None:
     service = GatewayNodeMethodService(GatewayNodeRegistry())
 
@@ -2369,6 +2940,26 @@ async def test_channels_logout_fails_as_explicit_unsupported_channel() -> None:
             "channels.logout",
             {
                 "channel": "telegram",
+                "accountId": "primary",
+            },
+        )
+
+    assert exc_info.value.code == "INVALID_REQUEST"
+    assert exc_info.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_channels_logout_rejects_invalid_channel_shape() -> None:
+    service = GatewayNodeMethodService(GatewayNodeRegistry())
+
+    with pytest.raises(
+        GatewayNodeMethodError,
+        match="invalid channels.logout channel",
+    ) as exc_info:
+        await service.call(
+            "channels.logout",
+            {
+                "channel": "not-a-real-channel",
                 "accountId": "primary",
             },
         )
@@ -2458,6 +3049,58 @@ async def test_update_run_triggers_runtime_update_tick_and_returns_fresh_view() 
         runtime_update_view=fake_view,
     )
     result = await service.call("update.run", {})
+
+    assert tick_calls == ["tick"]
+    assert result == payload
+
+
+@pytest.mark.asyncio
+async def test_update_run_accepts_upstream_optional_restart_request_params() -> None:
+    payload: dict[str, object] = {
+        "headline": "Runtime self-update is watching the repo",
+        "summary": "The current process is aligned with the checked-out repo revision.",
+        "enabled": True,
+        "repo_root": "C:/workspace/OpenZues",
+        "startup_revision": "rev-a",
+        "current_revision": "rev-a",
+        "pending_revision": None,
+        "pending_restart": False,
+        "restart_in_progress": False,
+        "safe_to_restart": True,
+        "last_checked_at": "2026-04-19T01:02:03Z",
+        "last_restart_at": None,
+        "last_error": None,
+        "auto_restart": True,
+    }
+    tick_calls: list[str] = []
+
+    async def fake_tick() -> bool:
+        tick_calls.append("tick")
+        return False
+
+    async def fake_view() -> dict[str, object]:
+        return dict(payload)
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        runtime_update_tick=fake_tick,
+        runtime_update_view=fake_view,
+    )
+    result = await service.call(
+        "update.run",
+        {
+            "sessionKey": "agent:main:thread:demo",
+            "deliveryContext": {
+                "channel": "slack",
+                "to": "user:U123",
+                "accountId": "default",
+                "threadId": 1771242986529939,
+            },
+            "note": "Restart after the bounded parity patch.",
+            "restartDelayMs": 0,
+            "timeoutMs": 5_000,
+        },
+    )
 
     assert tick_calls == ["tick"]
     assert result == payload
@@ -2927,6 +3570,7 @@ async def test_sessions_patch_persists_current_session_metadata_and_surfaces_it(
             "thinkingLevel": "low",
             "fastMode": True,
             "verboseLevel": "high",
+            "traceLevel": "debug",
             "responseUsage": "tokens",
             "model": "gpt-5.4-mini",
         },
@@ -2942,6 +3586,7 @@ async def test_sessions_patch_persists_current_session_metadata_and_surfaces_it(
     assert payload["entry"]["thinkingLevel"] == "low"
     assert payload["entry"]["fastMode"] is True
     assert payload["entry"]["verboseLevel"] == "high"
+    assert payload["entry"]["traceLevel"] == "debug"
     assert payload["entry"]["responseUsage"] == "tokens"
     assert payload["entry"]["model"] == "gpt-5.4-mini"
 
@@ -2966,6 +3611,7 @@ async def test_sessions_patch_persists_current_session_metadata_and_surfaces_it(
             "thinkingLevel": "low",
             "fastMode": True,
             "verboseLevel": "high",
+            "traceLevel": "debug",
             "inputTokens": None,
             "outputTokens": None,
             "totalTokens": None,
@@ -2984,6 +3630,7 @@ async def test_sessions_patch_persists_current_session_metadata_and_surfaces_it(
     assert history_payload["thinkingLevel"] == "low"
     assert history_payload["fastMode"] is True
     assert history_payload["verboseLevel"] == "high"
+    assert history_payload["traceLevel"] == "debug"
 
 
 @pytest.mark.asyncio
@@ -3358,6 +4005,202 @@ async def test_sessions_usage_logs_returns_bounded_transcript_entries_with_linke
 
 
 @pytest.mark.asyncio
+async def test_usage_cost_returns_bounded_daily_rollup_for_date_range() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-usage-cost-service"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway.db")
+    await database.initialize()
+    service = GatewayNodeMethodService(GatewayNodeRegistry(), database=database)
+
+    first_mission_id = await database.create_mission(
+        name="Usage cost first slice",
+        objective="Count the first bounded daily usage total.",
+        status="completed",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread-usage-cost-1",
+        session_key="openzues:thread:usage-cost-1",
+        conversation_target=None,
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        toolsets=[],
+    )
+    await database.update_mission(
+        first_mission_id,
+        total_tokens=300,
+        output_tokens=80,
+    )
+
+    second_mission_id = await database.create_mission(
+        name="Usage cost second slice",
+        objective="Count the second bounded daily usage total.",
+        status="completed",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread-usage-cost-2",
+        session_key="openzues:thread:usage-cost-2",
+        conversation_target=None,
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        toolsets=[],
+    )
+    await database.update_mission(
+        second_mission_id,
+        total_tokens=700,
+        output_tokens=180,
+    )
+
+    out_of_range_mission_id = await database.create_mission(
+        name="Usage cost out-of-range slice",
+        objective="Stay outside the bounded date window.",
+        status="completed",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread-usage-cost-3",
+        session_key="openzues:thread:usage-cost-3",
+        conversation_target=None,
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        toolsets=[],
+    )
+    await database.update_mission(
+        out_of_range_mission_id,
+        total_tokens=999,
+        output_tokens=333,
+    )
+
+    with sqlite3.connect(database.path) as conn:
+        conn.execute(
+            "UPDATE missions SET created_at = ?, updated_at = ? WHERE id = ?",
+            ("2026-04-15T12:00:00+00:00", "2026-04-15T12:00:00+00:00", first_mission_id),
+        )
+        conn.execute(
+            "UPDATE missions SET created_at = ?, updated_at = ? WHERE id = ?",
+            ("2026-04-16T18:30:00+00:00", "2026-04-16T18:30:00+00:00", second_mission_id),
+        )
+        conn.execute(
+            "UPDATE missions SET created_at = ?, updated_at = ? WHERE id = ?",
+            (
+                "2026-04-18T08:00:00+00:00",
+                "2026-04-18T08:00:00+00:00",
+                out_of_range_mission_id,
+            ),
+        )
+        conn.commit()
+
+    payload = await service.call(
+        "usage.cost",
+        {
+            "startDate": "2026-04-15",
+            "endDate": "2026-04-16",
+            "mode": "utc",
+        },
+    )
+
+    assert payload["days"] == 2
+    assert payload["daily"] == [
+        {
+            "date": "2026-04-15",
+            "input": 220,
+            "output": 80,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 300,
+            "totalCost": 0.0,
+            "inputCost": 0.0,
+            "outputCost": 0.0,
+            "cacheReadCost": 0.0,
+            "cacheWriteCost": 0.0,
+            "missingCostEntries": 1,
+        },
+        {
+            "date": "2026-04-16",
+            "input": 520,
+            "output": 180,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 700,
+            "totalCost": 0.0,
+            "inputCost": 0.0,
+            "outputCost": 0.0,
+            "cacheReadCost": 0.0,
+            "cacheWriteCost": 0.0,
+            "missingCostEntries": 1,
+        },
+    ]
+    assert payload["totals"] == {
+        "input": 740,
+        "output": 260,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "totalTokens": 1000,
+        "totalCost": 0.0,
+        "inputCost": 0.0,
+        "outputCost": 0.0,
+        "cacheReadCost": 0.0,
+        "cacheWriteCost": 0.0,
+        "missingCostEntries": 2,
+    }
+
+
+@pytest.mark.asyncio
+async def test_usage_status_returns_truthful_provider_inventory_with_telemetry_gap() -> None:
+    service = GatewayNodeMethodService(GatewayNodeRegistry())
+
+    payload = await service.call("usage.status")
+
+    assert payload == {
+        "updatedAt": payload["updatedAt"],
+        "providers": [
+            {
+                "provider": "openai",
+                "displayName": "openai",
+                "windows": [],
+                "plan": None,
+                "error": "Quota telemetry is not available in OpenZues yet.",
+            }
+        ],
+    }
+
+
+@pytest.mark.asyncio
 async def test_chat_abort_fails_as_explicit_unavailable_until_runtime_is_wired() -> None:
     service = GatewayNodeMethodService(GatewayNodeRegistry())
 
@@ -3375,6 +4218,1734 @@ async def test_chat_abort_fails_as_explicit_unavailable_until_runtime_is_wired()
     assert exc_info.value.message == (
         "chat.abort is unavailable until control chat cancellation is wired"
     )
+
+
+@pytest.mark.asyncio
+async def test_agent_wait_waits_for_tracked_gateway_run_completion() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-agent-wait-ok-service"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-agent-wait-ok.db")
+    await database.initialize()
+    session_key = "openzues:thread:agent-wait-ok"
+    mission_id = await database.create_mission(
+        name="Gateway Agent Wait Loop",
+        objective="Wait for the tracked gateway run to finish.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread-agent-wait-ok",
+        session_key=session_key,
+        cwd=str(tmp_path),
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=False,
+        run_verification=False,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+    )
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        del session_key, message, thinking, deliver, timeout_ms
+        return {"runId": idempotency_key, "status": "ok"}
+
+    sleep_calls = 0
+
+    async def fake_sleep(_seconds: float) -> None:
+        nonlocal sleep_calls
+        sleep_calls += 1
+        if sleep_calls == 1:
+            await database.update_mission(
+                mission_id,
+                status="completed",
+                in_progress=0,
+                phase="completed",
+                last_checkpoint="Tracked gateway wait completed.",
+            )
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        chat_send_service=fake_chat_send_service,
+        sleep=fake_sleep,
+    )
+
+    send_payload = await service.call(
+        "sessions.send",
+        {
+            "key": session_key,
+            "message": "continue",
+            "idempotencyKey": "run-agent-wait-ok-1",
+        },
+        now_ms=111,
+    )
+    assert send_payload == {"runId": "run-agent-wait-ok-1", "status": "ok"}
+
+    payload = await service.call(
+        "agent.wait",
+        {
+            "runId": "run-agent-wait-ok-1",
+            "timeoutMs": 5,
+        },
+    )
+
+    assert payload["runId"] == "run-agent-wait-ok-1"
+    assert payload["status"] == "ok"
+    assert payload["startedAt"] == 111
+    assert isinstance(payload["endedAt"], int)
+    assert payload["endedAt"] >= payload["startedAt"]
+    assert sleep_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_agent_wait_returns_failed_terminal_snapshot_for_tracked_run() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-agent-wait-error-service"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-agent-wait-error.db")
+    await database.initialize()
+    session_key = "openzues:thread:agent-wait-error"
+    mission_id = await database.create_mission(
+        name="Gateway Agent Wait Failure Loop",
+        objective="Surface the tracked gateway failure snapshot.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread-agent-wait-error",
+        session_key=session_key,
+        cwd=str(tmp_path),
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=False,
+        run_verification=False,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+    )
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        del session_key, message, thinking, deliver, timeout_ms
+        return {"runId": idempotency_key, "status": "ok"}
+
+    await database.update_mission(
+        mission_id,
+        status="failed",
+        in_progress=0,
+        phase="failed",
+        last_error="Gateway parity run failed on verification.",
+    )
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        chat_send_service=fake_chat_send_service,
+    )
+
+    send_payload = await service.call(
+        "sessions.send",
+        {
+            "key": session_key,
+            "message": "continue",
+            "idempotencyKey": "run-agent-wait-error-1",
+        },
+        now_ms=222,
+    )
+    assert send_payload == {"runId": "run-agent-wait-error-1", "status": "ok"}
+
+    payload = await service.call(
+        "agent.wait",
+        {
+            "runId": "run-agent-wait-error-1",
+            "timeoutMs": 0,
+        },
+    )
+
+    assert payload["runId"] == "run-agent-wait-error-1"
+    assert payload["status"] == "error"
+    assert payload["startedAt"] == 222
+    assert isinstance(payload["endedAt"], int)
+    assert payload["endedAt"] >= payload["startedAt"]
+    assert payload["error"] == "Gateway parity run failed on verification."
+
+
+@pytest.mark.asyncio
+async def test_agent_launches_bounded_main_session_run_and_wait_completes() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-agent-launch-main-service"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-agent-launch-main.db")
+    await database.initialize()
+    main_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+    )
+    mission_id = await database.create_mission(
+        name="Gateway Agent Launch Loop",
+        objective="Launch the next parity slice through the main control-chat session.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread-agent-launch-main",
+        session_key=main_session_key,
+        cwd=str(tmp_path),
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=False,
+        run_verification=False,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+    )
+
+    observed_send: dict[str, object] = {}
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        observed_send.update(
+            {
+                "session_key": session_key,
+                "message": message,
+                "idempotency_key": idempotency_key,
+                "thinking": thinking,
+                "deliver": deliver,
+                "timeout_ms": timeout_ms,
+            }
+        )
+        return {"runId": idempotency_key, "status": "ok"}
+
+    sleep_calls = 0
+
+    async def fake_sleep(_seconds: float) -> None:
+        nonlocal sleep_calls
+        sleep_calls += 1
+        if sleep_calls == 1:
+            await database.update_mission(
+                mission_id,
+                status="completed",
+                in_progress=0,
+                phase="completed",
+                last_checkpoint="Gateway agent launch completed.",
+            )
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        chat_send_service=fake_chat_send_service,
+        sleep=fake_sleep,
+    )
+
+    launch_payload = await service.call(
+        "agent",
+        {
+            "message": "Ship the next verified slice.",
+            "agentId": "main",
+            "idempotencyKey": "agent-run-1",
+        },
+        now_ms=321,
+    )
+
+    assert observed_send == {
+        "session_key": main_session_key,
+        "message": "Ship the next verified slice.",
+        "idempotency_key": "agent-run-1",
+        "thinking": None,
+        "deliver": None,
+        "timeout_ms": None,
+    }
+    assert launch_payload["runId"] == "agent-run-1"
+    assert launch_payload["status"] == "accepted"
+    assert isinstance(launch_payload["acceptedAt"], int)
+    assert launch_payload["acceptedAt"] >= 321
+
+    wait_payload = await service.call(
+        "agent.wait",
+        {
+            "runId": "agent-run-1",
+            "timeoutMs": 5,
+        },
+    )
+
+    assert wait_payload["runId"] == "agent-run-1"
+    assert wait_payload["status"] == "ok"
+    assert wait_payload["startedAt"] == 321
+    assert isinstance(wait_payload["endedAt"], int)
+    assert wait_payload["endedAt"] >= wait_payload["startedAt"]
+    assert sleep_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_agent_launches_bounded_session_id_selected_run_and_wait_completes() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-agent-launch-session-id-service"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-agent-launch-session-id.db")
+    await database.initialize()
+    main_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+    )
+    thread_session_key = resolve_thread_session_keys(
+        base_session_key=main_session_key,
+        thread_id="thread-agent-launch-session-id",
+    ).session_key
+    mission_id = await database.create_mission(
+        name="Gateway Agent SessionId Launch Loop",
+        objective="Launch parity through a sessionId-selected control-chat thread.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread-agent-launch-session-id",
+        session_key=thread_session_key,
+        cwd=str(tmp_path),
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=False,
+        run_verification=False,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+    )
+
+    observed_send: dict[str, object] = {}
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        observed_send.update(
+            {
+                "session_key": session_key,
+                "message": message,
+                "idempotency_key": idempotency_key,
+                "thinking": thinking,
+                "deliver": deliver,
+                "timeout_ms": timeout_ms,
+            }
+        )
+        return {"runId": idempotency_key, "status": "ok"}
+
+    sleep_calls = 0
+
+    async def fake_sleep(_seconds: float) -> None:
+        nonlocal sleep_calls
+        sleep_calls += 1
+        if sleep_calls == 1:
+            await database.update_mission(
+                mission_id,
+                status="completed",
+                in_progress=0,
+                phase="completed",
+                last_checkpoint="Gateway agent sessionId launch completed.",
+            )
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        chat_send_service=fake_chat_send_service,
+        sleep=fake_sleep,
+    )
+
+    launch_payload = await service.call(
+        "agent",
+        {
+            "message": "Ship the next verified slice.",
+            "agentId": "main",
+            "sessionId": "thread-agent-launch-session-id",
+            "idempotencyKey": "agent-run-session-id-1",
+        },
+        now_ms=654,
+    )
+
+    assert observed_send == {
+        "session_key": thread_session_key,
+        "message": "Ship the next verified slice.",
+        "idempotency_key": "agent-run-session-id-1",
+        "thinking": None,
+        "deliver": None,
+        "timeout_ms": None,
+    }
+    assert launch_payload["runId"] == "agent-run-session-id-1"
+    assert launch_payload["status"] == "accepted"
+    assert isinstance(launch_payload["acceptedAt"], int)
+    assert launch_payload["acceptedAt"] >= 654
+
+    wait_payload = await service.call(
+        "agent.wait",
+        {
+            "runId": "agent-run-session-id-1",
+            "timeoutMs": 5,
+        },
+    )
+
+    assert wait_payload["runId"] == "agent-run-session-id-1"
+    assert wait_payload["status"] == "ok"
+    assert wait_payload["startedAt"] == 654
+    assert isinstance(wait_payload["endedAt"], int)
+    assert wait_payload["endedAt"] >= wait_payload["startedAt"]
+    assert sleep_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_agent_launches_bounded_main_session_run_and_persists_session_label() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-agent-launch-label-persist-service"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-agent-launch-label-persist.db")
+    await database.initialize()
+    main_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+    )
+    mission_id = await database.create_mission(
+        name="Gateway Agent Label Persist Loop",
+        objective="Launch parity while persisting the requested session label.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread-agent-launch-label-persist",
+        session_key=main_session_key,
+        cwd=str(tmp_path),
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=False,
+        run_verification=False,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+    )
+    await database.upsert_gateway_session_metadata(
+        session_key=main_session_key,
+        metadata={"model": "gpt-5.4-mini"},
+    )
+
+    observed_send: dict[str, object] = {}
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        observed_send.update(
+            {
+                "session_key": session_key,
+                "message": message,
+                "idempotency_key": idempotency_key,
+                "thinking": thinking,
+                "deliver": deliver,
+                "timeout_ms": timeout_ms,
+            }
+        )
+        return {"runId": idempotency_key, "status": "ok"}
+
+    sleep_calls = 0
+
+    async def fake_sleep(_seconds: float) -> None:
+        nonlocal sleep_calls
+        sleep_calls += 1
+        if sleep_calls == 1:
+            await database.update_mission(
+                mission_id,
+                status="completed",
+                in_progress=0,
+                phase="completed",
+                last_checkpoint="Gateway agent label persistence completed.",
+            )
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        chat_send_service=fake_chat_send_service,
+        sleep=fake_sleep,
+    )
+
+    launch_payload = await service.call(
+        "agent",
+        {
+            "message": "Ship the next verified slice.",
+            "agentId": "main",
+            "label": "Parity Worker",
+            "idempotencyKey": "agent-run-label-persist-1",
+        },
+        now_ms=987,
+    )
+
+    assert observed_send == {
+        "session_key": main_session_key,
+        "message": "Ship the next verified slice.",
+        "idempotency_key": "agent-run-label-persist-1",
+        "thinking": None,
+        "deliver": None,
+        "timeout_ms": None,
+    }
+    assert launch_payload["runId"] == "agent-run-label-persist-1"
+    assert launch_payload["status"] == "accepted"
+    assert isinstance(launch_payload["acceptedAt"], int)
+    assert launch_payload["acceptedAt"] >= 987
+    metadata_row = await database.get_gateway_session_metadata(main_session_key)
+    assert isinstance(metadata_row, dict)
+    metadata = metadata_row.get("metadata")
+    assert isinstance(metadata, dict)
+    assert metadata["label"] == "Parity Worker"
+    assert metadata["model"] == "gpt-5.4-mini"
+
+    wait_payload = await service.call(
+        "agent.wait",
+        {
+            "runId": "agent-run-label-persist-1",
+            "timeoutMs": 5,
+        },
+    )
+
+    assert wait_payload["runId"] == "agent-run-label-persist-1"
+    assert wait_payload["status"] == "ok"
+    assert wait_payload["startedAt"] == 987
+    assert isinstance(wait_payload["endedAt"], int)
+    assert wait_payload["endedAt"] >= wait_payload["startedAt"]
+    assert sleep_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_agent_launches_bounded_main_session_run_with_explicit_non_delivery() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-agent-launch-deliver-false-service"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-agent-launch-deliver-false.db")
+    await database.initialize()
+    main_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+    )
+    mission_id = await database.create_mission(
+        name="Gateway Agent Deliver False Loop",
+        objective="Launch parity while keeping delivery explicitly disabled.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread-agent-launch-deliver-false",
+        session_key=main_session_key,
+        cwd=str(tmp_path),
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=False,
+        run_verification=False,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+    )
+
+    observed_send: dict[str, object] = {}
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        observed_send.update(
+            {
+                "session_key": session_key,
+                "message": message,
+                "idempotency_key": idempotency_key,
+                "thinking": thinking,
+                "deliver": deliver,
+                "timeout_ms": timeout_ms,
+            }
+        )
+        return {"runId": idempotency_key, "status": "ok"}
+
+    sleep_calls = 0
+
+    async def fake_sleep(_seconds: float) -> None:
+        nonlocal sleep_calls
+        sleep_calls += 1
+        if sleep_calls == 1:
+            await database.update_mission(
+                mission_id,
+                status="completed",
+                in_progress=0,
+                phase="completed",
+                last_checkpoint="Gateway agent explicit non-delivery launch completed.",
+            )
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        chat_send_service=fake_chat_send_service,
+        sleep=fake_sleep,
+    )
+
+    launch_payload = await service.call(
+        "agent",
+        {
+            "message": "Ship the next verified slice.",
+            "agentId": "main",
+            "deliver": False,
+            "idempotencyKey": "agent-run-deliver-false-1",
+        },
+        now_ms=1597,
+    )
+
+    assert observed_send == {
+        "session_key": main_session_key,
+        "message": "Ship the next verified slice.",
+        "idempotency_key": "agent-run-deliver-false-1",
+        "thinking": None,
+        "deliver": False,
+        "timeout_ms": None,
+    }
+    assert launch_payload["runId"] == "agent-run-deliver-false-1"
+    assert launch_payload["status"] == "accepted"
+    assert isinstance(launch_payload["acceptedAt"], int)
+    assert launch_payload["acceptedAt"] >= 1597
+
+    wait_payload = await service.call(
+        "agent.wait",
+        {
+            "runId": "agent-run-deliver-false-1",
+            "timeoutMs": 5,
+        },
+    )
+
+    assert wait_payload["runId"] == "agent-run-deliver-false-1"
+    assert wait_payload["status"] == "ok"
+    assert wait_payload["startedAt"] == 1597
+    assert isinstance(wait_payload["endedAt"], int)
+    assert wait_payload["endedAt"] >= wait_payload["startedAt"]
+    assert sleep_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_agent_launches_bounded_main_session_run_with_best_effort_deliver_false() -> None:
+    tmp_path = (
+        Path.cwd() / ".tmp-pytest-local" / "gateway-agent-launch-best-effort-false-service"
+    )
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-agent-launch-best-effort-false.db")
+    await database.initialize()
+    main_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+    )
+    mission_id = await database.create_mission(
+        name="Gateway Agent Best Effort False Loop",
+        objective="Launch parity while keeping best-effort delivery explicitly disabled.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread-agent-launch-best-effort-false",
+        session_key=main_session_key,
+        cwd=str(tmp_path),
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=False,
+        run_verification=False,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+    )
+
+    observed_send: dict[str, object] = {}
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        observed_send.update(
+            {
+                "session_key": session_key,
+                "message": message,
+                "idempotency_key": idempotency_key,
+                "thinking": thinking,
+                "deliver": deliver,
+                "timeout_ms": timeout_ms,
+            }
+        )
+        return {"runId": idempotency_key, "status": "ok"}
+
+    sleep_calls = 0
+
+    async def fake_sleep(_seconds: float) -> None:
+        nonlocal sleep_calls
+        sleep_calls += 1
+        if sleep_calls == 1:
+            await database.update_mission(
+                mission_id,
+                status="completed",
+                in_progress=0,
+                phase="completed",
+                last_checkpoint="Gateway agent best-effort false launch completed.",
+            )
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        chat_send_service=fake_chat_send_service,
+        sleep=fake_sleep,
+    )
+
+    launch_payload = await service.call(
+        "agent",
+        {
+            "message": "Ship the next verified slice.",
+            "agentId": "main",
+            "bestEffortDeliver": False,
+            "idempotencyKey": "agent-run-best-effort-false-1",
+        },
+        now_ms=2337,
+    )
+
+    assert observed_send == {
+        "session_key": main_session_key,
+        "message": "Ship the next verified slice.",
+        "idempotency_key": "agent-run-best-effort-false-1",
+        "thinking": None,
+        "deliver": None,
+        "timeout_ms": None,
+    }
+    assert launch_payload["runId"] == "agent-run-best-effort-false-1"
+    assert launch_payload["status"] == "accepted"
+    assert isinstance(launch_payload["acceptedAt"], int)
+    assert launch_payload["acceptedAt"] >= 2337
+
+    wait_payload = await service.call(
+        "agent.wait",
+        {
+            "runId": "agent-run-best-effort-false-1",
+            "timeoutMs": 5,
+        },
+    )
+
+    assert wait_payload["runId"] == "agent-run-best-effort-false-1"
+    assert wait_payload["status"] == "ok"
+    assert wait_payload["startedAt"] == 2337
+    assert isinstance(wait_payload["endedAt"], int)
+    assert wait_payload["endedAt"] >= wait_payload["startedAt"]
+    assert sleep_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_agent_rejects_malformed_session_keys_before_session_lookup() -> None:
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=Database(Path.cwd() / ".tmp-pytest-local" / "noop-agent-malformed.db"),
+        sessions_service=None,
+        chat_send_service=None,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match='invalid agent params: malformed session key "agent::main"',
+    ):
+        await service.call(
+            "agent",
+            {
+                "message": "Ship the next verified slice.",
+                "agentId": "main",
+                "sessionKey": "agent::main",
+                "idempotencyKey": "agent-run-malformed-session-key-1",
+                },
+            )
+
+
+@pytest.mark.asyncio
+async def test_agent_rejects_agent_id_that_conflicts_with_session_key_agent() -> None:
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=Database(Path.cwd() / ".tmp-pytest-local" / "noop-agent-mismatch.db"),
+        sessions_service=None,
+        chat_send_service=None,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match='invalid agent params: agent "main" does not match session key agent "other-agent"',
+    ):
+        await service.call(
+            "agent",
+            {
+                "message": "Ship the next verified slice.",
+                "agentId": "main",
+                "sessionKey": "agent:other-agent:main",
+                "idempotencyKey": "agent-run-session-key-agent-mismatch-1",
+                },
+            )
+
+
+@pytest.mark.asyncio
+async def test_agent_launch_accepts_matching_session_key_and_session_id_selectors() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-agent-launch-matching-key-session-id"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-agent-launch-matching-key-session-id.db")
+    await database.initialize()
+    main_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+    )
+    thread_session_key = resolve_thread_session_keys(
+        base_session_key=main_session_key,
+        thread_id="thread-agent-matching-key-session-id",
+    ).session_key
+    mission_id = await database.create_mission(
+        name="Gateway Agent Matching Key SessionId Loop",
+        objective="Launch parity through matching sessionKey and sessionId selectors.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread-agent-matching-key-session-id",
+        session_key=thread_session_key,
+        cwd=str(tmp_path),
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=False,
+        run_verification=False,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+    )
+
+    observed_send: dict[str, object] = {}
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        observed_send.update(
+            {
+                "session_key": session_key,
+                "message": message,
+                "idempotency_key": idempotency_key,
+                "thinking": thinking,
+                "deliver": deliver,
+                "timeout_ms": timeout_ms,
+            }
+        )
+        return {"runId": idempotency_key, "status": "ok"}
+
+    sleep_calls = 0
+
+    async def fake_sleep(_seconds: float) -> None:
+        nonlocal sleep_calls
+        sleep_calls += 1
+        if sleep_calls == 1:
+            await database.update_mission(
+                mission_id,
+                status="completed",
+                in_progress=0,
+                phase="completed",
+                last_checkpoint="Gateway agent matching session selectors completed.",
+            )
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        chat_send_service=fake_chat_send_service,
+        sleep=fake_sleep,
+    )
+
+    launch_payload = await service.call(
+        "agent",
+        {
+            "message": "Ship the next verified slice.",
+            "agentId": "main",
+            "sessionKey": thread_session_key,
+            "sessionId": "thread-agent-matching-key-session-id",
+            "idempotencyKey": "agent-run-matching-key-session-id-1",
+        },
+        now_ms=3189,
+    )
+
+    assert observed_send == {
+        "session_key": thread_session_key,
+        "message": "Ship the next verified slice.",
+        "idempotency_key": "agent-run-matching-key-session-id-1",
+        "thinking": None,
+        "deliver": None,
+        "timeout_ms": None,
+    }
+    assert launch_payload["runId"] == "agent-run-matching-key-session-id-1"
+    assert launch_payload["status"] == "accepted"
+    assert isinstance(launch_payload["acceptedAt"], int)
+
+    wait_payload = await service.call(
+        "agent.wait",
+        {
+            "runId": "agent-run-matching-key-session-id-1",
+            "timeoutMs": 5,
+        },
+    )
+
+    assert wait_payload["runId"] == "agent-run-matching-key-session-id-1"
+    assert wait_payload["status"] == "ok"
+    assert wait_payload["startedAt"] == 3189
+    assert isinstance(wait_payload["endedAt"], int)
+    assert wait_payload["endedAt"] >= wait_payload["startedAt"]
+    assert sleep_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_agent_launch_ignores_blank_optional_unsupported_string_fields() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-agent-launch-blank-optional-fields"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-agent-launch-blank-optional-fields.db")
+    await database.initialize()
+    main_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+    )
+    mission_id = await database.create_mission(
+        name="Gateway Agent Blank Optional Fields Loop",
+        objective="Launch parity while treating blank unsupported strings as omitted.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread-agent-launch-blank-optional-fields",
+        session_key=main_session_key,
+        cwd=str(tmp_path),
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=False,
+        run_verification=False,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+    )
+
+    observed_send: dict[str, object] = {}
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        observed_send.update(
+            {
+                "session_key": session_key,
+                "message": message,
+                "idempotency_key": idempotency_key,
+                "thinking": thinking,
+                "deliver": deliver,
+                "timeout_ms": timeout_ms,
+            }
+        )
+        return {"runId": idempotency_key, "status": "ok"}
+
+    sleep_calls = 0
+
+    async def fake_sleep(_seconds: float) -> None:
+        nonlocal sleep_calls
+        sleep_calls += 1
+        if sleep_calls == 1:
+            await database.update_mission(
+                mission_id,
+                status="completed",
+                in_progress=0,
+                phase="completed",
+                last_checkpoint="Gateway agent blank optional fields launch completed.",
+            )
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        chat_send_service=fake_chat_send_service,
+        sleep=fake_sleep,
+    )
+
+    launch_payload = await service.call(
+        "agent",
+        {
+            "message": "Ship the next verified slice.",
+            "agentId": "main",
+            "provider": "   ",
+            "replyTo": "   ",
+            "channel": "   ",
+            "threadId": "   ",
+            "groupId": "   ",
+            "lane": "   ",
+            "extraSystemPrompt": "   ",
+            "idempotencyKey": "agent-run-blank-optional-fields-1",
+        },
+        now_ms=3721,
+    )
+
+    assert observed_send == {
+        "session_key": main_session_key,
+        "message": "Ship the next verified slice.",
+        "idempotency_key": "agent-run-blank-optional-fields-1",
+        "thinking": None,
+        "deliver": None,
+        "timeout_ms": None,
+    }
+    assert launch_payload["runId"] == "agent-run-blank-optional-fields-1"
+    assert launch_payload["status"] == "accepted"
+    assert isinstance(launch_payload["acceptedAt"], int)
+
+    wait_payload = await service.call(
+        "agent.wait",
+        {
+            "runId": "agent-run-blank-optional-fields-1",
+            "timeoutMs": 5,
+        },
+    )
+
+    assert wait_payload["runId"] == "agent-run-blank-optional-fields-1"
+    assert wait_payload["status"] == "ok"
+    assert wait_payload["startedAt"] == 3721
+    assert isinstance(wait_payload["endedAt"], int)
+    assert wait_payload["endedAt"] >= wait_payload["startedAt"]
+    assert sleep_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_agent_launch_ignores_blank_session_selectors() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-agent-launch-blank-session-selectors"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-agent-launch-blank-session-selectors.db")
+    await database.initialize()
+    main_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+    )
+    mission_id = await database.create_mission(
+        name="Gateway Agent Blank Session Selectors Loop",
+        objective="Launch parity while treating blank session selectors as omitted.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread-agent-launch-blank-session-selectors",
+        session_key=main_session_key,
+        cwd=str(tmp_path),
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=False,
+        run_verification=False,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+    )
+
+    observed_send: dict[str, object] = {}
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        observed_send.update(
+            {
+                "session_key": session_key,
+                "message": message,
+                "idempotency_key": idempotency_key,
+                "thinking": thinking,
+                "deliver": deliver,
+                "timeout_ms": timeout_ms,
+            }
+        )
+        return {"runId": idempotency_key, "status": "ok"}
+
+    sleep_calls = 0
+
+    async def fake_sleep(_seconds: float) -> None:
+        nonlocal sleep_calls
+        sleep_calls += 1
+        if sleep_calls == 1:
+            await database.update_mission(
+                mission_id,
+                status="completed",
+                in_progress=0,
+                phase="completed",
+                last_checkpoint="Gateway agent blank session selectors launch completed.",
+            )
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        chat_send_service=fake_chat_send_service,
+        sleep=fake_sleep,
+    )
+
+    launch_payload = await service.call(
+        "agent",
+        {
+            "message": "Ship the next verified slice.",
+            "agentId": "main",
+            "sessionKey": "   ",
+            "sessionId": "   ",
+            "idempotencyKey": "agent-run-blank-session-selectors-1",
+        },
+        now_ms=4511,
+    )
+
+    assert observed_send == {
+        "session_key": main_session_key,
+        "message": "Ship the next verified slice.",
+        "idempotency_key": "agent-run-blank-session-selectors-1",
+        "thinking": None,
+        "deliver": None,
+        "timeout_ms": None,
+    }
+    assert launch_payload["runId"] == "agent-run-blank-session-selectors-1"
+    assert launch_payload["status"] == "accepted"
+    assert isinstance(launch_payload["acceptedAt"], int)
+
+    wait_payload = await service.call(
+        "agent.wait",
+        {
+            "runId": "agent-run-blank-session-selectors-1",
+            "timeoutMs": 5,
+        },
+    )
+
+    assert wait_payload["runId"] == "agent-run-blank-session-selectors-1"
+    assert wait_payload["status"] == "ok"
+    assert wait_payload["startedAt"] == 4511
+    assert isinstance(wait_payload["endedAt"], int)
+    assert wait_payload["endedAt"] >= wait_payload["startedAt"]
+    assert sleep_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_agent_launch_ignores_blank_agent_id() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-agent-launch-blank-agent-id"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-agent-launch-blank-agent-id.db")
+    await database.initialize()
+    main_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+    )
+    mission_id = await database.create_mission(
+        name="Gateway Agent Blank Agent Id Loop",
+        objective="Launch parity while treating blank agent ids as omitted.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread-agent-launch-blank-agent-id",
+        session_key=main_session_key,
+        cwd=str(tmp_path),
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=False,
+        run_verification=False,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+    )
+
+    observed_send: dict[str, object] = {}
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        observed_send.update(
+            {
+                "session_key": session_key,
+                "message": message,
+                "idempotency_key": idempotency_key,
+                "thinking": thinking,
+                "deliver": deliver,
+                "timeout_ms": timeout_ms,
+            }
+        )
+        return {"runId": idempotency_key, "status": "ok"}
+
+    sleep_calls = 0
+
+    async def fake_sleep(_seconds: float) -> None:
+        nonlocal sleep_calls
+        sleep_calls += 1
+        if sleep_calls == 1:
+            await database.update_mission(
+                mission_id,
+                status="completed",
+                in_progress=0,
+                phase="completed",
+                last_checkpoint="Gateway agent blank agent id launch completed.",
+            )
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        chat_send_service=fake_chat_send_service,
+        sleep=fake_sleep,
+    )
+
+    launch_payload = await service.call(
+        "agent",
+        {
+            "message": "Ship the next verified slice.",
+            "agentId": "   ",
+            "idempotencyKey": "agent-run-blank-agent-id-1",
+        },
+        now_ms=4822,
+    )
+
+    assert observed_send == {
+        "session_key": main_session_key,
+        "message": "Ship the next verified slice.",
+        "idempotency_key": "agent-run-blank-agent-id-1",
+        "thinking": None,
+        "deliver": None,
+        "timeout_ms": None,
+    }
+    assert launch_payload["runId"] == "agent-run-blank-agent-id-1"
+    assert launch_payload["status"] == "accepted"
+    assert isinstance(launch_payload["acceptedAt"], int)
+
+    wait_payload = await service.call(
+        "agent.wait",
+        {
+            "runId": "agent-run-blank-agent-id-1",
+            "timeoutMs": 5,
+        },
+    )
+
+    assert wait_payload["runId"] == "agent-run-blank-agent-id-1"
+    assert wait_payload["status"] == "ok"
+    assert wait_payload["startedAt"] == 4822
+    assert isinstance(wait_payload["endedAt"], int)
+    assert wait_payload["endedAt"] >= wait_payload["startedAt"]
+    assert sleep_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_agent_launch_allows_blank_thinking_hint() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-agent-launch-blank-thinking"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-agent-launch-blank-thinking.db")
+    await database.initialize()
+    main_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+    )
+    mission_id = await database.create_mission(
+        name="Gateway Agent Blank Thinking Loop",
+        objective="Launch parity while preserving blank thinking hints.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread-agent-launch-blank-thinking",
+        session_key=main_session_key,
+        cwd=str(tmp_path),
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=False,
+        run_verification=False,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+    )
+
+    observed_send: dict[str, object] = {}
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        observed_send.update(
+            {
+                "session_key": session_key,
+                "message": message,
+                "idempotency_key": idempotency_key,
+                "thinking": thinking,
+                "deliver": deliver,
+                "timeout_ms": timeout_ms,
+            }
+        )
+        return {"runId": idempotency_key, "status": "ok"}
+
+    sleep_calls = 0
+
+    async def fake_sleep(_seconds: float) -> None:
+        nonlocal sleep_calls
+        sleep_calls += 1
+        if sleep_calls == 1:
+            await database.update_mission(
+                mission_id,
+                status="completed",
+                in_progress=0,
+                phase="completed",
+                last_checkpoint="Gateway agent blank thinking launch completed.",
+            )
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        chat_send_service=fake_chat_send_service,
+        sleep=fake_sleep,
+    )
+
+    launch_payload = await service.call(
+        "agent",
+        {
+            "message": "Ship the next verified slice.",
+            "agentId": "main",
+            "thinking": "",
+            "idempotencyKey": "agent-run-blank-thinking-1",
+        },
+        now_ms=5091,
+    )
+
+    assert observed_send == {
+        "session_key": main_session_key,
+        "message": "Ship the next verified slice.",
+        "idempotency_key": "agent-run-blank-thinking-1",
+        "thinking": "",
+        "deliver": None,
+        "timeout_ms": None,
+    }
+    assert launch_payload["runId"] == "agent-run-blank-thinking-1"
+    assert launch_payload["status"] == "accepted"
+    assert isinstance(launch_payload["acceptedAt"], int)
+
+    wait_payload = await service.call(
+        "agent.wait",
+        {
+            "runId": "agent-run-blank-thinking-1",
+            "timeoutMs": 5,
+        },
+    )
+
+    assert wait_payload["runId"] == "agent-run-blank-thinking-1"
+    assert wait_payload["status"] == "ok"
+    assert wait_payload["startedAt"] == 5091
+    assert isinstance(wait_payload["endedAt"], int)
+    assert wait_payload["endedAt"] >= wait_payload["startedAt"]
+    assert sleep_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_agent_launch_ignores_blank_label_and_preserves_existing_metadata() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-agent-launch-blank-label"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-agent-launch-blank-label.db")
+    await database.initialize()
+    main_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+    )
+    mission_id = await database.create_mission(
+        name="Gateway Agent Blank Label Loop",
+        objective="Launch parity while treating blank labels as omitted.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread-agent-launch-blank-label",
+        session_key=main_session_key,
+        cwd=str(tmp_path),
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=False,
+        run_verification=False,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+    )
+    await database.upsert_gateway_session_metadata(
+        session_key=main_session_key,
+        metadata={"label": "Pinned Worker", "model": "gpt-5.4"},
+    )
+
+    observed_send: dict[str, object] = {}
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        observed_send.update(
+            {
+                "session_key": session_key,
+                "message": message,
+                "idempotency_key": idempotency_key,
+                "thinking": thinking,
+                "deliver": deliver,
+                "timeout_ms": timeout_ms,
+            }
+        )
+        return {"runId": idempotency_key, "status": "ok"}
+
+    sleep_calls = 0
+
+    async def fake_sleep(_seconds: float) -> None:
+        nonlocal sleep_calls
+        sleep_calls += 1
+        if sleep_calls == 1:
+            await database.update_mission(
+                mission_id,
+                status="completed",
+                in_progress=0,
+                phase="completed",
+                last_checkpoint="Gateway agent blank label launch completed.",
+            )
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        chat_send_service=fake_chat_send_service,
+        sleep=fake_sleep,
+    )
+
+    launch_payload = await service.call(
+        "agent",
+        {
+            "message": "Ship the next verified slice.",
+            "agentId": "main",
+            "label": "",
+            "idempotencyKey": "agent-run-blank-label-1",
+        },
+        now_ms=5274,
+    )
+
+    metadata_row = await database.get_gateway_session_metadata(main_session_key)
+
+    assert observed_send == {
+        "session_key": main_session_key,
+        "message": "Ship the next verified slice.",
+        "idempotency_key": "agent-run-blank-label-1",
+        "thinking": None,
+        "deliver": None,
+        "timeout_ms": None,
+    }
+    assert launch_payload["runId"] == "agent-run-blank-label-1"
+    assert launch_payload["status"] == "accepted"
+    assert isinstance(launch_payload["acceptedAt"], int)
+    assert metadata_row is not None
+    assert metadata_row["metadata"]["label"] == "Pinned Worker"
+    assert metadata_row["metadata"]["model"] == "gpt-5.4"
+
+    wait_payload = await service.call(
+        "agent.wait",
+        {
+            "runId": "agent-run-blank-label-1",
+            "timeoutMs": 5,
+        },
+    )
+
+    assert wait_payload["runId"] == "agent-run-blank-label-1"
+    assert wait_payload["status"] == "ok"
+    assert wait_payload["startedAt"] == 5274
+    assert isinstance(wait_payload["endedAt"], int)
+    assert wait_payload["endedAt"] >= wait_payload["startedAt"]
+    assert sleep_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_agent_launch_allows_empty_internal_events_array() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-agent-launch-empty-internal-events"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-agent-launch-empty-internal-events.db")
+    await database.initialize()
+    main_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+    )
+    mission_id = await database.create_mission(
+        name="Gateway Agent Empty Internal Events Loop",
+        objective="Launch parity while treating empty internal events as inert.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread-agent-launch-empty-internal-events",
+        session_key=main_session_key,
+        cwd=str(tmp_path),
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=False,
+        run_verification=False,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+    )
+
+    observed_send: dict[str, object] = {}
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        observed_send.update(
+            {
+                "session_key": session_key,
+                "message": message,
+                "idempotency_key": idempotency_key,
+                "thinking": thinking,
+                "deliver": deliver,
+                "timeout_ms": timeout_ms,
+            }
+        )
+        return {"runId": idempotency_key, "status": "ok"}
+
+    sleep_calls = 0
+
+    async def fake_sleep(_seconds: float) -> None:
+        nonlocal sleep_calls
+        sleep_calls += 1
+        if sleep_calls == 1:
+            await database.update_mission(
+                mission_id,
+                status="completed",
+                in_progress=0,
+                phase="completed",
+                last_checkpoint="Gateway agent empty internal events launch completed.",
+            )
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        chat_send_service=fake_chat_send_service,
+        sleep=fake_sleep,
+    )
+
+    launch_payload = await service.call(
+        "agent",
+        {
+            "message": "Ship the next verified slice.",
+            "agentId": "main",
+            "internalEvents": [],
+            "idempotencyKey": "agent-run-empty-internal-events-1",
+        },
+        now_ms=5417,
+    )
+
+    assert observed_send == {
+        "session_key": main_session_key,
+        "message": "Ship the next verified slice.",
+        "idempotency_key": "agent-run-empty-internal-events-1",
+        "thinking": None,
+        "deliver": None,
+        "timeout_ms": None,
+    }
+    assert launch_payload["runId"] == "agent-run-empty-internal-events-1"
+    assert launch_payload["status"] == "accepted"
+    assert isinstance(launch_payload["acceptedAt"], int)
+
+    wait_payload = await service.call(
+        "agent.wait",
+        {
+            "runId": "agent-run-empty-internal-events-1",
+            "timeoutMs": 5,
+        },
+    )
+
+    assert wait_payload["runId"] == "agent-run-empty-internal-events-1"
+    assert wait_payload["status"] == "ok"
+    assert wait_payload["startedAt"] == 5417
+    assert isinstance(wait_payload["endedAt"], int)
+    assert wait_payload["endedAt"] >= wait_payload["startedAt"]
+    assert sleep_calls == 1
 
 
 @pytest.mark.asyncio
@@ -3806,6 +6377,78 @@ async def test_cron_add_creates_every_schedule_agent_turn_job() -> None:
 
 
 @pytest.mark.asyncio
+async def test_cron_add_accepts_every_schedule_anchor_ms() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-add-anchor-service"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-cron-add-anchor.db")
+    await database.initialize()
+    created_payloads: list[TaskBlueprintCreate] = []
+
+    async def create_task(payload: TaskBlueprintCreate) -> object:
+        created_payloads.append(payload)
+        task_id = await database.create_task_blueprint(
+            name=payload.name,
+            summary=payload.summary,
+            project_id=payload.project_id,
+            instance_id=payload.instance_id,
+            cadence_minutes=payload.cadence_minutes,
+            enabled=payload.enabled,
+            payload={
+                "objective_template": payload.objective_template,
+                "conversation_target": payload.conversation_target,
+                "run_until_complete": payload.run_until_complete,
+                "continuation_cooldown_minutes": payload.continuation_cooldown_minutes,
+                "completion_marker": payload.completion_marker,
+                "cwd": payload.cwd,
+                "model": payload.model,
+                "reasoning_effort": payload.reasoning_effort,
+                "collaboration_mode": payload.collaboration_mode,
+                "max_turns": payload.max_turns,
+                "use_builtin_agents": payload.use_builtin_agents,
+                "run_verification": payload.run_verification,
+                "auto_commit": payload.auto_commit,
+                "pause_on_approval": payload.pause_on_approval,
+                "allow_auto_reflexes": payload.allow_auto_reflexes,
+                "auto_recover": payload.auto_recover,
+                "auto_recover_limit": payload.auto_recover_limit,
+                "reflex_cooldown_seconds": payload.reflex_cooldown_seconds,
+                "allow_failover": payload.allow_failover,
+                "toolsets": payload.toolsets,
+                "schedule_anchor_ms": payload.schedule_anchor_ms,
+            },
+        )
+        return type("CreatedTask", (), {"id": task_id})()
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        create_task_blueprint=create_task,
+    )
+
+    payload = await service.call(
+        "cron.add",
+        {
+            "name": "Anchored Ship",
+            "description": "Ship on the anchored minute boundary.",
+            "enabled": True,
+            "schedule": {"kind": "every", "everyMs": 3_600_000, "anchorMs": 123},
+            "sessionTarget": "main",
+            "wakeMode": "now",
+            "payload": {
+                "kind": "agentTurn",
+                "message": "Ship on the anchored minute boundary.",
+                "model": "gpt-5.4",
+            },
+        },
+    )
+
+    assert len(created_payloads) == 1
+    assert created_payloads[0].schedule_anchor_ms == 123
+    assert payload["schedule"] == {"kind": "every", "everyMs": 3_600_000, "anchorMs": 123}
+
+
+@pytest.mark.asyncio
 async def test_cron_add_rejects_unsupported_schedule_kind() -> None:
     service = GatewayNodeMethodService(
         GatewayNodeRegistry(),
@@ -3889,6 +6532,46 @@ async def test_cron_update_patches_supported_every_agent_turn_fields() -> None:
     assert not bool(updated_record["enabled"])
     assert updated_task["objective_template"] == "Repair the next verified slice."
     assert updated_task["model"] == "gpt-5.4-mini"
+
+
+@pytest.mark.asyncio
+async def test_cron_update_accepts_every_schedule_anchor_ms() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-update-anchor-service"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-cron-update-anchor.db")
+    await database.initialize()
+    task_id = await database.create_task_blueprint(
+        name="Anchored Ship",
+        summary="Ship on the anchored minute boundary.",
+        project_id=None,
+        instance_id=None,
+        cadence_minutes=60,
+        enabled=True,
+        payload={
+            **_task_blueprint_payload(
+                "Ship on the anchored minute boundary.",
+                model="gpt-5.4",
+            ),
+            "schedule_anchor_ms": 123,
+        },
+    )
+    service = GatewayNodeMethodService(GatewayNodeRegistry(), database=database)
+
+    payload = await service.call(
+        "cron.update",
+        {
+            "id": f"task-blueprint:{task_id}",
+            "patch": {
+                "schedule": {"kind": "every", "everyMs": 7_200_000, "anchorMs": 456},
+            },
+        },
+    )
+    updated_task = await database.get_task_blueprint(task_id)
+
+    assert payload["schedule"] == {"kind": "every", "everyMs": 7_200_000, "anchorMs": 456}
+    assert updated_task is not None
+    assert updated_task["schedule_anchor_ms"] == 456
 
 
 @pytest.mark.asyncio
@@ -4126,6 +6809,119 @@ async def test_agents_list_returns_bounded_singleton_agent_inventory() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method", "params", "message"),
+    [
+        (
+            "agents.create",
+            {
+                "name": "Builder",
+                "workspace": "/tmp/workspace",
+                "model": "gpt-5.4",
+                "emoji": "robot",
+                "avatar": "/static/agent.png",
+            },
+            "agents.create is unavailable until multi-agent registry mutation is wired",
+        ),
+        (
+            "agents.update",
+            {
+                "agentId": "main",
+                "name": "Builder",
+                "workspace": "/tmp/workspace",
+                "model": "gpt-5.4",
+                "emoji": "robot",
+                "avatar": "/static/agent.png",
+            },
+            "agents.update is unavailable until multi-agent registry mutation is wired",
+        ),
+        (
+            "agents.delete",
+            {
+                "agentId": "main",
+                "deleteFiles": True,
+            },
+            "agents.delete is unavailable until multi-agent registry mutation is wired",
+        ),
+    ],
+)
+async def test_agents_mutate_methods_return_explicit_unavailable_contract(
+    method: str,
+    params: dict[str, object],
+    message: str,
+) -> None:
+    service = GatewayNodeMethodService(GatewayNodeRegistry())
+
+    with pytest.raises(GatewayNodeMethodError) as exc_info:
+        await service.call(method, params)
+
+    assert exc_info.value.code == "UNAVAILABLE"
+    assert exc_info.value.status_code == 503
+    assert str(exc_info.value) == message
+
+
+@pytest.mark.asyncio
+async def test_doctor_memory_status_returns_explicit_unavailable_contract() -> None:
+    service = GatewayNodeMethodService(GatewayNodeRegistry())
+
+    with pytest.raises(GatewayNodeMethodError) as exc_info:
+        await service.call("doctor.memory.status", {})
+
+    assert exc_info.value.code == "UNAVAILABLE"
+    assert exc_info.value.status_code == 503
+    assert str(exc_info.value) == (
+        "doctor.memory.status is unavailable until gateway memory doctor runtime is wired"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method", "message"),
+    [
+        (
+            "doctor.memory.dreamDiary",
+            "doctor.memory.dreamDiary is unavailable until gateway dreaming runtime is wired",
+        ),
+        (
+            "doctor.memory.backfillDreamDiary",
+            "doctor.memory.backfillDreamDiary is unavailable until gateway dreaming "
+            "runtime is wired",
+        ),
+        (
+            "doctor.memory.resetDreamDiary",
+            "doctor.memory.resetDreamDiary is unavailable until gateway dreaming runtime is wired",
+        ),
+        (
+            "doctor.memory.resetGroundedShortTerm",
+            "doctor.memory.resetGroundedShortTerm is unavailable until gateway dreaming "
+            "runtime is wired",
+        ),
+        (
+            "doctor.memory.repairDreamingArtifacts",
+            "doctor.memory.repairDreamingArtifacts is unavailable until gateway dreaming "
+            "runtime is wired",
+        ),
+        (
+            "doctor.memory.dedupeDreamDiary",
+            "doctor.memory.dedupeDreamDiary is unavailable until gateway dreaming runtime is wired",
+        ),
+    ],
+)
+async def test_doctor_memory_family_returns_explicit_unavailable_contract(
+    method: str,
+    message: str,
+) -> None:
+    service = GatewayNodeMethodService(GatewayNodeRegistry())
+
+    with pytest.raises(GatewayNodeMethodError) as exc_info:
+        await service.call(method, {})
+
+    assert exc_info.value.code == "UNAVAILABLE"
+    assert exc_info.value.status_code == 503
+    assert str(exc_info.value) == message
+
+
+@pytest.mark.asyncio
 async def test_agent_identity_get_returns_singleton_identity_and_rejects_malformed_session_keys(
 ) -> None:
     service = GatewayNodeMethodService(GatewayNodeRegistry())
@@ -4139,8 +6935,51 @@ async def test_agent_identity_get_returns_singleton_identity_and_rejects_malform
         "emoji": None,
     }
 
-    with pytest.raises(ValueError, match="sessionKey is malformed"):
+    with pytest.raises(
+        ValueError,
+        match='invalid agent.identity.get params: malformed session key "agent:main"',
+    ):
         await service.call("agent.identity.get", {"sessionKey": "agent:main"})
+
+
+@pytest.mark.asyncio
+async def test_agent_identity_get_rejects_agent_id_that_conflicts_with_session_key_agent() -> None:
+    service = GatewayNodeMethodService(GatewayNodeRegistry())
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            'invalid agent.identity.get params: agent "main" does not match session key agent '
+            '"other-agent"'
+        ),
+    ):
+        await service.call(
+            "agent.identity.get",
+            {"agentId": "main", "sessionKey": "agent:other-agent:main"},
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("params",),
+    [
+        ({"agentId": "   "},),
+        ({"sessionKey": "   "},),
+    ],
+)
+async def test_agent_identity_get_allows_blank_optional_selectors(
+    params: dict[str, str],
+) -> None:
+    service = GatewayNodeMethodService(GatewayNodeRegistry())
+
+    payload = await service.call("agent.identity.get", params)
+
+    assert payload == {
+        "agentId": "main",
+        "name": "OpenZues",
+        "avatar": "/static/favicon.svg",
+        "emoji": None,
+    }
 
 
 @pytest.mark.asyncio
@@ -4245,6 +7084,7 @@ async def test_sessions_list_returns_bounded_singleton_control_chat_inventory() 
             "abortedLastRun": None,
             "thinkingLevel": None,
             "verboseLevel": None,
+            "traceLevel": None,
             "inputTokens": None,
             "outputTokens": None,
             "totalTokens": None,
@@ -4307,6 +7147,7 @@ async def test_sessions_list_includes_metadata_known_non_current_sessions() -> N
             "abortedLastRun": None,
             "thinkingLevel": None,
             "verboseLevel": None,
+            "traceLevel": None,
             "inputTokens": None,
             "outputTokens": None,
             "totalTokens": None,
@@ -4328,6 +7169,7 @@ async def test_sessions_list_includes_metadata_known_non_current_sessions() -> N
             "abortedLastRun": None,
             "thinkingLevel": None,
             "verboseLevel": None,
+            "traceLevel": None,
             "inputTokens": None,
             "outputTokens": None,
             "totalTokens": None,
@@ -5419,6 +8261,164 @@ async def test_config_get_returns_control_ui_bootstrap_snapshot() -> None:
 
 
 @pytest.mark.asyncio
+async def test_config_open_file_fails_as_explicit_unavailable_without_file_owner() -> None:
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        config_service=GatewayConfigService(
+            assistant_name="OpenZues",
+            assistant_avatar="/static/favicon.svg",
+            assistant_agent_id="assistant-control-ui",
+            server_version="9.9.9",
+        ),
+    )
+
+    with pytest.raises(GatewayNodeMethodError) as exc_info:
+        await service.call("config.openFile", {})
+
+    assert exc_info.value.code == "UNAVAILABLE"
+    assert (
+        exc_info.value.message
+        == "config.openFile is unavailable until operator config file ownership is wired"
+    )
+    assert exc_info.value.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_config_open_file_returns_snapshot_path_when_owner_is_wired(tmp_path) -> None:
+    opened_paths: list[Path] = []
+
+    def fake_open_path(path: Path) -> None:
+        opened_paths.append(path)
+
+    expected_path = tmp_path / "settings" / "control-ui-config.json"
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        config_service=GatewayConfigService(
+            assistant_name="OpenZues",
+            assistant_avatar="/static/favicon.svg",
+            assistant_agent_id="assistant-control-ui",
+            server_version="9.9.9",
+            data_dir=tmp_path,
+            open_path=fake_open_path,
+        ),
+    )
+
+    payload = await service.call("config.openFile", {})
+
+    assert payload == {"ok": True, "path": str(expected_path)}
+    assert opened_paths == [expected_path]
+    assert json.loads(expected_path.read_text(encoding="utf-8")) == {
+        "allowExternalEmbedUrls": False,
+        "assistantAgentId": "assistant-control-ui",
+        "assistantAvatar": "/static/favicon.svg",
+        "assistantName": "OpenZues",
+        "basePath": "",
+        "embedSandbox": "scripts",
+        "localMediaPreviewRoots": [],
+        "serverVersion": "9.9.9",
+    }
+
+
+@pytest.mark.asyncio
+async def test_config_open_file_returns_generic_error_when_opener_fails(tmp_path) -> None:
+    def fake_open_path(_path: Path) -> None:
+        raise OSError("no opener available")
+
+    expected_path = tmp_path / "settings" / "control-ui-config.json"
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        config_service=GatewayConfigService(
+            assistant_name="OpenZues",
+            assistant_avatar="/static/favicon.svg",
+            assistant_agent_id="assistant-control-ui",
+            server_version="9.9.9",
+            data_dir=tmp_path,
+            open_path=fake_open_path,
+        ),
+    )
+
+    payload = await service.call("config.openFile", {})
+
+    assert payload == {
+        "ok": False,
+        "path": str(expected_path),
+        "error": "failed to open config file",
+    }
+    assert expected_path.exists()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method", "params", "expected_message"),
+    [
+        (
+            "config.set",
+            {
+                "raw": "{\"assistantName\":\"Parity Builder\"}",
+                "baseHash": "sha256:abc123",
+            },
+            "config.set is unavailable until writable gateway config ownership is wired",
+        ),
+        (
+            "config.patch",
+            {
+                "raw": "{\"assistantName\":\"Parity Builder\"}",
+                "baseHash": "sha256:def456",
+                "sessionKey": "agent:main:thread:demo",
+                "deliveryContext": {
+                    "channel": "slack",
+                    "to": "user:U123",
+                    "accountId": "default",
+                    "threadId": 1771242986529939,
+                },
+                "note": "Patch the bounded config seam.",
+                "restartDelayMs": 0,
+            },
+            "config.patch is unavailable until writable gateway config patching is wired",
+        ),
+        (
+            "config.apply",
+            {
+                "raw": "{\"assistantName\":\"Parity Builder\"}",
+                "baseHash": "sha256:ghi789",
+                "sessionKey": "agent:main:thread:demo",
+                "deliveryContext": {
+                    "channel": "slack",
+                    "to": "user:U123",
+                    "accountId": "default",
+                    "threadId": 1771242986529939,
+                },
+                "note": "Apply the bounded config seam.",
+                "restartDelayMs": 0,
+            },
+            "config.apply is unavailable until writable gateway config apply runtime is wired",
+        ),
+    ],
+)
+async def test_config_write_methods_return_explicit_unavailable_contract(
+    method: str,
+    params: dict[str, object],
+    expected_message: str,
+) -> None:
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        config_service=GatewayConfigService(
+            assistant_name="OpenZues",
+            assistant_avatar="/static/favicon.svg",
+            assistant_agent_id="assistant-control-ui",
+            server_version="9.9.9",
+        ),
+    )
+
+    with pytest.raises(GatewayNodeMethodError) as exc_info:
+        await service.call(method, params)
+
+    assert exc_info.value.code == "UNAVAILABLE"
+    assert exc_info.value.message == expected_message
+    assert exc_info.value.status_code == 503
+
+
+@pytest.mark.asyncio
 async def test_channels_status_returns_notification_route_inventory() -> None:
     async def fake_list_notification_route_views() -> list[NotificationRouteView]:
         return [
@@ -5453,6 +8453,29 @@ async def test_channels_status_returns_notification_route_inventory() -> None:
     assert channels["routeCount"] == 1
     assert channels["enabledCount"] == 1
     assert channels["conversationTargetCount"] == 1
+    assert channels["channelOrder"] == ["discord", "slack", "telegram", "whatsapp"]
+    assert channels["channelLabels"]["slack"] == "Slack"
+    assert channels["channelDetailLabels"]["slack"] == "Slack"
+    assert channels["channelMeta"][1] == {
+        "id": "slack",
+        "label": "Slack",
+        "detailLabel": "Slack",
+    }
+    assert channels["channels"]["slack"] == {
+        "routeCount": 1,
+        "enabledRouteCount": 1,
+        "conversationTargetCount": 1,
+        "accountCount": 1,
+    }
+    assert channels["channelAccounts"]["slack"] == [
+        {
+            "accountId": "workspace-bot",
+            "routeCount": 1,
+            "enabledRouteCount": 1,
+            "conversationTargetCount": 1,
+        }
+    ]
+    assert channels["channelDefaultAccountId"]["slack"] == "workspace-bot"
     assert channels["routes"][0]["name"] == "Deploy Room"
     assert channels["routes"][0]["conversation_target"]["channel"] == "slack"
 
@@ -7065,6 +10088,70 @@ async def test_tts_convert_runs_bounded_runtime_when_wired(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_tts_convert_normalizes_blank_optional_selectors(tmp_path) -> None:
+    synthesized_path = tmp_path / "speech.wav"
+    synthesized_path.write_bytes(b"RIFFtest-wave")
+    observed: dict[str, object] = {}
+
+    def fake_convert(
+        *,
+        text: str,
+        channel: str | None,
+        provider: str | None,
+        model_id: str | None,
+        voice_id: str | None,
+    ) -> GatewayTtsSynthesisResult:
+        observed.update(
+            {
+                "text": text,
+                "channel": channel,
+                "provider": provider,
+                "model_id": model_id,
+                "voice_id": voice_id,
+            }
+        )
+        return GatewayTtsSynthesisResult(
+            audio_path=str(synthesized_path),
+            provider="microsoft",
+            output_format="wav",
+            voice_compatible=True,
+        )
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        tts_runtime_service=GatewayTtsRuntimeService(
+            data_dir=tmp_path,
+            convert_runner=fake_convert,
+        ),
+    )
+
+    payload = await service.call(
+        "tts.convert",
+        {
+            "text": "Hello from Zues",
+            "channel": "   ",
+            "provider": "   ",
+            "modelId": "   ",
+            "voiceId": "   ",
+        },
+    )
+
+    assert payload == {
+        "audioPath": str(synthesized_path),
+        "provider": "microsoft",
+        "outputFormat": "wav",
+        "voiceCompatible": True,
+    }
+    assert observed == {
+        "text": "Hello from Zues",
+        "channel": None,
+        "provider": "microsoft",
+        "model_id": None,
+        "voice_id": None,
+    }
+
+
+@pytest.mark.asyncio
 async def test_tts_convert_fails_closed_when_runtime_is_disabled() -> None:
     service = GatewayNodeMethodService(
         GatewayNodeRegistry(),
@@ -7149,6 +10236,36 @@ async def test_talk_speak_returns_inline_audio_when_runtime_is_wired(tmp_path) -
 
 
 @pytest.mark.asyncio
+async def test_talk_speak_rejects_rate_wpm_that_resolves_outside_upstream_window(
+    tmp_path,
+) -> None:
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        tts_runtime_service=GatewayTtsRuntimeService(
+            data_dir=tmp_path,
+            convert_runner=lambda **_: (_ for _ in ()).throw(
+                AssertionError("convert_runner should not be reached for invalid talk.speak")
+            ),
+        ),
+    )
+
+    with pytest.raises(
+        GatewayNodeMethodError,
+        match="invalid talk.speak params: rateWpm must resolve to speed between 0.5 and 2.0",
+    ) as exc_info:
+        await service.call(
+            "talk.speak",
+            {
+                "text": "Hello from talk mode.",
+                "rateWpm": 350,
+            },
+        )
+
+    assert exc_info.value.code == "INVALID_REQUEST"
+    assert exc_info.value.status_code == 400
+
+
+@pytest.mark.asyncio
 async def test_skills_install_clawhub_mode_fails_closed_when_gateway_host_lacks_cli() -> None:
     service = GatewayNodeMethodService(
         GatewayNodeRegistry(),
@@ -7204,6 +10321,840 @@ async def test_node_event_records_event_and_broadcasts_when_runtime_wired(tmp_pa
     assert broadcast["payload"] == {"ok": True}
     assert json.loads(str(broadcast["payloadJSON"])) == {"ok": True}
     assert isinstance(broadcast["createdAt"], str)
+
+
+@pytest.mark.asyncio
+async def test_system_event_records_event_and_broadcasts_presence_snapshot(tmp_path) -> None:
+    database = Database(tmp_path / "system-event.db")
+    await database.initialize()
+    registry = GatewayNodeRegistry()
+    _register_ios_node(registry)
+    hub = BroadcastHub()
+    service = GatewayNodeMethodService(
+        registry,
+        database=database,
+        hub=hub,
+        gateway_identity_service=GatewayIdentityService(tmp_path),
+    )
+
+    async with hub.subscribe() as queue:
+        response = await service.call(
+            "system-event",
+            {
+                "text": "note from test",
+                "deviceId": "device-1",
+                "instanceId": "instance-1",
+                "roles": ["operator", "operator", "  "],
+                "tags": ["gateway", "test"],
+            },
+            now_ms=1_700_000_000_000,
+        )
+        broadcast = await asyncio.wait_for(queue.get(), timeout=1.0)
+
+    events = await database.list_events()
+
+    assert response == {"ok": True}
+    assert len(events) == 1
+    assert events[0]["instance_id"] is None
+    assert events[0]["thread_id"] is None
+    assert events[0]["method"] == "system-event"
+    assert events[0]["payload"] == {
+        "text": "note from test",
+        "deviceId": "device-1",
+        "instanceId": "instance-1",
+        "roles": ["operator"],
+        "tags": ["gateway", "test"],
+    }
+
+    assert broadcast["type"] == "gateway_event"
+    assert broadcast["event"] == "presence"
+    assert isinstance(broadcast["createdAt"], str)
+    assert "presence" in broadcast["payload"]
+    assert isinstance(broadcast["payload"]["presence"], list)
+    node_entry = next(
+        entry for entry in broadcast["payload"]["presence"] if entry.get("deviceId") == "node-1"
+    )
+    assert node_entry["host"] == "Builder Phone"
+    self_entry = next(
+        entry
+        for entry in broadcast["payload"]["presence"]
+        if entry.get("reason") == "self"
+    )
+    assert self_entry["deviceId"].startswith("gateway-")
+
+
+@pytest.mark.asyncio
+async def test_secrets_reload_counts_enabled_broken_secret_refs() -> None:
+    now = datetime.now(UTC)
+    probed_secret_ids: list[int] = []
+
+    async def fake_list_integration_views() -> list[IntegrationView]:
+        return [
+            IntegrationView(
+                id=1,
+                name="Healthy GitHub",
+                kind="github",
+                base_url="https://api.github.com",
+                auth_scheme="token",
+                vault_secret_id=1,
+                vault_secret_label="GITHUB_TOKEN",
+                has_secret=True,
+                secret_preview="****1234",
+                auth_status="satisfied",
+                auth_detail="Vault secret 'GITHUB_TOKEN' is attached.",
+                enabled=True,
+                created_at=now,
+                updated_at=now,
+            ),
+            IntegrationView(
+                id=2,
+                name="Broken GitHub",
+                kind="github",
+                base_url="https://api.github.com",
+                auth_scheme="token",
+                vault_secret_id=9,
+                vault_secret_label=None,
+                has_secret=False,
+                secret_preview=None,
+                auth_status="degraded",
+                auth_detail="Referenced vault secret is missing.",
+                enabled=True,
+                created_at=now,
+                updated_at=now,
+            ),
+            IntegrationView(
+                id=3,
+                name="Missing Credential",
+                kind="github",
+                base_url="https://api.github.com",
+                auth_scheme="token",
+                vault_secret_id=None,
+                vault_secret_label=None,
+                has_secret=False,
+                secret_preview=None,
+                auth_status="missing",
+                auth_detail="Attach a vault secret before using this integration.",
+                enabled=True,
+                created_at=now,
+                updated_at=now,
+            ),
+            IntegrationView(
+                id=4,
+                name="Disabled Broken GitHub",
+                kind="github",
+                base_url="https://api.github.com",
+                auth_scheme="token",
+                vault_secret_id=10,
+                vault_secret_label=None,
+                has_secret=False,
+                secret_preview=None,
+                auth_status="degraded",
+                auth_detail="Referenced vault secret is missing.",
+                enabled=False,
+                created_at=now,
+                updated_at=now,
+            ),
+        ]
+
+    async def fake_list_notification_route_views() -> list[NotificationRouteView]:
+        return [
+            NotificationRouteView(
+                id=7,
+                name="Healthy Webhook",
+                kind="webhook",
+                target="https://example.invalid/healthy",
+                events=["mission/completed"],
+                enabled=True,
+                vault_secret_id=1,
+                vault_secret_label="Webhook secret",
+                has_secret=True,
+                secret_preview="****1234",
+                created_at=now,
+                updated_at=now,
+            ),
+            NotificationRouteView(
+                id=8,
+                name="Broken Webhook",
+                kind="webhook",
+                target="https://example.invalid/broken",
+                events=["mission/completed"],
+                enabled=True,
+                vault_secret_id=11,
+                vault_secret_label=None,
+                has_secret=False,
+                secret_preview=None,
+                created_at=now,
+                updated_at=now,
+            ),
+            NotificationRouteView(
+                id=9,
+                name="No Secret Webhook",
+                kind="webhook",
+                target="https://example.invalid/no-secret",
+                events=["mission/completed"],
+                enabled=True,
+                vault_secret_id=None,
+                vault_secret_label=None,
+                has_secret=False,
+                secret_preview=None,
+                created_at=now,
+                updated_at=now,
+            ),
+            NotificationRouteView(
+                id=10,
+                name="Disabled Broken Webhook",
+                kind="webhook",
+                target="https://example.invalid/disabled-broken",
+                events=["mission/completed"],
+                enabled=False,
+                vault_secret_id=12,
+                vault_secret_label=None,
+                has_secret=False,
+                secret_preview=None,
+                created_at=now,
+                updated_at=now,
+            ),
+        ]
+
+    async def fake_probe_secret(secret_id: int) -> str | None:
+        probed_secret_ids.append(secret_id)
+        return {
+            1: None,
+            11: "Referenced vault secret is missing.",
+            12: "Referenced vault secret is missing.",
+        }.get(secret_id)
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        list_integration_views=fake_list_integration_views,
+        list_notification_route_views=fake_list_notification_route_views,
+        probe_secret=fake_probe_secret,
+    )
+
+    payload = await service.call("secrets.reload", {})
+
+    assert payload == {"ok": True, "warningCount": 2}
+    assert probed_secret_ids == [1, 11]
+
+
+@pytest.mark.asyncio
+async def test_secrets_resolve_returns_validated_unavailable_contract() -> None:
+    service = GatewayNodeMethodService(GatewayNodeRegistry())
+
+    with pytest.raises(
+        GatewayNodeMethodError,
+        match=(
+            "secrets.resolve is unavailable until command-target secret resolution is wired"
+        ),
+    ) as exc_info:
+        await service.call(
+            "secrets.resolve",
+            {
+                "commandName": "memory status",
+                "targetIds": ["talk.providers.*.apiKey"],
+            },
+        )
+
+    assert exc_info.value.code == "UNAVAILABLE"
+    assert exc_info.value.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_message_action_reports_unsupported_action_for_known_channel() -> None:
+    service = GatewayNodeMethodService(GatewayNodeRegistry())
+
+    with pytest.raises(
+        GatewayNodeMethodError,
+        match=r"Channel whatsapp does not support action react\.",
+    ) as exc_info:
+        await service.call(
+            "message.action",
+            {
+                "channel": "whatsapp",
+                "action": "react",
+                "params": {
+                    "chatJid": "+15551234567",
+                    "messageId": "wamid.1",
+                    "emoji": "✅",
+                },
+                "accountId": "default",
+                "requesterSenderId": "trusted-user",
+                "senderIsOwner": True,
+                "sessionKey": "agent:main:whatsapp:+15551234567",
+                "sessionId": "session-123",
+                "agentId": "main",
+                "toolContext": {
+                    "currentChannelId": "channel:team:general",
+                    "currentGraphChannelId": "graph:team/general",
+                    "currentChannelProvider": "whatsapp",
+                    "currentThreadTs": "1710000000.9999",
+                    "currentMessageId": "wamid.1",
+                    "replyToMode": "first",
+                    "hasRepliedRef": {"value": True},
+                    "skipCrossContextDecoration": True,
+                },
+                "idempotencyKey": "idem-message-action",
+            },
+        )
+
+    assert exc_info.value.code == "INVALID_REQUEST"
+    assert exc_info.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_message_action_rejects_internal_webchat_channel() -> None:
+    service = GatewayNodeMethodService(GatewayNodeRegistry())
+
+    with pytest.raises(
+        GatewayNodeMethodError,
+        match=(
+            "unsupported channel: webchat \\(internal-only\\)\\. Use `chat.send` for "
+            "WebChat UI messages or choose a deliverable channel\\."
+        ),
+    ) as exc_info:
+        await service.call(
+            "message.action",
+            {
+                "channel": "webchat",
+                "action": "react",
+                "params": {
+                    "messageId": "webchat.1",
+                    "emoji": "ok",
+                },
+                "idempotencyKey": "idem-message-action-webchat",
+            },
+        )
+
+    assert exc_info.value.code == "INVALID_REQUEST"
+    assert exc_info.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_message_action_auto_picks_single_notification_route_channel_when_omitted() -> None:
+    now = datetime.now(UTC)
+
+    async def fake_list_notification_route_views() -> list[NotificationRouteView]:
+        return [
+            NotificationRouteView(
+                id=1,
+                name="Slack Route",
+                kind="webhook",
+                target="https://example.invalid/slack",
+                events=["mission/completed"],
+                conversation_target=ConversationTargetView(
+                    channel="slack",
+                    account_id="workspace-bot",
+                    peer_kind="channel",
+                    peer_id="deploy-room",
+                ),
+                enabled=True,
+                created_at=now,
+                updated_at=now,
+            )
+        ]
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        list_notification_route_views=fake_list_notification_route_views,
+    )
+
+    with pytest.raises(
+        GatewayNodeMethodError,
+        match=r"Channel slack does not support action react\.",
+    ) as exc_info:
+        await service.call(
+            "message.action",
+            {
+                "action": "react",
+                "params": {
+                    "messageId": "slack.1",
+                    "emoji": "ok",
+                },
+                "idempotencyKey": "idem-message-action-autopick",
+            },
+        )
+
+    assert exc_info.value.code == "INVALID_REQUEST"
+    assert exc_info.value.status_code == 400
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("field", "extra_params"),
+    [
+        (
+            "accountId",
+            {"accountId": "   "},
+        ),
+        (
+            "requesterSenderId",
+            {"requesterSenderId": "   "},
+        ),
+        (
+            "sessionKey",
+            {"sessionKey": "   "},
+        ),
+        (
+            "sessionId",
+            {"sessionId": "   "},
+        ),
+        (
+            "agentId",
+            {"agentId": "   "},
+        ),
+    ],
+)
+async def test_message_action_allows_blank_optional_routing_identifiers(
+    field: str,
+    extra_params: dict[str, str],
+) -> None:
+    service = GatewayNodeMethodService(GatewayNodeRegistry())
+
+    with pytest.raises(
+        GatewayNodeMethodError,
+        match=r"Channel slack does not support action react\.",
+    ) as exc_info:
+        await service.call(
+            "message.action",
+            {
+                "channel": "slack",
+                "action": "react",
+                "params": {
+                    "messageId": "slack.1",
+                    "emoji": "ok",
+                },
+                "idempotencyKey": f"idem-message-action-blank-{field}",
+                **extra_params,
+            },
+        )
+
+    assert exc_info.value.code == "INVALID_REQUEST"
+    assert exc_info.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_send_returns_validated_unavailable_contract() -> None:
+    service = GatewayNodeMethodService(GatewayNodeRegistry())
+
+    with pytest.raises(
+        GatewayNodeMethodError,
+        match="send is unavailable until channel-target outbound delivery is wired",
+    ) as exc_info:
+        await service.call(
+            "send",
+            {
+                "to": "channel:C123",
+                "message": "Ship parity.",
+                "channel": "slack",
+                "accountId": "default",
+                "agentId": "main",
+                "threadId": "1710000000.9999",
+                "sessionKey": "agent:main:slack:channel:C123",
+                "idempotencyKey": "idem-send",
+            },
+        )
+
+    assert exc_info.value.code == "UNAVAILABLE"
+    assert exc_info.value.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_send_accepts_valid_whatsapp_target_shape_before_delivery_placeholder() -> None:
+    service = GatewayNodeMethodService(GatewayNodeRegistry())
+
+    with pytest.raises(
+        GatewayNodeMethodError,
+        match="send is unavailable until channel-target outbound delivery is wired",
+    ) as exc_info:
+        await service.call(
+            "send",
+            {
+                "to": " (555) 123-4567 ",
+                "message": "Ship parity.",
+                "channel": "whatsapp",
+                "idempotencyKey": "idem-send-whatsapp-valid",
+            },
+        )
+
+    assert exc_info.value.code == "UNAVAILABLE"
+    assert exc_info.value.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_send_rejects_invalid_whatsapp_target_shape() -> None:
+    service = GatewayNodeMethodService(GatewayNodeRegistry())
+
+    with pytest.raises(
+        GatewayNodeMethodError,
+        match="WhatsApp target is required",
+    ) as exc_info:
+        await service.call(
+            "send",
+            {
+                "to": "wat",
+                "message": "Ship parity.",
+                "channel": "whatsapp",
+                "idempotencyKey": "idem-send-whatsapp-invalid",
+            },
+        )
+
+    assert exc_info.value.code == "INVALID_REQUEST"
+    assert exc_info.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_send_accepts_valid_telegram_topic_target_shape_before_delivery_placeholder() -> None:
+    service = GatewayNodeMethodService(GatewayNodeRegistry())
+
+    with pytest.raises(
+        GatewayNodeMethodError,
+        match="send is unavailable until channel-target outbound delivery is wired",
+    ) as exc_info:
+        await service.call(
+            "send",
+            {
+                "to": " telegram:-100123:topic:77 ",
+                "message": "Ship parity.",
+                "channel": "telegram",
+                "idempotencyKey": "idem-send-telegram-topic",
+            },
+        )
+
+    assert exc_info.value.code == "UNAVAILABLE"
+    assert exc_info.value.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_send_rejects_blank_telegram_target_shape() -> None:
+    service = GatewayNodeMethodService(GatewayNodeRegistry())
+
+    with pytest.raises(
+        GatewayNodeMethodError,
+        match="Telegram target is required",
+    ) as exc_info:
+        await service.call(
+            "send",
+            {
+                "to": "   ",
+                "message": "Ship parity.",
+                "channel": "telegram",
+                "idempotencyKey": "idem-send-telegram-blank",
+            },
+        )
+
+    assert exc_info.value.code == "INVALID_REQUEST"
+    assert exc_info.value.status_code == 400
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("field", "extra_params"),
+    [
+        (
+            "accountId",
+            {"accountId": "   "},
+        ),
+        (
+            "agentId",
+            {"agentId": "   "},
+        ),
+        (
+            "threadId",
+            {"threadId": "   "},
+        ),
+        (
+            "sessionKey",
+            {"sessionKey": "   "},
+        ),
+    ],
+)
+async def test_send_allows_blank_optional_routing_identifiers(
+    field: str,
+    extra_params: dict[str, str],
+) -> None:
+    service = GatewayNodeMethodService(GatewayNodeRegistry())
+
+    with pytest.raises(
+        GatewayNodeMethodError,
+        match="send is unavailable until channel-target outbound delivery is wired",
+    ) as exc_info:
+        await service.call(
+            "send",
+            {
+                "to": "channel:C123",
+                "message": "Ship parity.",
+                "channel": "slack",
+                "idempotencyKey": f"idem-send-blank-{field}",
+                **extra_params,
+            },
+        )
+
+    assert exc_info.value.code == "UNAVAILABLE"
+    assert exc_info.value.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_send_rejects_internal_webchat_channel() -> None:
+    service = GatewayNodeMethodService(GatewayNodeRegistry())
+
+    with pytest.raises(
+        GatewayNodeMethodError,
+        match=(
+            "unsupported channel: webchat \\(internal-only\\)\\. Use `chat.send` for "
+            "WebChat UI messages or choose a deliverable channel\\."
+        ),
+    ) as exc_info:
+        await service.call(
+            "send",
+            {
+                "to": "channel:C123",
+                "message": "Ship parity.",
+                "channel": "webchat",
+                "idempotencyKey": "idem-send-webchat",
+            },
+        )
+
+    assert exc_info.value.code == "INVALID_REQUEST"
+    assert exc_info.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_send_rejects_missing_channel_when_multiple_route_channels_configured() -> None:
+    now = datetime.now(UTC)
+
+    async def fake_list_notification_route_views() -> list[NotificationRouteView]:
+        return [
+            NotificationRouteView(
+                id=1,
+                name="Slack Route",
+                kind="webhook",
+                target="https://example.invalid/slack",
+                events=["mission/completed"],
+                conversation_target=ConversationTargetView(
+                    channel="slack",
+                    account_id="workspace-bot",
+                    peer_kind="channel",
+                    peer_id="deploy-room",
+                ),
+                enabled=True,
+                created_at=now,
+                updated_at=now,
+            ),
+            NotificationRouteView(
+                id=2,
+                name="Telegram Route",
+                kind="webhook",
+                target="https://example.invalid/telegram",
+                events=["mission/completed"],
+                conversation_target=ConversationTargetView(
+                    channel="telegram",
+                    account_id="default",
+                    peer_kind="group",
+                    peer_id="12345",
+                ),
+                enabled=True,
+                created_at=now,
+                updated_at=now,
+            ),
+        ]
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        list_notification_route_views=fake_list_notification_route_views,
+    )
+
+    with pytest.raises(
+        GatewayNodeMethodError,
+        match="Channel is required when multiple channels are configured: slack, telegram",
+    ) as exc_info:
+        await service.call(
+            "send",
+            {
+                "to": "channel:C123",
+                "message": "Ship parity.",
+                "idempotencyKey": "idem-send-no-channel",
+            },
+        )
+
+    assert exc_info.value.code == "INVALID_REQUEST"
+    assert exc_info.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_poll_returns_validated_unavailable_contract() -> None:
+    service = GatewayNodeMethodService(GatewayNodeRegistry())
+
+    with pytest.raises(
+        GatewayNodeMethodError,
+        match="poll is unavailable until channel-target poll delivery is wired",
+    ) as exc_info:
+        await service.call(
+            "poll",
+            {
+                "to": "channel:C123",
+                "question": "Ship it?",
+                "options": ["Yes", "No"],
+                "maxSelections": 1,
+                "durationSeconds": 3600,
+                "channel": "slack",
+                "accountId": "default",
+                "idempotencyKey": "idem-poll",
+            },
+        )
+
+    assert exc_info.value.code == "UNAVAILABLE"
+    assert exc_info.value.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_poll_allows_thread_id_before_delivery_placeholder() -> None:
+    service = GatewayNodeMethodService(GatewayNodeRegistry())
+
+    with pytest.raises(
+        GatewayNodeMethodError,
+        match="poll is unavailable until channel-target poll delivery is wired",
+    ) as exc_info:
+        await service.call(
+            "poll",
+            {
+                "to": "channel:C123",
+                "question": "Ship it?",
+                "options": ["Yes", "No"],
+                "maxSelections": 1,
+                "durationSeconds": 3600,
+                "channel": "slack",
+                "accountId": "default",
+                "threadId": "1710000000.9999",
+                "idempotencyKey": "idem-poll-thread",
+            },
+        )
+
+    assert exc_info.value.code == "UNAVAILABLE"
+    assert exc_info.value.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_poll_rejects_invalid_whatsapp_target_shape() -> None:
+    service = GatewayNodeMethodService(GatewayNodeRegistry())
+
+    with pytest.raises(
+        GatewayNodeMethodError,
+        match="WhatsApp target is required",
+    ) as exc_info:
+        await service.call(
+            "poll",
+            {
+                "to": "wat",
+                "question": "Where next?",
+                "options": ["Now", "Later"],
+                "channel": "whatsapp",
+                "idempotencyKey": "idem-poll-whatsapp-invalid",
+            },
+        )
+
+    assert exc_info.value.code == "INVALID_REQUEST"
+    assert exc_info.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_poll_rejects_blank_telegram_target_shape() -> None:
+    service = GatewayNodeMethodService(GatewayNodeRegistry())
+
+    with pytest.raises(
+        GatewayNodeMethodError,
+        match="Telegram target is required",
+    ) as exc_info:
+        await service.call(
+            "poll",
+            {
+                "to": "   ",
+                "question": "Where next?",
+                "options": ["Now", "Later"],
+                "channel": "telegram",
+                "idempotencyKey": "idem-poll-telegram-blank",
+            },
+        )
+
+    assert exc_info.value.code == "INVALID_REQUEST"
+    assert exc_info.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_poll_allows_blank_account_id() -> None:
+    service = GatewayNodeMethodService(GatewayNodeRegistry())
+
+    with pytest.raises(
+        GatewayNodeMethodError,
+        match="poll is unavailable until channel-target poll delivery is wired",
+    ) as exc_info:
+        await service.call(
+            "poll",
+            {
+                "to": "channel:C123",
+                "question": "Where next?",
+                "options": ["Now", "Later"],
+                "channel": "slack",
+                "accountId": "   ",
+                "idempotencyKey": "idem-poll-blank-account",
+            },
+        )
+
+    assert exc_info.value.code == "UNAVAILABLE"
+    assert exc_info.value.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_poll_rejects_internal_webchat_channel() -> None:
+    service = GatewayNodeMethodService(GatewayNodeRegistry())
+
+    with pytest.raises(
+        GatewayNodeMethodError,
+        match=(
+            "unsupported channel: webchat \\(internal-only\\)\\. Use `chat.send` for "
+            "WebChat UI messages or choose a deliverable channel\\."
+        ),
+    ) as exc_info:
+        await service.call(
+            "poll",
+            {
+                "to": "channel:C123",
+                "question": "Where next?",
+                "options": ["Now", "Later"],
+                "channel": "webchat",
+                "idempotencyKey": "idem-poll-webchat",
+            },
+        )
+
+    assert exc_info.value.code == "INVALID_REQUEST"
+    assert exc_info.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_poll_rejects_missing_channel_when_no_route_channels_configured() -> None:
+    async def fake_list_notification_route_views() -> list[NotificationRouteView]:
+        return []
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        list_notification_route_views=fake_list_notification_route_views,
+    )
+
+    with pytest.raises(
+        GatewayNodeMethodError,
+        match=r"Channel is required \(no configured channels detected\)\.",
+    ) as exc_info:
+        await service.call(
+            "poll",
+            {
+                "to": "channel:C123",
+                "question": "Where next?",
+                "options": ["Now", "Later"],
+                "idempotencyKey": "idem-poll-no-channel",
+            },
+        )
+
+    assert exc_info.value.code == "INVALID_REQUEST"
+    assert exc_info.value.status_code == 400
 
 
 @pytest.mark.asyncio

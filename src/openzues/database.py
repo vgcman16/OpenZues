@@ -128,6 +128,16 @@ class Database:
                     ON control_chat_messages(id DESC);
                 CREATE INDEX IF NOT EXISTS idx_control_chat_messages_session_key
                     ON control_chat_messages(session_key, id DESC);
+                CREATE TABLE IF NOT EXISTS control_chat_compaction_checkpoints (
+                    checkpoint_id TEXT PRIMARY KEY,
+                    session_key TEXT NOT NULL,
+                    created_at_ms INTEGER NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    archived_messages_json TEXT NOT NULL DEFAULT '[]',
+                    created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_control_chat_compaction_checkpoints_session_key
+                    ON control_chat_compaction_checkpoints(session_key, created_at_ms DESC);
                 CREATE TABLE IF NOT EXISTS attention_queue_actions (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     signal_id TEXT NOT NULL,
@@ -3085,8 +3095,9 @@ class Database:
         opportunity_id: str | None = None,
         target_label: str | None = None,
         session_key: str | None = None,
+        created_at: str | None = None,
     ) -> int:
-        now = utcnow()
+        now = created_at or utcnow()
         async with aiosqlite.connect(self.path) as db:
             cursor = await db.execute(
                 """
@@ -3252,6 +3263,175 @@ class Database:
             )
             await db.commit()
             return int(cursor.rowcount or 0)
+
+    async def delete_control_chat_messages_through_id(
+        self,
+        *,
+        session_key: str,
+        max_id: int,
+    ) -> int:
+        aliases = session_key_lookup_aliases(session_key)
+        if not aliases:
+            return 0
+        placeholders = ",".join("?" for _ in aliases)
+        async with aiosqlite.connect(self.path) as db:
+            cursor = await db.execute(
+                f"""
+                DELETE FROM control_chat_messages
+                WHERE LOWER(TRIM(session_key)) IN ({placeholders})
+                  AND id <= ?
+                """,
+                (*aliases, max_id),
+            )
+            await db.commit()
+            return int(cursor.rowcount or 0)
+
+    async def append_control_chat_compaction_checkpoint(
+        self,
+        *,
+        checkpoint_id: str,
+        session_key: str,
+        created_at_ms: int,
+        payload: dict[str, Any],
+        archived_messages: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        now = utcnow()
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute(
+                """
+                INSERT INTO control_chat_compaction_checkpoints (
+                    checkpoint_id,
+                    session_key,
+                    created_at_ms,
+                    payload_json,
+                    archived_messages_json,
+                    created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    checkpoint_id,
+                    session_key,
+                    created_at_ms,
+                    json.dumps(payload),
+                    json.dumps(archived_messages),
+                    now,
+                ),
+            )
+            await db.commit()
+        stored = await self.get_control_chat_compaction_checkpoint(
+            session_key=session_key,
+            checkpoint_id=checkpoint_id,
+        )
+        if stored is None:
+            raise RuntimeError("Failed to persist control chat compaction checkpoint.")
+        return stored
+
+    async def list_control_chat_compaction_checkpoints(
+        self,
+        *,
+        session_key: str,
+        limit: int = 25,
+    ) -> list[dict[str, Any]]:
+        aliases = session_key_lookup_aliases(session_key)
+        if not aliases:
+            return []
+        placeholders = ",".join("?" for _ in aliases)
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            rows = await db.execute_fetchall(
+                f"""
+                SELECT payload_json
+                FROM control_chat_compaction_checkpoints
+                WHERE LOWER(TRIM(session_key)) IN ({placeholders})
+                ORDER BY created_at_ms DESC, checkpoint_id DESC
+                LIMIT ?
+                """,
+                (*aliases, limit),
+            )
+            return [json.loads(str(row["payload_json"]) or "{}") for row in rows]
+
+    async def count_control_chat_compaction_checkpoints(
+        self,
+        *,
+        session_key: str,
+    ) -> int:
+        aliases = session_key_lookup_aliases(session_key)
+        if not aliases:
+            return 0
+        placeholders = ",".join("?" for _ in aliases)
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                f"""
+                SELECT COUNT(*) AS count
+                FROM control_chat_compaction_checkpoints
+                WHERE LOWER(TRIM(session_key)) IN ({placeholders})
+                """,
+                tuple(aliases),
+            )
+            row = await cursor.fetchone()
+            return int(row["count"]) if row is not None else 0
+
+    async def get_control_chat_compaction_checkpoint(
+        self,
+        *,
+        session_key: str,
+        checkpoint_id: str,
+    ) -> dict[str, Any] | None:
+        aliases = session_key_lookup_aliases(session_key)
+        if not aliases:
+            return None
+        placeholders = ",".join("?" for _ in aliases)
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                f"""
+                SELECT payload_json
+                FROM control_chat_compaction_checkpoints
+                WHERE checkpoint_id = ?
+                  AND LOWER(TRIM(session_key)) IN ({placeholders})
+                LIMIT 1
+                """,
+                (checkpoint_id, *aliases),
+            )
+            row = await cursor.fetchone()
+            if row is None:
+                return None
+            return json.loads(str(row["payload_json"]) or "{}")
+
+    async def get_control_chat_compaction_checkpoint_messages(
+        self,
+        *,
+        session_key: str,
+        checkpoint_id: str,
+    ) -> list[dict[str, Any]]:
+        aliases = session_key_lookup_aliases(session_key)
+        if not aliases:
+            return []
+        placeholders = ",".join("?" for _ in aliases)
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                f"""
+                SELECT archived_messages_json
+                FROM control_chat_compaction_checkpoints
+                WHERE checkpoint_id = ?
+                  AND LOWER(TRIM(session_key)) IN ({placeholders})
+                LIMIT 1
+                """,
+                (checkpoint_id, *aliases),
+            )
+            row = await cursor.fetchone()
+            if row is None:
+                return []
+            try:
+                decoded = json.loads(str(row["archived_messages_json"]) or "[]")
+            except (TypeError, ValueError):
+                return []
+            if not isinstance(decoded, list):
+                return []
+            return [item for item in decoded if isinstance(item, dict)]
 
     async def append_attention_queue_action(
         self,

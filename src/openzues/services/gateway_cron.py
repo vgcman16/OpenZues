@@ -272,12 +272,19 @@ class GatewayCronService:
         payload_state = cast(dict[str, Any], task.get("payload") or {})
         objective_template = str(payload_state.get("objective_template") or "").strip()
         model = str(payload_state.get("model") or "").strip()
+        anchor_ms = payload_state.get("schedule_anchor_ms")
         payload: dict[str, Any] = {
             "kind": "agentTurn",
             "message": objective_template,
         }
         if model:
             payload["model"] = model
+        schedule: dict[str, Any] = {
+            "kind": "every",
+            "everyMs": cadence_minutes * 60_000,
+        }
+        if isinstance(anchor_ms, int) and not isinstance(anchor_ms, bool) and anchor_ms >= 0:
+            schedule["anchorMs"] = anchor_ms
         return {
             "id": _cron_job_id(cast(int, task["id"])),
             "agentId": "openzues",
@@ -286,7 +293,7 @@ class GatewayCronService:
             "enabled": bool(task.get("enabled")),
             "createdAtMs": _timestamp_ms(task.get("created_at")),
             "updatedAtMs": _timestamp_ms(task.get("updated_at")),
-            "schedule": {"kind": "every", "everyMs": cadence_minutes * 60_000},
+            "schedule": schedule,
             "sessionTarget": "main",
             "wakeMode": "now",
             "payload": payload,
@@ -596,7 +603,7 @@ def build_gateway_cron_task_blueprint(job_create: dict[str, Any]) -> TaskBluepri
         schedule,
         method="cron.add",
         label="schedule",
-        allowed_keys={"kind", "everyMs"},
+        allowed_keys={"kind", "everyMs", "anchorMs"},
     )
     every_ms = schedule.get("everyMs")
     if isinstance(every_ms, bool) or not isinstance(every_ms, int):
@@ -607,6 +614,18 @@ def build_gateway_cron_task_blueprint(job_create: dict[str, Any]) -> TaskBluepri
         raise ValueError(
             "invalid cron.add params: schedule.everyMs must be a positive minute-aligned integer"
         )
+    anchor_ms: int | None = None
+    if "anchorMs" in schedule:
+        raw_anchor_ms = schedule.get("anchorMs")
+        if (
+            isinstance(raw_anchor_ms, bool)
+            or not isinstance(raw_anchor_ms, int)
+            or raw_anchor_ms < 0
+        ):
+            raise ValueError(
+                "invalid cron.add params: schedule.anchorMs must be a non-negative integer"
+            )
+        anchor_ms = raw_anchor_ms
 
     session_target = _require_cron_add_string(
         job_create.get("sessionTarget"),
@@ -650,6 +669,7 @@ def build_gateway_cron_task_blueprint(job_create: dict[str, Any]) -> TaskBluepri
         summary=description,
         objective_template=message,
         cadence_minutes=every_ms // 60_000,
+        schedule_anchor_ms=anchor_ms,
         model=model or "gpt-5.4",
         enabled=resolved_enabled,
     )
@@ -756,7 +776,7 @@ def build_gateway_cron_job_patch(
             schedule,
             method="cron.update",
             label="patch.schedule",
-            allowed_keys={"kind", "everyMs"},
+            allowed_keys={"kind", "everyMs", "anchorMs"},
         )
         every_ms = schedule.get("everyMs")
         if isinstance(every_ms, bool) or not isinstance(every_ms, int):
@@ -770,6 +790,18 @@ def build_gateway_cron_job_patch(
                 "patch.schedule.everyMs must be a positive minute-aligned integer"
             )
         row_updates["cadence_minutes"] = every_ms // 60_000
+        if "anchorMs" in schedule:
+            raw_anchor_ms = schedule.get("anchorMs")
+            if (
+                isinstance(raw_anchor_ms, bool)
+                or not isinstance(raw_anchor_ms, int)
+                or raw_anchor_ms < 0
+            ):
+                raise ValueError(
+                    "invalid cron.update params: "
+                    "patch.schedule.anchorMs must be a non-negative integer"
+                )
+            payload_updates["schedule_anchor_ms"] = raw_anchor_ms
 
     if "sessionTarget" in patch:
         session_target = _require_cron_update_string(

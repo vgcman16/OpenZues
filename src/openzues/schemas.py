@@ -1187,6 +1187,7 @@ class TaskBlueprintCreate(BaseModel):
     instance_id: int | None = None
     project_id: int | None = None
     cadence_minutes: int | None = Field(default=None, ge=1)
+    schedule_anchor_ms: int | None = Field(default=None, ge=0)
     run_until_complete: bool = False
     continuation_cooldown_minutes: int = Field(default=10, ge=1)
     completion_marker: str | None = None

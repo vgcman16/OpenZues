@@ -1,5 +1,27 @@
 ﻿# OpenClaw Parity Checkpoint
 
+## 2026-04-18 Usage Compatibility Bridge Checkpoint
+
+- Seam locked: `usage.cost` and `usage.status` gateway method parity.
+- Landed `usage.cost` through `GatewayNodeMethodService` using persisted mission usage totals, bounded date-range filtering, OpenClaw-compatible `mode` / `utcOffset` interpretation, and daily rollup aggregation.
+- Landed `usage.status` as a truthful compatibility payload built from the live model catalog: real provider inventory, empty usage windows, and an explicit telemetry-gap error instead of invented quota math.
+- Source of truth reused: existing mission usage persistence, the already-landed session usage helpers in `src/openzues/services/gateway_node_methods.py`, and the existing model catalog service; no second analytics or provider-status subsystem was introduced.
+- Verified behavior: missions outside the requested date window are excluded.
+- Verified behavior: daily buckets are sorted by date.
+- Verified behavior: totals preserve the existing OpenZues truth that token counts are real while cost fields remain `0.0` with `missingCostEntries` tracking the unresolved pricing gap.
+- Verified behavior: provider inventory is deduplicated from the model catalog and returned with explicit telemetry-unavailable messaging.
+- Focused proof:
+- `.\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py -k "sessions_usage or usage_cost or usage_status" -q`
+- `.\.venv\Scripts\python.exe -m pytest tests/test_gateway_nodes_api.py -k "sessions_usage or usage_cost or usage_status" -q`
+- `.\.venv\Scripts\python.exe -m ruff check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+- `.\.venv\Scripts\python.exe -m mypy src/openzues/services/gateway_node_methods.py`
+- Files anchoring this seam:
+- `src/openzues/services/gateway_node_methods.py`
+- `tests/test_gateway_node_methods.py`
+- `tests/test_gateway_nodes_api.py`
+- Remaining adjacent gap: OpenZues still does not persist real provider quota-window telemetry, so `usage.status` is a truthful compatibility surface rather than full quota parity.
+- Next smallest honest slice: move sideways to the next advertised method that already has a durable local source of truth, or deepen the usage seam later by persisting actual provider quota windows if OpenZues grows that data source.
+
 ## 2026-04-15 Method Registry Recovery Checkpoint
 
 - Seam locked: gateway method registry parity.
@@ -8756,4 +8778,2320 @@ Next best slice:
   - `src/openzues/services/gateway_logs.py`, `src/openzues/services/gateway_wizard.py`, and `src/openzues/services/gateway_node_methods.py` type-checked cleanly.
 - Next exact seam:
   - either widen this bounded wizard runtime to cover richer prompt graphs only if there is a real local backend for them, or pivot back to the next smallest advertised admin helper outside the wizard family before touching the heavier `config.*` write surface.
+
+### Recovery addendum 2026-04-19 system-event presence broadcast parity America/Chicago
+
+- Closed the next source-backed gateway/event seam by wiring `system-event` through the existing OpenZues event log and presence snapshot services:
+  - `system-event` now accepts the upstream-shaped system-event payload keys, requires `text`, appends a durable `system-event` record into the shared `events` table, and returns `{ "ok": true }`.
+  - when the local gateway identity / presence services are wired, the same call now also fans out a `presence` gateway event carrying the current presence snapshot to live subscribers.
+- Kept the scope intentionally honest:
+  - this slice does not yet claim OpenClaw's richer in-memory presence-context mutation logic.
+  - OpenZues currently broadcasts the real local presence snapshot it already knows how to build from gateway identity plus connected node registry state, while still persisting the incoming system-event payload for auditability and later expansion.
+- Product effect proved end to end:
+  - operators can now send a bounded `system-event` through the gateway method surface instead of falling through as unsupported.
+  - websocket listeners now receive a live `presence` gateway event after a system-event call, and the emitted payload is backed by the same presence snapshot used by `system-presence`.
+  - the event itself is durably recorded in the shared gateway event log for dashboard/event-history inspection.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_system_event_records_event_and_broadcasts_presence_snapshot`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_system_event_endpoint_records_event_and_broadcasts_presence`
+- Verified the slice with:
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py::test_system_event_records_event_and_broadcasts_presence_snapshot tests/test_gateway_nodes_api.py::test_system_event_endpoint_records_event_and_broadcasts_presence -q`
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py::test_system_presence_surfaces_gateway_self_and_connected_entries tests/test_gateway_node_methods.py::test_node_event_records_event_and_broadcasts_when_runtime_wired tests/test_gateway_node_methods.py::test_system_event_records_event_and_broadcasts_presence_snapshot tests/test_gateway_node_methods.py::test_last_heartbeat_surfaces_latest_recorded_heartbeat tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_system_presence tests/test_gateway_nodes_api.py::test_remote_node_event_endpoint_records_event tests/test_gateway_nodes_api.py::test_system_event_endpoint_records_event_and_broadcasts_presence tests/test_gateway_nodes_api.py::test_last_heartbeat_endpoint_returns_latest_recorded_heartbeat -q`
+  - `& '.\.venv\Scripts\python.exe' -m ruff check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `& '.\.venv\Scripts\python.exe' -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused `system-event` service/API proof pair passed.
+  - the widened adjacent event/presence sweep also passed cleanly (`8 passed`).
+  - Ruff stayed clean on the touched dispatcher/tests.
+  - `src/openzues/services/gateway_node_methods.py` type-checked cleanly.
+- Next exact seam:
+  - post-landing repo scan did not find a real local heartbeat enable/disable runtime to anchor `set-heartbeats`, so do not invent a fake toggle.
+  - pivot next to `chat.inject`, which already has promising local source-backed primitives (`append_control_chat_message` plus existing `session.message` hub fanout) and should be a more honest parity bridge than a synthetic heartbeat flag.
+
+### Recovery addendum 2026-04-19 chat.inject transcript bridge parity America/Chicago
+
+- Closed the next source-backed transcript seam by wiring `chat.inject` through the existing OpenZues control-chat persistence and session-event builders:
+  - `chat.inject` now accepts `sessionKey`, `message`, and optional `label`.
+  - the method now resolves the target session through the existing gateway session catalog, appends an assistant transcript row into `control_chat_messages`, returns `{ "ok": true, "messageId": "..." }`, and reuses the existing `session.message` / `sessions.changed` builders to fan out the stored message to subscribed websocket clients.
+- Kept the scope intentionally honest:
+  - OpenClaw also emits a `chat` UI event family for injected transcript updates.
+  - OpenZues does not yet have a separate local `chat` event consumer/runtime to anchor that variant cleanly, so this slice intentionally binds `chat.inject` to the already-proven session transcript/event path instead of inventing a parallel ephemeral chat channel.
+  - the optional upstream `label` is preserved in persisted row metadata (`target_label`) even though the current session message payload remains text-content focused.
+- Product effect proved end to end:
+  - operators can now inject assistant transcript rows into an existing session without invoking the full control-chat execution runtime.
+  - the injected row is durably stored, can be read back through existing session/chat history surfaces, and reaches subscribed websocket listeners through the same `session.message` contract already used by normal session activity.
+  - missing sessions fail closed with a clear `session not found` validation error instead of silently creating synthetic transcript state.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_chat_inject_appends_assistant_message_and_publishes_session_message_event`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_gateway_node_method_call_endpoint_supports_chat_inject_for_subscribed_session`
+- Verified the slice with:
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py::test_chat_inject_appends_assistant_message_and_publishes_session_message_event tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_chat_inject_for_subscribed_session -q`
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py::test_chat_send_returns_run_ack_from_injected_control_chat_bridge tests/test_gateway_node_methods.py::test_chat_inject_appends_assistant_message_and_publishes_session_message_event tests/test_gateway_node_methods.py::test_sessions_send_publishes_openclaw_sessions_changed_gateway_event tests/test_gateway_node_methods.py::test_sessions_messages_subscribe_filters_by_client_id -q`
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_publishes_session_message_events_after_sessions_send tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_chat_inject_for_subscribed_session tests/test_gateway_nodes_api.py::test_sessions_messages_subscribe_api_filters_websocket_delivery_by_client_id -q`
+  - `& '.\.venv\Scripts\python.exe' -m ruff check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `& '.\.venv\Scripts\python.exe' -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused `chat.inject` service/API proof pair passed.
+  - the widened adjacent transcript/message sweep passed cleanly (`7 passed` across the focused commands above).
+  - Ruff stayed clean on the touched dispatcher/tests.
+  - `src/openzues/services/gateway_node_methods.py` type-checked cleanly.
+- Next exact seam:
+  - pivot to the next advertised helper with a real local backing model, with `message.action` and the secrets family worth inspecting before touching anything that would require inventing a synthetic heartbeat/runtime control plane.
+
+### Recovery addendum 2026-04-19 secrets.reload vault warning parity America/Chicago
+
+- Closed the next source-backed admin seam by wiring `secrets.reload` through the existing OpenZues vault, integration, and notification-route inventory:
+  - `secrets.reload` now accepts an empty param object and returns the upstream-shaped payload `{ "ok": true, "warningCount": N }`.
+  - the warning count is computed from enabled secret-backed surfaces OpenZues already understands:
+    - enabled integrations whose attached vault reference is already surfaced as `auth_status == "degraded"`;
+    - enabled notification routes whose attached `vault_secret_id` fails a live `VaultService.probe_secret(...)` readback.
+- Kept the scope intentionally honest:
+  - OpenClaw's full `secrets.reload` swaps an in-memory runtime secret snapshot after re-resolution.
+  - OpenZues does not yet have that separate runtime-secret snapshot layer, so this slice intentionally lands the re-probe and warning contract only on the real vault-backed references it already owns instead of inventing a synthetic activation cache.
+  - missing credentials without an attached `vault_secret_id` are not counted as reload warnings, because there is no active SecretRef to reload yet.
+- Product effect proved end to end:
+  - operators and OpenClaw-compatible clients can now call `secrets.reload` without falling through as unsupported.
+  - the method gives a truthful warning count for broken enabled vault references across both integrations and outbound notification routes.
+  - healthy attached secrets stay warning-free, and disabled/bare surfaces do not inflate the count.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `src/openzues/app.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_secrets_reload_counts_enabled_broken_secret_refs`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_secrets_reload_endpoint_counts_broken_secret_refs`
+- Verified the slice with:
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py::test_secrets_reload_counts_enabled_broken_secret_refs tests/test_gateway_node_methods.py::test_system_event_records_event_and_broadcasts_presence_snapshot tests/test_gateway_nodes_api.py::test_secrets_reload_endpoint_counts_broken_secret_refs tests/test_gateway_nodes_api.py::test_system_event_endpoint_records_event_and_broadcasts_presence -q`
+  - `& '.\.venv\Scripts\python.exe' -m ruff check src/openzues/services/gateway_node_methods.py src/openzues/app.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `& '.\.venv\Scripts\python.exe' -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused `secrets.reload` service/API proof pair passed.
+  - the widened adjacent gateway event proof pair still passed cleanly (`4 passed` total in the focused sweep).
+  - Ruff stayed clean on the touched dispatcher/app/tests.
+  - `src/openzues/services/gateway_node_methods.py` type-checked cleanly.
+- Next exact seam:
+  - inspect OpenClaw's `secrets.resolve` command-target assignment contract against OpenZues' existing integration/route/vault model, then either land the smallest truthful bounded resolver or make the method explicitly `503 UNAVAILABLE` with exact OpenClaw-shaped validation instead of leaving another unsupported gap.
+
+### Recovery addendum 2026-04-19 secrets.resolve unavailable-contract parity America/Chicago
+
+- Closed the next gateway secrets gap by replacing the raw unsupported-method fallthrough on `secrets.resolve` with a bounded validated unavailable contract:
+  - OpenZues now accepts the upstream-shaped request body fields `commandName` and `targetIds`.
+  - valid requests no longer return a generic `400 unsupported method`; they now fail deliberately as `503 UNAVAILABLE` with the stable message `secrets.resolve is unavailable until command-target secret resolution is wired`.
+- Kept the scope intentionally honest:
+  - OpenClaw's real `secrets.resolve` depends on a command-target SecretRef registry and returns concrete `assignments`, `diagnostics`, and `inactiveRefPaths`.
+  - the local OpenZues workspace still does not have a truthful command-target secret assignment model to bridge that payload, so this slice stops at request-shape validation plus an explicit unavailable contract instead of inventing fake assignments.
+  - this still improves parity for upstream callers because the failure mode now distinguishes “method exists but resolver is not wired” from “gateway does not recognize this method at all.”
+- Product effect proved end to end:
+  - OpenClaw-compatible callers can now probe `secrets.resolve` and receive a stable `503` contract for valid requests instead of a misleading unsupported-method `400`.
+  - the request path now validates the required request shape before failing unavailable, which makes version-skew and missing-runtime behavior easier to classify upstream.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_secrets_resolve_returns_validated_unavailable_contract`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_secrets_resolve_endpoint_returns_validated_unavailable_contract`
+- Verified the slice with:
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py::test_secrets_reload_counts_enabled_broken_secret_refs tests/test_gateway_node_methods.py::test_secrets_resolve_returns_validated_unavailable_contract tests/test_gateway_node_methods.py::test_system_event_records_event_and_broadcasts_presence_snapshot tests/test_gateway_nodes_api.py::test_secrets_reload_endpoint_counts_broken_secret_refs tests/test_gateway_nodes_api.py::test_secrets_resolve_endpoint_returns_validated_unavailable_contract tests/test_gateway_nodes_api.py::test_system_event_endpoint_records_event_and_broadcasts_presence -q`
+  - `& '.\.venv\Scripts\python.exe' -m ruff check src/openzues/services/gateway_node_methods.py src/openzues/app.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `& '.\.venv\Scripts\python.exe' -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused `secrets.resolve` service/API proof pair passed.
+  - the widened adjacent secrets/event sweep passed cleanly (`6 passed`).
+  - Ruff stayed clean on the touched dispatcher/app/tests.
+  - `src/openzues/services/gateway_node_methods.py` type-checked cleanly.
+- Next exact seam:
+  - pivot out of the gateway secrets family and inspect the next smallest advertised helper with real local backing, with `message.action` needing a backing-runtime check and `config.openFile` worth comparing against the existing project/workspace file surfaces before touching heavier config mutation paths.
+
+### Recovery addendum 2026-04-19 config.openFile unavailable-contract parity America/Chicago
+
+- Closed the next advertised config seam by replacing the raw unsupported-method fallthrough on `config.openFile` with a bounded validated unavailable contract:
+  - OpenZues now accepts the upstream-shaped empty-param request for `config.openFile`.
+  - valid requests no longer fall through as `400 unsupported method`; they now return an explicit `503 UNAVAILABLE` with the stable message `config.openFile is unavailable until operator config file ownership is wired`.
+- Kept the scope intentionally honest:
+  - OpenClaw's `config.openFile` opens a real canonical config file path owned by its config runtime.
+  - OpenZues `config.get` currently exposes a synthesized control-UI bootstrap snapshot, not a single file-backed operator config document, and the repo does not yet own one truthful path that matches the upstream contract.
+  - because there is no honest canonical config file to open yet, this slice stops at request recognition plus an explicit unavailable contract instead of faking a file opener against unrelated settings artifacts.
+- Product effect proved end to end:
+  - OpenClaw-compatible callers can now distinguish “recognized but not yet wired in this runtime” from “unknown method” when probing `config.openFile`.
+  - the gateway config family is now more internally consistent: `config.get` is real, `config.openFile` is recognized, and the missing file-owner runtime is called out explicitly rather than hidden behind a generic 400.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_config_open_file_fails_as_explicit_unavailable_without_file_owner`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_gateway_node_method_call_endpoint_config_open_file_fails_as_explicit_unavailable`
+- Verified the slice with:
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py::test_config_get_returns_control_ui_bootstrap_snapshot tests/test_gateway_node_methods.py::test_config_open_file_fails_as_explicit_unavailable_without_file_owner tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_config_get tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_config_open_file_fails_as_explicit_unavailable -q`
+  - `& '.\.venv\Scripts\python.exe' -m ruff check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `& '.\.venv\Scripts\python.exe' -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused `config.openFile` service/API proof pair passed.
+  - the widened adjacent config sweep passed cleanly (`4 passed`).
+  - Ruff stayed clean on the touched dispatcher/tests.
+  - `src/openzues/services/gateway_node_methods.py` type-checked cleanly.
+- Next exact seam:
+  - inspect OpenClaw's `message.action` request contract against the existing OpenZues outbound delivery and notification-route runtime, then either land the smallest truthful bounded bridge or replace the current unsupported-method fallthrough with an exact validated `503 UNAVAILABLE` contract.
+
+### Recovery addendum 2026-04-19 message.action unavailable-contract parity America/Chicago
+
+- Closed the next advertised outbound-action seam by replacing the raw unsupported-method fallthrough on `message.action` with a bounded validated unavailable contract:
+  - OpenZues now recognizes the upstream-shaped `message.action` request body with required fields `channel`, `action`, `params`, and `idempotencyKey`.
+  - it also validates the optional OpenClaw compatibility fields `accountId`, `requesterSenderId`, `senderIsOwner`, `sessionKey`, `sessionId`, `agentId`, and `toolContext` before failing.
+  - valid requests no longer collapse into `400 unsupported method`; they now return an explicit `503 UNAVAILABLE` with the stable message `message.action is unavailable until channel-owned action dispatch is wired`.
+- Kept the scope intentionally honest:
+  - OpenClaw's `message.action` resolves a concrete outbound channel plugin and dispatches provider-owned message actions like reactions through a real `handleAction` runtime.
+  - OpenZues currently has webhook route testing and outbound delivery persistence, but it does not yet have a truthful provider-action dispatcher or channel plugin action surface that can execute those upstream actions.
+  - because there is no honest local bridge for reaction or provider-owned message actions yet, this slice stops at request-shape validation plus explicit unavailable semantics instead of inventing a fake delivery or pretending webhook routes are equivalent.
+- Product effect proved end to end:
+  - OpenClaw-compatible callers can now distinguish “recognized but not yet wired in this runtime” from “gateway does not recognize this method at all” when probing `message.action`.
+  - the outbound-action family now fails more truthfully: callers with valid payloads get a stable `503`, while malformed payloads still fail as validation errors instead of silently drifting into unsupported-method noise.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_message_action_returns_validated_unavailable_contract`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_message_action_endpoint_returns_validated_unavailable_contract`
+- Verified the slice with:
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py::test_secrets_resolve_returns_validated_unavailable_contract tests/test_gateway_node_methods.py::test_message_action_returns_validated_unavailable_contract tests/test_gateway_nodes_api.py::test_secrets_resolve_endpoint_returns_validated_unavailable_contract tests/test_gateway_nodes_api.py::test_message_action_endpoint_returns_validated_unavailable_contract -q`
+  - `& '.\.venv\Scripts\python.exe' -m ruff check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `& '.\.venv\Scripts\python.exe' -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused `message.action` service/API proof pair passed.
+  - the widened adjacent unavailable-contract sweep passed cleanly (`4 passed`).
+  - Ruff stayed clean on the touched dispatcher/tests.
+  - `src/openzues/services/gateway_node_methods.py` type-checked cleanly.
+- Next exact seam:
+  - inspect OpenClaw's `send` request contract against the existing OpenZues outbound delivery, notification routes, and any truthful channel-target runtime, then either land the smallest bounded bridge or replace the current unsupported-method fallthrough with an exact validated `503 UNAVAILABLE` contract.
+
+### Recovery addendum 2026-04-19 send unavailable-contract parity America/Chicago
+
+- Closed the next advertised outbound-send seam by replacing the raw unsupported-method fallthrough on `send` with a bounded validated unavailable contract:
+  - OpenZues now recognizes the upstream-shaped `send` request body with required fields `to` and `idempotencyKey`.
+  - it validates the optional OpenClaw compatibility fields `message`, `mediaUrl`, `mediaUrls`, `gifPlayback`, `channel`, `accountId`, `agentId`, `threadId`, and `sessionKey`.
+  - valid requests now fail deliberately as `503 UNAVAILABLE` with the stable message `send is unavailable until channel-target outbound delivery is wired`.
+  - malformed requests still preserve the upstream-style guard that at least one text or media payload must be present.
+- Kept the scope intentionally honest:
+  - OpenClaw's `send` resolves concrete outbound channel plugins, target routing, optional mirror session context, and channel-native delivery.
+  - OpenZues has notification-route webhook delivery and saved outbound event replay, but it does not yet own a truthful channel-target message delivery runtime for Slack, WhatsApp, Telegram, or similar provider channels.
+  - because webhook event delivery is not equivalent to direct channel message sending, this slice stops at request recognition plus explicit unavailable semantics instead of fabricating a fake sender.
+- Product effect proved end to end:
+  - OpenClaw-compatible callers can now distinguish “recognized but not yet wired here” from “unknown method” when probing `send`.
+  - the error surface is now more honest for upstream clients and easier to classify in parity inventories.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_send_returns_validated_unavailable_contract`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_send_endpoint_returns_validated_unavailable_contract`
+
+### Recovery addendum 2026-04-19 poll unavailable-contract parity America/Chicago
+
+- Closed the adjacent outbound-poll seam by replacing the raw unsupported-method fallthrough on `poll` with a bounded validated unavailable contract:
+  - OpenZues now recognizes the upstream-shaped `poll` request body with required fields `to`, `question`, `options`, and `idempotencyKey`.
+  - it validates the upstream bounds on `options` item count, `maxSelections`, and `durationSeconds`, plus optional `channel` and `accountId`.
+  - valid requests now fail deliberately as `503 UNAVAILABLE` with the stable message `poll is unavailable until channel-target poll delivery is wired`.
+- Kept the scope intentionally honest:
+  - OpenClaw's `poll` dispatches through channel plugins that know how to create native provider poll messages.
+  - OpenZues does not yet have a truthful provider poll runtime, and its webhook notification routes are not a substitute for native channel polls.
+  - because there is no honest bridge for provider poll creation yet, this slice stops at request-shape validation plus an explicit unavailable contract instead of pretending webhook delivery covers poll parity.
+- Product effect proved end to end:
+  - OpenClaw-compatible callers can now probe `poll` and get a stable `503` contract for valid requests instead of a misleading unsupported-method `400`.
+  - the outbound family now has a more internally consistent failure surface across `message.action`, `send`, and `poll`.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_poll_returns_validated_unavailable_contract`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_poll_endpoint_returns_validated_unavailable_contract`
+- Verified the slice with:
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py::test_message_action_returns_validated_unavailable_contract tests/test_gateway_node_methods.py::test_send_returns_validated_unavailable_contract tests/test_gateway_node_methods.py::test_poll_returns_validated_unavailable_contract tests/test_gateway_nodes_api.py::test_message_action_endpoint_returns_validated_unavailable_contract tests/test_gateway_nodes_api.py::test_send_endpoint_returns_validated_unavailable_contract tests/test_gateway_nodes_api.py::test_poll_endpoint_returns_validated_unavailable_contract -q`
+  - `& '.\.venv\Scripts\python.exe' -m ruff check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `& '.\.venv\Scripts\python.exe' -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused outbound unavailable-contract sweep passed cleanly (`6 passed`).
+  - Ruff stayed clean on the touched dispatcher/tests.
+  - `src/openzues/services/gateway_node_methods.py` type-checked cleanly.
+- Next exact seam:
+  - inspect OpenClaw's `channels.logout` runtime contract against the existing OpenZues channel inventory and auth surfaces, then either land the smallest truthful bounded response or tighten the current invalid-request placeholder into the exact upstream-compatible contract.
+
+### Recovery addendum 2026-04-19 channels.logout invalid-channel parity America/Chicago
+
+- Tightened the existing `channels.logout` branch so it now distinguishes invalid channel ids from recognized-but-unsupported channels:
+  - upstream-shaped requests still validate the same `channel` and optional `accountId` fields.
+  - invalid channel ids now fail as `400 INVALID_REQUEST` with the exact message `invalid channels.logout channel`.
+  - recognized built-in chat channels that still lack a truthful logout runtime continue to fail as `400 INVALID_REQUEST` with `channel <id> does not support logout`.
+- Kept the scope intentionally honest:
+  - OpenClaw normalizes channel ids against its bundled chat channel registry before deciding whether a plugin supports logout.
+  - OpenZues still does not own a real channel plugin/logout runtime or the config-file snapshot path that OpenClaw uses before calling `logoutAccount`.
+  - because that runtime is still absent, this slice only tightens the invalid-channel classification and leaves the recognized-channel unsupported contract in place instead of inventing fake logout behavior.
+- Product effect proved end to end:
+  - parity callers can now distinguish “bad channel id” from “known channel, but logout unsupported here,” which removes another source of misleading parity noise.
+  - the local `channels.logout` branch is now closer to the upstream decision tree without over-claiming runtime support that OpenZues does not yet have.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_channels_logout_rejects_invalid_channel_shape`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_gateway_node_method_call_endpoint_rejects_invalid_channels_logout_channel`
+- Verified the slice with:
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py::test_channels_logout_fails_as_explicit_unsupported_channel tests/test_gateway_node_methods.py::test_channels_logout_rejects_invalid_channel_shape tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_rejects_channels_logout_without_supported_channel tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_rejects_invalid_channels_logout_channel -q`
+  - `& '.\.venv\Scripts\python.exe' -m ruff check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `& '.\.venv\Scripts\python.exe' -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused `channels.logout` invalid/unsupported classification sweep passed cleanly (`4 passed`).
+  - Ruff stayed clean on the touched dispatcher/tests.
+  - `src/openzues/services/gateway_node_methods.py` type-checked cleanly.
+- Next exact seam:
+  - inspect OpenClaw's `channels.status` contract against the existing OpenZues channel inventory surface, then either land the smallest truthful field-level alignment or document the exact remaining runtime gap before moving to a different gateway family.
+
+### Recovery addendum 2026-04-19 channels.status field-alignment parity America/Chicago
+
+- Finished the next `channels.status` seam without inventing a live provider runtime:
+  - OpenZues still does not own OpenClaw's real channel plugin probe, login, linked-account, or runtime-health machinery.
+  - instead of faking those states, the gateway now reshapes the already-real notification-route inventory into the richer OpenClaw-style top-level envelope that downstream parity callers expect.
+- The local `channels.status` payload now carries both:
+  - the existing OpenZues route inventory fields: `routes`, `routeCount`, `enabledCount`, and `conversationTargetCount`.
+  - a bounded OpenClaw-style surface derived from the same saved route data: `ts`, `channelOrder`, `channelLabels`, `channelDetailLabels`, `channelMeta`, `channels`, `channelAccounts`, and `channelDefaultAccountId`.
+- Kept the contract intentionally honest:
+  - channel summaries now describe saved route coverage per channel via `routeCount`, `enabledRouteCount`, `conversationTargetCount`, and `accountCount`.
+  - channel account entries are synthesized only from saved `conversation_target.channel` plus `conversation_target.account_id` state, falling back to the shared `default` account id when a route is not account-scoped.
+  - no fake `configured`, `linked`, `running`, or probe/audit status is emitted, because OpenZues still cannot truthfully prove those OpenClaw runtime fields today.
+- Product effect proved end to end:
+  - parity callers now receive the same broad `channels.status` envelope shape that OpenClaw tooling expects, while the payload still stays grounded in real OpenZues notification-route data.
+  - the earlier narrow route-only payload is preserved as a superset, so local consumers do not lose the existing inventory fields while parity consumers gain the richer keyed channel/account maps.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_channels.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Tightened regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_channels_status_returns_notification_route_inventory`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_gateway_node_method_call_endpoint_supports_channels_status`
+- Verified the slice with:
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py::test_channels_status_returns_notification_route_inventory tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_channels_status tests/test_gateway_node_methods.py::test_channels_logout_rejects_invalid_channel_shape tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_rejects_invalid_channels_logout_channel -q`
+  - `& '.\.venv\Scripts\python.exe' -m ruff check src/openzues/services/gateway_channels.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `& '.\.venv\Scripts\python.exe' -m mypy src/openzues/services/gateway_channels.py`
+- Result:
+  - the focused `channels.status` and adjacent `channels.logout` gateway sweep passed cleanly (`4 passed`).
+  - Ruff stayed clean on the touched files.
+  - `src/openzues/services/gateway_channels.py` type-checked cleanly.
+- Next exact seam:
+  - inspect OpenClaw's `chat.history` contract against the existing OpenZues mission, session, and control-chat history surfaces, then either land the smallest truthful bounded bridge or document the exact remaining runtime gap before moving to another gateway family.
+
+### Recovery addendum 2026-04-19 config.openFile bounded parity America/Chicago
+
+- Replaced the old `503 UNAVAILABLE` placeholder for `config.openFile` with a bounded real contract:
+  - when OpenZues owns a data dir, the gateway now materializes the current control-UI bootstrap config to `data_dir/settings/control-ui-config.json`.
+  - `config.openFile` then attempts to open that exact path with a direct platform opener and returns `{ ok, path }`, matching the broad upstream behavior of "open the config file and report the path" without shell interpolation.
+- Kept the contract intentionally honest:
+  - OpenZues still does not own OpenClaw's deeper editable config source or config-apply runtime.
+  - the file opened here is the persisted OpenZues bootstrap snapshot that powers `config.get`, not a pretend full OpenClaw config tree.
+  - if the opener fails, the gateway returns `{ ok: false, path, error: "failed to open config file" }` and still preserves the written snapshot path for the operator.
+  - if no file-owning config service is wired, the older explicit `503 UNAVAILABLE` branch still remains available for standalone service construction.
+- Product effect proved end to end:
+  - parity callers no longer hit a dead placeholder for `config.openFile` in the real app wiring.
+  - the method now gives operators a stable, inspectable config snapshot on disk and a safe open-file attempt instead of only advertising the method in policy.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_config.py`
+  - `src/openzues/services/gateway_node_methods.py`
+  - `src/openzues/app.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_config_open_file_returns_snapshot_path_when_owner_is_wired`
+    - `test_config_open_file_returns_generic_error_when_opener_fails`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_gateway_node_method_call_endpoint_supports_config_open_file`
+- Verified the slice with:
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py::test_config_open_file_fails_as_explicit_unavailable_without_file_owner tests/test_gateway_node_methods.py::test_config_open_file_returns_snapshot_path_when_owner_is_wired tests/test_gateway_node_methods.py::test_config_open_file_returns_generic_error_when_opener_fails tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_config_open_file tests/test_gateway_node_methods.py::test_channels_status_returns_notification_route_inventory tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_channels_status -q`
+  - `& '.\.venv\Scripts\python.exe' -m ruff check src/openzues/services/gateway_config.py src/openzues/services/gateway_node_methods.py src/openzues/app.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `& '.\.venv\Scripts\python.exe' -m mypy src/openzues/services/gateway_config.py src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused `config.openFile` and adjacent gateway parity sweep passed cleanly (`6 passed` on the combined targeted slice, then `3 passed` on the final config-open recheck).
+  - Ruff stayed clean on the touched files.
+  - `src/openzues/services/gateway_config.py` and `src/openzues/services/gateway_node_methods.py` type-checked cleanly.
+- Next exact seam:
+  - inspect another still-explicit gateway placeholder that is real in OpenClaw but not yet truly wired in OpenZues, with `push.test` and any adjacent mobile/push helper contract as the highest-likelihood next bounded gap.
+
+### Recovery addendum 2026-04-19 push.test missing-registration parity America/Chicago
+
+- Tightened `push.test` from a generic runtime-placeholder failure into a more truthful bounded contract:
+  - valid `push.test` requests still validate the OpenClaw-shaped `nodeId`, optional `title`, optional `body`, and optional `environment`.
+  - instead of returning a blanket `503 UNAVAILABLE`, the dispatcher now fails as `400 INVALID_REQUEST` with `node <id> has no APNs registration`.
+- Kept the scope intentionally honest:
+  - OpenClaw owns a real APNS registration store plus direct/relay push senders.
+  - OpenZues still does not own APNS registration persistence or delivery transport, so it cannot truthfully produce a `PushTestResult`.
+  - what OpenZues can prove today is narrower: for the current control plane, there is no stored APNS registration backing the requested node id, so the most honest contract is an exact validated missing-registration failure rather than a blanket runtime-unavailable placeholder.
+- Product effect proved end to end:
+  - parity callers no longer hit a misleading "whole method unavailable" branch for syntactically valid requests.
+  - the gateway now reports a more OpenClaw-like failure classification that separates request shape validation from the deeper missing push transport/runtime gap.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Tightened regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_push_test_fails_as_missing_apns_registration`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_gateway_node_method_call_endpoint_reports_missing_push_registration`
+- Verified the slice with:
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py::test_push_test_fails_as_missing_apns_registration tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_reports_missing_push_registration tests/test_gateway_node_methods.py::test_web_login_methods_fail_as_explicit_provider_unavailable tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_rejects_web_login_without_provider -q`
+  - `& '.\.venv\Scripts\python.exe' -m ruff check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `& '.\.venv\Scripts\python.exe' -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused `push.test` plus adjacent `web.login` classification sweep passed cleanly (`6 passed`).
+  - Ruff stayed clean on the touched gateway files/tests.
+  - `src/openzues/services/gateway_node_methods.py` type-checked cleanly.
+- Next exact seam:
+  - inspect the still-explicit outbound placeholder family in the live tree, starting with `message.action`, then `send`, then `poll`, because those methods remain policy-advertised and app-visible but still terminate in deliberate `503 UNAVAILABLE` branches.
+
+### Recovery addendum 2026-04-19 outbound channel-validation parity America/Chicago
+
+- Tightened the first outbound gateway branch and the shared channel gate around it:
+  - `message.action` no longer falls straight through to a blanket `503 UNAVAILABLE` for syntactically valid requests.
+  - known OpenZues chat channels now fail as the more truthful `400 INVALID_REQUEST` classification: `Channel <channel> does not support action <action>.`
+  - internal `webchat` requests now return the same actionable guidance OpenClaw uses for deliverable-channel methods: `unsupported channel: webchat (internal-only). Use \`chat.send\` for WebChat UI messages or choose a deliverable channel.`
+- Extended the same bounded gate to adjacent outbound placeholders:
+  - `send` still honestly remains unavailable for real channel-target outbound delivery after validation.
+  - `poll` still honestly remains unavailable for real channel-target poll delivery after validation.
+  - both methods now reject impossible `webchat` channel requests before they hit the deeper delivery placeholder, which keeps the contract closer to OpenClaw's requested-channel resolution path instead of misclassifying bad requests as server unavailability.
+- Kept the scope intentionally honest:
+  - OpenZues still does not own OpenClaw's plugin-backed channel action dispatcher, outbound send runtime, or poll-delivery runtime.
+  - this slice only lands the bounded parity we can prove today: requested-channel resolution and failure classification now happen before the remaining missing runtime branches.
+- Product effect proved end to end:
+  - parity callers now get an exact unsupported-action error for `message.action` on the channels OpenZues actually advertises.
+  - `message.action`, `send`, and `poll` now all reject internal-only `webchat` requests with actionable guidance instead of collapsing them into misleading generic `503` responses.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_message_action_reports_unsupported_action_for_known_channel`
+    - `test_message_action_rejects_internal_webchat_channel`
+    - `test_send_rejects_internal_webchat_channel`
+    - `test_poll_rejects_internal_webchat_channel`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_message_action_endpoint_reports_unsupported_action_for_known_channel`
+    - `test_message_action_endpoint_rejects_internal_webchat_channel`
+    - `test_send_endpoint_rejects_internal_webchat_channel`
+    - `test_poll_endpoint_rejects_internal_webchat_channel`
+- Verified the slice with:
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py::test_message_action_reports_unsupported_action_for_known_channel tests/test_gateway_node_methods.py::test_message_action_rejects_internal_webchat_channel tests/test_gateway_node_methods.py::test_send_returns_validated_unavailable_contract tests/test_gateway_node_methods.py::test_send_rejects_internal_webchat_channel tests/test_gateway_node_methods.py::test_poll_returns_validated_unavailable_contract tests/test_gateway_node_methods.py::test_poll_rejects_internal_webchat_channel tests/test_gateway_nodes_api.py::test_message_action_endpoint_reports_unsupported_action_for_known_channel tests/test_gateway_nodes_api.py::test_message_action_endpoint_rejects_internal_webchat_channel tests/test_gateway_nodes_api.py::test_send_endpoint_returns_validated_unavailable_contract tests/test_gateway_nodes_api.py::test_send_endpoint_rejects_internal_webchat_channel tests/test_gateway_nodes_api.py::test_poll_endpoint_returns_validated_unavailable_contract tests/test_gateway_nodes_api.py::test_poll_endpoint_rejects_internal_webchat_channel -q`
+  - `& '.\.venv\Scripts\python.exe' -m ruff check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `& '.\.venv\Scripts\python.exe' -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused outbound validation sweep passed cleanly (`12 passed`).
+  - Ruff stayed clean on the touched gateway files/tests.
+  - `src/openzues/services/gateway_node_methods.py` type-checked cleanly.
+- Next exact seam:
+  - keep moving down the same outbound family, with `send` as the next highest-leverage bounded gap: inspect OpenClaw's target-resolution and default-channel-selection behavior, then decide whether OpenZues can truthfully land a narrower non-503 failure classification for missing route/target resolution before the still-missing delivery runtime.
+
+### Recovery addendum 2026-04-19 outbound missing-channel selection parity America/Chicago
+
+- Extended the outbound gateway family from basic explicit-channel validation into bounded missing-channel selection:
+  - `message.action` can now auto-pick a single configured local channel when the caller omits `channel`.
+  - `send` now fails as `400 INVALID_REQUEST` when channel choice is ambiguous across multiple configured local channels instead of falling through to the deeper delivery placeholder.
+  - `poll` now fails as `400 INVALID_REQUEST` when no configured local channels are visible instead of misclassifying that gap as a poll-delivery outage.
+- Kept the selection surface intentionally honest and local:
+  - OpenClaw resolves missing channels from configured deliverable channel plugins.
+  - OpenZues does not own that plugin config/runtime surface yet, so this slice uses the control plane surface it does own today: enabled notification routes with conversation targets.
+  - only known deliverable gateway chat channels derived from enabled route conversation targets participate in auto-selection.
+  - this means the missing-channel behavior is now grounded in saved OpenZues operator state rather than a fabricated upstream config mirror.
+- Product effect proved end to end:
+  - if exactly one enabled route conversation target channel exists, `message.action` now resolves that channel and returns the more truthful unsupported-action failure for that channel.
+  - if multiple enabled route conversation target channels exist, `send` now returns `Channel is required when multiple channels are configured: ...`.
+  - if no enabled route conversation target channels exist, `poll` now returns `Channel is required (no configured channels detected).`
+  - explicit `webchat` guidance and the remaining honest delivery-runtime placeholders for `send` and `poll` remain intact.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_message_action_auto_picks_single_notification_route_channel_when_omitted`
+    - `test_send_rejects_missing_channel_when_multiple_route_channels_configured`
+    - `test_poll_rejects_missing_channel_when_no_route_channels_configured`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_message_action_endpoint_auto_picks_single_route_channel_when_omitted`
+    - `test_send_endpoint_rejects_missing_channel_when_multiple_route_channels_configured`
+    - `test_poll_endpoint_rejects_missing_channel_when_no_route_channels_configured`
+- Verified the slice with:
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py::test_message_action_reports_unsupported_action_for_known_channel tests/test_gateway_node_methods.py::test_message_action_rejects_internal_webchat_channel tests/test_gateway_node_methods.py::test_message_action_auto_picks_single_notification_route_channel_when_omitted tests/test_gateway_node_methods.py::test_send_returns_validated_unavailable_contract tests/test_gateway_node_methods.py::test_send_rejects_internal_webchat_channel tests/test_gateway_node_methods.py::test_send_rejects_missing_channel_when_multiple_route_channels_configured tests/test_gateway_node_methods.py::test_poll_returns_validated_unavailable_contract tests/test_gateway_node_methods.py::test_poll_rejects_internal_webchat_channel tests/test_gateway_node_methods.py::test_poll_rejects_missing_channel_when_no_route_channels_configured tests/test_gateway_nodes_api.py::test_message_action_endpoint_reports_unsupported_action_for_known_channel tests/test_gateway_nodes_api.py::test_message_action_endpoint_rejects_internal_webchat_channel tests/test_gateway_nodes_api.py::test_message_action_endpoint_auto_picks_single_route_channel_when_omitted tests/test_gateway_nodes_api.py::test_send_endpoint_returns_validated_unavailable_contract tests/test_gateway_nodes_api.py::test_send_endpoint_rejects_internal_webchat_channel tests/test_gateway_nodes_api.py::test_send_endpoint_rejects_missing_channel_when_multiple_route_channels_configured tests/test_gateway_nodes_api.py::test_poll_endpoint_returns_validated_unavailable_contract tests/test_gateway_nodes_api.py::test_poll_endpoint_rejects_internal_webchat_channel tests/test_gateway_nodes_api.py::test_poll_endpoint_rejects_missing_channel_when_no_route_channels_configured -q`
+  - `& '.\.venv\Scripts\python.exe' -m ruff check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `& '.\.venv\Scripts\python.exe' -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused outbound missing-channel selection sweep passed cleanly (`18 passed`).
+  - Ruff stayed clean on the touched gateway files/tests.
+  - `src/openzues/services/gateway_node_methods.py` type-checked cleanly.
+- Next exact seam:
+  - stay in `send` and inspect the next bounded classification beneath channel selection: whether OpenZues can truthfully narrow `to`/target resolution failures from the current blanket delivery placeholder using saved conversation-target and route inventory before any real outbound delivery runtime exists.
+
+### Recovery addendum 2026-04-19 outbound WhatsApp target validation parity America/Chicago
+
+- Tightened the next truthful layer under outbound channel selection: syntax-level WhatsApp target validation for `send` and `poll`.
+  - valid-looking WhatsApp direct targets such as formatted phone numbers now pass validation and continue to the still-honest delivery placeholder.
+  - malformed WhatsApp targets now fail early as `400 INVALID_REQUEST` with `WhatsApp target is required` instead of being misclassified as a deeper outbound delivery outage.
+- Kept the scope intentionally bounded:
+  - OpenClaw owns richer plugin-backed target resolution and delivery for every outbound channel.
+  - OpenZues still does not own the full outbound runtime, session-route derivation, or directory-backed target lookup for `send`/`poll`.
+  - this slice only lands the part we can prove locally without overreaching: the static normalization/validation contract for WhatsApp-style direct numbers and group JIDs.
+- Product effect proved end to end:
+  - `send` with a valid-looking WhatsApp destination still reaches the existing explicit delivery placeholder, proving the new validator does not block known-good target shapes.
+  - `send` and `poll` with malformed WhatsApp targets now return `400` before the placeholder branch, which keeps target-shape failures separate from the still-missing outbound runtime.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_send_accepts_valid_whatsapp_target_shape_before_delivery_placeholder`
+    - `test_send_rejects_invalid_whatsapp_target_shape`
+    - `test_poll_rejects_invalid_whatsapp_target_shape`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_send_endpoint_rejects_invalid_whatsapp_target_shape`
+    - `test_poll_endpoint_rejects_invalid_whatsapp_target_shape`
+- Verified the slice with:
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py::test_message_action_reports_unsupported_action_for_known_channel tests/test_gateway_node_methods.py::test_message_action_rejects_internal_webchat_channel tests/test_gateway_node_methods.py::test_message_action_auto_picks_single_notification_route_channel_when_omitted tests/test_gateway_node_methods.py::test_send_returns_validated_unavailable_contract tests/test_gateway_node_methods.py::test_send_accepts_valid_whatsapp_target_shape_before_delivery_placeholder tests/test_gateway_node_methods.py::test_send_rejects_invalid_whatsapp_target_shape tests/test_gateway_node_methods.py::test_send_rejects_internal_webchat_channel tests/test_gateway_node_methods.py::test_send_rejects_missing_channel_when_multiple_route_channels_configured tests/test_gateway_node_methods.py::test_poll_returns_validated_unavailable_contract tests/test_gateway_node_methods.py::test_poll_rejects_invalid_whatsapp_target_shape tests/test_gateway_node_methods.py::test_poll_rejects_internal_webchat_channel tests/test_gateway_node_methods.py::test_poll_rejects_missing_channel_when_no_route_channels_configured tests/test_gateway_nodes_api.py::test_message_action_endpoint_reports_unsupported_action_for_known_channel tests/test_gateway_nodes_api.py::test_message_action_endpoint_rejects_internal_webchat_channel tests/test_gateway_nodes_api.py::test_message_action_endpoint_auto_picks_single_route_channel_when_omitted tests/test_gateway_nodes_api.py::test_send_endpoint_returns_validated_unavailable_contract tests/test_gateway_nodes_api.py::test_send_endpoint_rejects_invalid_whatsapp_target_shape tests/test_gateway_nodes_api.py::test_send_endpoint_rejects_internal_webchat_channel tests/test_gateway_nodes_api.py::test_send_endpoint_rejects_missing_channel_when_multiple_route_channels_configured tests/test_gateway_nodes_api.py::test_poll_endpoint_returns_validated_unavailable_contract tests/test_gateway_nodes_api.py::test_poll_endpoint_rejects_invalid_whatsapp_target_shape tests/test_gateway_nodes_api.py::test_poll_endpoint_rejects_internal_webchat_channel tests/test_gateway_nodes_api.py::test_poll_endpoint_rejects_missing_channel_when_no_route_channels_configured -q`
+  - `& '.\.venv\Scripts\python.exe' -m ruff check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `& '.\.venv\Scripts\python.exe' -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused outbound sweep passed cleanly (`23 passed`).
+  - Ruff stayed clean on the touched gateway files/tests.
+  - `src/openzues/services/gateway_node_methods.py` type-checked cleanly.
+- Next exact seam:
+  - continue the same syntax-level target-resolution lane with Telegram target parsing/normalization, especially topic-style and direct/group target shapes, before touching any broader outbound delivery runtime claims.
+
+### Recovery addendum 2026-04-19 outbound Telegram target-shape parity America/Chicago
+
+- Extended the bounded outbound target-validation lane from WhatsApp into Telegram-aware target handling for `send` and `poll`.
+  - Telegram targets are now validated after channel resolution instead of being blocked only by the generic `to must be a non-empty string` gate.
+  - blank Telegram targets now fail as `400 INVALID_REQUEST` with `Telegram target is required`, which matches the more specific upstream target-resolution classification better than the previous generic parameter error.
+  - topic-style Telegram targets such as `telegram:-100123:topic:77` are now accepted as valid-shaped inputs and continue to the still-honest outbound delivery placeholder.
+- Kept the scope intentionally bounded:
+  - OpenClaw owns richer Telegram target parsing plus real outbound routing and delivery.
+  - OpenZues still does not own the deeper outbound runtime, directory-backed resolution, or delivery transport.
+  - this slice only lands the syntax-level target contract we can prove locally: blank Telegram targets are classified at the Telegram layer, and topic-style target shapes are treated as valid-shaped inputs rather than rejected early by generic validation.
+- Product effect proved end to end:
+  - `send` with a valid Telegram topic-style target now still reaches the explicit delivery placeholder, proving the parser accepts the upstream-style target form.
+  - `send` and `poll` with blank Telegram targets now return `400` with Telegram-specific guidance instead of the earlier generic `to` validation message.
+  - the previously-landed WhatsApp validation, missing-channel selection behavior, and internal-only `webchat` guidance remain intact.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_send_accepts_valid_telegram_topic_target_shape_before_delivery_placeholder`
+    - `test_send_rejects_blank_telegram_target_shape`
+    - `test_poll_rejects_blank_telegram_target_shape`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_send_endpoint_rejects_blank_telegram_target_shape`
+    - `test_poll_endpoint_rejects_blank_telegram_target_shape`
+- Verified the slice with:
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py::test_message_action_reports_unsupported_action_for_known_channel tests/test_gateway_node_methods.py::test_message_action_rejects_internal_webchat_channel tests/test_gateway_node_methods.py::test_message_action_auto_picks_single_notification_route_channel_when_omitted tests/test_gateway_node_methods.py::test_send_returns_validated_unavailable_contract tests/test_gateway_node_methods.py::test_send_accepts_valid_whatsapp_target_shape_before_delivery_placeholder tests/test_gateway_node_methods.py::test_send_rejects_invalid_whatsapp_target_shape tests/test_gateway_node_methods.py::test_send_accepts_valid_telegram_topic_target_shape_before_delivery_placeholder tests/test_gateway_node_methods.py::test_send_rejects_blank_telegram_target_shape tests/test_gateway_node_methods.py::test_send_rejects_internal_webchat_channel tests/test_gateway_node_methods.py::test_send_rejects_missing_channel_when_multiple_route_channels_configured tests/test_gateway_node_methods.py::test_poll_returns_validated_unavailable_contract tests/test_gateway_node_methods.py::test_poll_rejects_invalid_whatsapp_target_shape tests/test_gateway_node_methods.py::test_poll_rejects_blank_telegram_target_shape tests/test_gateway_node_methods.py::test_poll_rejects_internal_webchat_channel tests/test_gateway_node_methods.py::test_poll_rejects_missing_channel_when_no_route_channels_configured tests/test_gateway_nodes_api.py::test_message_action_endpoint_reports_unsupported_action_for_known_channel tests/test_gateway_nodes_api.py::test_message_action_endpoint_rejects_internal_webchat_channel tests/test_gateway_nodes_api.py::test_message_action_endpoint_auto_picks_single_route_channel_when_omitted tests/test_gateway_nodes_api.py::test_send_endpoint_returns_validated_unavailable_contract tests/test_gateway_nodes_api.py::test_send_endpoint_rejects_invalid_whatsapp_target_shape tests/test_gateway_nodes_api.py::test_send_endpoint_rejects_blank_telegram_target_shape tests/test_gateway_nodes_api.py::test_send_endpoint_rejects_internal_webchat_channel tests/test_gateway_nodes_api.py::test_send_endpoint_rejects_missing_channel_when_multiple_route_channels_configured tests/test_gateway_nodes_api.py::test_poll_endpoint_returns_validated_unavailable_contract tests/test_gateway_nodes_api.py::test_poll_endpoint_rejects_invalid_whatsapp_target_shape tests/test_gateway_nodes_api.py::test_poll_endpoint_rejects_blank_telegram_target_shape tests/test_gateway_nodes_api.py::test_poll_endpoint_rejects_internal_webchat_channel tests/test_gateway_nodes_api.py::test_poll_endpoint_rejects_missing_channel_when_no_route_channels_configured -q`
+  - `& '.\.venv\Scripts\python.exe' -m ruff check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `& '.\.venv\Scripts\python.exe' -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused outbound sweep passed cleanly (`28 passed`).
+  - Ruff stayed clean on the touched gateway files/tests.
+  - `src/openzues/services/gateway_node_methods.py` type-checked cleanly.
+- Next exact seam:
+  - continue under outbound target handling with the remaining generic-channel blank-target path, especially whether explicit Slack and Discord empty targets can be narrowed from generic parameter validation into channel-aware `target is required` classifications without overstating any deeper outbound runtime support.
+
+### Recovery addendum 2026-04-19 outbound routing-identifier validation parity America/Chicago
+
+- Tightened the next truthful layer under the outbound action/send/poll family: optional routing identifiers must now be non-empty when present.
+  - `message.action` now rejects blank `accountId`, `requesterSenderId`, `sessionKey`, and `agentId` instead of skipping validation and falling through to the unsupported-action branch.
+  - `send` now rejects blank `accountId`, `agentId`, `threadId`, and `sessionKey` instead of misclassifying malformed routing metadata as the deeper `send` delivery-runtime gap.
+  - `poll` now rejects blank `accountId` instead of treating the malformed request as a missing outbound poll runtime.
+- Kept the scope intentionally honest:
+  - OpenClaw carries richer outbound routing and delivery state behind these fields.
+  - OpenZues still does not own the deeper outbound runtime, transport delivery, or upstream plugin-backed routing inventory.
+  - this slice only lands the request-shape contract OpenZues can prove locally today: if an optional routing identifier is present, it must be non-empty before the request reaches any deeper unsupported-action or delivery placeholder branch.
+- Product effect proved end to end:
+  - malformed outbound action/send/poll requests now fail at the request-validation layer with field-specific `... must be a non-empty string` messages.
+  - valid requests still preserve the previously-landed behavior: unsupported-action classification for `message.action`, channel-aware target validation for `send`/`poll`, and the still-honest `503` delivery placeholders where runtime support is not yet present.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_message_action_rejects_blank_optional_routing_identifiers`
+    - `test_send_rejects_blank_optional_routing_identifiers`
+    - `test_poll_rejects_blank_account_id`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_message_action_endpoint_rejects_blank_optional_routing_identifiers`
+    - `test_send_endpoint_rejects_blank_optional_routing_identifiers`
+    - `test_poll_endpoint_rejects_blank_account_id`
+- Verified the slice with:
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py::test_message_action_reports_unsupported_action_for_known_channel tests/test_gateway_node_methods.py::test_message_action_rejects_internal_webchat_channel tests/test_gateway_node_methods.py::test_message_action_auto_picks_single_notification_route_channel_when_omitted tests/test_gateway_node_methods.py::test_message_action_rejects_blank_optional_routing_identifiers tests/test_gateway_node_methods.py::test_send_returns_validated_unavailable_contract tests/test_gateway_node_methods.py::test_send_accepts_valid_whatsapp_target_shape_before_delivery_placeholder tests/test_gateway_node_methods.py::test_send_rejects_invalid_whatsapp_target_shape tests/test_gateway_node_methods.py::test_send_accepts_valid_telegram_topic_target_shape_before_delivery_placeholder tests/test_gateway_node_methods.py::test_send_rejects_blank_telegram_target_shape tests/test_gateway_node_methods.py::test_send_rejects_blank_optional_routing_identifiers tests/test_gateway_node_methods.py::test_send_rejects_internal_webchat_channel tests/test_gateway_node_methods.py::test_send_rejects_missing_channel_when_multiple_route_channels_configured tests/test_gateway_node_methods.py::test_poll_returns_validated_unavailable_contract tests/test_gateway_node_methods.py::test_poll_rejects_invalid_whatsapp_target_shape tests/test_gateway_node_methods.py::test_poll_rejects_blank_telegram_target_shape tests/test_gateway_node_methods.py::test_poll_rejects_blank_account_id tests/test_gateway_node_methods.py::test_poll_rejects_internal_webchat_channel tests/test_gateway_node_methods.py::test_poll_rejects_missing_channel_when_no_route_channels_configured tests/test_gateway_nodes_api.py::test_message_action_endpoint_reports_unsupported_action_for_known_channel tests/test_gateway_nodes_api.py::test_message_action_endpoint_rejects_internal_webchat_channel tests/test_gateway_nodes_api.py::test_message_action_endpoint_auto_picks_single_route_channel_when_omitted tests/test_gateway_nodes_api.py::test_message_action_endpoint_rejects_blank_optional_routing_identifiers tests/test_gateway_nodes_api.py::test_send_endpoint_returns_validated_unavailable_contract tests/test_gateway_nodes_api.py::test_send_endpoint_rejects_invalid_whatsapp_target_shape tests/test_gateway_nodes_api.py::test_send_endpoint_rejects_blank_telegram_target_shape tests/test_gateway_nodes_api.py::test_send_endpoint_rejects_blank_optional_routing_identifiers tests/test_gateway_nodes_api.py::test_send_endpoint_rejects_internal_webchat_channel tests/test_gateway_nodes_api.py::test_send_endpoint_rejects_missing_channel_when_multiple_route_channels_configured tests/test_gateway_nodes_api.py::test_poll_endpoint_returns_validated_unavailable_contract tests/test_gateway_nodes_api.py::test_poll_endpoint_rejects_invalid_whatsapp_target_shape tests/test_gateway_nodes_api.py::test_poll_endpoint_rejects_blank_telegram_target_shape tests/test_gateway_nodes_api.py::test_poll_endpoint_rejects_blank_account_id tests/test_gateway_nodes_api.py::test_poll_endpoint_rejects_internal_webchat_channel tests/test_gateway_nodes_api.py::test_poll_endpoint_rejects_missing_channel_when_no_route_channels_configured -q`
+  - `& '.\.venv\Scripts\python.exe' -m ruff check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `& '.\.venv\Scripts\python.exe' -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the widened outbound action/send/poll sweep passed cleanly (`46 passed`).
+  - Ruff stayed clean on the touched gateway files/tests.
+  - `src/openzues/services/gateway_node_methods.py` type-checked cleanly.
+- Next exact seam:
+  - move laterally from the core outbound action/send/poll family into the next adjacent request-shape mismatches that still accept blank optional account identifiers before deeper branches, such as `channels.logout` or `web.login.*`, while staying inside locally-provable validation contracts and avoiding any overclaim about outbound runtime support.
+
+### Recovery addendum 2026-04-19 adjacent blank-account gateway validation parity America/Chicago
+
+- Moved laterally from the outbound action/send/poll family into the next adjacent request-shape seams and tightened blank optional account validation for:
+  - `web.login.start`
+  - `web.login.wait`
+  - `channels.logout`
+- Before this slice, those methods accepted blank `accountId` values and then fell through into deeper method-specific fallback branches:
+  - `web.login.*` returned `web login provider is not available`
+  - `channels.logout` returned `channel <channel> does not support logout`
+- After this slice, blank `accountId` values now fail at the request-validation layer with `accountId must be a non-empty string`, which is a more truthful contract and matches the validation posture we already landed across the neighboring gateway methods.
+- Kept the scope intentionally bounded:
+  - OpenZues still does not claim any real web-login provider runtime or logout support for those channels.
+  - this slice only corrects the input-shape contract so malformed requests are rejected before the deeper unsupported-provider / unsupported-channel branches fire.
+- Product effect proved end to end:
+  - valid-shaped `web.login.*` requests still return the existing explicit `web login provider is not available` contract.
+  - valid-shaped `channels.logout` requests still return the existing explicit `channel telegram does not support logout` contract.
+  - blank `accountId` values on all three methods now fail early and consistently as request-validation errors.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_adjacent_gateway_methods_reject_blank_account_ids`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_gateway_node_method_call_endpoint_rejects_blank_adjacent_account_ids`
+- Verified the slice with:
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py::test_web_login_methods_fail_as_explicit_provider_unavailable tests/test_gateway_node_methods.py::test_adjacent_gateway_methods_reject_blank_account_ids tests/test_gateway_node_methods.py::test_channels_logout_fails_as_explicit_unsupported_channel tests/test_gateway_node_methods.py::test_channels_logout_rejects_invalid_channel_shape tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_rejects_web_login_without_provider tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_rejects_blank_adjacent_account_ids tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_rejects_channels_logout_without_supported_channel tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_rejects_invalid_channels_logout_channel -q`
+  - `& '.\.venv\Scripts\python.exe' -m ruff check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `& '.\.venv\Scripts\python.exe' -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused adjacent gateway validation sweep passed cleanly (`14 passed`).
+  - Ruff stayed clean on the touched gateway files/tests.
+  - `src/openzues/services/gateway_node_methods.py` type-checked cleanly.
+- Next exact seam:
+  - continue scanning the remaining gateway methods that still validate optional identifiers with plain `_require_string(...)` instead of `_require_non_empty_string(...)`, especially neighboring account/session surfaces where a blank value may still fall through to a deeper placeholder or unsupported-method branch.
+
+### Recovery addendum 2026-04-19 push.test exact upstream missing-registration wording America/Chicago
+
+- Re-checked the upstream OpenClaw source before tightening `push.test` further.
+  - Source of truth used: [openclaw/openclaw `src/gateway/server-methods/push.ts`](https://github.com/openclaw/openclaw/blob/main/src/gateway/server-methods/push.ts)
+  - The upstream handler keeps blank `title` and `body` optional by normalizing trimmed strings and falling back to defaults, so OpenZues should not harden those fields into non-empty validation.
+  - The real mismatch was narrower: the upstream missing-registration error includes an operator hint, `node <id> has no APNs registration (connect iOS node first)`.
+- Landed the exact wording parity without overstating any deeper APNs runtime:
+  - OpenZues still truthfully reports missing APNs registration rather than pretending it can send a push test.
+  - the error message now matches the upstream operator guidance more closely by telling the caller what to do next.
+- Product effect proved end to end:
+  - `push.test` now returns `400 INVALID_REQUEST` with `node ios-node-1 has no APNs registration (connect iOS node first)` for the current local no-registration state.
+  - the previously-landed adjacent `web.login.*` and `channels.logout` blank-account validation remains intact.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_push_test_fails_as_missing_apns_registration`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_gateway_node_method_call_endpoint_reports_missing_push_registration`
+- Verified the slice with:
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py::test_push_test_fails_as_missing_apns_registration tests/test_gateway_node_methods.py::test_web_login_methods_fail_as_explicit_provider_unavailable tests/test_gateway_node_methods.py::test_adjacent_gateway_methods_reject_blank_account_ids tests/test_gateway_node_methods.py::test_channels_logout_fails_as_explicit_unsupported_channel tests/test_gateway_node_methods.py::test_channels_logout_rejects_invalid_channel_shape tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_reports_missing_push_registration tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_rejects_web_login_without_provider tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_rejects_blank_adjacent_account_ids tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_rejects_channels_logout_without_supported_channel tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_rejects_invalid_channels_logout_channel -q`
+  - `& '.\.venv\Scripts\python.exe' -m ruff check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `& '.\.venv\Scripts\python.exe' -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused `push.test` plus adjacent login/logout sweep passed cleanly (`16 passed`).
+  - Ruff stayed clean on the touched gateway files/tests.
+  - `src/openzues/services/gateway_node_methods.py` type-checked cleanly.
+- Next exact seam:
+  - continue with source-backed gateway contract tightening where OpenClaw has explicit operator-facing wording or request normalization that OpenZues has not mirrored yet, starting with another small method family whose upstream implementation is public and can be verified directly before patching.
+
+### Recovery addendum 2026-04-19 channels.logout blank-account correction America/Chicago
+
+- Re-checked the upstream OpenClaw source before keeping the earlier `channels.logout` hardening.
+  - Source of truth used: [openclaw/openclaw `src/gateway/server-methods/channels.ts`](https://github.com/openclaw/openclaw/blob/main/src/gateway/server-methods/channels.ts)
+  - The upstream handler trims `accountId` and lets a blank value fall back to the default-account path instead of rejecting it as malformed.
+- Corrected the earlier local over-hardening:
+  - OpenZues no longer treats blank `accountId` on `channels.logout` as `accountId must be a non-empty string`.
+  - blank `accountId` now reaches the same truthful unsupported-channel branch as any other valid-shaped logout request, which keeps local behavior aligned with the upstream request-normalization contract.
+- Kept the scope intentionally narrow:
+  - `web.login.start` and `web.login.wait` still keep the stricter blank-account validation we already source-checked locally for this branch.
+  - `channels.logout` still does not claim real channel logout support; it simply preserves the upstream normalization shape before returning `channel <channel> does not support logout`.
+- Product effect proved end to end:
+  - `channels.logout` with `{"channel": "telegram", "accountId": "   "}` now returns the explicit unsupported-channel contract instead of a request-shape validation error.
+  - invalid channel shapes still return `invalid channels.logout channel`.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_channels_logout_allows_blank_account_id`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_gateway_node_method_call_endpoint_allows_blank_logout_account_id`
+- Verified the slice with:
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py::test_channels_logout_allows_blank_account_id tests/test_gateway_node_methods.py::test_channels_logout_fails_as_explicit_unsupported_channel tests/test_gateway_node_methods.py::test_adjacent_gateway_methods_reject_blank_account_ids tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_allows_blank_logout_account_id tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_rejects_channels_logout_without_supported_channel tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_rejects_blank_adjacent_account_ids -q`
+  - `& '.\.venv\Scripts\python.exe' -m ruff check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `& '.\.venv\Scripts\python.exe' -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused `channels.logout` correction sweep passed cleanly (`8 passed`).
+  - Ruff stayed clean on the touched gateway files/tests.
+  - `src/openzues/services/gateway_node_methods.py` type-checked cleanly.
+- Next exact seam:
+  - continue with another source-backed gateway method family where OpenClaw publicly normalizes optional identifiers or returns exact operator-facing wording that OpenZues still has not mirrored yet.
+
+### Recovery addendum 2026-04-19 web.login blank-account correction America/Chicago
+
+- Re-checked the upstream OpenClaw source before keeping the earlier `web.login.start` / `web.login.wait` hardening.
+  - Source of truth used: [openclaw/openclaw `src/gateway/server-methods/web.ts`](https://github.com/openclaw/openclaw/blob/main/src/gateway/server-methods/web.ts)
+  - The upstream handler resolves `accountId` with a plain string-type check and passes it through unchanged, so a blank string is still considered a present account identifier rather than a request-shape failure.
+- Corrected the earlier local over-hardening:
+  - OpenZues no longer rejects blank `accountId` on `web.login.start` or `web.login.wait` with `accountId must be a non-empty string`.
+  - blank `accountId` now reaches the same truthful provider-unavailable branch as any other valid-shaped request when no web-login provider is wired locally.
+- Kept the scope intentionally narrow:
+  - this does not claim any real QR login provider, channel startup, or channel stop/start runtime in OpenZues.
+  - the only parity gain here is request normalization: optional `accountId` may be a string, including blank, before the deeper provider-availability branch fires.
+- Product effect proved end to end:
+  - `web.login.start` and `web.login.wait` with blank `accountId` now return `web login provider is not available` instead of failing early as malformed input.
+  - non-string `accountId` values still fail at the request-validation layer.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_web_login_methods_allow_blank_account_id`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_gateway_node_method_call_endpoint_allows_blank_web_login_account_id`
+- Verified the slice with:
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py::test_web_login_methods_fail_as_explicit_provider_unavailable tests/test_gateway_node_methods.py::test_web_login_methods_allow_blank_account_id tests/test_gateway_node_methods.py::test_channels_logout_allows_blank_account_id tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_rejects_web_login_without_provider tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_allows_blank_web_login_account_id tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_allows_blank_logout_account_id -q`
+  - `& '.\.venv\Scripts\python.exe' -m ruff check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `& '.\.venv\Scripts\python.exe' -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused web-login correction sweep passed cleanly (`10 passed`).
+  - Ruff stayed clean on the touched gateway files/tests.
+  - `src/openzues/services/gateway_node_methods.py` type-checked cleanly.
+- Next exact seam:
+  - continue scanning public gateway server-method files for the next place where OpenClaw intentionally accepts optional string inputs or emits exact operator-facing wording that OpenZues still handles differently.
+
+### Recovery addendum 2026-04-19 outbound optional-identifier normalization correction America/Chicago
+
+- Re-checked the upstream OpenClaw source before keeping the earlier outbound optional-identifier hardening.
+  - Source of truth used: [openclaw/openclaw `src/gateway/server-methods/send.ts`](https://github.com/openclaw/openclaw/blob/main/src/gateway/server-methods/send.ts)
+  - The upstream outbound handlers normalize optional routing identifiers instead of treating blank strings as request-shape failures:
+    - `message.action` passes `accountId`, `requesterSenderId`, `sessionKey`, `sessionId`, and `agentId` through `normalizeOptionalString(...)`.
+    - `send` normalizes `accountId`, `threadId`, `sessionKey`, and `agentId` before deeper route/session delivery work.
+    - `poll` normalizes `accountId` before target resolution and delivery.
+- Corrected the earlier local over-hardening:
+  - OpenZues no longer rejects blank optional routing identifiers on `message.action`, `send`, or `poll` with `... must be a non-empty string`.
+  - blank values now behave like omitted values for these optional routing fields, which keeps local request normalization aligned with upstream before the deeper unsupported-action or unavailable-delivery branches fire.
+- This addendum supersedes the earlier local assumption recorded in `Recovery addendum 2026-04-19 outbound routing-identifier validation parity America/Chicago`.
+  - That earlier slice was a reasonable local guess, but the upstream public source shows the real contract is normalization-to-unset, not strict non-empty rejection, so parity required a reversal.
+- Product effect proved end to end:
+  - `message.action` with blank optional routing identifiers now reaches the explicit unsupported-action contract instead of failing at the request-validation layer.
+  - `send` with blank optional routing identifiers now reaches the existing truthful `503` unavailable-delivery placeholder.
+  - `poll` with blank `accountId` now reaches the existing truthful `503` unavailable-delivery placeholder.
+  - non-string values are still rejected as malformed input where the request shape actually requires a string.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_message_action_allows_blank_optional_routing_identifiers`
+    - `test_send_allows_blank_optional_routing_identifiers`
+    - `test_poll_allows_blank_account_id`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_message_action_endpoint_allows_blank_optional_routing_identifiers`
+    - `test_send_endpoint_allows_blank_optional_routing_identifiers`
+    - `test_poll_endpoint_allows_blank_account_id`
+- Verified the slice with:
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py::test_message_action_allows_blank_optional_routing_identifiers tests/test_gateway_node_methods.py::test_send_allows_blank_optional_routing_identifiers tests/test_gateway_node_methods.py::test_poll_allows_blank_account_id tests/test_gateway_nodes_api.py::test_message_action_endpoint_allows_blank_optional_routing_identifiers tests/test_gateway_nodes_api.py::test_send_endpoint_allows_blank_optional_routing_identifiers tests/test_gateway_nodes_api.py::test_poll_endpoint_allows_blank_account_id -q`
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py::test_message_action_reports_unsupported_action_for_known_channel tests/test_gateway_node_methods.py::test_message_action_allows_blank_optional_routing_identifiers tests/test_gateway_node_methods.py::test_send_returns_validated_unavailable_contract tests/test_gateway_node_methods.py::test_send_allows_blank_optional_routing_identifiers tests/test_gateway_node_methods.py::test_poll_returns_validated_unavailable_contract tests/test_gateway_node_methods.py::test_poll_allows_blank_account_id tests/test_gateway_node_methods.py::test_web_login_methods_fail_as_explicit_provider_unavailable tests/test_gateway_node_methods.py::test_web_login_methods_allow_blank_account_id tests/test_gateway_node_methods.py::test_channels_logout_fails_as_explicit_unsupported_channel tests/test_gateway_node_methods.py::test_channels_logout_allows_blank_account_id tests/test_gateway_nodes_api.py::test_message_action_endpoint_reports_unsupported_action_for_known_channel tests/test_gateway_nodes_api.py::test_message_action_endpoint_allows_blank_optional_routing_identifiers tests/test_gateway_nodes_api.py::test_send_endpoint_returns_validated_unavailable_contract tests/test_gateway_nodes_api.py::test_send_endpoint_allows_blank_optional_routing_identifiers tests/test_gateway_nodes_api.py::test_poll_endpoint_returns_validated_unavailable_contract tests/test_gateway_nodes_api.py::test_poll_endpoint_allows_blank_account_id tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_rejects_web_login_without_provider tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_allows_blank_web_login_account_id tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_rejects_channels_logout_without_supported_channel tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_allows_blank_logout_account_id -q`
+  - `& '.\.venv\Scripts\python.exe' -m ruff check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `& '.\.venv\Scripts\python.exe' -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused outbound normalization regression sweep passed cleanly (`20 passed`).
+  - the wider neighboring service/API sweep passed cleanly (`38 passed`).
+  - Ruff stayed clean on the touched gateway files/tests.
+  - `src/openzues/services/gateway_node_methods.py` type-checked cleanly.
+- Next exact seam:
+  - continue scanning public gateway server-method files for the next case where OpenClaw intentionally normalizes optional strings or routes through a deeper truthful branch that OpenZues still short-circuits too early.
+
+### Recovery addendum 2026-04-19 chat.abort empty-runId normalization parity America/Chicago
+
+- Re-checked the upstream OpenClaw source before keeping the local `chat.abort` empty-`runId` rejection.
+  - Source of truth used: [openclaw/openclaw `src/gateway/server-methods/chat.ts`](https://github.com/openclaw/openclaw/blob/main/src/gateway/server-methods/chat.ts)
+  - The upstream `chat.abort` handler destructures `runId` and immediately branches on `if (!runId)`, which means an empty string falls through to the session-scoped abort path rather than being rejected as malformed input.
+- Corrected the local over-hardening:
+  - OpenZues no longer rejects `chat.abort` requests with `{"runId": ""}` as `runId must be a non-empty string`.
+  - an empty-string `runId` now behaves like an omitted `runId` and aborts the tracked session-scoped run, which matches the upstream branch we can verify directly.
+- Kept the scope intentionally narrow:
+  - this addendum only changes the empty-string case for `chat.abort`.
+  - OpenZues still requires a non-empty `sessionKey`, and it still preserves the existing tracked-run guardrails for non-empty `runId` values that do not match the active tracked run.
+  - I did not generalize this to whitespace-only `runId` values because the upstream `if (!runId)` branch only proves empty-string falsiness directly.
+- Product effect proved end to end:
+  - `chat.abort` with `{"sessionKey": "openzues:thread:demo", "runId": ""}` now aborts the tracked session run and returns the same payload as an omitted `runId`.
+  - explicit non-matching run ids still return `{ "ok": true, "aborted": false, "runIds": [] }`.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_chat_abort_treats_empty_run_id_as_session_scoped_abort`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_gateway_node_method_call_endpoint_treats_empty_chat_abort_run_id_as_session_abort`
+- Verified the slice with:
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py::test_sessions_abort_translates_tracked_gateway_run_into_session_status_payload tests/test_gateway_node_methods.py::test_chat_abort_treats_empty_run_id_as_session_scoped_abort tests/test_gateway_node_methods.py::test_chat_abort_does_not_interrupt_when_run_id_is_not_the_tracked_gateway_run tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_chat_abort_interrupts_tracked_runtime tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_treats_empty_chat_abort_run_id_as_session_abort -q`
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q`
+  - `& '.\.venv\Scripts\python.exe' -m ruff check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `& '.\.venv\Scripts\python.exe' -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused `chat.abort` normalization slice passed cleanly (`5 passed`).
+  - the full gateway method/API suites passed cleanly (`347 passed`).
+  - Ruff stayed clean on the touched gateway files/tests.
+  - `src/openzues/services/gateway_node_methods.py` type-checked cleanly.
+- Next exact seam:
+  - continue scanning public gateway server-method files for the next caller-visible normalization or exact branch contract where OpenClaw treats a present-but-empty field as omission or routes to a deeper truthful runtime branch that OpenZues still short-circuits too early.
+
+### Recovery addendum 2026-04-19 agent.identity.get blank-selector normalization parity America/Chicago
+
+- Re-checked the upstream OpenClaw source before keeping the local `agent.identity.get` blank-selector rejection.
+  - Source of truth used: [openclaw/openclaw `src/gateway/server-methods/agent.ts`](https://github.com/openclaw/openclaw/blob/main/src/gateway/server-methods/agent.ts)
+  - The upstream handler resolves both `agentId` and `sessionKey` through `normalizeOptionalString(...) ?? ""`, so blank strings collapse to omission before identity resolution instead of failing at the request-shape layer.
+- Corrected the local over-hardening:
+  - OpenZues no longer rejects blank `agentId` or `sessionKey` on `agent.identity.get` with `... must be a non-empty string`.
+  - blank selectors now behave like omitted selectors and fall through to the default identity lookup path, which keeps local normalization aligned with the upstream branch we can verify directly.
+- Kept the scope intentionally narrow:
+  - this addendum only changes the blank-string handling for optional `agentId` and `sessionKey`.
+  - malformed non-string values are still rejected at the request-validation layer, and valid explicit selectors still preserve the existing identity resolution behavior.
+- Product effect proved end to end:
+  - `agent.identity.get` with `{"agentId": "   "}` now returns the default `main` agent identity instead of failing early as malformed input.
+  - `agent.identity.get` with `{"sessionKey": "   "}` now returns the same default identity payload instead of failing early as malformed input.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_agent_identity_get_allows_blank_optional_selectors`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_gateway_node_method_call_endpoint_allows_blank_agent_identity_selectors`
+- Verified the slice with:
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py::test_agent_identity_get_returns_singleton_identity_and_rejects_malformed_session_keys tests/test_gateway_node_methods.py::test_agent_identity_get_allows_blank_optional_selectors tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_allows_blank_agent_identity_selectors -q`
+  - `& '.\.venv\Scripts\python.exe' -m ruff check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `& '.\.venv\Scripts\python.exe' -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused `agent.identity.get` normalization slice passed cleanly (`5 passed`).
+  - Ruff stayed clean on the touched gateway files/tests.
+  - `src/openzues/services/gateway_node_methods.py` type-checked cleanly.
+- Next exact seam:
+  - continue with the adjacent TTS method family where upstream normalizes blank optional selectors before runtime routing, while OpenZues still rejects them too early at the request-validation layer.
+
+### Recovery addendum 2026-04-19 tts.convert blank-selector normalization parity America/Chicago
+
+- Re-checked the upstream OpenClaw source before keeping the local `tts.convert` blank-selector rejection.
+  - Source of truth used: [openclaw/openclaw `src/gateway/server-methods/tts.ts`](https://github.com/openclaw/openclaw/blob/main/src/gateway/server-methods/tts.ts)
+  - The upstream handler normalizes optional `channel`, `provider`, `modelId`, and `voiceId` through `normalizeOptionalString(...)` before it resolves overrides and runtime routing, so blank strings are treated as omission instead of malformed input.
+- Corrected the local over-hardening:
+  - OpenZues no longer rejects blank `channel`, `provider`, `modelId`, or `voiceId` on `tts.convert` with `... must be a non-empty string`.
+  - blank selectors now behave like omitted selectors at the gateway request layer, which keeps the local input contract aligned with the upstream normalization path before runtime/provider selection happens.
+- Kept the scope intentionally narrow:
+  - this addendum only changes blank-string handling for optional `tts.convert` selectors.
+  - required `text` validation is unchanged, and I did not widen this into `tts.setProvider` or `talk.speak` because this checkpoint only covers the upstream branch verified directly in `tts.ts`.
+- Product effect proved end to end:
+  - `tts.convert` with blank `channel`, `provider`, `modelId`, and `voiceId` now reaches the runtime instead of failing at the request-validation layer.
+  - blank `channel`, `modelId`, and `voiceId` are passed through as omitted values.
+  - blank `provider` now follows the existing runtime default-provider resolution path, which produced the same default `microsoft` provider as an omitted provider in the focused local proof.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_tts_convert_normalizes_blank_optional_selectors`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_gateway_node_method_call_endpoint_normalizes_blank_tts_convert_selectors`
+- Verified the slice with:
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py::test_tts_convert_runs_bounded_runtime_when_wired tests/test_gateway_node_methods.py::test_tts_convert_normalizes_blank_optional_selectors tests/test_gateway_node_methods.py::test_tts_convert_fails_closed_when_runtime_is_disabled tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_tts_convert_when_runtime_is_wired tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_normalizes_blank_tts_convert_selectors -q`
+  - `& '.\.venv\Scripts\python.exe' -m ruff check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `& '.\.venv\Scripts\python.exe' -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused `tts.convert` normalization slice passed cleanly (`5 passed`).
+  - Ruff stayed clean on the touched gateway files/tests.
+  - `src/openzues/services/gateway_node_methods.py` type-checked cleanly.
+- Next exact seam:
+  - continue within the adjacent TTS family with the next source-backed caller-visible mismatch, especially whether `tts.setProvider` should treat blank provider input as the upstream invalid-provider branch rather than the current local non-empty-string validation error.
+
+### Recovery addendum 2026-04-19 tts.setProvider invalid-provider parity America/Chicago
+
+- Re-checked the upstream OpenClaw source before keeping the local `tts.setProvider` validation path.
+  - Source of truth used: [openclaw/openclaw `src/gateway/server-methods/tts.ts`](https://github.com/openclaw/openclaw/blob/main/src/gateway/server-methods/tts.ts)
+  - The upstream handler canonicalizes `normalizeOptionalString(params.provider) ?? ""` and then rejects anything unresolved or unregistered with the explicit operator-facing message `Invalid provider. Use a registered TTS provider id.`
+- Corrected the local mismatch:
+  - OpenZues no longer rejects blank `provider` on `tts.setProvider` as `provider must be a non-empty string`.
+  - OpenZues also no longer silently accepts unknown provider ids into local TTS preferences.
+  - blank or unknown provider input now reaches the same explicit invalid-provider branch the upstream source exposes publicly.
+- Kept the scope intentionally narrow:
+  - this addendum only changes caller-visible validation for `tts.setProvider`.
+  - known providers and aliases such as `edge -> microsoft` still preserve the existing local success path.
+- Product effect proved end to end:
+  - `tts.setProvider` with `{"provider": "   "}` now returns `Invalid provider. Use a registered TTS provider id.` instead of a non-empty-string validation error.
+  - `tts.setProvider` with `{"provider": "not-a-real-provider"}` now returns the same explicit invalid-provider contract instead of mutating local state.
+  - failed requests leave persisted TTS provider state untouched.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_tts_set_provider_rejects_blank_or_unknown_provider_ids`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_gateway_node_method_call_endpoint_rejects_blank_or_unknown_tts_provider`
+- Verified the slice with:
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py::test_tts_pref_methods_persist_local_state_and_surface_status tests/test_gateway_node_methods.py::test_tts_set_provider_rejects_blank_or_unknown_provider_ids tests/test_gateway_node_methods.py::test_tts_convert_normalizes_blank_optional_selectors tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_local_tts_pref_mutations tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_rejects_blank_or_unknown_tts_provider tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_normalizes_blank_tts_convert_selectors -q`
+  - `& '.\.venv\Scripts\python.exe' -m ruff check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `& '.\.venv\Scripts\python.exe' -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused `tts.setProvider` and neighboring TTS regression sweep passed cleanly (`8 passed`).
+  - Ruff stayed clean on the touched gateway files/tests.
+  - `src/openzues/services/gateway_node_methods.py` type-checked cleanly.
+- Next exact seam:
+  - continue scanning adjacent public gateway server-method files for the next caller-visible normalization or exact invalid-request branch OpenClaw exposes where OpenZues still diverges, likely in another single-method validation surface rather than a broader runtime feature gap.
+
+### Recovery addendum 2026-04-19 talk.speak rateWpm cutoff parity America/Chicago
+
+- Re-checked the upstream OpenClaw source before keeping the local `talk.speak` `rateWpm` cutoff behavior.
+  - Source of truth used: [openclaw/openclaw `src/gateway/server-methods/talk.ts`](https://github.com/openclaw/openclaw/blob/main/src/gateway/server-methods/talk.ts)
+  - The upstream talk handler rejects `rateWpm` when it resolves to a speed outside the open interval `(0.5, 2.0)`, and its current conversion path uses `rateWpm / 175` before surfacing the explicit invalid-params message `invalid talk.speak params: rateWpm must resolve to speed between 0.5 and 2.0`.
+- Corrected the local mismatch:
+  - OpenZues no longer lets `rateWpm: 350` fall through to synthesis.
+  - the local runtime now resolves `rateWpm` with `/175.0` instead of `/180.0`, and it rejects `<= 0.5` or `>= 2.0` so the caller-visible acceptance window matches the upstream contract.
+  - the gateway wrapper now maps this validation failure to `INVALID_REQUEST` instead of letting a raw runtime `ValueError` or downstream convert path leak outward.
+- Kept the scope intentionally narrow:
+  - this addendum only fixes the caller-visible `rateWpm` validation/cutoff path for `talk.speak`.
+  - it does not broaden talk-mode runtime support or change the existing unavailable-runtime behavior for unwired synthesis backends.
+- Product effect proved end to end:
+  - `talk.speak` with `{"text": "...", "rateWpm": 350}` now returns `invalid talk.speak params: rateWpm must resolve to speed between 0.5 and 2.0` instead of reaching synthesis locally.
+  - normal `talk.speak` requests such as `rateWpm: 180` still return the existing inline-audio payload.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_tts_runtime.py`
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_talk_speak_rejects_rate_wpm_that_resolves_outside_upstream_window`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_gateway_node_method_call_endpoint_rejects_rate_wpm_outside_upstream_window`
+- Verified the slice with:
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py::test_talk_speak_returns_inline_audio_when_runtime_is_wired tests/test_gateway_node_methods.py::test_talk_speak_rejects_rate_wpm_that_resolves_outside_upstream_window tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_talk_speak_when_runtime_is_wired tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_rejects_rate_wpm_outside_upstream_window -q`
+  - `& '.\.venv\Scripts\python.exe' -m ruff check src/openzues/services/gateway_node_methods.py src/openzues/services/gateway_tts_runtime.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `& '.\.venv\Scripts\python.exe' -m mypy src/openzues/services/gateway_node_methods.py src/openzues/services/gateway_tts_runtime.py`
+- Result:
+  - the focused `talk.speak` parity proof passed cleanly.
+  - Ruff stayed clean on the touched gateway files/tests.
+  - both touched production files type-checked cleanly.
+
+### Recovery addendum 2026-04-19 poll.threadId acceptance parity America/Chicago
+
+- Re-checked the upstream OpenClaw source before keeping the local `poll` request-key surface.
+  - Source of truth used: [openclaw/openclaw `src/gateway/server-methods/send.ts`](https://github.com/openclaw/openclaw/blob/main/src/gateway/server-methods/send.ts)
+  - The upstream `poll` handler accepts optional `threadId`, normalizes it with `normalizeOptionalString(...)`, and forwards it into the poll-delivery path instead of rejecting it as an unknown request key.
+- Corrected the local mismatch:
+  - OpenZues `poll` now accepts optional `threadId` alongside the already-supported `to`, `question`, `options`, `maxSelections`, `durationSeconds`, `channel`, `accountId`, and `idempotencyKey` fields.
+  - this keeps the request shape aligned with upstream before the existing truthful local `503` unavailable-delivery branch fires.
+- Kept the scope intentionally narrow:
+  - this addendum does not claim poll delivery is implemented.
+  - the only gain is that callers can send the same optional `threadId` field the upstream gateway accepts without being stopped at the validation layer first.
+- Product effect proved end to end:
+  - `poll` with `threadId: "1710000000.9999"` now reaches the existing `poll is unavailable until channel-target poll delivery is wired` contract instead of failing as an unknown-key request.
+  - the unavailable branch remains unchanged for the bounded local runtime.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_poll_allows_thread_id_before_delivery_placeholder`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_poll_endpoint_allows_thread_id_before_delivery_placeholder`
+- Verified the slice with:
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py::test_poll_returns_validated_unavailable_contract tests/test_gateway_node_methods.py::test_poll_allows_thread_id_before_delivery_placeholder tests/test_gateway_nodes_api.py::test_poll_endpoint_returns_validated_unavailable_contract tests/test_gateway_nodes_api.py::test_poll_endpoint_allows_thread_id_before_delivery_placeholder -q`
+  - `& '.\.venv\Scripts\python.exe' -m ruff check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `& '.\.venv\Scripts\python.exe' -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused `poll.threadId` parity proof passed cleanly.
+  - Ruff stayed clean on the touched gateway files/tests.
+  - the touched dispatcher type-checked cleanly.
+
+### Recovery addendum 2026-04-19 channels.logout blank-channel params parity America/Chicago
+
+- Re-checked the upstream OpenClaw source before keeping the local blank-`channel` path for `channels.logout`.
+  - Source of truth used: [openclaw/openclaw `src/gateway/server-methods/channels.ts`](https://github.com/openclaw/openclaw/blob/main/src/gateway/server-methods/channels.ts) and [openclaw/openclaw `src/gateway/protocol/schema/channels.ts`](https://github.com/openclaw/openclaw/blob/main/src/gateway/protocol/schema/channels.ts)
+  - Upstream validates blank `channel` at the params/schema layer first and only routes nonblank values into channel-id normalization, so a blank `channel` should not leak a helper-level non-empty-string error.
+- Corrected the local mismatch:
+  - OpenZues no longer leaks `channel must be a non-empty string` for `channels.logout` with a blank `channel`.
+  - blank `channel` now returns an explicit `invalid channels.logout params: ...` validation failure, while nonblank unknown channels still preserve the existing `invalid channels.logout channel` contract.
+- Kept the scope intentionally narrow:
+  - this addendum only changes validation ordering and caller-visible wording for blank `channel`.
+  - the previously-landed blank-`accountId` normalization and unsupported-channel behavior remain intact.
+- Product effect proved end to end:
+  - `channels.logout` with `{"channel": "   "}` now returns an `invalid channels.logout params:` error instead of the raw helper validation message.
+  - `channels.logout` with `{"channel": "not-a-real-channel"}` still returns `invalid channels.logout channel`.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_channels_logout_rejects_blank_channel_as_invalid_params`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_gateway_node_method_call_endpoint_rejects_blank_channels_logout_channel`
+- Verified the slice with:
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py::test_channels_logout_rejects_blank_channel_as_invalid_params tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_rejects_blank_channels_logout_channel -q`
+  - `& '.\.venv\Scripts\python.exe' -m ruff check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `& '.\.venv\Scripts\python.exe' -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused blank-`channel` parity proof passed cleanly.
+  - Ruff stayed clean on the touched gateway files/tests.
+  - the touched dispatcher type-checked cleanly.
+
+### Recovery addendum 2026-04-19 parallel-agent gateway parity batch verification America/Chicago
+
+- Used the six-agent scouting pass to split the next bounded parity seams across `sessions`, `cron`, `agents/files`, `send/poll`, `tts/talk`, and `web/chat/channels` instead of continuing single-threaded seam selection.
+- Batch result:
+  - landed three small caller-visible seams from the scout queue in one pass:
+    - `talk.speak` `rateWpm` cutoff parity
+    - `poll.threadId` acceptance parity
+    - `channels.logout` blank-`channel` params parity
+  - the `agents/files` scout came back with no remaining bounded source-backed parity gap worth landing right now.
+  - the `cron anchorMs` scout found a real seam, but it touches persistence/round-trip state and is better treated as a deliberate next step rather than mixed into this validation batch.
+  - the `sessions.changed traceLevel` scout found a possible event-payload seam, but it is lower-confidence than the three validation gaps landed here because local `traceLevel` support is not yet first-class elsewhere in the bounded session payload.
+- Broad verification after this batch:
+  - `& '.\.venv\Scripts\python.exe' -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q`
+- Result:
+  - the full gateway method/API suites passed cleanly after the batch (`363 passed`).
+- Next exact seam:
+  - choose between the cron `schedule.anchorMs` round-trip gap and the remaining outbound/request-shape scout queue, with a bias toward seams that stay honest without forcing new persistence or runtime claims.
+
+### Recovery addendum 2026-04-19 cron schedule.anchorMs round-trip parity America/Chicago
+
+- Re-checked the upstream OpenClaw cron schedule contract before keeping the local shape.
+  - Source of truth used from the local upstream checkout:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\protocol\schema\cron.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\cron\normalize.ts`
+  - the upstream `every` schedule schema allows optional `anchorMs`, and normalization preserves it instead of dropping it.
+- Corrected the local mismatch:
+  - OpenZues `cron.add` now accepts `schedule.anchorMs` for `{"kind": "every"}` jobs.
+  - OpenZues `cron.update` now accepts and persists `patch.schedule.anchorMs`.
+  - OpenZues `cron.list` and direct cron job payloads now emit `anchorMs` back when the task blueprint carries that stored value.
+- Kept the scope intentionally narrow:
+  - this addendum only lands request/response parity for the `anchorMs` field.
+  - it does not claim any new wake scheduler semantics beyond preserving the caller-visible contract and round-tripping the stored anchor value.
+- Product effect proved end to end:
+  - `cron.add` with `{"schedule": {"kind": "every", "everyMs": 3600000, "anchorMs": 123}}` now returns the same `anchorMs` value instead of silently stripping it.
+  - `cron.update` can change an existing anchored job from `anchorMs: 123` to `anchorMs: 456`, and subsequent `cron.list` responses keep that new value.
+- Primary files carrying the product change:
+  - `src/openzues/schemas.py`
+  - `src/openzues/services/gateway_cron.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_cron_add_accepts_every_schedule_anchor_ms`
+    - `test_cron_update_accepts_every_schedule_anchor_ms`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_gateway_node_method_call_endpoint_supports_cron_add_anchor_ms`
+    - `test_gateway_node_method_call_endpoint_supports_cron_update_anchor_ms`
+- Verified the slice with:
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "test_cron_add_accepts_every_schedule_anchor_ms or test_cron_update_accepts_every_schedule_anchor_ms or test_gateway_node_method_call_endpoint_supports_cron_add or test_gateway_node_method_call_endpoint_supports_cron_add_anchor_ms or test_gateway_node_method_call_endpoint_supports_cron_update or test_gateway_node_method_call_endpoint_supports_cron_update_anchor_ms"`
+  - `.\.venv\Scripts\ruff.exe check src/openzues/schemas.py src/openzues/services/gateway_cron.py tests/test_gateway_nodes_api.py tests/test_gateway_node_methods.py`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mypy src/openzues/schemas.py src/openzues/services/gateway_cron.py`
+- Result:
+  - the focused cron add/update/list anchor round-trip slice passed cleanly (`6 passed`).
+  - Ruff stayed clean on the touched schema/service/test files.
+  - both touched production files type-checked cleanly.
+- Next exact seam:
+  - re-check the remaining `sessions.changed` event-shape scout, especially whether upstream emits `traceLevel` in the changed payload while OpenZues currently leaves that field out of the event contract.
+
+### Recovery addendum 2026-04-19 sessions traceLevel metadata parity America/Chicago
+
+- Re-checked the upstream OpenClaw session metadata contract before keeping the local field surface.
+  - Source of truth used from the local upstream checkout:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\protocol\schema\sessions.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods\sessions.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\session-utils.ts`
+  - upstream accepts optional `traceLevel` on `sessions.patch`, stores it with the session row, and emits it back through the session row and `sessions.changed` payloads.
+- Corrected the local mismatch:
+  - OpenZues `sessions.patch` now accepts optional `traceLevel` instead of rejecting it as an unknown field.
+  - stored session metadata now exposes `traceLevel` back through the local session payload surfaces that already carry adjacent fields like `thinkingLevel` and `verboseLevel`.
+  - `sessions.changed` payloads built from the session service now include `traceLevel`, including the compaction-restore path that previously dropped it.
+- Kept the scope intentionally narrow:
+  - this addendum only lands the `traceLevel` metadata contract on top of the already-existing control-chat session store.
+  - it does not claim broader OpenClaw session-row parity for unrelated upstream-only fields such as delivery/runtime-specific channel metadata.
+- Product effect proved end to end:
+  - `sessions.patch` with `traceLevel: "debug"` now succeeds and returns the same value in the patched session entry.
+  - `sessions.list` and `chat.history` now round-trip that stored `traceLevel` instead of silently omitting it.
+  - `sessions.compaction.restore` now returns the restored entry with the stored `traceLevel`, and the emitted `sessions.changed` event keeps the same value on the restore path.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `src/openzues/services/gateway_sessions.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_sessions_patch_persists_current_session_metadata_and_surfaces_it`
+    - `test_sessions_compaction_restore_rehydrates_snapshot_and_publishes_event`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_sessions_patch_api_persists_current_session_metadata_and_surfaces_it`
+    - `test_gateway_node_method_call_endpoint_supports_sessions_compaction_restore`
+- Verified the slice with:
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "test_sessions_patch_persists_current_session_metadata_and_surfaces_it or test_sessions_patch_api_persists_current_session_metadata_and_surfaces_it or test_sessions_compaction_restore_rehydrates_snapshot_and_publishes_event or test_gateway_node_method_call_endpoint_supports_sessions_compaction_restore"`
+  - `.\.venv\Scripts\ruff.exe check src/openzues/services/gateway_node_methods.py src/openzues/services/gateway_sessions.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mypy src/openzues/services/gateway_node_methods.py src/openzues/services/gateway_sessions.py`
+- Result:
+  - the focused `traceLevel` session patch/list/history/restore slice passed cleanly (`4 passed`).
+  - Ruff stayed clean on the touched gateway session files/tests.
+  - both touched production files type-checked cleanly.
+- Next exact seam:
+  - add one adjacent proof that `sessions.send` message-phase and send-reason `sessions.changed` payloads also preserve patched `traceLevel`, since the local builders now carry the field but that path has not been asserted yet.
+
+### Recovery addendum 2026-04-19 sessions.send traceLevel event proof America/Chicago
+
+- Continued directly from the previous `traceLevel` metadata seam and checked the adjacent `sessions.send` event paths before claiming broader parity.
+  - Source of truth kept the same as the prior session metadata addendum because upstream `session-utils.ts` and the session event emitter both build event payloads from the same session-row metadata surface that already includes `traceLevel`.
+- What this pass proved:
+  - the local `reason="send"` `sessions.changed` payload keeps patched `traceLevel` on the service path.
+  - the local `phase="message"` `sessions.changed` payloads emitted by `sessions.send` keep patched `traceLevel` on the API path.
+- Important outcome:
+  - no production patch was needed in this pass.
+  - the earlier `traceLevel` plumbing in the session payload builders was already sufficient; this addendum closes the remaining proof gap with explicit regression coverage.
+- Primary files carrying the proof update:
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Extended focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_sessions_send_publishes_openclaw_sessions_changed_gateway_event`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_gateway_node_method_call_endpoint_publishes_phase_message_changed_after_sessions_send`
+- Verified the slice with:
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "test_sessions_patch_persists_current_session_metadata_and_surfaces_it or test_sessions_send_publishes_openclaw_sessions_changed_gateway_event or test_sessions_patch_api_persists_current_session_metadata_and_surfaces_it or test_gateway_node_method_call_endpoint_publishes_phase_message_changed_after_sessions_send"`
+  - `.\.venv\Scripts\ruff.exe check tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mypy src/openzues/services/gateway_node_methods.py src/openzues/services/gateway_sessions.py`
+- Result:
+  - the focused send-path proof passed cleanly (`4 passed`).
+  - Ruff stayed clean on the touched tests.
+  - the adjacent production session files still type-checked cleanly.
+- Next exact seam:
+  - leave the `traceLevel` family and move back to the next smallest caller-visible gateway gap, likely another bounded request-shape or normalization difference rather than more session metadata proof work.
+
+### Recovery addendum 2026-04-19 update.run optional restart-request params parity America/Chicago
+
+- Re-checked the upstream `update.run` request shape before widening the local gateway validator.
+  - Source of truth used from the local upstream checkout:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\protocol\schema\config.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods\update.ts`
+  - upstream accepts optional `sessionKey`, `deliveryContext`, `note`, `restartDelayMs`, and `timeoutMs` on `update.run`.
+- Corrected the local mismatch:
+  - OpenZues previously rejected every optional upstream field at the gateway boundary because `update.run` was still validated as an empty-object request.
+  - the local gateway validator now accepts the same upstream-legal request shape and validates each optional field before handing control to the already-existing runtime update tick/view path.
+- Kept the scope intentionally narrow:
+  - this addendum only lands request-shape parity for upstream-legal optional restart-request fields.
+  - it does not claim deeper runtime restart routing parity beyond the existing OpenZues behavior of ticking the runtime update service and returning the fresh update view.
+- Product effect proved end to end:
+  - the service path no longer raises `ValueError` when the caller supplies upstream-legal `update.run` params for `sessionKey`, `deliveryContext`, `note`, `restartDelayMs`, and `timeoutMs`.
+  - the node API path now accepts the same request body and returns the refreshed runtime update view instead of a `400` validation failure.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_update_run_accepts_upstream_optional_restart_request_params`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_gateway_node_method_call_endpoint_update_run_accepts_optional_restart_request_params`
+- Verified the slice with:
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "test_update_run_triggers_runtime_update_tick_and_returns_fresh_view or test_update_run_accepts_upstream_optional_restart_request_params or test_gateway_node_method_call_endpoint_supports_update_run or test_gateway_node_method_call_endpoint_update_run_accepts_optional_restart_request_params"`
+  - `.\.venv\Scripts\ruff.exe check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused `update.run` request-shape slice passed cleanly (`4 passed`).
+  - Ruff stayed clean on the touched service/tests after wrapping the new validator lines.
+  - the touched production file type-checked cleanly.
+- Next exact seam:
+  - scout the next caller-visible bounded gateway gap, preferably another upstream request-shape or normalization seam adjacent to `config.*` or `update.*`, instead of extending undocumented local-only behavior.
+
+### Recovery addendum 2026-04-19 config write unavailable-contract parity America/Chicago
+
+- Re-checked the upstream writable config method family before widening the local gateway dispatcher.
+  - Source of truth used from the local upstream checkout:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\protocol\schema\config.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods\config.ts`
+  - upstream recognizes three writable config admin methods here:
+    - `config.set` with `raw` plus optional `baseHash`
+    - `config.patch` with `raw`, optional `baseHash`, and the same optional restart-request fields `sessionKey`, `deliveryContext`, `note`, and `restartDelayMs`
+    - `config.apply` with the same request shape as `config.patch`
+- Corrected the local mismatch:
+  - OpenZues already classified and advertised `config.set`, `config.patch`, and `config.apply`, but valid calls still fell through the dispatcher as a generic `unsupported method` error.
+  - the local gateway dispatcher now recognizes all three methods, validates the upstream-shaped request body for each one, and returns explicit `503 UNAVAILABLE` contracts instead of a misleading `400 unsupported method` fallthrough.
+- Kept the scope intentionally honest:
+  - this addendum does not claim writable config parity.
+  - OpenZues still does not own OpenClaw's canonical writable config runtime, merge-patch engine, config-file validation pipeline, or restart scheduling path for config writes.
+  - the improvement here is method recognition plus upstream-shaped request validation, so clients can correctly distinguish "known method, runtime not wired" from "gateway does not recognize this method."
+- Product effect proved end to end:
+  - `config.set` now validates `raw` and optional `baseHash`, then returns a stable `503` unavailable contract instead of falling through as unsupported.
+  - `config.patch` and `config.apply` now accept the upstream restart-request shape (`sessionKey`, `deliveryContext`, `note`, `restartDelayMs`) on top of `raw` and optional `baseHash`, then return explicit `503` unavailable contracts instead of a generic unsupported-method failure.
+  - the adjacent already-landed `config.openFile` surface still works, so the readable side of the config family remains intact while the writable side now fails honestly.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_config_write_methods_return_explicit_unavailable_contract`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_gateway_node_method_call_endpoint_returns_explicit_config_write_unavailable_contract`
+- Verified the slice with:
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "config_write_methods_return_explicit_unavailable_contract or returns_explicit_config_write_unavailable_contract"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "test_config_open_file_fails_as_explicit_unavailable_without_file_owner or test_config_open_file_returns_snapshot_path_when_owner_is_wired or test_config_open_file_returns_generic_error_when_opener_fails or test_config_write_methods_return_explicit_unavailable_contract or test_gateway_node_method_call_endpoint_supports_config_open_file or test_gateway_node_method_call_endpoint_returns_explicit_config_write_unavailable_contract"`
+  - `.\.venv\Scripts\ruff.exe check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused writable-config parity slice passed cleanly (`6 passed`).
+  - the widened adjacent config gateway sweep also passed cleanly (`10 passed`).
+  - Ruff stayed clean on the touched dispatcher/tests.
+  - the touched dispatcher type-checked cleanly.
+- Next exact seam:
+  - do not re-open `set-heartbeats`; the current repo scan still does not show a truthful local heartbeat-toggle runtime to anchor it.
+  - `chat.history`, the secrets family, and the outbound `message.action` / `send` / `poll` placeholder contracts are already covered in this workspace, so the next honest move is another advertised-but-missing method scan rather than guessing inside those families.
+
+### Recovery addendum 2026-04-19 agent.wait unavailable-contract parity America/Chicago
+
+- Re-checked the upstream `agent.wait` contract before touching the local dispatcher.
+  - Source of truth used from the local upstream checkout:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\protocol\schema\agent.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods\agent.ts`
+  - upstream recognizes `agent.wait` with:
+    - required `runId`
+    - optional `timeoutMs` with a minimum of `0`
+- Corrected the local mismatch:
+  - OpenZues already tracks active control-chat run ids for `chat.send`, `sessions.send`, `sessions.steer`, and `chat.abort`, but `agent.wait` still fell through the gateway dispatcher as a generic `unsupported method`.
+  - the local dispatcher now recognizes `agent.wait`, validates the upstream-shaped request body, and returns an explicit `503 UNAVAILABLE` contract instead of a misleading `400 unsupported method` failure.
+- Kept the scope intentionally honest:
+  - this addendum does not claim live wait-loop parity.
+  - OpenZues still does not own OpenClaw's active run polling / completion wait runtime for control-chat runs.
+  - the improvement here is request-shape recognition and truthful unavailable behavior so callers can distinguish "known method, runtime not wired" from "method missing."
+- Product effect proved end to end:
+  - `agent.wait` now validates `runId` and optional `timeoutMs`, then returns `UNAVAILABLE` with the message `agent.wait is unavailable until control chat run waiting is wired`.
+  - the node API path now returns `503` for valid `agent.wait` requests instead of mapping the dispatcher fallthrough to `400`.
+  - while widening the adjacent chat/agent sweep, I also fixed two stale `chat.history` regression expectations so they match the already-landed `traceLevel` field in the session/chat payload contract.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_agent_wait_returns_validated_unavailable_contract`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_gateway_node_method_call_endpoint_returns_validated_agent_wait_unavailable_contract`
+- Verified the slice with:
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "agent_wait_returns_validated_unavailable_contract or returns_validated_agent_wait_unavailable_contract"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "chat_history or chat_send or chat_abort or agent_wait or agents_list"`
+  - `.\.venv\Scripts\ruff.exe check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused `agent.wait` parity slice passed cleanly (`2 passed`).
+  - the widened adjacent chat/agent sweep passed cleanly after refreshing the stale `chat.history` expectations (`15 passed`).
+  - Ruff stayed clean on the touched dispatcher/tests.
+  - the touched production dispatcher type-checked cleanly.
+- Next exact seam:
+  - return to the advertised-but-missing gateway method scan and pick the next smallest honest contract gap, preferably another method that can land as request-shape parity or an explicit unavailable contract without inventing runtime behavior.
+
+### Recovery addendum 2026-04-19 agents mutate unavailable-contract parity America/Chicago
+
+- Re-checked the upstream mutable agent-admin contracts before touching the local dispatcher.
+  - Source of truth used from the local upstream checkout:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\protocol\schema\agents-models-skills.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods\agents.ts`
+  - upstream recognizes:
+    - `agents.create` with required `name` and `workspace`, plus optional `model`, `emoji`, and `avatar`
+    - `agents.update` with required `agentId`, plus optional `name`, `workspace`, `model`, `emoji`, and `avatar`
+    - `agents.delete` with required `agentId` and optional `deleteFiles`
+- Corrected the local mismatch:
+  - OpenZues already exposes a bounded singleton agent surface through `agents.list`, `agent.identity.get`, and `agents.files.*`, but the upstream mutate methods still fell through as generic unsupported-method errors.
+  - the local gateway dispatcher now recognizes all three mutable agent-admin methods, validates the upstream-shaped request body for each one, and returns explicit `503 UNAVAILABLE` contracts instead of a misleading `400 unsupported method` failure.
+- Kept the scope intentionally honest:
+  - this addendum does not claim full mutable multi-agent parity.
+  - OpenZues does not yet own OpenClaw's richer agent registry, workspace creation/update pipeline, binding cleanup, or delete-files behavior.
+  - the improvement here is request-shape recognition plus truthful unavailable behavior so callers can tell "known method, runtime not wired" from "gateway does not recognize this method."
+- Product effect proved end to end:
+  - `agents.create` now validates `name`, `workspace`, optional `model`, and optional display fields before returning an explicit unavailable contract.
+  - `agents.update` now validates `agentId` plus the optional mutable fields before returning an explicit unavailable contract.
+  - `agents.delete` now validates `agentId` and optional `deleteFiles` before returning an explicit unavailable contract.
+  - the bounded singleton agent read surfaces (`agents.list`, `agent.identity.get`, and `agents.files.*`) still behave as before; the wider agent slice stayed green after the dispatcher expansion.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_agents_mutate_methods_return_explicit_unavailable_contract`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_gateway_node_method_call_endpoint_returns_explicit_agents_mutate_unavailable_contract`
+- Verified the slice with:
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "agents_mutate_methods_return_explicit_unavailable_contract or returns_explicit_agents_mutate_unavailable_contract"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "agents_list or agent_identity_get or agent_wait or agents_mutate or agents_files"`
+  - `.\.venv\Scripts\ruff.exe check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused mutable-agent parity slice passed cleanly (`6 passed`).
+  - the widened adjacent agent slice also passed cleanly (`18 passed`).
+  - Ruff stayed clean on the touched dispatcher/tests.
+  - the touched production dispatcher type-checked cleanly.
+- Next exact seam:
+  - compare the `doctor.memory.*` family against the local MemPalace / memory-health surfaces and pick the smallest honest next move, since the agent-admin family now fails truthfully instead of falling through.
+
+### Recovery addendum 2026-04-19 doctor.memory.status unavailable-contract parity America/Chicago
+
+- Re-checked the upstream `doctor.memory.status` runtime before widening the local dispatcher.
+  - Source of truth used from the local upstream checkout:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods\doctor.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods\doctor.test.ts`
+  - upstream treats `doctor.memory.status` as a real read method with an empty-object request and a structured response covering:
+    - default agent id resolution
+    - embedding availability
+    - dreaming counters / promoted counts
+    - managed dreaming cron posture
+- Corrected the local mismatch:
+  - OpenZues already advertises `doctor.memory.status` in gateway method policy, but valid calls still fell through the dispatcher as a generic unsupported-method error.
+  - the local dispatcher now recognizes `doctor.memory.status`, enforces an empty-object request body, and returns an explicit `503 UNAVAILABLE` contract instead of a misleading `400 unsupported method` failure.
+- Kept the scope intentionally honest:
+  - this addendum does not claim OpenClaw memory-doctor parity.
+  - OpenZues has MemPalace capability posture and memory-health signals, but it does not currently own the same upstream gateway memory-search manager, dreaming store aggregation, and managed dreaming cron runtime that back the full upstream response.
+  - the improvement here is method recognition plus truthful unavailable behavior so callers can distinguish "known method, runtime not wired" from "gateway does not recognize this method."
+- Product effect proved end to end:
+  - `doctor.memory.status` now validates an empty params object and returns `UNAVAILABLE` with the message `doctor.memory.status is unavailable until gateway memory doctor runtime is wired`.
+  - the node API path now returns `503` for valid `doctor.memory.status` requests instead of mapping the dispatcher fallthrough to `400`.
+  - the widened adjacent agent/doctor read-surface slice stayed green after landing the method.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_doctor_memory_status_returns_explicit_unavailable_contract`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_gateway_node_method_call_endpoint_returns_doctor_memory_unavailable_contract`
+- Verified the slice with:
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "doctor_memory_status_returns_explicit_unavailable_contract or doctor_memory_unavailable_contract"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "doctor_memory or agents_list or agent_identity_get or agent_wait or agents_mutate or agents_files"`
+  - `.\.venv\Scripts\ruff.exe check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused `doctor.memory.status` parity slice passed cleanly (`2 passed`).
+  - the widened adjacent agent/doctor read-surface sweep also passed cleanly (`20 passed`).
+  - Ruff stayed clean on the touched dispatcher/tests.
+  - the touched production dispatcher type-checked cleanly.
+- Next exact seam:
+  - inspect the rest of the `doctor.memory.*` family for another bounded method-recognition win, or skip back to a different advertised-but-missing gateway method whose upstream request shape can be honored without inventing runtime behavior.
+
+### Recovery addendum 2026-04-19 doctor.memory family unavailable-contract parity America/Chicago
+
+- Continued directly from the `doctor.memory.status` seam and checked the rest of the upstream memory-doctor family before widening the local dispatcher again.
+  - Source of truth used from the local upstream checkout:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods\doctor.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods\doctor.test.ts`
+  - upstream recognizes the remaining empty-request methods:
+    - `doctor.memory.dreamDiary`
+    - `doctor.memory.backfillDreamDiary`
+    - `doctor.memory.resetDreamDiary`
+    - `doctor.memory.resetGroundedShortTerm`
+    - `doctor.memory.repairDreamingArtifacts`
+    - `doctor.memory.dedupeDreamDiary`
+- Corrected the local mismatch:
+  - OpenZues already advertised these methods in gateway method policy, but every valid call still fell through the dispatcher as a generic unsupported-method error.
+  - the local dispatcher now recognizes the entire remaining `doctor.memory.*` family, enforces an empty-object request body for each method, and returns explicit `503 UNAVAILABLE` contracts instead of misleading `400 unsupported method` failures.
+- Kept the scope intentionally honest:
+  - this addendum does not claim dream-diary or dreaming-maintenance parity.
+  - OpenZues does not currently own the upstream dream-diary reader, grounded-short-term cleanup runtime, or dreaming-artifact repair pipeline that back these methods in OpenClaw.
+  - the improvement here is family-wide method recognition plus truthful unavailable behavior so callers can classify "known method, runtime not wired" separately from "method missing."
+- Product effect proved end to end:
+  - all six remaining `doctor.memory.*` methods now validate an empty params object and return stable explicit unavailable contracts instead of dispatcher fallthrough.
+  - the widened adjacent doctor/agent read-surface slice stayed green after landing the whole family, so this closes the local `doctor.memory.*` recognition gap instead of leaving it half-finished.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_doctor_memory_family_returns_explicit_unavailable_contract`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_gateway_node_method_call_endpoint_returns_doctor_memory_family_unavailable_contract`
+- Verified the slice with:
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "doctor_memory_family_returns_explicit_unavailable_contract or doctor_memory_family_unavailable_contract or doctor_memory_status_returns_explicit_unavailable_contract or doctor_memory_unavailable_contract"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "doctor_memory or agents_list or agent_identity_get or agent_wait or agents_mutate or agents_files"`
+  - `.\.venv\Scripts\ruff.exe check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused `doctor.memory.*` family proof passed cleanly (`14 passed`).
+  - the widened adjacent doctor/agent read-surface sweep also passed cleanly (`32 passed`).
+  - Ruff stayed clean on the touched dispatcher/tests.
+  - the touched production dispatcher type-checked cleanly.
+- Next exact seam:
+  - pivot back to the remaining advertised-but-missing gateway methods outside the memory-doctor family, with approval flows, `connect.challenge`, or device-token/device-pair management now the clearest missing-method frontier.
+
+### Recovery addendum 2026-04-19 models.authStatus unavailable-contract parity America/Chicago
+
+- Checked the upstream `models.authStatus` contract before widening the local model gateway surface.
+  - Source of truth used from the local upstream checkout:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods\models-auth-status.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods\models-auth-status.test.ts`
+  - upstream recognizes `models.authStatus` with an optional `refresh` boolean and returns a structured auth-health snapshot enriched with configured providers, credential posture, and usage windows.
+- Corrected the local mismatch:
+  - OpenZues already exposes `models.list`, but valid `models.authStatus` calls still fell through the dispatcher as a generic unsupported-method error.
+  - the local dispatcher now recognizes `models.authStatus`, validates the optional `refresh` boolean, and returns an explicit `503 UNAVAILABLE` contract instead of a misleading `400 unsupported method` failure.
+- Kept the scope intentionally honest:
+  - this addendum does not claim model-auth parity.
+  - OpenZues does not currently own the upstream auth-profile store, configured-provider resolver, or usage-window enrichment runtime that back the full upstream result.
+  - the improvement here is request-shape recognition plus truthful unavailable behavior so callers can distinguish "known method, runtime not wired" from "method missing."
+- Product effect proved end to end:
+  - `models.authStatus` now validates the upstream-shaped request body and returns `UNAVAILABLE` with the message `models.authStatus is unavailable until model auth health runtime is wired`.
+  - the adjacent model slice stayed green, so `models.list` remains truthful while the auth-health method now fails honestly instead of falling through.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_models_auth_status_returns_validated_unavailable_contract`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_gateway_node_method_call_endpoint_returns_models_auth_status_unavailable_contract`
+- Verified the slice with:
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "models_auth_status_returns_validated_unavailable_contract or models_auth_status_unavailable_contract"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "models_list or models_auth_status"`
+  - `.\.venv\Scripts\ruff.exe check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused `models.authStatus` parity slice passed cleanly (`2 passed`).
+  - the widened adjacent model sweep also passed cleanly (`4 passed`).
+  - Ruff stayed clean on the touched dispatcher/tests.
+  - the touched production dispatcher type-checked cleanly.
+- Next exact seam:
+  - keep moving across the remaining advertised-but-missing gateway methods with the same rule: prefer bounded request-shape parity or explicit unavailable contracts until a seam has a real local runtime behind it.
+
+### Recovery addendum 2026-04-19 device pair and token unavailable-contract parity America/Chicago
+
+- Checked the upstream device-auth management family before widening the local gateway dispatcher again.
+  - Source of truth used from the local upstream checkout:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\protocol\schema\devices.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods\devices.ts`
+  - upstream recognizes the device-auth methods:
+    - `device.pair.list`
+    - `device.pair.approve`
+    - `device.pair.reject`
+    - `device.pair.remove`
+    - `device.token.rotate`
+    - `device.token.revoke`
+  - upstream request-shape details used for local validation:
+    - `device.pair.list` takes an empty object
+    - `device.pair.approve` and `device.pair.reject` require `requestId`
+    - `device.pair.remove` requires `deviceId`
+    - `device.token.rotate` requires `deviceId`, `role`, and optional `scopes`
+    - `device.token.revoke` requires `deviceId` and `role`
+- Corrected the local mismatch:
+  - OpenZues already advertises this device family in gateway method policy, but every valid call still fell through the dispatcher as a generic unsupported-method error.
+  - OpenZues does have local `node.pair.*` runtime, but that is not a truthful replacement for the upstream device-auth registry and token-management surface.
+  - the local dispatcher now recognizes all six `device.*` methods, validates the upstream-shaped request body for each method, and returns explicit `503 UNAVAILABLE` contracts instead of misleading `400 unsupported method` failures.
+- Kept the scope intentionally honest:
+  - this addendum does not claim device-auth parity.
+  - OpenZues does not currently own the upstream paired-device inventory, approval queue, device-token issuance, or revocation runtime that back these methods in OpenClaw.
+  - the improvement here is honest method recognition and request validation so callers can distinguish "known method, runtime not wired" from "gateway does not recognize this method."
+- Product effect proved end to end:
+  - valid `device.pair.*` requests now return stable explicit unavailable contracts with the `device auth pairing runtime` message instead of dispatcher fallthrough.
+  - valid `device.token.*` requests now return stable explicit unavailable contracts with the `device auth token runtime` message instead of dispatcher fallthrough.
+  - the widened adjacent pairing slice stayed green after the change, so local `node.pair.*` behavior was not regressed while the advertised `device.*` surface became truthful.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_device_family_returns_explicit_unavailable_contract`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_gateway_node_method_call_endpoint_returns_device_family_unavailable_contract`
+- Verified the slice with:
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "device_family_returns_explicit_unavailable_contract or returns_device_family_unavailable_contract"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "device_family or node_pair"`
+  - `.\.venv\Scripts\ruff.exe check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused device-family proof passed cleanly (`12 passed`).
+  - the widened adjacent pairing sweep also passed cleanly (`23 passed`).
+  - Ruff stayed clean on the touched dispatcher/tests.
+  - the touched production dispatcher type-checked cleanly.
+- Next exact seam:
+  - continue across the remaining advertised-but-missing gateway methods where OpenZues can honestly honor the upstream request shape, with `connect.challenge`, approval flows, or adjacent session/runtime methods now the highest-yield frontier.
+
+### Recovery addendum 2026-04-19 plugin approval unavailable-contract parity America/Chicago
+
+- Checked the upstream plugin-approval family before widening the local approval surface.
+  - Source of truth used from the local upstream checkout:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods\plugin-approval.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\protocol\schema\plugin-approvals.ts`
+  - upstream recognizes:
+    - `plugin.approval.list`
+    - `plugin.approval.request`
+    - `plugin.approval.waitDecision`
+    - `plugin.approval.resolve`
+  - upstream request-shape details used for local validation:
+    - `plugin.approval.list` takes an empty object
+    - `plugin.approval.request` requires `title` and `description`, with optional plugin/tool/session routing metadata plus `timeoutMs` and `twoPhase`
+    - `plugin.approval.waitDecision` requires `id`
+    - `plugin.approval.resolve` requires `id` plus a decision
+- Corrected the local mismatch:
+  - OpenZues already advertised the plugin approval methods in gateway method policy, but valid calls still fell through the dispatcher as generic unsupported-method failures.
+  - the local dispatcher now recognizes the entire `plugin.approval.*` family, validates the upstream-shaped request body for each method, and returns explicit `503 UNAVAILABLE` contracts instead of misleading `400 unsupported method` failures.
+- Kept the scope intentionally honest:
+  - this addendum does not claim plugin approval parity.
+  - OpenZues does not currently own the upstream plugin approval manager, approval routing, or forwarder-backed resolution runtime that make the real OpenClaw workflow function.
+  - the improvement here is honest method recognition and request validation so callers can classify "known method, runtime not wired" separately from "gateway does not recognize this method."
+- Product effect proved end to end:
+  - valid `plugin.approval.*` requests now return stable explicit unavailable contracts with the `plugin approval runtime` message instead of dispatcher fallthrough.
+  - the approval/device/pairing regression slice stayed green after landing the family, so this closes another advertised gateway seam without destabilizing adjacent node/device work.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_plugin_approval_family_returns_explicit_unavailable_contract`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_gateway_node_method_call_endpoint_returns_plugin_approval_family_unavailable_contract`
+- Verified the slice with:
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "plugin_approval_family_returns_explicit_unavailable_contract or returns_plugin_approval_family_unavailable_contract"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "exec_approval_family or plugin_approval_family or device_family or node_pair"`
+  - `.\.venv\Scripts\ruff.exe check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused plugin approval proof passed cleanly (`8 passed`).
+  - the widened approval/device/pairing sweep passed cleanly (`41 passed` after the full approval pass landed).
+  - Ruff stayed clean on the touched dispatcher/tests.
+  - the touched production dispatcher type-checked cleanly.
+- Next exact seam:
+  - keep walking the remaining approval and session-adjacent contracts where OpenZues can honestly honor the upstream request shape before deferring to a runtime gap.
+
+### Recovery addendum 2026-04-19 exec approval unavailable-contract parity America/Chicago
+
+- Checked the upstream exec-approval family before widening the local approval surface again.
+  - Source of truth used from the local upstream checkout:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods\exec-approval.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods\approval-shared.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\protocol\schema\exec-approvals.ts`
+  - upstream recognizes:
+    - `exec.approval.get`
+    - `exec.approval.list`
+    - `exec.approval.request`
+    - `exec.approval.waitDecision`
+    - `exec.approval.resolve`
+  - upstream request-shape details used for local validation:
+    - `exec.approval.get` requires `id`
+    - `exec.approval.list` takes an empty object
+    - `exec.approval.request` accepts command metadata, optional `commandArgv`, `env`, `cwd`, optional `systemRunPlan`, host/session routing fields, plus `timeoutMs` and `twoPhase`
+    - `exec.approval.waitDecision` requires `id`
+    - `exec.approval.resolve` requires `id` plus a decision
+- Corrected the local mismatch:
+  - OpenZues already advertised the exec approval methods in gateway method policy, but valid calls still fell through the dispatcher as generic unsupported-method failures.
+  - the local dispatcher now recognizes the entire `exec.approval.*` family, validates the upstream-shaped request body for each method including `env`, `commandArgv`, and `systemRunPlan`, and returns explicit `503 UNAVAILABLE` contracts instead of misleading `400 unsupported method` failures.
+- Kept the scope intentionally honest:
+  - this addendum does not claim exec approval parity.
+  - OpenZues does not currently own the upstream exec approval manager, policy-aware approval routing, or approval resolution runtime that back these methods in OpenClaw.
+  - the improvement here is honest method recognition and request validation so callers can distinguish "known method, runtime not wired" from "gateway method missing."
+- Product effect proved end to end:
+  - valid `exec.approval.*` requests now return stable explicit unavailable contracts with the `exec approval runtime` message instead of dispatcher fallthrough.
+  - the widened approval/device/pairing regression slice stayed green after adding the exec family, so the approval coverage gain did not regress the surrounding gateway seams already landed in this pass.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_exec_approval_family_returns_explicit_unavailable_contract`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_gateway_node_method_call_endpoint_returns_exec_approval_family_unavailable_contract`
+- Verified the slice with:
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "exec_approval_family_returns_explicit_unavailable_contract or returns_exec_approval_family_unavailable_contract"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "exec_approval_family or plugin_approval_family or device_family or node_pair"`
+  - `.\.venv\Scripts\ruff.exe check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused exec approval proof passed cleanly (`10 passed`).
+  - the widened approval/device/pairing sweep passed cleanly (`41 passed`).
+  - Ruff stayed clean on the touched dispatcher/tests.
+  - the touched production dispatcher type-checked cleanly.
+- Next exact seam:
+  - continue across the remaining advertised gateway contracts with the same rule: prefer honest request-shape parity and explicit unavailable behavior until a real OpenZues runtime exists behind the method.
+
+### Recovery addendum 2026-04-19 exec approvals config and heartbeat-toggle unavailable-contract parity America/Chicago
+
+- Checked the remaining reserved admin/runtime-control gap before widening the dispatcher again.
+  - Source of truth used from the local upstream checkout:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods\system.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\protocol\schema\exec-approvals.ts`
+  - upstream request-shape details used for local validation:
+    - `set-heartbeats` requires `{ enabled: boolean }`
+    - `exec.approvals.get` takes an empty object
+    - `exec.approvals.set` requires a versioned approval-policy file object and optional `baseHash`
+    - `exec.approvals.node.get` requires `nodeId`
+    - `exec.approvals.node.set` requires `nodeId`, a versioned approval-policy file object, and optional `baseHash`
+  - local validation landed for the nested approval-policy file shape:
+    - `version: 1`
+    - optional `socket.path` and `socket.token`
+    - optional `defaults` policy block
+    - optional `agents` map with per-agent policy blocks and optional allowlist entries
+- Corrected the local mismatch:
+  - OpenZues already advertised `exec.approvals.*` and `set-heartbeats` in gateway method policy, but valid calls still fell through the dispatcher as generic unsupported-method failures.
+  - the local dispatcher now recognizes the entire `exec.approvals.*` family plus `set-heartbeats`, validates the upstream-shaped request body, and returns explicit `503 UNAVAILABLE` contracts instead of misleading `400 unsupported method` failures.
+- Kept the scope intentionally honest:
+  - this addendum does not claim live exec approvals config parity or heartbeat-toggle runtime parity.
+  - OpenZues still lacks the real approval-policy persistence/runtime and the global heartbeat enable/disable runtime behind these methods.
+  - the gain here is truthful request-shape parity and stable unavailable contracts so callers can separate "known method, runtime not wired" from "missing gateway method."
+- Product effect proved end to end:
+  - valid `exec.approvals.get`, `exec.approvals.set`, `exec.approvals.node.get`, `exec.approvals.node.set`, and `set-heartbeats` requests now return explicit unavailable contracts instead of dispatcher fallthrough.
+  - after this slice, the policy-vs-dispatch gap dropped to one remaining advertised method: `agent`.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_exec_approvals_family_returns_explicit_unavailable_contract`
+    - `test_set_heartbeats_returns_explicit_unavailable_contract`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_gateway_node_method_call_endpoint_returns_exec_approvals_family_unavailable_contract`
+    - `test_gateway_node_method_call_endpoint_returns_set_heartbeats_unavailable_contract`
+- Verified the slice with:
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "exec_approvals_family_returns_explicit_unavailable_contract or set_heartbeats_returns_explicit_unavailable_contract or returns_exec_approvals_family_unavailable_contract or returns_set_heartbeats_unavailable_contract"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "exec_approvals_family or set_heartbeats or exec_approval_family or plugin_approval_family or device_family or node_pair"`
+  - `.\.venv\Scripts\ruff.exe check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mypy src/openzues/services/gateway_node_methods.py`
+  - `$env:PYTHONPATH='src'; @' ... policy-vs-dispatch audit script ... '@ | .\.venv\Scripts\python.exe -`
+- Result:
+  - the focused reserved-admin proof passed cleanly (`10 passed`).
+  - the widened adjacent dispatcher sweep passed cleanly (`51 passed`).
+  - Ruff stayed clean on the touched dispatcher/tests.
+  - the touched production dispatcher type-checked cleanly.
+  - policy-vs-dispatch audit result:
+    - `POLICY_METHOD_COUNT 134`
+    - `IMPLEMENTED_MATCH_COUNT 133`
+    - `MISSING_COUNT 1`
+    - remaining method: `agent`
+- Next exact seam:
+  - inspect the upstream `agent` method against the already-landed OpenZues session/chat primitives and decide whether the honest next step is a minimal bridge onto `sessions.create` and `sessions.send`, or an explicit unavailable contract if the true runtime semantics cannot yet be preserved.
+
+### Recovery addendum 2026-04-19 agent unavailable-contract parity and zero-gap dispatcher coverage America/Chicago
+
+- Checked the final advertised dispatcher gap against the upstream `agent` contract before attempting a bridge.
+  - Source of truth used from the local upstream checkout:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\protocol\schema\agent.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods\agent.ts`
+  - upstream `agent` covers more than a thin chat-send alias:
+    - idempotent run orchestration
+    - optional agent/session targeting
+    - delivery routing metadata
+    - attachments and internal events
+    - bootstrap context controls
+    - reset/reactivation/session startup behavior
+- Made the honest parity call:
+  - OpenZues already advertised `agent` in gateway method policy, but did not recognize it in the dispatcher at all.
+  - a fake bridge straight onto `sessions.create` plus `sessions.send` would have silently dropped upstream semantics that OpenClaw actually preserves.
+  - the local dispatcher now recognizes `agent`, validates the upstream-shaped request body for the currently bounded surface, and returns an explicit `503 UNAVAILABLE` contract instead of a misleading `400 unsupported method`.
+- Kept the scope intentionally honest:
+  - this addendum does not claim full `agent` runtime parity.
+  - OpenZues still lacks the true gateway-side run orchestration, delivery plan resolution, attachment handling, and agent-run wait/runtime bridge that make the upstream method fully operational.
+  - the gain here is truthful request-shape parity and complete dispatcher recognition of every currently advertised gateway method.
+- Product effect proved end to end:
+  - valid `agent` requests now return a stable explicit unavailable contract with the `gateway agent runtime bridge` message instead of falling through the dispatcher.
+  - the policy-vs-dispatch audit is now fully closed:
+    - `POLICY_METHOD_COUNT 134`
+    - `IMPLEMENTED_MATCH_COUNT 134`
+    - `MISSING_COUNT 0`
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_agent_returns_validated_unavailable_contract`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_gateway_node_method_call_endpoint_returns_validated_agent_unavailable_contract`
+- Verified the slice with:
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "test_agent_returns_validated_unavailable_contract or test_gateway_node_method_call_endpoint_returns_validated_agent_unavailable_contract"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "agent or exec_approvals_family or set_heartbeats or exec_approval_family or plugin_approval_family or device_family or node_pair"`
+  - `.\.venv\Scripts\ruff.exe check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mypy src/openzues/services/gateway_node_methods.py`
+  - `$env:PYTHONPATH='src'; @' ... policy-vs-dispatch audit script ... '@ | .\.venv\Scripts\python.exe -`
+- Result:
+  - the focused `agent` proof passed cleanly (`2 passed`).
+  - the widened gateway-method sweep passed cleanly (`83 passed`).
+  - Ruff stayed clean on the touched dispatcher/tests.
+  - the touched production dispatcher type-checked cleanly.
+  - every currently advertised gateway method is now recognized by the local dispatcher.
+- Next exact seam:
+  - move from dispatcher recognition parity into runtime parity by choosing one real execution path to bridge honestly, with `agent.wait`, live `agent` run orchestration, or another currently-unavailable but now-recognized gateway runtime contract as the next bounded frontier.
+
+### Recovery addendum 2026-04-19 agent wait runtime parity for tracked gateway runs America/Chicago
+
+- Moved from dispatcher-only parity into a real bounded runtime bridge for `agent.wait`.
+  - local runtime evidence used:
+    - `src/openzues/services/gateway_node_methods.py`
+    - `src/openzues/database.py`
+  - concrete OpenZues primitives already available for the bridge:
+    - gateway chat sends already return a `runId`
+    - the dispatcher already remembers active run ids per session
+    - mission rows already persist `status`, `thread_id`, `session_key`, `created_at`, `updated_at`, and `last_error`
+    - the database already exposes exact/thread-child/session-key lookup helpers plus swarm `run_id` lookup
+- Landed the smallest honest runtime:
+  - `chat.send`, `sessions.send`, `sessions.steer`, and `sessions.create` initial sends now remember tracked run state with a stable `startedAt` timestamp.
+  - `agent.wait` no longer hard-raises `UNAVAILABLE` for every valid request.
+  - for tracked gateway control-chat runs, `agent.wait` now polls mission state and returns:
+    - `{ status: "ok" }` when the tracked mission reaches `completed`
+    - `{ status: "error", error }` when the tracked mission reaches `failed`
+    - `{ status: "timeout" }` when no terminal state is observed before the caller timeout
+  - terminal snapshots include `runId`, `startedAt`, and `endedAt`.
+- Kept the scope intentionally honest:
+  - this is not full upstream `agent.wait` parity for every run source.
+  - the bridge is bounded to OpenZues mission-backed runs that the local gateway runtime can actually observe truthfully.
+  - the generic `agent` launch method itself remains explicit unavailable until real gateway-side run orchestration is wired.
+- Product effect proved end to end:
+  - a tracked gateway run can now be launched locally and waited to completion through the gateway contract instead of failing immediately at the dispatcher boundary.
+  - a tracked failed run now surfaces a terminal error snapshot instead of collapsing into a generic unavailable response.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_agent_wait_waits_for_tracked_gateway_run_completion`
+    - `test_agent_wait_returns_failed_terminal_snapshot_for_tracked_run`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_gateway_node_method_call_endpoint_supports_agent_wait_for_tracked_gateway_run`
+- Refreshed adjacent test expectations while widening:
+  - the session inventory and abort-event gateway payloads already include `traceLevel`; the widened suite exposed stale expectations, so the affected tests were updated to match the current session contract.
+- Verified the slice with:
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "agent_wait_waits_for_tracked_gateway_run_completion or agent_wait_returns_failed_terminal_snapshot_for_tracked_run or supports_agent_wait_for_tracked_gateway_run"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q`
+  - `.\.venv\Scripts\ruff.exe check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused `agent.wait` proof passed cleanly (`3 passed`).
+  - the full gateway node-method/API regression sweep passed cleanly (`442 passed`).
+  - Ruff stayed clean on the touched runtime/tests.
+  - the touched production runtime type-checked cleanly.
+- Next exact seam:
+  - choose the next honest runtime bridge behind the still-unavailable `agent` family, most likely a bounded `agent` launch path onto OpenZues control-chat sessions, or another advertised gateway runtime contract that can now move from explicit unavailable to real mission-backed execution.
+
+### Recovery addendum 2026-04-19 bounded agent launch runtime parity for control-chat sessions America/Chicago
+
+- Extended the `agent` family from request-shape parity into a real, narrow launch bridge.
+  - local runtime evidence used:
+    - `src/openzues/services/gateway_node_methods.py`
+    - `src/openzues/services/gateway_sessions.py`
+    - the already-landed tracked-run machinery behind `agent.wait`
+  - upstream guidance used from the local OpenClaw checkout:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\protocol\schema\agent.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods\agent.ts`
+  - bounded upstream semantics carried forward:
+    - `runId` is the caller `idempotencyKey`
+    - launch returns an immediate `accepted` ack
+    - the launched run can then be observed through `agent.wait`
+- Landed the smallest honest runtime:
+  - `agent` now launches a control-chat run through the existing OpenZues chat-send bridge when the request stays inside the bounded local surface:
+    - required: `message`, `idempotencyKey`
+    - supported selectors: optional `sessionKey`, optional `agentId=main`
+    - supported pass-through controls: optional `thinking`, optional `timeout`
+  - when `sessionKey` is omitted, the bridge targets the current main control-chat session key from the gateway sessions service.
+  - the launch path now:
+    - forwards the first turn into the existing control-chat send runtime
+    - remembers the tracked run id / start time for `agent.wait`
+    - publishes the usual `sessions.changed` send event
+    - returns `{ runId, status: "accepted", acceptedAt }`
+- Kept the scope intentionally honest:
+  - this is not full upstream `agent` parity.
+  - OpenZues still does not truthfully implement the richer upstream launch surfaces here, including:
+    - delivery routing fields (`to`, `replyTo`, `channel`, `replyChannel`, `accountId`, `replyAccountId`, `threadId`)
+    - group / lane / bootstrap context controls
+    - provider/model override handling
+    - attachment ingestion through the `agent` method
+    - internal events / input provenance launch orchestration
+  - requests that try to use those richer fields still fail as explicit `503 UNAVAILABLE` with a bounded-bridge message instead of being silently misinterpreted.
+- Product effect proved end to end:
+  - a caller can now start a real gateway `agent` run against the main or explicit control-chat session instead of hitting an immediate blanket unavailable error.
+  - the returned `runId` can be fed directly into the already-landed `agent.wait` bridge, and the same mission-backed runtime completes truthfully through that path.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_agent_launches_bounded_main_session_run_and_wait_completes`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_gateway_node_method_call_endpoint_supports_bounded_agent_launch_main_session`
+- Verified the slice with:
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "agent_launches_bounded_main_session_run_and_wait_completes or supports_bounded_agent_launch_main_session"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "agent or sessions_create or sessions_send or chat_send"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q`
+  - `.\.venv\Scripts\ruff.exe check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused bounded-launch proof pair passed cleanly (`2 passed`).
+  - the widened adjacent `agent` / session-send / session-create sweep passed cleanly (`42 passed`).
+  - the full gateway node-method/API regression sweep passed cleanly (`442 passed`).
+  - Ruff stayed clean on the touched runtime/tests.
+  - the touched production runtime type-checked cleanly.
+- Next exact seam:
+  - deepen `agent` parity one bounded field family at a time, with the highest-leverage next options being either explicit-session launch behavior beyond the main session default, or one truthful delivery-context bridge if OpenZues already has enough real local routing state to preserve it without inventing channel semantics.
+
+### Recovery addendum 2026-04-19 bounded agent launch parity by sessionId for control-chat threads America/Chicago
+
+- Extended the bounded `agent` launch bridge to honor explicit `sessionId` targeting instead of only the main session default or direct `sessionKey`.
+  - local runtime evidence used:
+    - `src/openzues/services/gateway_node_methods.py`
+    - `src/openzues/services/gateway_sessions.py`
+    - the already-landed mission-backed tracked-run / `agent.wait` bridge
+  - existing local capability reused instead of inventing new routing:
+    - the gateway sessions service already resolves known control-chat sessions by `sessionKey` and `sessionId`
+    - OpenZues mission rows already persist thread-linked session identity through the current control-chat session model
+- Landed the smallest honest runtime:
+  - bounded `agent` launches now accept:
+    - `message`
+    - `idempotencyKey`
+    - optional `agentId=main`
+    - optional `sessionKey`
+    - optional `sessionId`
+    - optional `thinking`
+    - optional `timeout`
+  - when either `sessionKey` or `sessionId` is supplied, the launch path now routes through the existing gateway sessions resolver before dispatching the first turn.
+  - the accepted launch semantics remain unchanged:
+    - launch returns `{ runId, status: "accepted", acceptedAt }`
+    - the returned run id stays compatible with the bounded `agent.wait` runtime
+- Kept the scope intentionally honest:
+  - this still is not full upstream `agent` parity.
+  - richer upstream launch surfaces remain explicit unavailable, including delivery routing, group/lane/bootstrap controls, provider/model overrides, attachment ingestion, and internal event / provenance orchestration.
+  - the new support is specifically for truthful session selection inside the existing local control-chat runtime.
+- Product effect proved end to end:
+  - callers can now target a concrete thread-backed control-chat session by upstream-style `sessionId` and launch a real bounded `agent` run there.
+  - that launched run completes through the same mission-backed `agent.wait` path already verified for tracked gateway runs.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_agent_launches_bounded_session_id_selected_run_and_wait_completes`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_gateway_node_method_call_endpoint_supports_bounded_agent_launch_by_session_id`
+- Verified the slice with:
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "session_id_selected_run_and_wait_completes or supports_bounded_agent_launch_by_session_id"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q`
+  - `.\.venv\Scripts\ruff.exe check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused `sessionId` launch proof pair passed cleanly (`2 passed`).
+  - the full gateway node-method/API regression sweep passed cleanly (`444 passed`).
+  - Ruff stayed clean on the touched runtime/tests.
+  - the touched production runtime type-checked cleanly.
+- Next exact seam:
+  - continue deepening the bounded `agent` launch surface only where the upstream contract and local runtime already align truthfully, with the best next options being explicit non-delivery compatibility (`deliver: false`) or a compatibility/negative-case pass around the existing `sessionKey` / `sessionId` selector behavior.
+
+### Recovery addendum 2026-04-19 bounded agent launch session label persistence parity for control-chat threads America/Chicago
+
+- Corrected the local parity interpretation for upstream `agent.label`.
+  - upstream evidence from the local OpenClaw checkout:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\protocol\schema\agent.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods\agent.ts`
+  - key finding:
+    - upstream `label` is not a session selector.
+    - upstream applies `label` as persisted session metadata on the resolved target session entry.
+- Landed the smallest honest local runtime:
+  - bounded `agent` launches still resolve target sessions only through the selectors OpenZues can already support truthfully here:
+    - `sessionKey`
+    - `sessionId`
+    - or the main-session default when neither is supplied
+  - when a bounded launch includes `label`, OpenZues now merges that label into the target session metadata before dispatching the first turn.
+  - existing metadata on that session is preserved during the merge.
+  - accepted-launch semantics remain unchanged:
+    - launch returns `{ runId, status: "accepted", acceptedAt }`
+    - the returned run id remains directly compatible with `agent.wait`
+- Kept the scope intentionally honest:
+  - this still is not full upstream `agent` parity.
+  - OpenZues does not claim `label` as a session selector anymore in the parity checkpoint.
+  - richer delivery routing, group/lane/bootstrap controls, provider/model overrides, attachment ingestion, and internal event/provenance orchestration remain explicit unavailable.
+- Product effect proved end to end:
+  - a caller can now name or update the session label for a bounded gateway `agent` launch without losing existing session metadata.
+  - the run still completes through the same mission-backed `agent.wait` bridge already verified for tracked gateway launches.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_agent_launches_bounded_main_session_run_and_persists_session_label`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_gateway_node_method_call_endpoint_persists_agent_launch_session_label`
+- Verified the slice with:
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "persists_session_label or persists_agent_launch_session_label"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q`
+  - `.\.venv\Scripts\ruff.exe check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused label-persistence proof pair passed cleanly (`2 passed`).
+  - the full gateway node-method/API regression sweep passed cleanly (`446 passed`).
+  - Ruff stayed clean on the touched runtime/tests.
+  - the touched production runtime type-checked cleanly.
+- Next exact seam:
+  - keep expanding the bounded `agent` request surface where the local runtime already matches upstream truthfully, with explicit `deliver: false` compatibility now the cheapest next step because it should behave identically to the current session-only launch path without inventing outbound channel semantics.
+
+### Recovery addendum 2026-04-19 bounded agent launch explicit non-delivery parity for control-chat sessions America/Chicago
+
+- Extended the bounded `agent` launch bridge to accept explicit non-delivery requests without pretending outbound routing parity exists.
+  - upstream evidence from the local OpenClaw checkout:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\protocol\schema\agent.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods\agent.ts`
+  - key finding:
+    - upstream treats `deliver` as opt-in delivery.
+    - `deliver: false` is still a valid request and behaves as a session-only run.
+- Landed the smallest honest local runtime:
+  - bounded `agent` launches now accept `deliver: false`.
+  - explicit non-delivery flows through the existing local control-chat launch bridge and remains session-only.
+  - `deliver: true` stays explicitly unavailable, because OpenZues still does not have truthful outbound channel delivery parity behind `agent`.
+  - accepted-launch semantics remain unchanged:
+    - launch returns `{ runId, status: "accepted", acceptedAt }`
+    - the returned run id remains directly compatible with `agent.wait`
+- Kept the scope intentionally honest:
+  - this is not delivery parity.
+  - OpenZues still refuses delivery-targeted `agent` launches that would require real channel routing semantics.
+  - the new support only removes a false negative for an upstream-valid non-delivery request shape.
+- Product effect proved end to end:
+  - callers can now send `deliver: false` explicitly and still get the same truthful mission-backed session launch they would have received by omitting the field.
+  - the launched run completes through the already-verified `agent.wait` bridge.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_agent_launches_bounded_main_session_run_with_explicit_non_delivery`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_gateway_node_method_call_endpoint_supports_agent_launch_with_deliver_false`
+- Verified the slice with:
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "explicit_non_delivery"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q`
+  - `.\.venv\Scripts\ruff.exe check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused explicit-non-delivery proof pair passed cleanly (`2 passed`).
+  - the full gateway node-method/API regression sweep passed cleanly (`448 passed`).
+  - Ruff stayed clean on the touched runtime/tests.
+  - the touched production runtime type-checked cleanly.
+- Next exact seam:
+  - keep deepening the bounded `agent` request surface only where upstream-valid behavior already maps cleanly onto local truth, with the best next options now being a compatibility/negative-case pass around mixed `sessionKey` + `sessionId` requests or another harmless request-shape allowance that does not require outbound delivery semantics.
+
+### Recovery addendum 2026-04-19 bounded agent launch bestEffortDeliver false parity for control-chat sessions America/Chicago
+
+- Extended the bounded `agent` launch bridge to accept explicit `bestEffortDeliver: false` without pretending delivery downgrade parity exists.
+  - upstream evidence from the local OpenClaw checkout:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\protocol\schema\agent.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods\agent.ts`
+  - key finding:
+    - upstream accepts `bestEffortDeliver` as an optional request field.
+    - `bestEffortDeliver: false` is a harmless request shape when the run remains session-only.
+- Landed the smallest honest local runtime:
+  - bounded `agent` launches now accept `bestEffortDeliver: false`.
+  - explicit best-effort false does not change local launch behavior; it still uses the existing mission-backed control-chat runtime.
+  - `bestEffortDeliver: true` remains explicit unavailable, because OpenZues still does not implement the delivery downgrade path behind upstream agent delivery semantics.
+- Kept the scope intentionally honest:
+  - this is not delivery or downgrade parity.
+  - the new support only removes another false negative for an upstream-valid session-only request shape.
+- Product effect proved end to end:
+  - callers can now send `bestEffortDeliver: false` explicitly and still get the same truthful session-backed run instead of an avoidable request rejection.
+  - the launched run still completes through the already-verified `agent.wait` bridge.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_agent_launches_bounded_main_session_run_with_best_effort_deliver_false`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_gateway_node_method_call_endpoint_supports_agent_launch_with_best_effort_false`
+- Verified the slice with:
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "best_effort_deliver_false or best_effort_false"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q`
+  - `.\.venv\Scripts\ruff.exe check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused best-effort-false proof pair passed cleanly (`2 passed`).
+  - the full gateway node-method/API regression sweep passed cleanly (`450 passed` before the next seam landed, then widened further below).
+  - Ruff stayed clean on the touched runtime/tests.
+  - the touched production runtime type-checked cleanly.
+- Next exact seam:
+  - keep tightening bounded `agent` request validation so malformed upstream request shapes fail with the same high-signal invalid-request errors instead of collapsing into generic local session lookup failures.
+
+### Recovery addendum 2026-04-19 bounded agent malformed session key validation parity America/Chicago
+
+- Tightened bounded `agent` request-shape validation to reject malformed `agent:` session keys before any runtime or lookup path runs.
+  - upstream evidence from the local OpenClaw checkout:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods\agent.ts`
+  - key finding:
+    - upstream validates malformed `agent:` session keys early and returns an invalid-request error with a specific malformed-session-key message.
+- Landed the smallest honest local runtime:
+  - bounded `agent` now checks `sessionKey` shape before the runtime bridge availability gate and before session lookup.
+  - malformed `agent:` session keys now fail as:
+    - `invalid agent params: malformed session key "<value>"`
+  - this behavior now matches upstream intent much more closely than the old generic `unknown session key` collapse.
+- Kept the scope intentionally honest:
+  - this is request validation parity, not broader delivery/runtime parity.
+  - only malformed `agent:` key detection was added here.
+- Product effect proved end to end:
+  - malformed session-key requests now produce the higher-signal invalid-request contract even when the bounded local runtime is absent or would otherwise have failed later for unrelated reasons.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_agent_rejects_malformed_session_keys_before_session_lookup`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_gateway_node_method_call_endpoint_rejects_malformed_agent_session_keys`
+- Verified the slice with:
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "malformed_agent_session_keys or malformed_session_keys_before_session_lookup"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q`
+  - `.\.venv\Scripts\ruff.exe check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused malformed-session-key proof pair passed cleanly (`2 passed`).
+  - the full gateway node-method/API regression sweep passed cleanly (`452 passed`).
+  - Ruff stayed clean on the touched runtime/tests.
+  - the touched production runtime type-checked cleanly.
+- Next exact seam:
+  - continue on bounded agent request-shape parity with either mixed `sessionKey` + `sessionId` compatibility proofs or another upstream-valid negative-case check such as agent/session-key mismatch messaging, whichever exposes a real failing gap first.
+
+### Recovery addendum 2026-04-19 bounded agent session key agent mismatch parity America/Chicago
+
+- Tightened bounded `agent` request validation for explicit `agentId` plus explicit `sessionKey`.
+  - upstream evidence from the local OpenClaw checkout:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods\agent.ts`
+  - key finding:
+    - when both `agentId` and `sessionKey` are provided, upstream validates that the session key belongs to the same agent and returns an invalid-request mismatch message if they disagree.
+- Landed the smallest honest local runtime:
+  - bounded `agent` now validates the explicit `agentId` against the parsed agent embedded in `sessionKey` before the runtime availability gate and before session lookup.
+  - mismatches now fail as:
+    - `invalid agent params: agent "<agentId>" does not match session key agent "<sessionAgentId>"`
+- Kept the scope intentionally honest:
+  - this is request validation parity, not broader multi-agent runtime parity.
+  - OpenZues still only supports bounded `agentId="main"` launches here.
+- Product effect proved end to end:
+  - conflicting selector requests now fail with the same high-signal invalid-request contract instead of collapsing later into unrelated runtime or lookup failures.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_agent_rejects_agent_id_that_conflicts_with_session_key_agent`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_gateway_node_method_call_endpoint_rejects_agent_session_key_mismatch`
+- Verified the slice with:
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "rejects_agent_session_key_mismatch or conflicts_with_session_key_agent"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q`
+  - `.\.venv\Scripts\ruff.exe check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused agent/session-key mismatch proof pair passed cleanly (`2 passed`).
+  - the full gateway node-method/API regression sweep passed cleanly (`454 passed` before the next proof-only seam landed, then widened further below).
+  - Ruff stayed clean on the touched runtime/tests.
+  - the touched production runtime type-checked cleanly.
+- Next exact seam:
+  - confirm or tighten mixed `sessionKey` + `sessionId` compatibility at the `agent` layer so the checkpoint can distinguish real remaining gaps from already-correct inherited behavior.
+
+### Recovery addendum 2026-04-19 bounded agent matching sessionKey plus sessionId compatibility proof America/Chicago
+
+- Verified that bounded `agent` already accepts matching explicit `sessionKey` plus `sessionId` selectors through the shared gateway session resolver.
+  - local runtime evidence used:
+    - `src/openzues/services/gateway_node_methods.py`
+    - `src/openzues/services/gateway_sessions.py`
+  - key finding:
+    - when `sessionKey` and `sessionId` identify the same control-chat thread, the existing bounded launch bridge already routes the run correctly without extra production changes.
+- Landed proof, not production code:
+  - added end-to-end regression coverage for matching selector pairs at both the service and API layers.
+  - no runtime change was needed because the current resolver inheritance already behaved correctly.
+- Product effect proved end to end:
+  - callers can explicitly name the same target thread using both selectors together and still get a truthful bounded launch plus `agent.wait` completion path.
+- Primary files carrying the new proof:
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_agent_launch_accepts_matching_session_key_and_session_id_selectors`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_gateway_node_method_call_endpoint_accepts_matching_key_and_session_id_selectors`
+- Verified the slice with:
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "matching_key_and_session_id_selectors or matching_session_key_and_session_id_selectors"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q`
+  - `.\.venv\Scripts\ruff.exe check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused matching-selector proof pair passed cleanly (`2 passed`).
+  - the full gateway node-method/API regression sweep passed cleanly (`456 passed`).
+  - Ruff stayed clean on the touched runtime/tests.
+  - the touched production runtime type-checked cleanly.
+- Next exact seam:
+  - keep working down the remaining upstream-valid `agent` request-shape surface, focusing on cases that still fail locally without requiring outbound delivery parity or multi-agent runtime support.
+
+### Recovery addendum 2026-04-19 bounded agent blank optional transport-field normalization parity America/Chicago
+
+- Re-checked the upstream OpenClaw source before widening the bounded `agent` bridge.
+  - upstream evidence from the local OpenClaw checkout:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\protocol\schema\agent.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods\agent.ts`
+  - key finding:
+    - the OpenClaw request schema accepts these transport selectors as optional strings.
+    - the runtime normalizes optional transport inputs like `replyTo`, `to`, `threadId`, `channel`, and `accountId` before routing, so blank strings collapse to omission instead of creating a distinct malformed transport state.
+- Landed the smallest honest local runtime:
+  - bounded `agent` now trims optional unsupported transport strings before the session-only availability gate:
+    - `provider`
+    - `model`
+    - `to`
+    - `replyTo`
+    - `channel`
+    - `replyChannel`
+    - `accountId`
+    - `replyAccountId`
+    - `threadId`
+    - `groupId`
+    - `groupChannel`
+    - `groupSpace`
+    - `lane`
+    - `extraSystemPrompt`
+  - whitespace-only values for those fields now behave the same as omission on the bounded OpenZues bridge.
+- Kept the scope intentionally honest:
+  - non-blank values for those fields still return the explicit bounded-launch `503` unavailable contract, because OpenZues still does not implement outbound delivery or richer transport routing for `agent`.
+  - `sessionKey`, `sessionId`, and `thinking` remain strict bounded-launch inputs; this slice only normalized the unsupported optional transport fields.
+- Product effect proved end to end:
+  - callers can send blank transport placeholders from OpenClaw-shaped clients and still reach the truthful session-backed `agent` launch path instead of being blocked by avoidable request-shape noise.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_agent_launch_ignores_blank_optional_unsupported_string_fields`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_gateway_node_method_call_endpoint_ignores_blank_optional_agent_fields`
+- Verified the slice with:
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "blank_optional_unsupported_string_fields or ignores_blank_optional_agent_fields"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q`
+  - `.\.venv\Scripts\ruff.exe check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused blank-transport proof pair passed cleanly (`2 passed`).
+  - the full gateway node-method/API regression sweep passed cleanly (`461 passed`).
+  - Ruff stayed clean on the touched runtime/tests.
+  - the touched production runtime type-checked cleanly.
+- Next exact seam:
+  - keep walking the bounded `agent` request surface and compare the remaining strict optional fields against upstream normalization behavior, starting with the next source-backed case that still fails locally without requiring outbound delivery or multi-agent execution parity.
+
+### Recovery addendum 2026-04-19 bounded agent blank selector normalization parity America/Chicago
+
+- Re-checked the upstream OpenClaw `agent` handler before widening selector normalization locally.
+  - upstream evidence from the local OpenClaw checkout:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods\agent.ts`
+  - key finding:
+    - upstream normalizes these optional selectors with `normalizeOptionalString(...)` before routing or validation decisions:
+      - `agentId`
+      - `sessionKey`
+      - `sessionId`
+    - blank selector strings therefore collapse to omission instead of failing as malformed non-empty-string inputs.
+- Landed the smallest honest local runtime:
+  - bounded `agent` now treats blank `agentId`, `sessionKey`, and `sessionId` the same as omitted values.
+  - blank `sessionKey` and `sessionId` now fall through to the existing main-session fallback rather than failing at request parsing.
+  - blank `agentId` now behaves like no explicit agent selector, which still stays inside the existing singleton `main` lane.
+- Kept the scope intentionally honest:
+  - non-blank unknown agent ids still fail with the existing `unknown agent id` validation.
+  - malformed non-blank `agent:` session keys still fail with the earlier explicit malformed-session-key contract.
+  - this slice only closes blank-selector normalization; it does not widen bounded `agent` into multi-agent or outbound delivery parity.
+- Product effect proved end to end:
+  - OpenClaw-shaped clients can now send blank launch selectors without getting stuck on avoidable local validation drift, and the bounded run still resolves to the truthful current main control-chat session when no real selector remains.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_agent_launch_ignores_blank_session_selectors`
+    - `test_agent_launch_ignores_blank_agent_id`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_gateway_node_method_call_endpoint_ignores_blank_agent_session_selectors`
+    - `test_gateway_node_method_call_endpoint_ignores_blank_agent_id`
+- Verified the slice with:
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "ignores_blank_session_selectors or ignores_blank_agent_session_selectors or ignores_blank_agent_id"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q`
+  - `.\.venv\Scripts\ruff.exe check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused blank-selector proof quartet passed cleanly (`4 passed`).
+  - the full gateway node-method/API regression sweep passed cleanly after the selector landings (`465 passed`).
+  - Ruff stayed clean on the touched runtime/tests.
+  - the touched production runtime type-checked cleanly.
+- Next exact seam:
+  - keep comparing the remaining bounded `agent` optional fields against upstream blank-handling and selector rules, but only land the next slice when the OpenClaw source proves the local strictness is real drift rather than an intentional runtime boundary.
+
+### Recovery addendum 2026-04-19 bounded agent blank thinking passthrough parity America/Chicago
+
+- Re-checked the upstream OpenClaw `agent` handler before changing local `thinking` validation.
+  - upstream evidence from the local OpenClaw checkout:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\protocol\schema\agent.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods\agent.ts`
+  - key finding:
+    - OpenClaw accepts `thinking` as an optional string in the request schema.
+    - the gateway handler forwards `request.thinking` raw into the agent ingress path instead of requiring a non-empty trimmed string.
+- Landed the smallest honest local runtime:
+  - bounded `agent` now accepts blank `thinking` strings and preserves them as-is when forwarding to the session-only chat bridge.
+  - this closes request-shape drift without pretending OpenZues implements the larger OpenClaw thinking-level runtime semantics behind that field.
+- Kept the scope intentionally honest:
+  - this slice only fixes gateway request acceptance and passthrough for bounded session-only launches.
+  - it does not claim that an empty `thinking` hint changes runtime behavior inside OpenZues.
+- Product effect proved end to end:
+  - OpenClaw-shaped callers no longer get an avoidable `thinking must be a non-empty string` failure when they send a blank string that upstream already tolerates.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_agent_launch_allows_blank_thinking_hint`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_gateway_node_method_call_endpoint_allows_blank_agent_thinking`
+- Verified the slice with:
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "blank_thinking or blank_agent_thinking"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q`
+  - `.\.venv\Scripts\ruff.exe check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused blank-thinking proof pair passed cleanly (`2 passed`).
+  - the full gateway node-method/API regression sweep passed cleanly after the passthrough landing.
+  - Ruff stayed clean on the touched runtime/tests.
+  - the touched production runtime type-checked cleanly.
+
+### Recovery addendum 2026-04-19 bounded agent blank label omission parity America/Chicago
+
+- Re-checked the upstream OpenClaw `agent` session-entry merge path before widening local label handling.
+  - upstream evidence from the local OpenClaw checkout:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods\agent.ts`
+  - key finding:
+    - OpenClaw derives the next session label as `normalizeOptionalString(request.label) || entry?.label`, so a blank label is treated as omission and does not erase an existing session label.
+- Landed the smallest honest local runtime:
+  - bounded `agent` now trims optional `label`, ignores it when blank, and preserves any existing SQLite session metadata instead of failing early.
+  - non-blank labels still flow through the same bounded metadata persistence path and keep the existing max-length check.
+- Kept the scope intentionally honest:
+  - this only closes blank-label request-shape parity on the bounded session-only bridge.
+  - it does not widen label semantics beyond the local persisted session metadata already owned by OpenZues.
+- Product effect proved end to end:
+  - callers can send a blank launch label without losing an existing bounded session label and without tripping a local validation error that upstream does not raise.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_agent_launch_ignores_blank_label_and_preserves_existing_metadata`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_gateway_node_method_call_endpoint_ignores_blank_agent_label`
+- Verified the slice with:
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "blank_label or blank_agent_label"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q`
+  - `.\.venv\Scripts\ruff.exe check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused blank-label proof pair passed cleanly after the omission landing.
+  - the full gateway node-method/API regression sweep passed cleanly after the metadata-preservation landing.
+  - Ruff stayed clean on the touched runtime/tests.
+  - the touched production runtime type-checked cleanly.
+- Next exact seam:
+  - keep walking the bounded `agent` request contract with the same rule: only patch the next field when the OpenClaw source shows the local bridge is stricter than upstream in a way that still maps honestly onto OpenZues' session-only runtime.
+
+### Recovery addendum 2026-04-19 bounded agent empty internalEvents omission parity America/Chicago
+
+- Re-checked the upstream OpenClaw `agent` contract before widening local `internalEvents` handling.
+  - upstream evidence from the local OpenClaw checkout:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\protocol\schema\agent.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods\agent.ts`
+  - key finding:
+    - OpenClaw accepts `internalEvents` as an optional array and forwards it to the agent ingress path.
+    - an empty array is structurally valid and inert; it should not by itself change routing or force an unsupported-path failure.
+- Landed the smallest honest local runtime:
+  - bounded `agent` now treats `internalEvents: []` the same as omission at the session-only availability gate.
+  - non-empty `internalEvents` arrays still remain explicit unavailable on the local bridge, because OpenZues still does not implement that richer internal event routing path.
+- Kept the scope intentionally honest:
+  - this is a request-shape compatibility fix for the empty-array case only.
+  - OpenZues still does not claim OpenClaw parity for populated internal event payloads.
+- Product effect proved end to end:
+  - callers can send an empty `internalEvents` array from an OpenClaw-shaped client without tripping an avoidable `503` on a bounded session-only launch.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_agent_launch_allows_empty_internal_events_array`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_gateway_node_method_call_endpoint_allows_empty_internal_events`
+- Verified the slice with:
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "empty_internal_events"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q`
+  - `.\.venv\Scripts\ruff.exe check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused empty-`internalEvents` proof pair passed cleanly (`2 passed`).
+  - the full gateway node-method/API regression sweep passed cleanly after the omission landing.
+  - Ruff stayed clean on the touched runtime/tests.
+  - the touched production runtime type-checked cleanly.
+- Next exact seam:
+  - keep hunting for the same class of bounded request-shape drift: harmless empty or blank OpenClaw-shaped inputs that the local bridge still rejects too early, while leaving genuinely unsupported runtime surfaces behind the explicit `503` boundary.
 

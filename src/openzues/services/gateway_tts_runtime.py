@@ -237,10 +237,10 @@ try {
         if speed is not None:
             resolved_speed = float(speed)
         elif rate_wpm is not None:
-            resolved_speed = float(rate_wpm) / 180.0
+            resolved_speed = float(rate_wpm) / 175.0
         else:
             return None
-        if resolved_speed < 0.5 or resolved_speed > 2.0:
+        if resolved_speed <= 0.5 or resolved_speed >= 2.0:
             raise ValueError(
                 "invalid talk.speak params: rateWpm must resolve to speed between 0.5 and 2.0"
             )
