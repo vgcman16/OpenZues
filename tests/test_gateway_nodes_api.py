@@ -4,8 +4,10 @@ import asyncio
 import base64
 import json
 import os
+import re
 import shutil
 import sqlite3
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -14,9 +16,10 @@ import pytest
 from fastapi.testclient import TestClient
 
 from openzues.app import create_app
-from openzues.database import Database
+from openzues.database import Database, utcnow
 from openzues.schemas import DashboardView
 from openzues.services.ecc_catalog import configure_ecc_catalog
+from openzues.services.gateway_cron import build_gateway_cron_task_blueprint
 from openzues.services.gateway_node_methods import GatewayNodeMethodService
 from openzues.services.gateway_node_registry import (
     GatewayNodeConnect,
@@ -160,6 +163,17 @@ def _register_known_live_node(
 def _allow_mutating_api_requests(client: TestClient) -> None:
     client.app.state.control_plane_role = "leader"
     client.app.state.control_plane_owner_pid = None
+
+
+def _wait_for(fetch, predicate, *, timeout_seconds: float = 3.0, interval_seconds: float = 0.05):
+    deadline = time.monotonic() + timeout_seconds
+    value = fetch()
+    while not predicate(value):
+        if time.monotonic() >= deadline:
+            return value
+        time.sleep(interval_seconds)
+        value = fetch()
+    return value
 
 
 def test_gateway_node_endpoints_surface_known_nodes_and_pending_actions(tmp_path) -> None:
@@ -1208,7 +1222,7 @@ def test_gateway_node_method_call_endpoint_supports_voicewake_get_and_set(tmp_pa
         )
 
     assert get_response.status_code == 200
-    assert get_response.json() == {"triggers": ["openclaw", "claude", "computer"]}
+    assert get_response.json() == {"triggers": ["openclaw", "claude"]}
     assert set_response.status_code == 200
     assert set_response.json() == {"triggers": ["zues", "builder"]}
     assert after_response.status_code == 200
@@ -1236,9 +1250,16 @@ def test_gateway_node_method_call_endpoint_supports_gateway_identity_get(tmp_pat
     assert first_response.status_code == 200
     assert second_response.status_code == 200
     assert first_response.json() == second_response.json()
-    assert first_response.json()["id"].startswith("gateway-")
+    assert re.fullmatch(r"[0-9a-f]{64}", first_response.json()["id"])
+    assert re.fullmatch(r"[A-Za-z0-9_-]{43}", first_response.json()["publicKey"])
     assert len(first_response.json()["publicKey"]) > 20
-    assert (tmp_path / "data" / "settings" / "gateway-identity.json").exists()
+    identity_path = tmp_path / "data" / "settings" / "gateway-identity.json"
+    assert identity_path.exists()
+    stored = json.loads(identity_path.read_text(encoding="utf-8"))
+    assert stored["version"] == 1
+    assert stored["deviceId"] == first_response.json()["id"]
+    assert "BEGIN PUBLIC KEY" in stored["publicKeyPem"]
+    assert "BEGIN PRIVATE KEY" in stored["privateKeyPem"]
 
 
 def test_gateway_node_method_call_endpoint_supports_health(tmp_path) -> None:
@@ -1847,7 +1868,7 @@ def test_gateway_node_method_call_endpoint_returns_exec_approvals_family_unavail
     assert response.json() == {"detail": detail}
 
 
-def test_gateway_node_method_call_endpoint_returns_set_heartbeats_unavailable_contract(
+def test_gateway_node_method_call_endpoint_toggles_attention_queue_runtime(
     tmp_path,
 ) -> None:
     app_settings = Settings(
@@ -1858,15 +1879,384 @@ def test_gateway_node_method_call_endpoint_returns_set_heartbeats_unavailable_co
 
     with TestClient(app, client=("testclient", 50000)) as client:
         _allow_mutating_api_requests(client)
-        response = client.post(
+        before_dashboard = client.get("/api/dashboard")
+        disable_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={"method": "set-heartbeats", "params": {"enabled": False}},
+        )
+        disabled_dashboard = client.get("/api/dashboard")
+        enable_response = client.post(
             "/api/gateway/node-methods/call",
             json={"method": "set-heartbeats", "params": {"enabled": True}},
         )
+        enabled_dashboard = client.get("/api/dashboard")
 
-    assert response.status_code == 503
-    assert response.json() == {
-        "detail": "set-heartbeats is unavailable until gateway heartbeat toggle runtime is wired"
-    }
+    assert before_dashboard.status_code == 200
+    assert before_dashboard.json()["attention_queue"]["enabled"] is True
+    assert disable_response.status_code == 200
+    assert disable_response.json() == {"ok": True, "enabled": False}
+    assert disabled_dashboard.status_code == 200
+    assert disabled_dashboard.json()["attention_queue"]["enabled"] is False
+    assert disabled_dashboard.json()["attention_queue"]["headline"] == "Attention queue is manual"
+    assert enable_response.status_code == 200
+    assert enable_response.json() == {"ok": True, "enabled": True}
+    assert enabled_dashboard.status_code == 200
+    assert enabled_dashboard.json()["attention_queue"]["enabled"] is True
+
+
+def test_gateway_node_method_call_endpoint_wake_now_stays_pending_when_heartbeats_are_disabled(
+    tmp_path,
+) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        disable_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={"method": "set-heartbeats", "params": {"enabled": False}},
+        )
+        wake_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "wake",
+                "params": {
+                    "mode": "now",
+                    "text": "Resume parity from the latest checkpoint.",
+                },
+            },
+        )
+        messages = asyncio.run(client.app.state.database.list_control_chat_messages())
+        wake_requests = asyncio.run(client.app.state.database.list_gateway_wake_requests())
+
+    assert disable_response.status_code == 200
+    assert disable_response.json() == {"ok": True, "enabled": False}
+    assert wake_response.status_code == 200
+    assert wake_response.json() == {"ok": True}
+    assert [message["content"] for message in messages if message["role"] == "user"] == []
+    assert len(wake_requests) == 1
+    assert wake_requests[0]["mode"] == "now"
+    assert wake_requests[0]["text"] == "Resume parity from the latest checkpoint."
+    assert wake_requests[0]["status"] == "pending"
+
+
+def test_attention_queue_tick_drains_multiple_pending_wakes_in_one_pass(tmp_path) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        disable_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={"method": "set-heartbeats", "params": {"enabled": False}},
+        )
+        first_wake = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "wake",
+                "params": {"mode": "now", "text": "Resume parity from checkpoint A."},
+            },
+        )
+        second_wake = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "wake",
+                "params": {"mode": "now", "text": "Resume parity from checkpoint B."},
+            },
+        )
+        dashboard = DashboardView.model_validate(client.get("/api/dashboard").json())
+        acted = asyncio.run(client.app.state.control_chat_service.tick_attention_queue(dashboard))
+        messages = asyncio.run(client.app.state.database.list_control_chat_messages())
+        wake_requests = asyncio.run(client.app.state.database.list_gateway_wake_requests())
+
+    assert disable_response.status_code == 200
+    assert disable_response.json() == {"ok": True, "enabled": False}
+    assert first_wake.status_code == 200
+    assert second_wake.status_code == 200
+    assert acted is True
+    assert [message["content"] for message in messages if message["role"] == "user"] == [
+        "Resume parity from checkpoint B.",
+    ]
+    assert len(wake_requests) == 1
+    assert wake_requests[0]["text"] == "Resume parity from checkpoint B."
+    assert wake_requests[0]["status"] == "dispatched"
+
+
+def test_attention_queue_tick_coalesces_duplicate_pending_wakes_in_one_pass(tmp_path) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        disable_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={"method": "set-heartbeats", "params": {"enabled": False}},
+        )
+        first_wake = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "wake",
+                "params": {"mode": "now", "text": "Resume parity from the latest checkpoint."},
+            },
+        )
+        second_wake = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "wake",
+                "params": {"mode": "now", "text": "Resume parity from the latest checkpoint."},
+            },
+        )
+        dashboard = DashboardView.model_validate(client.get("/api/dashboard").json())
+        acted = asyncio.run(client.app.state.control_chat_service.tick_attention_queue(dashboard))
+        messages = asyncio.run(client.app.state.database.list_control_chat_messages())
+        wake_requests = asyncio.run(client.app.state.database.list_gateway_wake_requests())
+
+    assert disable_response.status_code == 200
+    assert disable_response.json() == {"ok": True, "enabled": False}
+    assert first_wake.status_code == 200
+    assert second_wake.status_code == 200
+    assert acted is True
+    assert [message["content"] for message in messages if message["role"] == "user"] == [
+        "Resume parity from the latest checkpoint."
+    ]
+    assert len(wake_requests) == 1
+    assert wake_requests[0]["status"] == "dispatched"
+
+
+def test_attention_queue_tick_collapses_historical_same_target_pending_rows_before_dispatch(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+    submit_calls: list[tuple[str, str | None]] = []
+    target_session_key = "agent:main:thread:demo"
+
+    async def fake_submit(
+        prompt: str,
+        dashboard: DashboardView,
+        *,
+        session_key: str | None = None,
+    ) -> object:
+        del dashboard
+        submit_calls.append((prompt, session_key))
+        return {"ok": True}
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        now = datetime.now(UTC).isoformat()
+        with sqlite3.connect(app_settings.db_path) as db:
+            db.execute(
+                """
+                INSERT INTO gateway_wake_requests (
+                    mode,
+                    text,
+                    reason,
+                    agent_id,
+                    session_key,
+                    status,
+                    created_at,
+                    updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)
+                """,
+                (
+                    "next-heartbeat",
+                    "Resume parity from checkpoint A.",
+                    "exec-event",
+                    "main",
+                    target_session_key,
+                    now,
+                    now,
+                ),
+            )
+            db.execute(
+                """
+                INSERT INTO gateway_wake_requests (
+                    mode,
+                    text,
+                    reason,
+                    agent_id,
+                    session_key,
+                    status,
+                    created_at,
+                    updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)
+                """,
+                (
+                    "next-heartbeat",
+                    "Resume parity from checkpoint B.",
+                    "retry",
+                    "main",
+                    target_session_key,
+                    now,
+                    now,
+                ),
+            )
+            db.commit()
+        monkeypatch.setattr(client.app.state.control_chat_service, "submit", fake_submit)
+        dashboard = DashboardView.model_validate(client.get("/api/dashboard").json())
+        acted = asyncio.run(client.app.state.control_chat_service.tick_attention_queue(dashboard))
+        wake_requests = asyncio.run(client.app.state.database.list_gateway_wake_requests())
+
+    assert acted is True
+    assert submit_calls == [("Resume parity from checkpoint A.", target_session_key)]
+    assert len(wake_requests) == 1
+    assert wake_requests[0]["text"] == "Resume parity from checkpoint A."
+    assert wake_requests[0]["reason"] == "exec-event"
+    assert wake_requests[0]["agent_id"] == "main"
+    assert wake_requests[0]["session_key"] == target_session_key
+    assert wake_requests[0]["status"] == "dispatched"
+
+
+def test_gateway_node_method_call_endpoint_wake_now_auto_retries_after_submit_error(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+    submit_calls: list[str] = []
+
+    async def flaky_submit(
+        prompt: str,
+        dashboard: DashboardView,
+        *,
+        session_key: str | None = None,
+    ) -> object:
+        del dashboard, session_key
+        submit_calls.append(prompt)
+        if len(submit_calls) == 1:
+            raise RuntimeError("wake submit boom")
+        return {"ok": True}
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        monkeypatch.setattr(client.app.state.control_chat_service, "submit", flaky_submit)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "wake",
+                "params": {"mode": "now", "text": "Resume parity after the wake failure."},
+            },
+        )
+        wake_requests = _wait_for(
+            lambda: asyncio.run(client.app.state.database.list_gateway_wake_requests()),
+            lambda rows: len(rows) == 1 and rows[0]["status"] == "dispatched",
+            timeout_seconds=2.5,
+        )
+        control_chat_messages = asyncio.run(client.app.state.database.list_control_chat_messages())
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True}
+    assert submit_calls == [
+        "Resume parity after the wake failure.",
+        "Resume parity after the wake failure.",
+    ]
+    assert len(wake_requests) == 1
+    assert wake_requests[0]["status"] == "dispatched"
+    assert [
+        message["content"]
+        for message in control_chat_messages
+        if message["role"] == "user"
+    ] == []
+
+
+def test_attention_queue_reenable_clears_stale_wake_retry_cooldown(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+    submit_calls: list[str] = []
+
+    async def flaky_submit(
+        prompt: str,
+        dashboard: DashboardView,
+        *,
+        session_key: str | None = None,
+    ) -> object:
+        del dashboard, session_key
+        submit_calls.append(prompt)
+        if len(submit_calls) == 1:
+            raise RuntimeError("wake submit boom")
+        return {"ok": True}
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        monkeypatch.setattr("openzues.services.control_chat.WAKE_RETRY_COOLDOWN_SECONDS", 60.0)
+        monkeypatch.setattr("openzues.services.control_chat.time.monotonic", lambda: 100.0)
+        monkeypatch.setattr(client.app.state.control_chat_service, "submit", flaky_submit)
+        
+        async def no_op_start_attention_queue(*args, **kwargs) -> None:
+            del args, kwargs
+
+        monkeypatch.setattr(
+            client.app.state.control_chat_service,
+            "start_attention_queue",
+            no_op_start_attention_queue,
+        )
+        disable_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={"method": "set-heartbeats", "params": {"enabled": False}},
+        )
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "wake",
+                "params": {
+                    "mode": "next-heartbeat",
+                    "text": "Resume parity after the wake failure.",
+                },
+            },
+        )
+        dashboard = DashboardView.model_validate(client.get("/api/dashboard").json())
+        with pytest.raises(RuntimeError, match="wake submit boom"):
+            asyncio.run(client.app.state.control_chat_service.tick_attention_queue(dashboard))
+        enable_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={"method": "set-heartbeats", "params": {"enabled": True}},
+        )
+        refreshed_dashboard = DashboardView.model_validate(client.get("/api/dashboard").json())
+        acted = asyncio.run(
+            client.app.state.control_chat_service.tick_attention_queue(refreshed_dashboard)
+        )
+        wake_requests = asyncio.run(client.app.state.database.list_gateway_wake_requests())
+        with client.app.state.control_chat_service._wake_retry_timer_lock:
+            if client.app.state.control_chat_service._wake_retry_timer is not None:
+                client.app.state.control_chat_service._wake_retry_timer.cancel()
+                client.app.state.control_chat_service._wake_retry_timer = None
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True}
+    assert disable_response.status_code == 200
+    assert disable_response.json() == {"ok": True, "enabled": False}
+    assert enable_response.status_code == 200
+    assert enable_response.json() == {"ok": True, "enabled": True}
+    assert acted is True
+    assert submit_calls == [
+        "Resume parity after the wake failure.",
+        "Resume parity after the wake failure.",
+    ]
+    assert len(wake_requests) == 1
+    assert wake_requests[0]["status"] == "dispatched"
 
 
 def test_gateway_node_method_call_endpoint_talk_speak_fails_as_explicitly_unavailable(
@@ -2323,6 +2713,75 @@ def test_gateway_node_method_call_endpoint_supports_tools_effective_with_bootstr
     ]
 
 
+def test_gateway_node_method_call_endpoint_supports_tools_effective_with_empty_toolsets(
+    tmp_path,
+) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        asyncio.run(
+            client.app.state.database.upsert_gateway_bootstrap(
+                setup_mode="local",
+                setup_flow="quickstart",
+                route_binding_mode="saved_lane",
+                preferred_instance_id=None,
+                preferred_project_id=None,
+                team_id=None,
+                operator_id=None,
+                task_blueprint_id=None,
+                default_cwd=str(tmp_path),
+                bootstrap_roles=[],
+                bootstrap_scopes=[],
+                model="gpt-5.4",
+                max_turns=4,
+                use_builtin_agents=True,
+                run_verification=True,
+                auto_commit=False,
+                pause_on_approval=True,
+                allow_auto_reflexes=True,
+                auto_recover=True,
+                auto_recover_limit=2,
+                reflex_cooldown_seconds=900,
+                allow_failover=True,
+                toolsets=[],
+            )
+        )
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "tools.effective",
+                "params": {
+                    "sessionKey": build_launch_session_key(
+                        mode="saved_lane",
+                        preferred_instance_id=None,
+                        task_id=None,
+                        project_id=None,
+                        operator_id=None,
+                    ),
+                    "agentId": "main",
+                },
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["agentId"] == "main"
+    assert payload["profile"] == "minimal"
+    assert payload["groups"] == [
+        {
+            "id": "core",
+            "label": "Built-in tools",
+            "source": "core",
+            "tools": [],
+        }
+    ]
+
+
 def test_gateway_node_method_call_endpoint_supports_chat_history() -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-chat-history-api"
     shutil.rmtree(tmp_path, ignore_errors=True)
@@ -2416,6 +2875,822 @@ def test_gateway_node_method_call_endpoint_supports_chat_send() -> None:
     ]
 
 
+def test_gateway_node_method_call_endpoint_treats_chat_send_stop_message_as_abort(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+
+        async def fake_interrupt_turn(instance_id: int, thread_id: str) -> dict[str, object]:
+            return {"ok": True, "instanceId": instance_id, "threadId": thread_id}
+
+        monkeypatch.setattr(client.app.state.manager, "interrupt_turn", fake_interrupt_turn)
+        send_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "chat.send",
+                "params": {
+                    "sessionKey": "openzues:thread:demo",
+                    "message": "status",
+                    "idempotencyKey": "run-chat-send-1",
+                },
+            },
+        )
+        assert send_response.status_code == 200
+        asyncio.run(
+            client.app.state.database.create_mission(
+                name="Gateway Chat Stop Loop",
+                objective="Abort the live control chat thread from chat.send stop text.",
+                status="active",
+                instance_id=7,
+                project_id=None,
+                thread_id="thread-chat-stop-1",
+                session_key="openzues:thread:demo",
+                cwd=str(tmp_path),
+                model="gpt-5.4",
+                reasoning_effort=None,
+                collaboration_mode=None,
+                max_turns=None,
+                use_builtin_agents=False,
+                run_verification=False,
+                auto_commit=False,
+                pause_on_approval=True,
+                allow_auto_reflexes=True,
+                auto_recover=True,
+                auto_recover_limit=2,
+                reflex_cooldown_seconds=900,
+                allow_failover=True,
+            )
+        )
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "chat.send",
+                "params": {
+                    "sessionKey": "openzues:thread:demo",
+                    "message": " /STOP!!! ",
+                    "idempotencyKey": "run-chat-send-stop-api-1",
+                },
+            },
+        )
+        messages = asyncio.run(client.app.state.database.list_control_chat_messages())
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True,
+        "aborted": True,
+        "runIds": ["run-chat-send-1"],
+    }
+    assert [message["role"] for message in messages[-2:]] == ["user", "assistant"]
+    assert messages[-2]["content"] == "status"
+    assert all("/STOP" not in str(message["content"]) for message in messages)
+
+
+def test_gateway_node_method_call_endpoint_chat_send_stop_message_reports_no_active_run(
+    tmp_path,
+) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "chat.send",
+                "params": {
+                    "sessionKey": "openzues:thread:demo",
+                    "message": "stop please",
+                    "idempotencyKey": "run-chat-send-stop-idle-api-1",
+                },
+            },
+        )
+        messages = asyncio.run(client.app.state.database.list_control_chat_messages())
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True,
+        "aborted": False,
+        "runIds": [],
+    }
+    assert messages == []
+
+
+def test_gateway_node_method_call_endpoint_ignores_blank_chat_send_originating_fields() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-chat-send-blank-origin-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "chat.send",
+                "params": {
+                    "sessionKey": "openzues:thread:demo",
+                    "message": "status",
+                    "originatingChannel": "   ",
+                    "originatingTo": "   ",
+                    "originatingAccountId": "   ",
+                    "originatingThreadId": "   ",
+                    "idempotencyKey": "run-chat-send-blank-origin-api-1",
+                },
+            },
+        )
+        messages = asyncio.run(client.app.state.database.list_control_chat_messages())
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "runId": "run-chat-send-blank-origin-api-1",
+        "status": "ok",
+    }
+    assert [message["role"] for message in messages[-2:]] == ["user", "assistant"]
+    assert messages[-2]["content"] == "status"
+    assert [message["session_key"] for message in messages[-2:]] == [
+        "openzues:thread:demo",
+        "openzues:thread:demo",
+    ]
+
+
+def test_gateway_node_method_call_endpoint_treats_chat_send_originating_fields_() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-chat-send-origin-runtime-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "chat.send",
+                "params": {
+                    "sessionKey": "openzues:thread:demo",
+                    "message": "status",
+                    "originatingChannel": "slack",
+                    "originatingTo": "C12345",
+                    "idempotencyKey": "run-chat-send-origin-runtime-api-1",
+                },
+            },
+        )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == (
+        "chat.send originating route fields are unavailable until control chat route "
+        "provenance is wired"
+    )
+
+
+def test_gateway_node_method_call_endpoint_treats_chat_send_system_provenance_fields_() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-chat-send-system-runtime-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "chat.send",
+                "params": {
+                    "sessionKey": "openzues:thread:demo",
+                    "message": "status",
+                    "systemInputProvenance": {"kind": "internal_system"},
+                    "systemProvenanceReceipt": "Gateway witness",
+                    "idempotencyKey": "run-chat-send-system-runtime-api-1",
+                },
+            },
+        )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == (
+        "chat.send system provenance fields are unavailable until control chat "
+        "provenance injection is wired"
+    )
+
+
+def test_remote_chat_send_blank_system_receipt_honors_scope_and_omission() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-chat-send-blank-system-receipt-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+
+    bootstrap_app = create_app(app_settings)
+    with TestClient(bootstrap_app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        operator_response = client.post(
+            "/api/operators",
+            json={
+                "name": "Remote Operator",
+                "role": "operator",
+                "issue_api_key": True,
+            },
+        )
+        owner_response = client.post(
+            "/api/operators",
+            json={
+                "name": "Remote Owner",
+                "role": "owner",
+                "issue_api_key": True,
+            },
+        )
+
+    assert operator_response.status_code == 200
+    assert owner_response.status_code == 200
+    operator_api_key = operator_response.json()["api_key"]
+    owner_api_key = owner_response.json()["api_key"]
+
+    remote_app = create_app(app_settings)
+    with TestClient(remote_app, client=("203.0.113.7", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        operator_send_response = client.post(
+            "/api/gateway/node-methods/call",
+            headers={"Authorization": f"Bearer {operator_api_key}"},
+            json={
+                "method": "chat.send",
+                "params": {
+                    "sessionKey": "openzues:thread:demo",
+                    "message": "status",
+                    "systemProvenanceReceipt": "   ",
+                    "idempotencyKey": "run-chat-send-blank-system-receipt-operator-api-1",
+                },
+            },
+        )
+        owner_send_response = client.post(
+            "/api/gateway/node-methods/call",
+            headers={"Authorization": f"Bearer {owner_api_key}"},
+            json={
+                "method": "chat.send",
+                "params": {
+                    "sessionKey": "openzues:thread:demo",
+                    "message": "status",
+                    "systemProvenanceReceipt": "   ",
+                    "idempotencyKey": "run-chat-send-blank-system-receipt-owner-api-1",
+                },
+            },
+        )
+        messages = asyncio.run(client.app.state.database.list_control_chat_messages())
+
+    assert operator_send_response.status_code == 400
+    assert operator_send_response.json()["detail"] == "system provenance fields require admin scope"
+    assert owner_send_response.status_code == 200
+    assert owner_send_response.json() == {
+        "runId": "run-chat-send-blank-system-receipt-owner-api-1",
+        "status": "ok",
+    }
+    assert [message["role"] for message in messages[-2:]] == ["user", "assistant"]
+    assert messages[-2]["content"] == "status"
+    assert [message["session_key"] for message in messages[-2:]] == [
+        "openzues:thread:demo",
+        "openzues:thread:demo",
+    ]
+
+
+def test_remote_chat_send_rejects_null_byte_system_receipt() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-chat-send-null-system-receipt-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+
+    bootstrap_app = create_app(app_settings)
+    with TestClient(bootstrap_app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        owner_response = client.post(
+            "/api/operators",
+            json={
+                "name": "Remote Owner",
+                "role": "owner",
+                "issue_api_key": True,
+            },
+        )
+
+    assert owner_response.status_code == 200
+    owner_api_key = owner_response.json()["api_key"]
+
+    remote_app = create_app(app_settings)
+    with TestClient(remote_app, client=("203.0.113.7", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            headers={"Authorization": f"Bearer {owner_api_key}"},
+            json={
+                "method": "chat.send",
+                "params": {
+                    "sessionKey": "openzues:thread:demo",
+                    "message": "status",
+                    "systemProvenanceReceipt": "wit\u0000ness",
+                    "idempotencyKey": "run-chat-send-null-system-receipt-api-1",
+                },
+            },
+        )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "message must not contain null bytes"
+
+
+def test_remote_chat_send_blank_message_with_provenance_requires_message_or_attachment() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-chat-send-empty-provenance-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+
+    bootstrap_app = create_app(app_settings)
+    with TestClient(bootstrap_app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        owner_response = client.post(
+            "/api/operators",
+            json={
+                "name": "Remote Owner",
+                "role": "owner",
+                "issue_api_key": True,
+            },
+        )
+
+    assert owner_response.status_code == 200
+    owner_api_key = owner_response.json()["api_key"]
+
+    remote_app = create_app(app_settings)
+    with TestClient(remote_app, client=("203.0.113.7", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        explicit_origin_response = client.post(
+            "/api/gateway/node-methods/call",
+            headers={"Authorization": f"Bearer {owner_api_key}"},
+            json={
+                "method": "chat.send",
+                "params": {
+                    "sessionKey": "openzues:thread:demo",
+                    "message": "",
+                    "originatingChannel": "slack",
+                    "originatingTo": "C12345",
+                    "idempotencyKey": "run-chat-send-empty-origin-api-1",
+                },
+            },
+        )
+        provenance_response = client.post(
+            "/api/gateway/node-methods/call",
+            headers={"Authorization": f"Bearer {owner_api_key}"},
+            json={
+                "method": "chat.send",
+                "params": {
+                    "sessionKey": "openzues:thread:demo",
+                    "message": "",
+                    "systemInputProvenance": {"kind": "internal_system"},
+                    "idempotencyKey": "run-chat-send-empty-provenance-api-1",
+                },
+            },
+        )
+        receipt_response = client.post(
+            "/api/gateway/node-methods/call",
+            headers={"Authorization": f"Bearer {owner_api_key}"},
+            json={
+                "method": "chat.send",
+                "params": {
+                    "sessionKey": "openzues:thread:demo",
+                    "message": "",
+                    "systemProvenanceReceipt": "Gateway witness",
+                    "idempotencyKey": "run-chat-send-empty-receipt-api-1",
+                },
+            },
+        )
+
+    assert explicit_origin_response.status_code == 400
+    assert explicit_origin_response.json()["detail"] == "message or attachment required"
+    assert provenance_response.status_code == 400
+    assert provenance_response.json()["detail"] == "message or attachment required"
+    assert receipt_response.status_code == 400
+    assert receipt_response.json()["detail"] == "message or attachment required"
+
+
+def test_remote_chat_send_invalid_system_input_provenance_honors_scope_and_omission() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-chat-send-invalid-provenance-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+
+    bootstrap_app = create_app(app_settings)
+    with TestClient(bootstrap_app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        operator_response = client.post(
+            "/api/operators",
+            json={
+                "name": "Remote Operator",
+                "role": "operator",
+                "issue_api_key": True,
+            },
+        )
+        owner_response = client.post(
+            "/api/operators",
+            json={
+                "name": "Remote Owner",
+                "role": "owner",
+                "issue_api_key": True,
+            },
+        )
+
+    assert operator_response.status_code == 200
+    assert owner_response.status_code == 200
+    operator_api_key = operator_response.json()["api_key"]
+    owner_api_key = owner_response.json()["api_key"]
+
+    remote_app = create_app(app_settings)
+    with TestClient(remote_app, client=("203.0.113.7", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        operator_send_response = client.post(
+            "/api/gateway/node-methods/call",
+            headers={"Authorization": f"Bearer {operator_api_key}"},
+            json={
+                "method": "chat.send",
+                "params": {
+                    "sessionKey": "openzues:thread:demo",
+                    "message": "status",
+                    "systemInputProvenance": {"kind": "not-a-real-kind"},
+                    "idempotencyKey": "run-chat-send-invalid-provenance-operator-api-1",
+                },
+            },
+        )
+        owner_send_response = client.post(
+            "/api/gateway/node-methods/call",
+            headers={"Authorization": f"Bearer {owner_api_key}"},
+            json={
+                "method": "chat.send",
+                "params": {
+                    "sessionKey": "openzues:thread:demo",
+                    "message": "status",
+                    "systemInputProvenance": {"kind": "not-a-real-kind"},
+                    "idempotencyKey": "run-chat-send-invalid-provenance-owner-api-1",
+                },
+            },
+        )
+        messages = asyncio.run(client.app.state.database.list_control_chat_messages())
+
+    assert operator_send_response.status_code == 400
+    assert operator_send_response.json()["detail"] == "system provenance fields require admin scope"
+    assert owner_send_response.status_code == 200
+    assert owner_send_response.json() == {
+        "runId": "run-chat-send-invalid-provenance-owner-api-1",
+        "status": "ok",
+    }
+    assert [message["role"] for message in messages[-2:]] == ["user", "assistant"]
+    assert messages[-2]["content"] == "status"
+    assert [message["session_key"] for message in messages[-2:]] == [
+        "openzues:thread:demo",
+        "openzues:thread:demo",
+    ]
+
+
+@pytest.mark.parametrize(("raw_value",), [("",), (0,), (False,)])
+def test_remote_chat_send_falsey_scalar_system_input_provenance_is_omitted_before_scope_gate(
+    raw_value: object,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-chat-send-falsey-provenance-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+
+    bootstrap_app = create_app(app_settings)
+    with TestClient(bootstrap_app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        operator_response = client.post(
+            "/api/operators",
+            json={
+                "name": "Remote Operator",
+                "role": "operator",
+                "issue_api_key": True,
+            },
+        )
+
+    assert operator_response.status_code == 200
+    operator_api_key = operator_response.json()["api_key"]
+
+    remote_app = create_app(app_settings)
+    with TestClient(remote_app, client=("203.0.113.7", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            headers={"Authorization": f"Bearer {operator_api_key}"},
+            json={
+                "method": "chat.send",
+                "params": {
+                    "sessionKey": "openzues:thread:demo",
+                    "message": "status",
+                    "systemInputProvenance": raw_value,
+                    "idempotencyKey": "run-chat-send-falsey-provenance-operator-api-1",
+                },
+            },
+        )
+        messages = asyncio.run(client.app.state.database.list_control_chat_messages())
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "runId": "run-chat-send-falsey-provenance-operator-api-1",
+        "status": "ok",
+    }
+    assert [message["role"] for message in messages[-2:]] == ["user", "assistant"]
+    assert messages[-2]["content"] == "status"
+    assert [message["session_key"] for message in messages[-2:]] == [
+        "openzues:thread:demo",
+        "openzues:thread:demo",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("attachments",),
+    [
+        (
+            [
+                {
+                    "type": "image",
+                    "mimeType": "image/png",
+                    "fileName": "preview.png",
+                }
+            ],
+        ),
+        (
+            [
+                {
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/png",
+                    }
+                }
+            ],
+        ),
+    ],
+)
+def test_gateway_node_method_call_endpoint_ignores_inert_chat_send_attachments(
+    attachments: list[dict[str, object]],
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-chat-send-inert-attachments-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "chat.send",
+                "params": {
+                    "sessionKey": "openzues:thread:demo",
+                    "message": "status",
+                    "attachments": attachments,
+                    "idempotencyKey": "run-chat-send-inert-attachments-api-1",
+                },
+            },
+        )
+        messages = asyncio.run(client.app.state.database.list_control_chat_messages())
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "runId": "run-chat-send-inert-attachments-api-1",
+        "status": "ok",
+    }
+    assert [message["role"] for message in messages[-2:]] == ["user", "assistant"]
+    assert messages[-2]["content"] == "status"
+    assert [message["session_key"] for message in messages[-2:]] == [
+        "openzues:thread:demo",
+        "openzues:thread:demo",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("attachments",),
+    [
+        (
+            [
+                {
+                    "type": "image",
+                    "mimeType": "image/png",
+                    "fileName": "preview.png",
+                    "content": "Zm9v",
+                }
+            ],
+        ),
+        (
+            [
+                {
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/png",
+                        "data": "Zm9v",
+                    }
+                }
+            ],
+        ),
+    ],
+)
+def test_gateway_node_method_call_endpoint_treats_effective_chat_send_attachments_(
+    attachments: list[dict[str, object]],
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-chat-send-effective-attachments-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "chat.send",
+                "params": {
+                    "sessionKey": "openzues:thread:demo",
+                    "message": "status",
+                    "attachments": attachments,
+                    "idempotencyKey": "run-chat-send-effective-attachments-api-1",
+                },
+            },
+        )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == (
+        "chat.send attachments are unavailable until control chat attachment runtime is wired"
+    )
+
+
+@pytest.mark.parametrize(
+    ("method", "session_field"),
+    [
+        ("chat.send", "sessionKey"),
+        ("sessions.send", "key"),
+        ("sessions.steer", "key"),
+    ],
+)
+def test_gateway_node_method_call_endpoint_requires_message_or_effective_attachment(
+    method: str,
+    session_field: str,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-message-or-attachment-required-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": method,
+                "params": {
+                    session_field: "openzues:thread:demo",
+                    "message": "",
+                    "attachments": [
+                        {
+                            "type": "image",
+                            "mimeType": "image/png",
+                            "fileName": "preview.png",
+                        }
+                    ],
+                    "idempotencyKey": f"run-{method.replace('.', '-')}-empty-message-api-1",
+                },
+            },
+        )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "message or attachment required"
+
+
+@pytest.mark.parametrize(
+    ("method", "session_field"),
+    [
+        ("chat.send", "sessionKey"),
+        ("sessions.send", "key"),
+        ("sessions.steer", "key"),
+    ],
+)
+def test_gateway_node_method_call_endpoint_rejects_null_bytes_in_send_message(
+    method: str,
+    session_field: str,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-send-null-bytes-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": method,
+                "params": {
+                    session_field: "openzues:thread:demo",
+                    "message": "sta\u0000tus",
+                    "idempotencyKey": f"run-{method.replace('.', '-')}-null-byte-api-1",
+                },
+            },
+        )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "message must not contain null bytes"
+
+
+@pytest.mark.parametrize(
+    ("method", "session_field"),
+    [
+        ("chat.send", "sessionKey"),
+        ("sessions.send", "key"),
+        ("sessions.steer", "key"),
+    ],
+)
+def test_gateway_node_method_call_endpoint_sanitizes_send_message_before_runtime(
+    method: str,
+    session_field: str,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-send-sanitize-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": method,
+                "params": {
+                    session_field: "openzues:thread:demo",
+                    "message": "Cafe\u0301\u0007",
+                    "idempotencyKey": f"run-{method.replace('.', '-')}-sanitize-api-1",
+                },
+            },
+        )
+        messages = asyncio.run(client.app.state.database.list_control_chat_messages())
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "runId": f"run-{method.replace('.', '-')}-sanitize-api-1",
+        "status": "ok",
+    }
+    assert [message["role"] for message in messages[-2:]] == ["user", "assistant"]
+    assert messages[-2]["content"] == "Café"
+    assert [message["session_key"] for message in messages[-2:]] == [
+        "openzues:thread:demo",
+        "openzues:thread:demo",
+    ]
+
+
 def test_gateway_node_method_call_endpoint_supports_sessions_send() -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-send-api"
     shutil.rmtree(tmp_path, ignore_errors=True)
@@ -2451,6 +3726,241 @@ def test_gateway_node_method_call_endpoint_supports_sessions_send() -> None:
         "openzues:thread:demo",
         "openzues:thread:demo",
     ]
+
+
+def test_gateway_node_method_call_endpoint_treats_sessions_send_stop_message_as_abort(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+
+        async def fake_interrupt_turn(instance_id: int, thread_id: str) -> dict[str, object]:
+            return {"ok": True, "instanceId": instance_id, "threadId": thread_id}
+
+        monkeypatch.setattr(client.app.state.manager, "interrupt_turn", fake_interrupt_turn)
+        send_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.send",
+                "params": {
+                    "key": "openzues:thread:demo",
+                    "message": "status",
+                    "idempotencyKey": "run-session-send-1",
+                },
+            },
+        )
+        assert send_response.status_code == 200
+        asyncio.run(
+            client.app.state.database.create_mission(
+                name="Gateway Sessions Send Stop Loop",
+                objective="Abort the live control chat thread from sessions.send stop text.",
+                status="active",
+                instance_id=7,
+                project_id=None,
+                thread_id="thread-sessions-send-stop-1",
+                session_key="openzues:thread:demo",
+                cwd=str(tmp_path),
+                model="gpt-5.4",
+                reasoning_effort=None,
+                collaboration_mode=None,
+                max_turns=None,
+                use_builtin_agents=False,
+                run_verification=False,
+                auto_commit=False,
+                pause_on_approval=True,
+                allow_auto_reflexes=True,
+                auto_recover=True,
+                auto_recover_limit=2,
+                reflex_cooldown_seconds=900,
+                allow_failover=True,
+            )
+        )
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.send",
+                "params": {
+                    "key": "openzues:thread:demo",
+                    "message": " /STOP!!! ",
+                    "idempotencyKey": "run-session-send-stop-api-1",
+                },
+            },
+        )
+        messages = asyncio.run(client.app.state.database.list_control_chat_messages())
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True,
+        "aborted": True,
+        "runIds": ["run-session-send-1"],
+    }
+    assert [message["role"] for message in messages[-2:]] == ["user", "assistant"]
+    assert messages[-2]["content"] == "status"
+    assert all("/STOP" not in str(message["content"]) for message in messages)
+
+
+def test_gateway_node_method_call_endpoint_sessions_send_stop_message_reports_no_active_run(
+    tmp_path,
+) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.send",
+                "params": {
+                    "key": "openzues:thread:demo",
+                    "message": "stop please",
+                    "idempotencyKey": "run-session-send-stop-idle-api-1",
+                },
+            },
+        )
+        messages = asyncio.run(client.app.state.database.list_control_chat_messages())
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True,
+        "aborted": False,
+        "runIds": [],
+    }
+    assert messages == []
+
+
+@pytest.mark.parametrize(
+    ("attachments",),
+    [
+        (
+            [
+                {
+                    "type": "image",
+                    "mimeType": "image/png",
+                    "fileName": "preview.png",
+                }
+            ],
+        ),
+        (
+            [
+                {
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/png",
+                    }
+                }
+            ],
+        ),
+    ],
+)
+def test_gateway_node_method_call_endpoint_ignores_inert_sessions_send_attachments(
+    attachments: list[dict[str, object]],
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-send-inert-attachments-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.send",
+                "params": {
+                    "key": "openzues:thread:demo",
+                    "message": "status",
+                    "attachments": attachments,
+                    "idempotencyKey": "run-session-send-inert-attachments-api-1",
+                },
+            },
+        )
+        messages = asyncio.run(client.app.state.database.list_control_chat_messages())
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "runId": "run-session-send-inert-attachments-api-1",
+        "status": "ok",
+    }
+    assert [message["role"] for message in messages[-2:]] == ["user", "assistant"]
+    assert messages[-2]["content"] == "status"
+    assert [message["session_key"] for message in messages[-2:]] == [
+        "openzues:thread:demo",
+        "openzues:thread:demo",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("attachments",),
+    [
+        (
+            [
+                {
+                    "type": "image",
+                    "mimeType": "image/png",
+                    "fileName": "preview.png",
+                    "content": "Zm9v",
+                }
+            ],
+        ),
+        (
+            [
+                {
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/png",
+                        "data": "Zm9v",
+                    }
+                }
+            ],
+        ),
+    ],
+)
+def test_gateway_node_method_call_endpoint_treats_effective_sessions_send_attachments_(
+    attachments: list[dict[str, object]],
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-send-effective-attachments-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.send",
+                "params": {
+                    "key": "openzues:thread:demo",
+                    "message": "status",
+                    "attachments": attachments,
+                    "idempotencyKey": "run-session-send-effective-attachments-api-1",
+                },
+            },
+        )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == (
+        "sessions.send attachments are unavailable until control chat attachment runtime is wired"
+    )
 
 
 def test_gateway_node_method_call_endpoint_sessions_steer_interrupts_tracked_runtime(
@@ -2524,7 +4034,11 @@ def test_gateway_node_method_call_endpoint_sessions_steer_interrupts_tracked_run
         messages = asyncio.run(client.app.state.database.list_control_chat_messages())
 
     assert response.status_code == 200
-    assert response.json() == {"runId": "run-session-steer-1", "status": "ok"}
+    assert response.json() == {
+        "runId": "run-session-steer-1",
+        "status": "ok",
+        "interruptedActiveRun": True,
+    }
     assert [message["role"] for message in messages[-4:]] == [
         "user",
         "assistant",
@@ -2532,6 +4046,549 @@ def test_gateway_node_method_call_endpoint_sessions_steer_interrupts_tracked_run
         "assistant",
     ]
     assert messages[-2]["content"] == "redirect"
+
+
+def test_gateway_node_method_call_endpoint_sessions_send_started_ack_attaches_message_seq(
+    tmp_path,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-send-started-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    database = Database(app_settings.db_path)
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        del session_key, message, thinking, deliver, timeout_ms
+        return {"runId": idempotency_key, "status": "started"}
+
+    app = create_app(
+        app_settings,
+        database=database,
+        gateway_node_method_service=GatewayNodeMethodService(
+            GatewayNodeRegistry(),
+            database=database,
+            chat_send_service=fake_chat_send_service,
+        ),
+    )
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        asyncio.run(
+            client.app.state.database.append_control_chat_message(
+                role="user",
+                content="Existing transcript line.",
+                session_key="openzues:thread:demo",
+            )
+        )
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.send",
+                "params": {
+                    "key": "openzues:thread:demo",
+                    "message": "status",
+                    "idempotencyKey": "run-session-send-started-api-1",
+                },
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "runId": "run-session-send-started-api-1",
+        "status": "started",
+        "messageSeq": 2,
+    }
+
+
+def test_gateway_node_method_call_endpoint_sessions_steer_started_ack_attaches_both_flags(
+    tmp_path,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-steer-started-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    database = Database(app_settings.db_path)
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        del session_key, message, thinking, deliver, timeout_ms
+        return {"runId": idempotency_key, "status": "started"}
+
+    async def fake_chat_abort_service(
+        *,
+        session_key: str,
+        run_id: str | None,
+    ) -> dict[str, object]:
+        del session_key, run_id
+        return {"ok": True}
+
+    app = create_app(
+        app_settings,
+        database=database,
+        gateway_node_method_service=GatewayNodeMethodService(
+            GatewayNodeRegistry(),
+            database=database,
+            chat_send_service=fake_chat_send_service,
+            chat_abort_service=fake_chat_abort_service,
+        ),
+    )
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        asyncio.run(
+            client.app.state.database.append_control_chat_message(
+                role="assistant",
+                content="Existing transcript line.",
+                session_key="openzues:thread:demo",
+            )
+        )
+        send_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.send",
+                "params": {
+                    "key": "openzues:thread:demo",
+                    "message": "status",
+                    "idempotencyKey": "run-session-send-started-api-1",
+                },
+            },
+        )
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.steer",
+                "params": {
+                    "key": "openzues:thread:demo",
+                    "message": "redirect",
+                    "idempotencyKey": "run-session-steer-started-api-1",
+                },
+            },
+        )
+
+    assert send_response.status_code == 200
+    assert send_response.json() == {
+        "runId": "run-session-send-started-api-1",
+        "status": "started",
+        "messageSeq": 2,
+    }
+    assert response.status_code == 200
+    assert response.json() == {
+        "runId": "run-session-steer-started-api-1",
+        "status": "started",
+        "messageSeq": 2,
+        "interruptedActiveRun": True,
+    }
+
+
+def test_gateway_node_method_call_endpoint_sessions_steer_without_interrupt_emits_send_reason(
+    tmp_path,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-steer-event-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+
+    class _RecordingBroadcastHub(BroadcastHub):
+        def __init__(self) -> None:
+            super().__init__()
+            self.published_events: list[dict[str, object]] = []
+
+        async def publish(self, event: dict[str, object]) -> None:
+            self.published_events.append(dict(event))
+            await super().publish(event)
+
+    hub = _RecordingBroadcastHub()
+    app = create_app(app_settings, hub=hub)
+    session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+    )
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        asyncio.run(
+            client.app.state.database.upsert_gateway_session_metadata(
+                session_key=session_key,
+                metadata={"traceLevel": "verbose"},
+            )
+        )
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.steer",
+                "params": {
+                    "key": session_key,
+                    "message": "redirect",
+                    "idempotencyKey": "run-session-steer-standalone-api-1",
+                },
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "runId": "run-session-steer-standalone-api-1",
+        "status": "ok",
+    }
+    sessions_changed = [
+        event
+        for event in hub.published_events
+        if event.get("type") == "gateway_event"
+        and event.get("event") == "sessions.changed"
+        and isinstance(event.get("payload"), dict)
+        and isinstance(event["payload"].get("reason"), str)
+    ]
+    assert len(sessions_changed) == 1
+    assert sessions_changed[0]["payload"] == {
+        "sessionKey": session_key,
+        "reason": "send",
+        "ts": sessions_changed[0]["payload"]["ts"],
+        "updatedAt": sessions_changed[0]["payload"]["updatedAt"],
+        "sessionId": None,
+        "kind": "global",
+        "subject": "Operator control chat",
+        "displayName": "OpenZues Control Chat",
+        "systemSent": None,
+        "abortedLastRun": None,
+        "thinkingLevel": None,
+        "verboseLevel": None,
+        "traceLevel": "verbose",
+        "inputTokens": None,
+        "outputTokens": None,
+        "totalTokens": None,
+        "contextTokens": None,
+        "modelProvider": "openai",
+        "model": "gpt-5.4",
+        "space": None,
+    }
+    assert isinstance(sessions_changed[0]["createdAt"], str)
+    assert isinstance(sessions_changed[0]["payload"]["ts"], int)
+    assert isinstance(sessions_changed[0]["payload"]["updatedAt"], int)
+
+
+def test_gateway_node_method_call_endpoint_sessions_steer_stop_message_aborts_without_follow_up(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-steer-stop-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    interrupt_results: list[dict[str, object]] = [
+        {"ok": True, "instanceId": 7, "threadId": "thread-steer-stop-1"},
+        {"ok": False, "reason": "no_active_turn"},
+    ]
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+
+        async def fake_interrupt_turn(instance_id: int, thread_id: str) -> dict[str, object]:
+            del instance_id, thread_id
+            if interrupt_results:
+                return interrupt_results.pop(0)
+            return {"ok": False, "reason": "no_active_turn"}
+
+        monkeypatch.setattr(client.app.state.manager, "interrupt_turn", fake_interrupt_turn)
+        send_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.send",
+                "params": {
+                    "key": "openzues:thread:demo",
+                    "message": "status",
+                    "idempotencyKey": "run-session-send-1",
+                },
+            },
+        )
+        assert send_response.status_code == 200
+        asyncio.run(
+            client.app.state.database.create_mission(
+                name="Gateway Steer Stop Loop",
+                objective="Interrupt the live control chat thread without persisting stop text.",
+                status="active",
+                instance_id=7,
+                project_id=None,
+                thread_id="thread-steer-stop-1",
+                session_key="openzues:thread:demo",
+                cwd=str(tmp_path),
+                model="gpt-5.4",
+                reasoning_effort=None,
+                collaboration_mode=None,
+                max_turns=None,
+                use_builtin_agents=False,
+                run_verification=False,
+                auto_commit=False,
+                pause_on_approval=True,
+                allow_auto_reflexes=True,
+                auto_recover=True,
+                auto_recover_limit=2,
+                reflex_cooldown_seconds=900,
+                allow_failover=True,
+            )
+        )
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.steer",
+                "params": {
+                    "key": "openzues:thread:demo",
+                    "message": " /STOP!!! ",
+                    "idempotencyKey": "run-session-steer-stop-api-1",
+                },
+            },
+        )
+        messages = asyncio.run(client.app.state.database.list_control_chat_messages())
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True,
+        "aborted": False,
+        "runIds": [],
+        "interruptedActiveRun": True,
+    }
+    assert [message["role"] for message in messages[-2:]] == ["user", "assistant"]
+    assert messages[-2]["content"] == "status"
+    assert all("/STOP" not in str(message["content"]) for message in messages)
+
+
+def test_gateway_node_method_call_endpoint_sessions_steer_stop_message_reports_idle_abort(
+    tmp_path,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-steer-stop-idle-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.steer",
+                "params": {
+                    "key": "openzues:thread:demo",
+                    "message": "stop please",
+                    "idempotencyKey": "run-session-steer-stop-idle-api-1",
+                },
+            },
+        )
+        messages = asyncio.run(client.app.state.database.list_control_chat_messages())
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True,
+        "aborted": False,
+        "runIds": [],
+    }
+    assert messages == []
+
+
+@pytest.mark.parametrize(
+    ("attachments",),
+    [
+        (
+            [
+                {
+                    "type": "image",
+                    "mimeType": "image/png",
+                    "fileName": "preview.png",
+                }
+            ],
+        ),
+        (
+            [
+                {
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/png",
+                    }
+                }
+            ],
+        ),
+    ],
+)
+def test_gateway_node_method_call_endpoint_ignores_inert_sessions_steer_attachments(
+    tmp_path,
+    monkeypatch,
+    attachments: list[dict[str, object]],
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-steer-inert-attachments-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+
+        async def fake_interrupt_turn(instance_id: int, thread_id: str) -> dict[str, object]:
+            return {"ok": True, "instanceId": instance_id, "threadId": thread_id}
+
+        monkeypatch.setattr(client.app.state.manager, "interrupt_turn", fake_interrupt_turn)
+        send_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.send",
+                "params": {
+                    "key": "openzues:thread:demo",
+                    "message": "status",
+                    "idempotencyKey": "run-session-send-steer-inert-api-1",
+                },
+            },
+        )
+        assert send_response.status_code == 200
+        asyncio.run(
+            client.app.state.database.create_mission(
+                name="Gateway Steer Inert Attachments Loop",
+                objective=(
+                    "Interrupt then continue the live control chat thread with inert "
+                    "attachments."
+                ),
+                status="active",
+                instance_id=7,
+                project_id=None,
+                thread_id="thread-steer-inert-1",
+                session_key="openzues:thread:demo",
+                cwd=str(tmp_path),
+                model="gpt-5.4",
+                reasoning_effort=None,
+                collaboration_mode=None,
+                max_turns=None,
+                use_builtin_agents=False,
+                run_verification=False,
+                auto_commit=False,
+                pause_on_approval=True,
+                allow_auto_reflexes=True,
+                auto_recover=True,
+                auto_recover_limit=2,
+                reflex_cooldown_seconds=900,
+                allow_failover=True,
+            )
+        )
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.steer",
+                "params": {
+                    "key": "openzues:thread:demo",
+                    "message": "redirect",
+                    "attachments": attachments,
+                    "idempotencyKey": "run-session-steer-inert-api-1",
+                },
+            },
+        )
+        messages = asyncio.run(client.app.state.database.list_control_chat_messages())
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "runId": "run-session-steer-inert-api-1",
+        "status": "ok",
+        "interruptedActiveRun": True,
+    }
+    assert [message["role"] for message in messages[-4:]] == [
+        "user",
+        "assistant",
+        "user",
+        "assistant",
+    ]
+    assert messages[-2]["content"] == "redirect"
+
+
+@pytest.mark.parametrize(
+    ("attachments",),
+    [
+        (
+            [
+                {
+                    "type": "image",
+                    "mimeType": "image/png",
+                    "fileName": "preview.png",
+                    "content": "Zm9v",
+                }
+            ],
+        ),
+        (
+            [
+                {
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/png",
+                        "data": "Zm9v",
+                    }
+                }
+            ],
+        ),
+    ],
+)
+def test_gateway_node_method_call_endpoint_treats_effective_sessions_steer_attachments_(
+    attachments: list[dict[str, object]],
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-steer-effective-attachments-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.steer",
+                "params": {
+                    "key": "openzues:thread:demo",
+                    "message": "redirect",
+                    "attachments": attachments,
+                    "idempotencyKey": "run-session-steer-effective-attachments-api-1",
+                },
+            },
+        )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == (
+        "sessions.steer attachments are unavailable until control chat attachment runtime is wired"
+    )
 
 
 def test_gateway_node_method_call_endpoint_sessions_abort_interrupts_tracked_runtime(
@@ -6271,6 +8328,68 @@ def test_gateway_node_method_call_endpoint_supports_cron_status() -> None:
     }
 
 
+def test_gateway_node_method_call_endpoint_supports_cron_status_with_one_shot_job() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-status-at-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        database = client.app.state.database
+        asyncio.run(
+            database.create_task_blueprint(
+                name="One Shot",
+                summary="Run once at noon UTC.",
+                project_id=None,
+                instance_id=None,
+                cadence_minutes=None,
+                enabled=True,
+                payload={
+                    "objective_template": "Run once at noon UTC.",
+                    "conversation_target": None,
+                    "run_until_complete": False,
+                    "continuation_cooldown_minutes": 10,
+                    "completion_marker": None,
+                    "cwd": None,
+                    "model": "gpt-5.4",
+                    "reasoning_effort": None,
+                    "collaboration_mode": None,
+                    "max_turns": None,
+                    "use_builtin_agents": True,
+                    "run_verification": True,
+                    "auto_commit": False,
+                    "pause_on_approval": True,
+                    "allow_auto_reflexes": True,
+                    "auto_recover": True,
+                    "auto_recover_limit": 2,
+                    "reflex_cooldown_seconds": 900,
+                    "allow_failover": True,
+                    "toolsets": [],
+                    "enabled": True,
+                    "schedule_kind": "at",
+                    "schedule_at": "2026-04-18T12:00:00.000Z",
+                },
+            )
+        )
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={"method": "cron.status", "params": {}},
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "enabled": True,
+        "storePath": str(app_settings.db_path),
+        "jobs": 1,
+        "nextWakeAtMs": int(datetime(2026, 4, 18, 12, 0, tzinfo=UTC).timestamp() * 1000),
+    }
+
+
 def test_gateway_node_method_call_endpoint_supports_cron_runs_scope_all() -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-runs-api"
     shutil.rmtree(tmp_path, ignore_errors=True)
@@ -6447,6 +8566,230 @@ def test_gateway_node_method_call_endpoint_supports_cron_runs_scope_all() -> Non
     assert entry["deliveryStatus"] == "not-requested"
 
 
+def test_gateway_node_method_call_endpoint_surfaces_delivered_cron_webhook_status() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-runs-delivery-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        database = client.app.state.database
+        created_task = build_gateway_cron_task_blueprint(
+            {
+                "name": "Nightly Ship Webhook",
+                "enabled": True,
+                "schedule": {"kind": "every", "everyMs": 3_600_000},
+                "sessionTarget": "isolated",
+                "wakeMode": "next-heartbeat",
+                "payload": {
+                    "kind": "agentTurn",
+                    "message": "Ship the next verified webhook slice.",
+                },
+                "delivery": {
+                    "mode": "webhook",
+                    "to": "https://example.invalid/cron-finished",
+                },
+            }
+        )
+        task_id = asyncio.run(
+            database.create_task_blueprint(
+                name=created_task.name,
+                summary=created_task.summary,
+                project_id=created_task.project_id,
+                instance_id=created_task.instance_id,
+                cadence_minutes=created_task.cadence_minutes,
+                enabled=created_task.enabled,
+                payload=created_task.model_dump(
+                    exclude={
+                        "name",
+                        "summary",
+                        "project_id",
+                        "instance_id",
+                        "cadence_minutes",
+                        "enabled",
+                    }
+                ),
+            )
+        )
+        mission_id = asyncio.run(
+            database.create_mission(
+                name="Nightly Ship Webhook Run",
+                objective="Ship the next verified webhook slice.",
+                status="completed",
+                instance_id=7,
+                project_id=None,
+                task_blueprint_id=task_id,
+                thread_id="thread-ship-webhook-ok",
+                session_key="launch:mode:workspace_affinity",
+                conversation_target=None,
+                cwd="C:/workspace",
+                model="gpt-5.4",
+                reasoning_effort=None,
+                collaboration_mode=None,
+                max_turns=None,
+                use_builtin_agents=True,
+                run_verification=True,
+                auto_commit=False,
+                pause_on_approval=True,
+                allow_auto_reflexes=True,
+                auto_recover=True,
+                auto_recover_limit=2,
+                reflex_cooldown_seconds=900,
+                allow_failover=True,
+                toolsets=[],
+            )
+        )
+        asyncio.run(
+            database.update_mission(
+                mission_id,
+                last_checkpoint="Nightly webhook ship landed.",
+            )
+        )
+        asyncio.run(
+            database.create_outbound_delivery(
+                route_id=None,
+                route_name="Cron webhook for Nightly Ship Webhook",
+                route_kind="webhook",
+                route_target="https://example.invalid/cron-finished",
+                event_type="cron/finished",
+                session_key="launch:mode:workspace_affinity",
+                conversation_target=None,
+                route_scope={
+                    "route_name": "Cron webhook for Nightly Ship Webhook",
+                    "route_kind": "webhook",
+                    "route_target": "https://example.invalid/cron-finished",
+                },
+                event_payload={
+                    "missionId": mission_id,
+                    "taskId": task_id,
+                    "jobId": f"task-blueprint:{task_id}",
+                    "summary": "Nightly webhook ship landed.",
+                },
+                message_summary="Nightly webhook ship landed.",
+                test_delivery=False,
+                delivery_state="delivered",
+                attempt_count=1,
+                delivered_at=utcnow(),
+            )
+        )
+
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "cron.runs",
+                "params": {
+                    "id": f"task-blueprint:{task_id}",
+                    "limit": 10,
+                },
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total"] == 1
+    assert payload["entries"][0]["summary"] == "Nightly webhook ship landed."
+    assert payload["entries"][0]["deliveryStatus"] == "delivered"
+
+
+def test_app_ops_mesh_service_delivers_last_channel_cron_failure_to_session_messages() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-last-channel-session-delivery"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        task = asyncio.run(
+            client.app.state.ops_mesh_service.create_task_blueprint(
+                build_gateway_cron_task_blueprint(
+                    {
+                        "name": "Last Channel Failure Session Delivery",
+                        "enabled": True,
+                        "schedule": {"kind": "every", "everyMs": 3_600_000},
+                        "sessionTarget": "isolated",
+                        "wakeMode": "next-heartbeat",
+                        "payload": {
+                            "kind": "agentTurn",
+                            "message": "Deliver cron failure through the live session key.",
+                        },
+                        "delivery": {
+                            "mode": "announce",
+                            "channel": "last",
+                        },
+                    }
+                )
+            )
+        )
+        database = client.app.state.database
+        mission_id = asyncio.run(
+            database.create_mission(
+                name="Last Channel Failure Session Delivery",
+                objective="Deliver cron failure through the live session key.",
+                status="failed",
+                instance_id=task.instance_id or 1,
+                project_id=task.project_id,
+                task_blueprint_id=task.id,
+                thread_id="thread_cron_failure_last_channel_session_delivery",
+                cwd=str(tmp_path),
+                model="gpt-5.4",
+                reasoning_effort=None,
+                collaboration_mode=None,
+                max_turns=4,
+                use_builtin_agents=True,
+                run_verification=True,
+                auto_commit=False,
+                pause_on_approval=True,
+                allow_auto_reflexes=True,
+                auto_recover=True,
+                auto_recover_limit=2,
+                reflex_cooldown_seconds=900,
+                allow_failover=True,
+                toolsets=[],
+            )
+        )
+        session_key = "agent:main:telegram:direct:123:thread:99"
+        asyncio.run(
+            database.update_mission(
+                mission_id,
+                last_checkpoint="last-channel session delivery failed",
+                last_error="lane timed out",
+                last_activity_at=datetime.now(UTC).isoformat(),
+                session_key=session_key,
+            )
+        )
+
+        asyncio.run(
+            client.app.state.ops_mesh_service.handle_mission_event(
+                "mission/failed",
+                {"missionId": mission_id},
+            )
+        )
+        messages = asyncio.run(
+            database.list_control_chat_messages(limit=10, session_key=session_key)
+        )
+        deliveries = asyncio.run(
+            client.app.state.ops_mesh_service.list_outbound_delivery_views(limit=10)
+        )
+
+    assert [message["content"] for message in messages if message["role"] == "assistant"] == [
+        '\u26a0\ufe0f Cron job "Last Channel Failure Session Delivery" failed: lane timed out'
+    ]
+    assert len(deliveries) == 1
+    assert deliveries[0].route_kind == "session"
+    assert deliveries[0].route_target == session_key
+    assert deliveries[0].event_type == "cron/failure"
+    assert deliveries[0].delivery_state == "delivered"
+    assert deliveries[0].session_key == session_key
+
+
 def test_gateway_node_method_call_endpoint_supports_cron_run_force() -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-run-api"
     shutil.rmtree(tmp_path, ignore_errors=True)
@@ -6567,6 +8910,68 @@ def test_gateway_node_method_call_endpoint_supports_cron_remove() -> None:
     assert remaining is None
 
 
+def test_gateway_node_method_call_endpoint_supports_cron_remove_for_one_shot_job() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-remove-at-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        database = client.app.state.database
+        task_id = asyncio.run(
+            database.create_task_blueprint(
+                name="One Shot",
+                summary="Run exactly once.",
+                project_id=None,
+                instance_id=None,
+                cadence_minutes=None,
+                enabled=True,
+                payload={
+                    "objective_template": "Run exactly once.",
+                    "conversation_target": None,
+                    "run_until_complete": False,
+                    "continuation_cooldown_minutes": 10,
+                    "completion_marker": None,
+                    "cwd": None,
+                    "model": "gpt-5.4",
+                    "reasoning_effort": None,
+                    "collaboration_mode": None,
+                    "max_turns": None,
+                    "use_builtin_agents": True,
+                    "run_verification": True,
+                    "auto_commit": False,
+                    "pause_on_approval": True,
+                    "allow_auto_reflexes": True,
+                    "auto_recover": True,
+                    "auto_recover_limit": 2,
+                    "reflex_cooldown_seconds": 900,
+                    "allow_failover": True,
+                    "toolsets": [],
+                    "enabled": True,
+                    "schedule_kind": "at",
+                    "schedule_at": "2026-04-18T12:00:00.000Z",
+                },
+            )
+        )
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "cron.remove",
+                "params": {"id": f"task-blueprint:{task_id}"},
+            },
+        )
+        remaining = asyncio.run(database.get_task_blueprint(task_id))
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True, "removed": True}
+    assert remaining is None
+
+
 def test_gateway_node_method_call_endpoint_supports_cron_add() -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-add-api"
     shutil.rmtree(tmp_path, ignore_errors=True)
@@ -6588,8 +8993,8 @@ def test_gateway_node_method_call_endpoint_supports_cron_add() -> None:
                     "description": "Ship the next verified slice.",
                     "enabled": True,
                     "schedule": {"kind": "every", "everyMs": 3_600_000},
-                    "sessionTarget": "main",
-                    "wakeMode": "now",
+                    "sessionTarget": "isolated",
+                    "wakeMode": "next-heartbeat",
                     "payload": {
                         "kind": "agentTurn",
                         "message": "Ship the next verified slice.",
@@ -6612,8 +9017,8 @@ def test_gateway_node_method_call_endpoint_supports_cron_add() -> None:
     assert payload["name"] == "Nightly Ship"
     assert payload["description"] == "Ship the next verified slice."
     assert payload["schedule"] == {"kind": "every", "everyMs": 3_600_000}
-    assert payload["sessionTarget"] == "main"
-    assert payload["wakeMode"] == "now"
+    assert payload["sessionTarget"] == "isolated"
+    assert payload["wakeMode"] == "next-heartbeat"
     assert payload["payload"] == {
         "kind": "agentTurn",
         "message": "Ship the next verified slice.",
@@ -6647,8 +9052,8 @@ def test_gateway_node_method_call_endpoint_supports_cron_add_anchor_ms() -> None
                     "description": "Ship on the anchored minute boundary.",
                     "enabled": True,
                     "schedule": {"kind": "every", "everyMs": 3_600_000, "anchorMs": 123},
-                    "sessionTarget": "main",
-                    "wakeMode": "now",
+                    "sessionTarget": "isolated",
+                    "wakeMode": "next-heartbeat",
                     "payload": {
                         "kind": "agentTurn",
                         "message": "Ship on the anchored minute boundary.",
@@ -6672,6 +9077,1243 @@ def test_gateway_node_method_call_endpoint_supports_cron_add_anchor_ms() -> None
     jobs = list_response.json()["jobs"]
     assert len(jobs) == 1
     assert jobs[0]["schedule"] == {"kind": "every", "everyMs": 3_600_000, "anchorMs": 123}
+
+
+def test_gateway_node_method_call_endpoint_supports_cron_add_at_schedule() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-add-at-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "cron.add",
+                "params": {
+                    "name": "One Shot",
+                    "description": "Run exactly once at noon UTC.",
+                    "enabled": True,
+                    "schedule": {"kind": "at", "at": "2026-04-18T12:00:00Z"},
+                    "sessionTarget": "isolated",
+                    "wakeMode": "next-heartbeat",
+                    "payload": {
+                        "kind": "agentTurn",
+                        "message": "Run exactly once at noon UTC.",
+                        "model": "gpt-5.4",
+                    },
+                },
+            },
+        )
+        list_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "cron.list",
+                "params": {"includeDisabled": True},
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["schedule"] == {"kind": "at", "at": "2026-04-18T12:00:00.000Z"}
+    assert list_response.status_code == 200
+    jobs = list_response.json()["jobs"]
+    assert len(jobs) == 1
+    assert jobs[0]["schedule"] == {"kind": "at", "at": "2026-04-18T12:00:00.000Z"}
+
+
+def test_gateway_node_method_call_endpoint_routes_main_system_event_cron_run_through_wake_queue(
+    tmp_path,
+) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        add_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "cron.add",
+                "params": {
+                    "name": "Wake Main Lane",
+                    "description": "Nudge the main lane on the next heartbeat.",
+                    "enabled": True,
+                    "schedule": {"kind": "every", "everyMs": 3_600_000},
+                    "sessionTarget": "main",
+                    "wakeMode": "next-heartbeat",
+                    "payload": {
+                        "kind": "systemEvent",
+                        "text": "Resume the main lane from cron.",
+                    },
+                },
+            },
+        )
+        assert add_response.status_code == 200
+        job_id = str(add_response.json()["id"])
+
+        run_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "cron.run",
+                "params": {"id": job_id, "mode": "force"},
+            },
+        )
+        database = client.app.state.database
+        wake_requests = asyncio.run(database.list_gateway_wake_requests())
+        events = asyncio.run(database.list_events())
+        missions = asyncio.run(database.list_missions())
+
+    assert run_response.status_code == 200
+    payload = run_response.json()
+    assert payload["ok"] is True
+    assert payload["enqueued"] is True
+    assert isinstance(payload["runId"], str)
+    assert wake_requests[0]["mode"] == "next-heartbeat"
+    assert wake_requests[0]["text"] == "Resume the main lane from cron."
+    assert wake_requests[0]["status"] == "pending"
+    assert events[0]["method"] == "system-event"
+    assert events[0]["payload"]["text"] == "Resume the main lane from cron."
+    assert missions == []
+
+
+def test_gateway_node_method_call_endpoint_surfaces_cron_runs_for_main_system_event_wake_jobs(
+    tmp_path,
+) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        add_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "cron.add",
+                "params": {
+                    "name": "Wake Main Lane",
+                    "enabled": True,
+                    "schedule": {"kind": "every", "everyMs": 3_600_000},
+                    "sessionTarget": "main",
+                    "wakeMode": "next-heartbeat",
+                    "payload": {
+                        "kind": "systemEvent",
+                        "text": "Resume the main lane from cron.",
+                    },
+                },
+            },
+        )
+        assert add_response.status_code == 200
+        job_id = str(add_response.json()["id"])
+
+        run_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "cron.run",
+                "params": {"id": job_id, "mode": "force"},
+            },
+        )
+        assert run_response.status_code == 200
+
+        runs_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "cron.runs",
+                "params": {"id": job_id, "limit": 10},
+            },
+        )
+
+    assert runs_response.status_code == 200
+    payload = runs_response.json()
+    assert payload["total"] == 1
+    assert payload["entries"][-1]["jobId"] == job_id
+    assert payload["entries"][-1]["action"] == "finished"
+    assert payload["entries"][-1]["status"] == "ok"
+    assert payload["entries"][-1]["summary"] == "Resume the main lane from cron."
+    assert payload["entries"][-1]["deliveryStatus"] == "not-requested"
+
+
+def test_gateway_node_method_call_endpoint_supports_cron_add_isolated_agent_turn_job(
+    tmp_path,
+) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "cron.add",
+                "params": {
+                    "name": "Isolated Lane",
+                    "enabled": True,
+                    "schedule": {"kind": "every", "everyMs": 3_600_000},
+                    "sessionTarget": "isolated",
+                    "wakeMode": "next-heartbeat",
+                    "payload": {
+                        "kind": "agentTurn",
+                        "message": "Run the isolated lane from cron.",
+                        "model": "gpt-5.4-mini",
+                    },
+                },
+            },
+        )
+        list_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "cron.list",
+                "params": {"includeDisabled": True},
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["sessionTarget"] == "isolated"
+    assert payload["wakeMode"] == "next-heartbeat"
+    assert payload["payload"] == {
+        "kind": "agentTurn",
+        "message": "Run the isolated lane from cron.",
+        "model": "gpt-5.4-mini",
+    }
+    assert payload["delivery"] == {"mode": "announce"}
+    assert list_response.status_code == 200
+    assert list_response.json()["jobs"][0]["sessionTarget"] == "isolated"
+    assert list_response.json()["jobs"][0]["delivery"] == {"mode": "announce"}
+
+
+def test_gateway_node_method_call_endpoint_preserves_isolated_agent_turn_none_delivery(
+    tmp_path,
+) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "cron.add",
+                "params": {
+                    "name": "Isolated Lane No Delivery",
+                    "enabled": True,
+                    "schedule": {"kind": "every", "everyMs": 3_600_000},
+                    "sessionTarget": "isolated",
+                    "wakeMode": "next-heartbeat",
+                    "payload": {
+                        "kind": "agentTurn",
+                        "message": "Run the isolated lane from cron without announce delivery.",
+                    },
+                    "delivery": {"mode": "none"},
+                },
+            },
+        )
+        list_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "cron.list",
+                "params": {"includeDisabled": True},
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["delivery"] == {"mode": "none"}
+    assert list_response.status_code == 200
+    assert list_response.json()["jobs"][0]["delivery"] == {"mode": "none"}
+
+
+def test_gateway_node_method_call_endpoint_accepts_isolated_agent_turn_announce_delivery(
+    tmp_path,
+) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "cron.add",
+                "params": {
+                    "name": "Isolated Lane Announce",
+                    "enabled": True,
+                    "schedule": {"kind": "every", "everyMs": 3_600_000},
+                    "sessionTarget": "isolated",
+                    "wakeMode": "next-heartbeat",
+                    "payload": {
+                        "kind": "agentTurn",
+                        "message": (
+                            "Run the isolated lane from cron with explicit announce delivery."
+                        ),
+                    },
+                    "delivery": {
+                        "mode": "announce",
+                        "channel": " TeLeGrAm ",
+                        "to": " 7200373102 ",
+                        "accountId": " coordinator ",
+                    },
+                },
+            },
+        )
+        list_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "cron.list",
+                "params": {"includeDisabled": True},
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["delivery"] == {
+        "mode": "announce",
+        "channel": "telegram",
+        "to": "7200373102",
+        "accountId": "coordinator",
+    }
+    assert list_response.status_code == 200
+    assert list_response.json()["jobs"][0]["delivery"] == {
+        "mode": "announce",
+        "channel": "telegram",
+        "to": "7200373102",
+        "accountId": "coordinator",
+    }
+    with TestClient(app, client=("testclient", 50000)) as verify_client:
+        stored_task = asyncio.run(verify_client.app.state.database.get_task_blueprint(1))
+    assert stored_task is not None
+    conversation_target = stored_task["conversation_target"]
+    assert isinstance(conversation_target, dict)
+    assert conversation_target["channel"] == "telegram"
+    assert conversation_target["account_id"] == "coordinator"
+    assert conversation_target["peer_kind"] == "channel"
+    assert conversation_target["peer_id"] == "7200373102"
+
+
+def test_gateway_node_method_call_endpoint_accepts_webhook_delivery_for_main_system_event(
+    tmp_path,
+) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "cron.add",
+                "params": {
+                    "name": "Webhook Wake",
+                    "enabled": True,
+                    "schedule": {"kind": "every", "everyMs": 3_600_000},
+                    "sessionTarget": "main",
+                    "wakeMode": "now",
+                    "payload": {
+                        "kind": "systemEvent",
+                        "text": "Wake the main lane through webhook delivery.",
+                    },
+                    "delivery": {
+                        "mode": " WeBhOoK ",
+                        "to": " https://example.invalid/cron ",
+                        "bestEffort": True,
+                        "failureDestination": {
+                            "mode": "webhook",
+                            "to": "  https://example.invalid/failure  ",
+                        },
+                    },
+                },
+            },
+        )
+        list_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "cron.list",
+                "params": {"includeDisabled": True},
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["delivery"] == {
+        "mode": "webhook",
+        "to": "https://example.invalid/cron",
+        "bestEffort": True,
+        "failureDestination": {
+            "mode": "webhook",
+            "to": "https://example.invalid/failure",
+        },
+    }
+    assert list_response.status_code == 200
+    assert list_response.json()["jobs"][0]["delivery"] == {
+        "mode": "webhook",
+        "to": "https://example.invalid/cron",
+        "bestEffort": True,
+        "failureDestination": {
+            "mode": "webhook",
+            "to": "https://example.invalid/failure",
+        },
+    }
+
+
+def test_gateway_node_method_call_endpoint_merges_cron_delivery_thread_id_patch(tmp_path) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        created = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "cron.add",
+                "params": {
+                    "name": "Thread Hint Patch",
+                    "enabled": True,
+                    "schedule": {"kind": "every", "everyMs": 3_600_000},
+                    "sessionTarget": "isolated",
+                    "wakeMode": "next-heartbeat",
+                    "payload": {
+                        "kind": "agentTurn",
+                        "message": (
+                            "Patch the announce delivery thread hint without touching the "
+                            "target."
+                        ),
+                    },
+                    "delivery": {
+                        "mode": "announce",
+                        "channel": "telegram",
+                        "to": "-100123:topic:42",
+                    },
+                },
+            },
+        )
+        updated = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "cron.update",
+                "params": {
+                    "id": created.json()["id"],
+                    "patch": {
+                        "delivery": {
+                            "threadId": " 99 ",
+                        }
+                    },
+                },
+            },
+        )
+        list_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "cron.list",
+                "params": {"includeDisabled": True},
+            },
+        )
+
+    assert created.status_code == 200
+    assert updated.status_code == 200
+    assert updated.json()["delivery"] == {
+        "mode": "announce",
+        "channel": "telegram",
+        "to": "-100123:topic:42",
+        "threadId": "99",
+    }
+    assert list_response.status_code == 200
+    assert list_response.json()["jobs"][0]["delivery"] == {
+        "mode": "announce",
+        "channel": "telegram",
+        "to": "-100123:topic:42",
+        "threadId": "99",
+    }
+    with TestClient(app, client=("testclient", 50000)) as verify_client:
+        stored_task = asyncio.run(verify_client.app.state.database.get_task_blueprint(1))
+    assert stored_task is not None
+    assert stored_task["cron_delivery_thread_id"] == "99"
+
+
+def test_gateway_node_method_call_endpoint_accepts_numeric_cron_delivery_thread_id(
+    tmp_path,
+) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "cron.add",
+                "params": {
+                    "name": "Numeric Thread Hint",
+                    "enabled": True,
+                    "schedule": {"kind": "every", "everyMs": 3_600_000},
+                    "sessionTarget": "isolated",
+                    "wakeMode": "next-heartbeat",
+                    "payload": {
+                        "kind": "agentTurn",
+                        "message": "Round-trip a numeric announce delivery thread hint.",
+                    },
+                    "delivery": {
+                        "mode": "announce",
+                        "channel": "telegram",
+                        "to": "-100123:topic:42",
+                        "threadId": 77,
+                    },
+                },
+            },
+        )
+        list_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "cron.list",
+                "params": {"includeDisabled": True},
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["delivery"] == {
+        "mode": "announce",
+        "channel": "telegram",
+        "to": "-100123:topic:42",
+        "threadId": 77,
+    }
+    assert list_response.status_code == 200
+    assert list_response.json()["jobs"][0]["delivery"] == {
+        "mode": "announce",
+        "channel": "telegram",
+        "to": "-100123:topic:42",
+        "threadId": 77,
+    }
+    with TestClient(app, client=("testclient", 50000)) as verify_client:
+        stored_task = asyncio.run(verify_client.app.state.database.get_task_blueprint(1))
+    assert stored_task is not None
+    assert stored_task["cron_delivery_thread_id"] == 77
+
+
+def test_gateway_node_method_call_endpoint_accepts_legacy_notify_flag(tmp_path) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "cron.add",
+                "params": {
+                    "name": "Legacy Notify Webhook",
+                    "enabled": True,
+                    "notify": True,
+                    "schedule": {"kind": "every", "everyMs": 3_600_000},
+                    "sessionTarget": "main",
+                    "wakeMode": "next-heartbeat",
+                    "payload": {
+                        "kind": "systemEvent",
+                        "text": "Use the legacy cron webhook fallback.",
+                    },
+                },
+            },
+        )
+        list_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "cron.list",
+                "params": {"includeDisabled": True},
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["notify"] is True
+    assert list_response.status_code == 200
+    assert list_response.json()["jobs"][0]["notify"] is True
+    with TestClient(app, client=("testclient", 50000)) as verify_client:
+        stored_task = asyncio.run(verify_client.app.state.database.get_task_blueprint(1))
+    assert stored_task is not None
+    assert stored_task["cron_notify_enabled"] is True
+
+
+def test_gateway_node_method_call_endpoint_ignores_announce_delivery_patch_for_main_system_event(
+    tmp_path,
+) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        created = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "cron.add",
+                "params": {
+                    "name": "Main Lane Wake",
+                    "enabled": True,
+                    "schedule": {"kind": "every", "everyMs": 3_600_000},
+                    "sessionTarget": "main",
+                    "wakeMode": "next-heartbeat",
+                    "payload": {
+                        "kind": "systemEvent",
+                        "text": "Resume the main lane from cron.",
+                    },
+                },
+            },
+        )
+        update = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "cron.update",
+                "params": {
+                    "id": created.json()["id"],
+                    "patch": {
+                        "delivery": {
+                            "mode": "announce",
+                            "channel": "telegram",
+                            "to": "19098680",
+                        }
+                    },
+                },
+            },
+        )
+
+    assert created.status_code == 200
+    assert update.status_code == 200
+    assert update.json()["delivery"] == {"mode": "none"}
+
+
+def test_gateway_node_method_call_endpoint_normalizes_deliver_delivery_mode_to_announce(
+    tmp_path,
+) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "cron.add",
+                "params": {
+                    "name": "Deliver Alias",
+                    "enabled": True,
+                    "schedule": {"kind": "every", "everyMs": 3_600_000},
+                    "sessionTarget": "isolated",
+                    "wakeMode": "next-heartbeat",
+                    "payload": {
+                        "kind": "agentTurn",
+                        "message": "Run the isolated lane from cron with the deliver alias.",
+                    },
+                    "delivery": {
+                        "mode": " DeLiVeR ",
+                        "channel": "Telegram",
+                        "to": "7200373102",
+                    },
+                },
+            },
+        )
+        list_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "cron.list",
+                "params": {"includeDisabled": True},
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["delivery"] == {
+        "mode": "announce",
+        "channel": "telegram",
+        "to": "7200373102",
+    }
+    assert list_response.status_code == 200
+    assert list_response.json()["jobs"][0]["delivery"] == {
+        "mode": "announce",
+        "channel": "telegram",
+        "to": "7200373102",
+    }
+
+
+def test_gateway_node_method_call_endpoint_rejects_target_like_delivery_channel_ids(
+    tmp_path,
+) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "cron.add",
+                "params": {
+                    "name": "Invalid Delivery Provider",
+                    "enabled": True,
+                    "schedule": {"kind": "every", "everyMs": 3_600_000},
+                    "sessionTarget": "isolated",
+                    "wakeMode": "next-heartbeat",
+                    "payload": {
+                        "kind": "agentTurn",
+                        "message": "Reject target ids that get stuffed into delivery.channel.",
+                    },
+                    "delivery": {
+                        "mode": "announce",
+                        "channel": "C0AT2Q238MQ",
+                        "to": "C0AT2Q238MQ",
+                    },
+                },
+            },
+        )
+
+    assert response.status_code == 400
+    assert "delivery.channel" in response.json()["detail"]
+
+
+def test_gateway_node_method_call_endpoint_requires_delivery_channel_for_ambiguous_add(
+    tmp_path,
+) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        database = client.app.state.database
+        asyncio.run(
+            database.create_notification_route(
+                name="Telegram Route",
+                kind="webhook",
+                target="https://example.invalid/telegram",
+                events=["mission.completed"],
+                conversation_target={"channel": "telegram", "account_id": "default"},
+                enabled=True,
+                secret_header_name=None,
+                secret_token=None,
+                vault_secret_id=None,
+            )
+        )
+        asyncio.run(
+            database.create_notification_route(
+                name="Slack Route",
+                kind="webhook",
+                target="https://example.invalid/slack",
+                events=["mission.completed"],
+                conversation_target={"channel": "slack", "account_id": "default"},
+                enabled=True,
+                secret_header_name=None,
+                secret_token=None,
+                vault_secret_id=None,
+            )
+        )
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "cron.add",
+                "params": {
+                    "name": "Ambiguous Announce Add",
+                    "enabled": True,
+                    "schedule": {"kind": "every", "everyMs": 3_600_000},
+                    "sessionTarget": "isolated",
+                    "wakeMode": "next-heartbeat",
+                    "payload": {
+                        "kind": "agentTurn",
+                        "message": "Require a delivery channel when multiple routes are enabled.",
+                    },
+                    "delivery": {"mode": "announce"},
+                },
+            },
+        )
+
+    assert response.status_code == 400
+    assert "delivery.channel is required" in response.json()["detail"]
+
+
+def test_gateway_node_method_call_endpoint_requires_delivery_channel_for_ambiguous_update(
+    tmp_path,
+) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        database = client.app.state.database
+        asyncio.run(
+            database.create_notification_route(
+                name="Telegram Route",
+                kind="webhook",
+                target="https://example.invalid/telegram",
+                events=["mission.completed"],
+                conversation_target={"channel": "telegram", "account_id": "default"},
+                enabled=True,
+                secret_header_name=None,
+                secret_token=None,
+                vault_secret_id=None,
+            )
+        )
+        asyncio.run(
+            database.create_notification_route(
+                name="Slack Route",
+                kind="webhook",
+                target="https://example.invalid/slack",
+                events=["mission.completed"],
+                conversation_target={"channel": "slack", "account_id": "default"},
+                enabled=True,
+                secret_header_name=None,
+                secret_token=None,
+                vault_secret_id=None,
+            )
+        )
+        task_id = asyncio.run(
+            database.create_task_blueprint(
+                name="Nightly Ship",
+                summary="Ship the next verified slice.",
+                project_id=None,
+                instance_id=None,
+                cadence_minutes=60,
+                enabled=True,
+                payload={
+                    "objective_template": "Run this on the isolated cron lane.",
+                    "conversation_target": None,
+                    "run_until_complete": False,
+                    "continuation_cooldown_minutes": 10,
+                    "completion_marker": None,
+                    "cwd": None,
+                    "model": "gpt-5.4",
+                    "reasoning_effort": None,
+                    "collaboration_mode": None,
+                    "max_turns": None,
+                    "use_builtin_agents": True,
+                    "run_verification": True,
+                    "auto_commit": False,
+                    "pause_on_approval": True,
+                    "allow_auto_reflexes": True,
+                    "auto_recover": True,
+                    "auto_recover_limit": 2,
+                    "reflex_cooldown_seconds": 900,
+                    "allow_failover": True,
+                    "toolsets": [],
+                    "cron_session_target": "isolated",
+                    "cron_wake_mode": "next-heartbeat",
+                    "cron_payload_kind": "agentTurn",
+                    "cron_delivery_mode": "none",
+                },
+            )
+        )
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "cron.update",
+                "params": {
+                    "id": f"task-blueprint:{task_id}",
+                    "patch": {"delivery": {"mode": "announce"}},
+                },
+            },
+        )
+
+    assert response.status_code == 400
+    assert "patch.delivery.channel is required" in response.json()["detail"]
+
+
+def test_gateway_node_method_call_endpoint_allows_announce_when_extra_routes_are_disabled(
+    tmp_path,
+) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        database = client.app.state.database
+        asyncio.run(
+            database.create_notification_route(
+                name="Telegram Route",
+                kind="webhook",
+                target="https://example.invalid/telegram",
+                events=["mission.completed"],
+                conversation_target={"channel": "telegram", "account_id": "default"},
+                enabled=True,
+                secret_header_name=None,
+                secret_token=None,
+                vault_secret_id=None,
+            )
+        )
+        asyncio.run(
+            database.create_notification_route(
+                name="Disabled Slack Route",
+                kind="webhook",
+                target="https://example.invalid/slack",
+                events=["mission.completed"],
+                conversation_target={"channel": "slack", "account_id": "default"},
+                enabled=False,
+                secret_header_name=None,
+                secret_token=None,
+                vault_secret_id=None,
+            )
+        )
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "cron.add",
+                "params": {
+                    "name": "Disabled Extra Route",
+                    "enabled": True,
+                    "schedule": {"kind": "every", "everyMs": 3_600_000},
+                    "sessionTarget": "isolated",
+                    "wakeMode": "next-heartbeat",
+                    "payload": {
+                        "kind": "agentTurn",
+                        "message": "Allow announce delivery when only one enabled route remains.",
+                    },
+                    "delivery": {"mode": "announce"},
+                },
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["delivery"] == {"mode": "announce"}
+
+
+def test_gateway_node_method_call_endpoint_supports_custom_cron_session_targets() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-custom-session-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        add_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "cron.add",
+                "params": {
+                    "name": "Custom Session Job",
+                    "enabled": True,
+                    "schedule": {"kind": "every", "everyMs": 3_600_000},
+                    "sessionTarget": "session:project-alpha:ops",
+                    "wakeMode": "now",
+                    "payload": {
+                        "kind": "agentTurn",
+                        "message": "Run on the saved cron session.",
+                    },
+                },
+            },
+        )
+        add_payload = add_response.json()
+        update_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "cron.update",
+                "params": {
+                    "id": add_payload["id"],
+                    "patch": {"sessionTarget": "session:project-beta:ops"},
+                },
+            },
+        )
+        list_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "cron.list",
+                "params": {"includeDisabled": True},
+            },
+        )
+
+    assert add_response.status_code == 200
+    assert add_payload["sessionTarget"] == "session:project-alpha:ops"
+    assert update_response.status_code == 200
+    assert update_response.json()["sessionTarget"] == "session:project-beta:ops"
+    assert list_response.status_code == 200
+    assert list_response.json()["jobs"][0]["sessionTarget"] == "session:project-beta:ops"
+
+
+def test_gateway_node_method_call_endpoint_rejects_unsafe_custom_cron_session_targets() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-custom-session-reject-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        add_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "cron.add",
+                "params": {
+                    "name": "Unsafe Custom Session Job",
+                    "enabled": True,
+                    "schedule": {"kind": "every", "everyMs": 3_600_000},
+                    "sessionTarget": "session:../../outside",
+                    "wakeMode": "now",
+                    "payload": {
+                        "kind": "agentTurn",
+                        "message": "Run on the saved cron session.",
+                    },
+                },
+            },
+        )
+        safe_add_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "cron.add",
+                "params": {
+                    "name": "Safe Custom Session Job",
+                    "enabled": True,
+                    "schedule": {"kind": "every", "everyMs": 3_600_000},
+                    "sessionTarget": "session:project-alpha:ops",
+                    "wakeMode": "now",
+                    "payload": {
+                        "kind": "agentTurn",
+                        "message": "Run on the saved cron session.",
+                    },
+                },
+            },
+        )
+        update_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "cron.update",
+                "params": {
+                    "id": safe_add_response.json()["id"],
+                    "patch": {"sessionTarget": "session:..\\outside"},
+                },
+            },
+        )
+
+    assert add_response.status_code == 400
+    assert "invalid cron sessionTarget session id" in add_response.json()["detail"]
+    assert safe_add_response.status_code == 200
+    assert update_response.status_code == 400
+    assert "invalid cron sessionTarget session id" in update_response.json()["detail"]
+
+
+def test_gateway_node_method_call_endpoint_normalizes_current_cron_session_target_to_isolated(
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-current-session-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        add_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "cron.add",
+                "params": {
+                    "name": "Current Session Job",
+                    "enabled": True,
+                    "schedule": {"kind": "every", "everyMs": 3_600_000},
+                    "sessionTarget": "current",
+                    "wakeMode": "next-heartbeat",
+                    "payload": {
+                        "kind": "agentTurn",
+                        "message": "Stay on the current cron lane.",
+                    },
+                },
+            },
+        )
+        add_payload = add_response.json()
+        update_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "cron.update",
+                "params": {
+                    "id": add_payload["id"],
+                    "patch": {"sessionTarget": "current"},
+                },
+            },
+        )
+        list_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "cron.list",
+                "params": {"includeDisabled": True},
+            },
+        )
+
+    assert add_response.status_code == 200
+    assert add_payload["sessionTarget"] == "isolated"
+    assert update_response.status_code == 200
+    assert update_response.json()["sessionTarget"] == "isolated"
+    assert list_response.status_code == 200
+    assert list_response.json()["jobs"][0]["sessionTarget"] == "isolated"
+
+
+def test_gateway_node_method_call_endpoint_preserves_custom_cron_session_target_casing() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-custom-session-case-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        add_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "cron.add",
+                "params": {
+                    "name": "Mixed Case Custom Session Job",
+                    "enabled": True,
+                    "schedule": {"kind": "every", "everyMs": 3_600_000},
+                    "sessionTarget": "session:MySessionID",
+                    "wakeMode": "now",
+                    "payload": {
+                        "kind": "agentTurn",
+                        "message": "Run on the named cron lane.",
+                    },
+                },
+            },
+        )
+        add_payload = add_response.json()
+        update_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "cron.update",
+                "params": {
+                    "id": add_payload["id"],
+                    "patch": {"sessionTarget": "session:ProjectBeta:Ops"},
+                },
+            },
+        )
+        list_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "cron.list",
+                "params": {"includeDisabled": True},
+            },
+        )
+
+    assert add_response.status_code == 200
+    assert add_payload["sessionTarget"] == "session:MySessionID"
+    assert update_response.status_code == 200
+    assert update_response.json()["sessionTarget"] == "session:ProjectBeta:Ops"
+    assert list_response.status_code == 200
+    assert list_response.json()["jobs"][0]["sessionTarget"] == "session:ProjectBeta:Ops"
+
+
+def test_gateway_node_method_call_endpoint_infers_cron_add_at_schedule_kind() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-add-at-infer-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "cron.add",
+                "params": {
+                    "name": "One Shot",
+                    "enabled": True,
+                    "schedule": {"at": "2026-04-18T12:00:00Z"},
+                    "sessionTarget": "isolated",
+                    "wakeMode": "next-heartbeat",
+                    "payload": {
+                        "kind": "agentTurn",
+                        "message": "Run exactly once at noon UTC.",
+                    },
+                },
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["schedule"] == {"kind": "at", "at": "2026-04-18T12:00:00.000Z"}
+
+
+def test_gateway_node_method_call_endpoint_rejects_cron_add_main_agent_turn_job() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-add-main-agent-turn-reject-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "cron.add",
+                "params": {
+                    "name": "Nightly Ship",
+                    "enabled": True,
+                    "schedule": {"kind": "every", "everyMs": 3_600_000},
+                    "sessionTarget": "main",
+                    "wakeMode": "now",
+                    "payload": {
+                        "kind": "agentTurn",
+                        "message": "Ship the next verified slice.",
+                        "model": "gpt-5.4",
+                    },
+                },
+            },
+        )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == (
+        "invalid cron.add params: "
+        "payload.kind='agentTurn' requires sessionTarget to leave 'main'"
+    )
 
 
 def test_gateway_node_method_call_endpoint_supports_cron_update() -> None:
@@ -6766,6 +10408,87 @@ def test_gateway_node_method_call_endpoint_supports_cron_update() -> None:
     assert jobs[0]["enabled"] is False
 
 
+def test_gateway_node_method_call_endpoint_round_trips_cron_session_key() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-session-key-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        database = client.app.state.database
+        task_id = asyncio.run(
+            database.create_task_blueprint(
+                name="Session Key Repair",
+                summary="Keep the cron route pinned to a stored session.",
+                project_id=None,
+                instance_id=None,
+                cadence_minutes=60,
+                enabled=True,
+                payload={
+                    "objective_template": "Keep the cron route pinned to a stored session.",
+                    "conversation_target": None,
+                    "run_until_complete": False,
+                    "continuation_cooldown_minutes": 10,
+                    "completion_marker": None,
+                    "cwd": None,
+                    "model": "gpt-5.4",
+                    "reasoning_effort": None,
+                    "collaboration_mode": None,
+                    "max_turns": None,
+                    "use_builtin_agents": True,
+                    "run_verification": True,
+                    "auto_commit": False,
+                    "pause_on_approval": True,
+                    "allow_auto_reflexes": True,
+                    "auto_recover": True,
+                    "auto_recover_limit": 2,
+                    "reflex_cooldown_seconds": 900,
+                    "allow_failover": True,
+                    "toolsets": [],
+                    "cron_session_target": "isolated",
+                    "cron_wake_mode": "next-heartbeat",
+                    "cron_payload_kind": "agentTurn",
+                    "cron_session_key": "agent:openzues:telegram:direct:123:thread:77",
+                    "cron_delivery_channel": "last",
+                },
+            )
+        )
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "cron.update",
+                "params": {
+                    "id": f"task-blueprint:{task_id}",
+                    "patch": {
+                        "sessionKey": "telegram:channel:deploy-room",
+                    },
+                },
+            },
+        )
+        list_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "cron.list",
+                "params": {"includeDisabled": True},
+            },
+        )
+        stored = asyncio.run(database.get_task_blueprint(task_id))
+
+    assert response.status_code == 200
+    assert response.json()["sessionKey"] == "telegram:channel:deploy-room"
+    assert list_response.status_code == 200
+    jobs = list_response.json()["jobs"]
+    assert len(jobs) == 1
+    assert jobs[0]["sessionKey"] == "telegram:channel:deploy-room"
+    assert stored is not None
+    assert stored["cron_session_key"] == "agent:openzues:telegram:channel:deploy-room"
+
+
 def test_gateway_node_method_call_endpoint_supports_cron_update_anchor_ms() -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-update-anchor-api"
     shutil.rmtree(tmp_path, ignore_errors=True)
@@ -6841,6 +10564,656 @@ def test_gateway_node_method_call_endpoint_supports_cron_update_anchor_ms() -> N
     assert jobs[0]["schedule"] == {"kind": "every", "everyMs": 7_200_000, "anchorMs": 456}
 
 
+def test_gateway_node_method_call_endpoint_supports_cron_update_at_schedule() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-update-at-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        database = client.app.state.database
+        task_id = asyncio.run(
+            database.create_task_blueprint(
+                name="Nightly Ship",
+                summary="Ship the next verified slice.",
+                project_id=None,
+                instance_id=None,
+                cadence_minutes=60,
+                enabled=True,
+                payload={
+                    "objective_template": "Ship the next verified slice.",
+                    "conversation_target": None,
+                    "run_until_complete": False,
+                    "continuation_cooldown_minutes": 10,
+                    "completion_marker": None,
+                    "cwd": None,
+                    "model": "gpt-5.4",
+                    "reasoning_effort": None,
+                    "collaboration_mode": None,
+                    "max_turns": None,
+                    "use_builtin_agents": True,
+                    "run_verification": True,
+                    "auto_commit": False,
+                    "pause_on_approval": True,
+                    "allow_auto_reflexes": True,
+                    "auto_recover": True,
+                    "auto_recover_limit": 2,
+                    "reflex_cooldown_seconds": 900,
+                    "allow_failover": True,
+                    "toolsets": [],
+                },
+            )
+        )
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "cron.update",
+                "params": {
+                    "id": f"task-blueprint:{task_id}",
+                    "patch": {
+                        "schedule": {"kind": "at", "at": "2026-04-18T12:00:00Z"},
+                    },
+                },
+            },
+        )
+        list_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "cron.list",
+                "params": {"includeDisabled": True},
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["schedule"] == {"kind": "at", "at": "2026-04-18T12:00:00.000Z"}
+    assert list_response.status_code == 200
+    jobs = list_response.json()["jobs"]
+    assert len(jobs) == 1
+    assert jobs[0]["schedule"] == {"kind": "at", "at": "2026-04-18T12:00:00.000Z"}
+
+
+def test_gateway_node_method_call_endpoint_infers_cron_update_at_schedule_kind() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-update-at-infer-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        database = client.app.state.database
+        task_id = asyncio.run(
+            database.create_task_blueprint(
+                name="Nightly Ship",
+                summary="Ship the next verified slice.",
+                project_id=None,
+                instance_id=None,
+                cadence_minutes=60,
+                enabled=True,
+                payload={
+                    "objective_template": "Ship the next verified slice.",
+                    "conversation_target": None,
+                    "run_until_complete": False,
+                    "continuation_cooldown_minutes": 10,
+                    "completion_marker": None,
+                    "cwd": None,
+                    "model": "gpt-5.4",
+                    "reasoning_effort": None,
+                    "collaboration_mode": None,
+                    "max_turns": None,
+                    "use_builtin_agents": True,
+                    "run_verification": True,
+                    "auto_commit": False,
+                    "pause_on_approval": True,
+                    "allow_auto_reflexes": True,
+                    "auto_recover": True,
+                    "auto_recover_limit": 2,
+                    "reflex_cooldown_seconds": 900,
+                    "allow_failover": True,
+                    "toolsets": [],
+                },
+            )
+        )
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "cron.update",
+                "params": {
+                    "id": f"task-blueprint:{task_id}",
+                    "patch": {
+                        "schedule": {"at": "2026-04-18T12:00:00Z"},
+                    },
+                },
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["schedule"] == {"kind": "at", "at": "2026-04-18T12:00:00.000Z"}
+
+
+def test_gateway_node_method_call_endpoint_supports_cron_update_isolated_agent_turn_job() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-update-isolated-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        database = client.app.state.database
+        task_id = asyncio.run(
+            database.create_task_blueprint(
+                name="Nightly Ship",
+                summary="Ship the next verified slice.",
+                project_id=None,
+                instance_id=None,
+                cadence_minutes=60,
+                enabled=True,
+                payload={
+                    "objective_template": "Ship the next verified slice.",
+                    "conversation_target": None,
+                    "run_until_complete": False,
+                    "continuation_cooldown_minutes": 10,
+                    "completion_marker": None,
+                    "cwd": None,
+                    "model": "gpt-5.4",
+                    "reasoning_effort": None,
+                    "collaboration_mode": None,
+                    "max_turns": None,
+                    "use_builtin_agents": True,
+                    "run_verification": True,
+                    "auto_commit": False,
+                    "pause_on_approval": True,
+                    "allow_auto_reflexes": True,
+                    "auto_recover": True,
+                    "auto_recover_limit": 2,
+                    "reflex_cooldown_seconds": 900,
+                    "allow_failover": True,
+                    "toolsets": [],
+                },
+            )
+        )
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "cron.update",
+                "params": {
+                    "id": f"task-blueprint:{task_id}",
+                    "patch": {
+                        "sessionTarget": "isolated",
+                        "wakeMode": "next-heartbeat",
+                        "payload": {
+                            "kind": "agentTurn",
+                            "message": "Run this on the isolated cron lane.",
+                            "model": "gpt-5.4-mini",
+                        },
+                    },
+                },
+            },
+        )
+        list_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "cron.list",
+                "params": {"includeDisabled": True},
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["sessionTarget"] == "isolated"
+    assert payload["wakeMode"] == "next-heartbeat"
+    assert payload["payload"] == {
+        "kind": "agentTurn",
+        "message": "Run this on the isolated cron lane.",
+        "model": "gpt-5.4-mini",
+    }
+    assert list_response.status_code == 200
+    jobs = list_response.json()["jobs"]
+    assert len(jobs) == 1
+    assert jobs[0]["sessionTarget"] == "isolated"
+    assert jobs[0]["wakeMode"] == "next-heartbeat"
+    assert jobs[0]["payload"] == {
+        "kind": "agentTurn",
+        "message": "Run this on the isolated cron lane.",
+        "model": "gpt-5.4-mini",
+    }
+
+
+def test_gateway_node_method_call_endpoint_rejects_cron_update_main_system_event_to_agent_turn(
+    ) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-update-main-system-event-reject-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        database = client.app.state.database
+        task_id = asyncio.run(
+            database.create_task_blueprint(
+                name="Nightly Ship",
+                summary="Ship the next verified slice.",
+                project_id=None,
+                instance_id=None,
+                cadence_minutes=60,
+                enabled=True,
+                payload={
+                    "objective_template": "Resume the main lane from cron.",
+                    "conversation_target": None,
+                    "run_until_complete": False,
+                    "continuation_cooldown_minutes": 10,
+                    "completion_marker": None,
+                    "cwd": None,
+                    "model": "gpt-5.4",
+                    "reasoning_effort": None,
+                    "collaboration_mode": None,
+                    "max_turns": None,
+                    "use_builtin_agents": True,
+                    "run_verification": True,
+                    "auto_commit": False,
+                    "pause_on_approval": True,
+                    "allow_auto_reflexes": True,
+                    "auto_recover": True,
+                    "auto_recover_limit": 2,
+                    "reflex_cooldown_seconds": 900,
+                    "allow_failover": True,
+                    "toolsets": [],
+                    "cron_session_target": "main",
+                    "cron_wake_mode": "next-heartbeat",
+                    "cron_payload_kind": "systemEvent",
+                    "cron_payload_text": "Resume the main lane from cron.",
+                },
+            )
+        )
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "cron.update",
+                "params": {
+                    "id": f"task-blueprint:{task_id}",
+                    "patch": {
+                        "payload": {
+                            "kind": "agentTurn",
+                            "message": "Run this on the isolated cron lane.",
+                        },
+                    },
+                },
+            },
+        )
+
+    assert response.status_code == 400
+
+
+def test_gateway_node_method_call_endpoint_rejects_cron_update_isolated_system_event_job() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-update-isolated-reject-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        database = client.app.state.database
+        task_id = asyncio.run(
+            database.create_task_blueprint(
+                name="Nightly Ship",
+                summary="Ship the next verified slice.",
+                project_id=None,
+                instance_id=None,
+                cadence_minutes=60,
+                enabled=True,
+                payload={
+                    "objective_template": "Ship the next verified slice.",
+                    "conversation_target": None,
+                    "run_until_complete": False,
+                    "continuation_cooldown_minutes": 10,
+                    "completion_marker": None,
+                    "cwd": None,
+                    "model": "gpt-5.4",
+                    "reasoning_effort": None,
+                    "collaboration_mode": None,
+                    "max_turns": None,
+                    "use_builtin_agents": True,
+                    "run_verification": True,
+                    "auto_commit": False,
+                    "pause_on_approval": True,
+                    "allow_auto_reflexes": True,
+                    "auto_recover": True,
+                    "auto_recover_limit": 2,
+                    "reflex_cooldown_seconds": 900,
+                    "allow_failover": True,
+                    "toolsets": [],
+                },
+            )
+        )
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "cron.update",
+                "params": {
+                    "id": f"task-blueprint:{task_id}",
+                    "patch": {
+                        "sessionTarget": "isolated",
+                        "payload": {
+                            "kind": "systemEvent",
+                            "text": "Resume the main lane from cron.",
+                        },
+                    },
+                },
+            },
+        )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == (
+        "invalid cron.update params: "
+        "patch.payload.kind='systemEvent' requires patch.sessionTarget='main'"
+    )
+
+
+def test_gateway_node_method_call_endpoint_can_clear_explicit_none_delivery_back_to_announce(
+    tmp_path,
+) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        database = client.app.state.database
+        task_id = asyncio.run(
+            database.create_task_blueprint(
+                name="Nightly Ship",
+                summary="Ship the next verified slice.",
+                project_id=None,
+                instance_id=None,
+                cadence_minutes=60,
+                enabled=True,
+                payload={
+                    "objective_template": "Run this on the isolated cron lane.",
+                    "conversation_target": None,
+                    "run_until_complete": False,
+                    "continuation_cooldown_minutes": 10,
+                    "completion_marker": None,
+                    "cwd": None,
+                    "model": "gpt-5.4",
+                    "reasoning_effort": None,
+                    "collaboration_mode": None,
+                    "max_turns": None,
+                    "use_builtin_agents": True,
+                    "run_verification": True,
+                    "auto_commit": False,
+                    "pause_on_approval": True,
+                    "allow_auto_reflexes": True,
+                    "auto_recover": True,
+                    "auto_recover_limit": 2,
+                    "reflex_cooldown_seconds": 900,
+                    "allow_failover": True,
+                    "toolsets": [],
+                    "cron_session_target": "isolated",
+                    "cron_wake_mode": "next-heartbeat",
+                    "cron_payload_kind": "agentTurn",
+                    "cron_delivery_mode": "none",
+                },
+            )
+        )
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "cron.update",
+                "params": {
+                    "id": f"task-blueprint:{task_id}",
+                    "patch": {
+                        "delivery": {"mode": "announce"},
+                    },
+                },
+            },
+        )
+        list_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "cron.list",
+                "params": {"includeDisabled": True},
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["delivery"] == {"mode": "announce"}
+    assert list_response.status_code == 200
+    assert list_response.json()["jobs"][0]["delivery"] == {"mode": "announce"}
+
+
+def test_gateway_node_method_call_endpoint_normalizes_announce_delivery_metadata(
+    tmp_path,
+) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        database = client.app.state.database
+        task_id = asyncio.run(
+            database.create_task_blueprint(
+                name="Nightly Ship",
+                summary="Ship the next verified slice.",
+                project_id=None,
+                instance_id=None,
+                cadence_minutes=60,
+                enabled=True,
+                payload={
+                    "objective_template": "Run this on the isolated cron lane.",
+                    "conversation_target": None,
+                    "run_until_complete": False,
+                    "continuation_cooldown_minutes": 10,
+                    "completion_marker": None,
+                    "cwd": None,
+                    "model": "gpt-5.4",
+                    "reasoning_effort": None,
+                    "collaboration_mode": None,
+                    "max_turns": None,
+                    "use_builtin_agents": True,
+                    "run_verification": True,
+                    "auto_commit": False,
+                    "pause_on_approval": True,
+                    "allow_auto_reflexes": True,
+                    "auto_recover": True,
+                    "auto_recover_limit": 2,
+                    "reflex_cooldown_seconds": 900,
+                    "allow_failover": True,
+                    "toolsets": [],
+                    "cron_session_target": "isolated",
+                    "cron_wake_mode": "next-heartbeat",
+                    "cron_payload_kind": "agentTurn",
+                },
+            )
+        )
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "cron.update",
+                "params": {
+                    "id": f"task-blueprint:{task_id}",
+                    "patch": {
+                        "delivery": {
+                            "mode": "announce",
+                            "channel": " TeLeGrAm ",
+                            "to": " 7200373102 ",
+                            "accountId": " coordinator ",
+                            "bestEffort": True,
+                            "failureDestination": {
+                                "mode": "announce",
+                                "channel": " Signal ",
+                                "to": " +15550001111 ",
+                                "accountId": " escalations ",
+                            },
+                        },
+                    },
+                },
+            },
+        )
+        list_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "cron.list",
+                "params": {"includeDisabled": True},
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["delivery"] == {
+        "mode": "announce",
+        "channel": "telegram",
+        "to": "7200373102",
+        "accountId": "coordinator",
+        "bestEffort": True,
+        "failureDestination": {
+            "mode": "announce",
+            "channel": "signal",
+            "to": "+15550001111",
+            "accountId": "escalations",
+        },
+    }
+    assert list_response.status_code == 200
+    assert list_response.json()["jobs"][0]["delivery"] == {
+        "mode": "announce",
+        "channel": "telegram",
+        "to": "7200373102",
+        "accountId": "coordinator",
+        "bestEffort": True,
+        "failureDestination": {
+            "mode": "announce",
+            "channel": "signal",
+            "to": "+15550001111",
+            "accountId": "escalations",
+        },
+    }
+
+
+def test_gateway_node_method_call_endpoint_clears_cron_failure_destination_fields(tmp_path) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        database = client.app.state.database
+        task_id = asyncio.run(
+            database.create_task_blueprint(
+                name="Nightly Ship",
+                summary="Ship the next verified slice.",
+                project_id=None,
+                instance_id=None,
+                cadence_minutes=60,
+                enabled=True,
+                payload={
+                    "objective_template": "Run this on the isolated cron lane.",
+                    "conversation_target": None,
+                    "run_until_complete": False,
+                    "continuation_cooldown_minutes": 10,
+                    "completion_marker": None,
+                    "cwd": None,
+                    "model": "gpt-5.4",
+                    "reasoning_effort": None,
+                    "collaboration_mode": None,
+                    "max_turns": None,
+                    "use_builtin_agents": True,
+                    "run_verification": True,
+                    "auto_commit": False,
+                    "pause_on_approval": True,
+                    "allow_auto_reflexes": True,
+                    "auto_recover": True,
+                    "auto_recover_limit": 2,
+                    "reflex_cooldown_seconds": 900,
+                    "allow_failover": True,
+                    "toolsets": [],
+                    "cron_session_target": "isolated",
+                    "cron_wake_mode": "next-heartbeat",
+                    "cron_payload_kind": "agentTurn",
+                    "cron_delivery_mode": "announce",
+                    "cron_delivery_channel": "telegram",
+                    "cron_delivery_to": "7200373102",
+                    "cron_delivery_failure_destination": {
+                        "mode": "announce",
+                        "channel": "signal",
+                        "to": "+15550001111",
+                        "accountId": "escalations",
+                    },
+                },
+            )
+        )
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "cron.update",
+                "params": {
+                    "id": f"task-blueprint:{task_id}",
+                    "patch": {
+                        "delivery": {
+                            "failureDestination": {
+                                "channel": "   ",
+                                "accountId": "",
+                            },
+                        },
+                    },
+                },
+            },
+        )
+        list_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "cron.list",
+                "params": {"includeDisabled": True},
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["delivery"] == {
+        "mode": "announce",
+        "channel": "telegram",
+        "to": "7200373102",
+        "failureDestination": {
+            "mode": "announce",
+            "to": "+15550001111",
+        },
+    }
+    assert list_response.status_code == 200
+    assert list_response.json()["jobs"][0]["delivery"] == {
+        "mode": "announce",
+        "channel": "telegram",
+        "to": "7200373102",
+        "failureDestination": {
+            "mode": "announce",
+            "to": "+15550001111",
+        },
+    }
+
+
 def test_gateway_node_method_call_endpoint_supports_wake_now_and_next_heartbeat(tmp_path) -> None:
     app_settings = Settings(
         data_dir=tmp_path / "data",
@@ -6860,7 +11233,13 @@ def test_gateway_node_method_call_endpoint_supports_wake_now_and_next_heartbeat(
                 },
             },
         )
-        messages_after_now = asyncio.run(client.app.state.database.list_control_chat_messages())
+        messages_after_now = _wait_for(
+            lambda: asyncio.run(client.app.state.database.list_control_chat_messages()),
+            lambda messages: [
+                message["content"] for message in messages if message["role"] == "user"
+            ]
+            == ["Resume parity from the latest checkpoint."],
+        )
         queued_response = client.post(
             "/api/gateway/node-methods/call",
             json={
@@ -6872,6 +11251,7 @@ def test_gateway_node_method_call_endpoint_supports_wake_now_and_next_heartbeat(
             },
         )
         messages_before_tick = asyncio.run(client.app.state.database.list_control_chat_messages())
+        events_before_tick = asyncio.run(client.app.state.database.list_events())
         dashboard = DashboardView.model_validate(client.get("/api/dashboard").json())
         acted = asyncio.run(client.app.state.control_chat_service.tick_attention_queue(dashboard))
         messages_after_tick = asyncio.run(client.app.state.database.list_control_chat_messages())
@@ -6888,6 +11268,11 @@ def test_gateway_node_method_call_endpoint_supports_wake_now_and_next_heartbeat(
     assert [
         message["content"] for message in messages_before_tick if message["role"] == "user"
     ] == ["Resume parity from the latest checkpoint."]
+    assert [event["method"] for event in events_before_tick] == ["system-event", "system-event"]
+    assert [event["payload"] for event in events_before_tick] == [
+        {"text": "Resume parity from the latest checkpoint.", "reason": "wake"},
+        {"text": "Check the queued parity nudge on the next heartbeat.", "reason": "wake"},
+    ]
 
     assert acted is True
     assert [
@@ -6896,7 +11281,638 @@ def test_gateway_node_method_call_endpoint_supports_wake_now_and_next_heartbeat(
         "Resume parity from the latest checkpoint.",
         "Check the queued parity nudge on the next heartbeat.",
     ]
+    assert len(wake_requests) == 2
+    assert wake_requests[0]["mode"] == "now"
+    assert wake_requests[0]["text"] == "Resume parity from the latest checkpoint."
+    assert wake_requests[0]["status"] == "dispatched"
+    assert wake_requests[1]["mode"] == "next-heartbeat"
+    assert wake_requests[1]["text"] == "Check the queued parity nudge on the next heartbeat."
+    assert wake_requests[1]["status"] == "dispatched"
+
+
+def test_gateway_node_method_call_endpoint_wake_allows_opaque_metadata_fields(tmp_path) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "wake",
+                "params": {
+                    "mode": "now",
+                    "text": "Resume parity from the latest checkpoint.",
+                    "source": "heartbeat",
+                    "requestId": "wake-meta-1",
+                    "metadata": {"thread": "parity"},
+                },
+            },
+        )
+        messages = _wait_for(
+            lambda: asyncio.run(client.app.state.database.list_control_chat_messages()),
+            lambda records: [message["content"] for message in records if message["role"] == "user"]
+            == ["Resume parity from the latest checkpoint."],
+        )
+        events = asyncio.run(client.app.state.database.list_events())
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True}
+    assert [message["content"] for message in messages if message["role"] == "user"] == [
+        "Resume parity from the latest checkpoint."
+    ]
+    assert len(events) == 1
+    assert events[0]["method"] == "system-event"
+    assert events[0]["payload"] == {
+        "text": "Resume parity from the latest checkpoint.",
+        "reason": "wake",
+    }
+
+
+def test_gateway_node_method_call_endpoint_wake_now_does_not_flush_next_heartbeat_rows(
+    tmp_path,
+) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        queued_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "wake",
+                "params": {
+                    "mode": "next-heartbeat",
+                    "text": "Check the queued parity nudge on the next heartbeat.",
+                },
+            },
+        )
+        now_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "wake",
+                "params": {
+                    "mode": "now",
+                    "text": "Resume parity from the latest checkpoint.",
+                },
+            },
+        )
+        wake_requests = _wait_for(
+            lambda: asyncio.run(client.app.state.database.list_gateway_wake_requests()),
+            lambda rows: len(rows) == 2
+            and rows[0]["status"] == "pending"
+            and rows[1]["status"] == "dispatched",
+        )
+        messages = asyncio.run(client.app.state.database.list_control_chat_messages())
+
+    assert queued_response.status_code == 200
+    assert queued_response.json() == {"ok": True}
+    assert now_response.status_code == 200
+    assert now_response.json() == {"ok": True}
+    assert [message["content"] for message in messages if message["role"] == "user"] == [
+        "Resume parity from the latest checkpoint."
+    ]
+    assert len(wake_requests) == 2
+    assert wake_requests[0]["mode"] == "next-heartbeat"
+    assert wake_requests[0]["text"] == "Check the queued parity nudge on the next heartbeat."
+    assert wake_requests[0]["status"] == "pending"
+    assert wake_requests[1]["mode"] == "now"
+    assert wake_requests[1]["text"] == "Resume parity from the latest checkpoint."
+    assert wake_requests[1]["status"] == "dispatched"
+
+
+def test_gateway_node_method_call_endpoint_wake_now_coalesces_duplicate_rows(
+    tmp_path,
+) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        first_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "wake",
+                "params": {
+                    "mode": "now",
+                    "text": "Resume parity from the latest checkpoint.",
+                },
+            },
+        )
+        second_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "wake",
+                "params": {
+                    "mode": "now",
+                    "text": "Resume parity from the latest checkpoint.",
+                },
+            },
+        )
+        immediate_messages = asyncio.run(client.app.state.database.list_control_chat_messages())
+        delayed_messages = _wait_for(
+            lambda: asyncio.run(client.app.state.database.list_control_chat_messages()),
+            lambda records: [message["content"] for message in records if message["role"] == "user"]
+            == ["Resume parity from the latest checkpoint."],
+        )
+        wake_requests = _wait_for(
+            lambda: asyncio.run(client.app.state.database.list_gateway_wake_requests()),
+            lambda rows: len(rows) == 1 and rows[0]["status"] == "dispatched",
+        )
+
+    assert first_response.status_code == 200
+    assert first_response.json() == {"ok": True}
+    assert second_response.status_code == 200
+    assert second_response.json() == {"ok": True}
+    assert [message["content"] for message in immediate_messages if message["role"] == "user"] == []
+    assert [message["content"] for message in delayed_messages if message["role"] == "user"] == [
+        "Resume parity from the latest checkpoint."
+    ]
     assert len(wake_requests) == 1
+    assert wake_requests[0]["status"] == "dispatched"
+
+
+def test_gateway_node_method_call_endpoint_wake_now_batches_distinct_rows(
+    tmp_path,
+) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        first_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "wake",
+                "params": {
+                    "mode": "now",
+                    "text": "Resume parity from checkpoint A.",
+                },
+            },
+        )
+        second_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "wake",
+                "params": {
+                    "mode": "now",
+                    "text": "Resume parity from checkpoint B.",
+                },
+            },
+        )
+        immediate_messages = asyncio.run(client.app.state.database.list_control_chat_messages())
+        delayed_messages = _wait_for(
+            lambda: asyncio.run(client.app.state.database.list_control_chat_messages()),
+            lambda records: [message["content"] for message in records if message["role"] == "user"]
+            == ["Resume parity from checkpoint B."],
+        )
+        wake_requests = _wait_for(
+            lambda: asyncio.run(client.app.state.database.list_gateway_wake_requests()),
+            lambda rows: len(rows) == 1 and rows[0]["status"] == "dispatched",
+        )
+
+    assert first_response.status_code == 200
+    assert first_response.json() == {"ok": True}
+    assert second_response.status_code == 200
+    assert second_response.json() == {"ok": True}
+    assert [message["content"] for message in immediate_messages if message["role"] == "user"] == []
+    assert [message["content"] for message in delayed_messages if message["role"] == "user"] == [
+        "Resume parity from checkpoint B.",
+    ]
+    assert len(wake_requests) == 1
+    assert wake_requests[0]["text"] == "Resume parity from checkpoint B."
+    assert wake_requests[0]["status"] == "dispatched"
+
+
+def test_gateway_node_method_call_endpoint_wake_preserves_distinct_session_targets(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+    submit_calls: list[tuple[str, str | None]] = []
+
+    async def fake_submit(
+        prompt: str,
+        dashboard: DashboardView,
+        *,
+        session_key: str | None = None,
+    ) -> object:
+        del dashboard
+        submit_calls.append((prompt, session_key))
+        return {"ok": True}
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        monkeypatch.setattr(client.app.state.control_chat_service, "submit", fake_submit)
+        first_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "wake",
+                "params": {
+                    "mode": "next-heartbeat",
+                    "text": "Resume parity from the latest checkpoint.",
+                    "sessionKey": "openzues:thread:ops",
+                },
+            },
+        )
+        second_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "wake",
+                "params": {
+                    "mode": "next-heartbeat",
+                    "text": "Resume parity from the latest checkpoint.",
+                    "sessionKey": "openzues:thread:main",
+                },
+            },
+        )
+        dashboard = DashboardView.model_validate(client.get("/api/dashboard").json())
+        acted = asyncio.run(client.app.state.control_chat_service.tick_attention_queue(dashboard))
+        wake_requests = asyncio.run(client.app.state.database.list_gateway_wake_requests())
+
+    assert first_response.status_code == 200
+    assert first_response.json() == {"ok": True}
+    assert second_response.status_code == 200
+    assert second_response.json() == {"ok": True}
+    assert acted is True
+    assert submit_calls == [
+        ("Resume parity from the latest checkpoint.", "openzues:thread:ops"),
+        ("Resume parity from the latest checkpoint.", "openzues:thread:main"),
+    ]
+    assert len(wake_requests) == 2
+    assert [request["session_key"] for request in wake_requests] == [
+        "openzues:thread:ops",
+        "openzues:thread:main",
+    ]
+    assert [request["status"] for request in wake_requests] == ["dispatched", "dispatched"]
+
+
+def test_gateway_node_method_call_endpoint_wake_resolves_main_agent_target(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+    submit_calls: list[tuple[str, str | None]] = []
+
+    async def fake_submit(
+        prompt: str,
+        dashboard: DashboardView,
+        *,
+        session_key: str | None = None,
+    ) -> object:
+        del dashboard
+        submit_calls.append((prompt, session_key))
+        return {"ok": True}
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        resolved_session_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={"method": "sessions.resolve", "params": {"agentId": "main"}},
+        )
+        monkeypatch.setattr(client.app.state.control_chat_service, "submit", fake_submit)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "wake",
+                "params": {
+                    "mode": "next-heartbeat",
+                    "text": "Resume parity through the main agent target.",
+                    "agentId": "main",
+                },
+            },
+        )
+        dashboard = DashboardView.model_validate(client.get("/api/dashboard").json())
+        acted = asyncio.run(client.app.state.control_chat_service.tick_attention_queue(dashboard))
+        events = asyncio.run(client.app.state.database.list_events())
+        wake_requests = asyncio.run(client.app.state.database.list_gateway_wake_requests())
+
+    assert resolved_session_response.status_code == 200
+    resolved_session_key = resolved_session_response.json()["key"]
+    assert response.status_code == 200
+    assert response.json() == {"ok": True}
+    assert acted is True
+    assert submit_calls == [
+        ("Resume parity through the main agent target.", resolved_session_key),
+    ]
+    assert [event["payload"] for event in events] == [
+        {
+            "text": "Resume parity through the main agent target.",
+            "reason": "wake",
+            "agentId": "main",
+            "sessionKey": resolved_session_key,
+        }
+    ]
+    assert len(wake_requests) == 1
+    assert wake_requests[0]["agent_id"] == "main"
+    assert wake_requests[0]["session_key"] == resolved_session_key
+    assert wake_requests[0]["status"] == "dispatched"
+
+
+def test_gateway_node_method_call_endpoint_wake_derives_agent_identity_from_session_key(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+    submit_calls: list[tuple[str, str | None]] = []
+    target_session_key = "agent:main:thread:demo"
+
+    async def fake_submit(
+        prompt: str,
+        dashboard: DashboardView,
+        *,
+        session_key: str | None = None,
+    ) -> object:
+        del dashboard
+        submit_calls.append((prompt, session_key))
+        return {"ok": True}
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        monkeypatch.setattr(client.app.state.control_chat_service, "submit", fake_submit)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "wake",
+                "params": {
+                    "mode": "next-heartbeat",
+                    "text": "Resume parity through the explicit session target.",
+                    "sessionKey": target_session_key,
+                },
+            },
+        )
+        dashboard = DashboardView.model_validate(client.get("/api/dashboard").json())
+        acted = asyncio.run(client.app.state.control_chat_service.tick_attention_queue(dashboard))
+        events = asyncio.run(client.app.state.database.list_events())
+        wake_requests = asyncio.run(client.app.state.database.list_gateway_wake_requests())
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True}
+    assert acted is True
+    assert submit_calls == [
+        ("Resume parity through the explicit session target.", target_session_key),
+    ]
+    assert [event["payload"] for event in events] == [
+        {
+            "text": "Resume parity through the explicit session target.",
+            "reason": "wake",
+            "agentId": "main",
+            "sessionKey": target_session_key,
+        }
+    ]
+    assert len(wake_requests) == 1
+    assert wake_requests[0]["agent_id"] == "main"
+    assert wake_requests[0]["session_key"] == target_session_key
+    assert wake_requests[0]["status"] == "dispatched"
+
+
+def test_gateway_node_method_call_endpoint_wake_preserves_explicit_reason_metadata(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+    submit_calls: list[tuple[str, str | None]] = []
+    target_session_key = "agent:main:thread:demo"
+
+    async def fake_submit(
+        prompt: str,
+        dashboard: DashboardView,
+        *,
+        session_key: str | None = None,
+    ) -> object:
+        del dashboard
+        submit_calls.append((prompt, session_key))
+        return {"ok": True}
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        monkeypatch.setattr(client.app.state.control_chat_service, "submit", fake_submit)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "wake",
+                "params": {
+                    "mode": "next-heartbeat",
+                    "text": "Resume parity through the cron wake.",
+                    "reason": "cron:job-1",
+                    "sessionKey": target_session_key,
+                },
+            },
+        )
+        dashboard = DashboardView.model_validate(client.get("/api/dashboard").json())
+        acted = asyncio.run(client.app.state.control_chat_service.tick_attention_queue(dashboard))
+        events = asyncio.run(client.app.state.database.list_events())
+        wake_requests = asyncio.run(client.app.state.database.list_gateway_wake_requests())
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True}
+    assert acted is True
+    assert submit_calls == [("Resume parity through the cron wake.", target_session_key)]
+    assert [event["payload"] for event in events] == [
+        {
+            "text": "Resume parity through the cron wake.",
+            "reason": "cron:job-1",
+            "agentId": "main",
+            "sessionKey": target_session_key,
+        }
+    ]
+    assert len(wake_requests) == 1
+    assert wake_requests[0]["reason"] == "cron:job-1"
+    assert wake_requests[0]["agent_id"] == "main"
+    assert wake_requests[0]["session_key"] == target_session_key
+    assert wake_requests[0]["status"] == "dispatched"
+
+
+def test_gateway_node_method_call_endpoint_wake_upgrades_duplicate_pending_reason_by_priority(
+    tmp_path,
+) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+    target_session_key = "agent:main:thread:demo"
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        first_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "wake",
+                "params": {
+                    "mode": "next-heartbeat",
+                    "text": "Resume parity through the prioritized wake.",
+                    "reason": "retry",
+                    "sessionKey": target_session_key,
+                },
+            },
+        )
+        second_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "wake",
+                "params": {
+                    "mode": "next-heartbeat",
+                    "text": "Resume parity through the prioritized wake.",
+                    "reason": "exec-event",
+                    "sessionKey": target_session_key,
+                },
+            },
+        )
+        events = asyncio.run(client.app.state.database.list_events())
+        wake_requests = asyncio.run(client.app.state.database.list_gateway_wake_requests())
+
+    assert first_response.status_code == 200
+    assert first_response.json() == {"ok": True}
+    assert second_response.status_code == 200
+    assert second_response.json() == {"ok": True}
+    assert [event["payload"] for event in events] == [
+        {
+            "text": "Resume parity through the prioritized wake.",
+            "reason": "retry",
+            "agentId": "main",
+            "sessionKey": target_session_key,
+        },
+        {
+            "text": "Resume parity through the prioritized wake.",
+            "reason": "exec-event",
+            "agentId": "main",
+            "sessionKey": target_session_key,
+        },
+    ]
+    assert len(wake_requests) == 1
+    assert wake_requests[0]["reason"] == "exec-event"
+    assert wake_requests[0]["agent_id"] == "main"
+    assert wake_requests[0]["session_key"] == target_session_key
+    assert wake_requests[0]["status"] == "pending"
+
+
+def test_gateway_node_method_call_endpoint_wake_keeps_winning_text_on_lower_priority_followup(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+    submit_calls: list[tuple[str, str | None]] = []
+    target_session_key = "agent:main:thread:demo"
+
+    async def fake_submit(
+        prompt: str,
+        dashboard: DashboardView,
+        *,
+        session_key: str | None = None,
+    ) -> object:
+        del dashboard
+        submit_calls.append((prompt, session_key))
+        return {"ok": True}
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        monkeypatch.setattr(client.app.state.control_chat_service, "submit", fake_submit)
+        first_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "wake",
+                "params": {
+                    "mode": "next-heartbeat",
+                    "text": "Resume parity from checkpoint A.",
+                    "reason": "exec-event",
+                    "sessionKey": target_session_key,
+                },
+            },
+        )
+        second_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "wake",
+                "params": {
+                    "mode": "next-heartbeat",
+                    "text": "Resume parity from checkpoint B.",
+                    "reason": "retry",
+                    "sessionKey": target_session_key,
+                },
+            },
+        )
+        dashboard = DashboardView.model_validate(client.get("/api/dashboard").json())
+        acted = asyncio.run(client.app.state.control_chat_service.tick_attention_queue(dashboard))
+        wake_requests = asyncio.run(client.app.state.database.list_gateway_wake_requests())
+
+    assert first_response.status_code == 200
+    assert first_response.json() == {"ok": True}
+    assert second_response.status_code == 200
+    assert second_response.json() == {"ok": True}
+    assert acted is True
+    assert submit_calls == [("Resume parity from checkpoint A.", target_session_key)]
+    assert len(wake_requests) == 1
+    assert wake_requests[0]["text"] == "Resume parity from checkpoint A."
+    assert wake_requests[0]["reason"] == "exec-event"
+    assert wake_requests[0]["agent_id"] == "main"
+    assert wake_requests[0]["session_key"] == target_session_key
+    assert wake_requests[0]["status"] == "dispatched"
+
+
+def test_gateway_node_method_call_endpoint_wake_now_records_dispatched_wake_request(
+    tmp_path,
+) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "wake",
+                "params": {
+                    "mode": "now",
+                    "text": "Resume parity from the latest checkpoint.",
+                },
+            },
+        )
+        wake_requests = _wait_for(
+            lambda: asyncio.run(client.app.state.database.list_gateway_wake_requests()),
+            lambda rows: len(rows) == 1 and rows[0]["status"] == "dispatched",
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True}
+    assert len(wake_requests) == 1
+    assert wake_requests[0]["mode"] == "now"
+    assert wake_requests[0]["text"] == "Resume parity from the latest checkpoint."
     assert wake_requests[0]["status"] == "dispatched"
 
 
@@ -8142,6 +13158,213 @@ def test_gateway_node_method_call_endpoint_rejects_agent_session_key_mismatch(tm
     )
 
 
+@pytest.mark.parametrize(
+    ("params", "expected_channel"),
+    [
+        (
+            {
+                "channel": "not-a-real-channel",
+            },
+            "not-a-real-channel",
+        ),
+        (
+            {
+                "replyChannel": "not-a-real-reply-channel",
+            },
+            "not-a-real-reply-channel",
+        ),
+    ],
+)
+def test_gateway_node_method_call_endpoint_rejects_unknown_agent_channel_hints(
+    tmp_path,
+    params: dict[str, str],
+    expected_channel: str,
+) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "agent",
+                "params": {
+                    "message": "Ship the next verified slice.",
+                    "agentId": "main",
+                    "idempotencyKey": f"agent-run-unknown-channel-api-{expected_channel}",
+                    **params,
+                },
+            },
+        )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == f"invalid agent params: unknown channel: {expected_channel}"
+
+
+@pytest.mark.parametrize(
+    ("params",),
+    [
+        (
+            {
+                "channel": "last",
+            },
+        ),
+        (
+            {
+                "replyChannel": "last",
+            },
+        ),
+    ],
+)
+def test_gateway_node_method_call_endpoint_treats_last_agent_channel_hints_as_omitted(
+    params: dict[str, str],
+) -> None:
+    tmp_path = (
+        Path.cwd() / ".tmp-pytest-local" / "gateway-agent-launch-last-channel-hint-api"
+    )
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-agent-launch-last-channel-hint-api.db")
+    asyncio.run(database.initialize())
+    main_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+    )
+    mission_id = asyncio.run(
+        database.create_mission(
+            name="Gateway Agent Last Channel Hint API Loop",
+            objective='Launch parity while treating "last" channel hints as omitted.',
+            status="active",
+            instance_id=7,
+            project_id=None,
+            thread_id="thread-agent-launch-last-channel-hint-api",
+            session_key=main_session_key,
+            cwd=str(tmp_path),
+            model="gpt-5.4",
+            reasoning_effort=None,
+            collaboration_mode=None,
+            max_turns=None,
+            use_builtin_agents=False,
+            run_verification=False,
+            auto_commit=False,
+            pause_on_approval=True,
+            allow_auto_reflexes=True,
+            auto_recover=True,
+            auto_recover_limit=2,
+            reflex_cooldown_seconds=900,
+            allow_failover=True,
+        )
+    )
+
+    observed_send: dict[str, object] = {}
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        observed_send.update(
+            {
+                "session_key": session_key,
+                "message": message,
+                "idempotency_key": idempotency_key,
+                "thinking": thinking,
+                "deliver": deliver,
+                "timeout_ms": timeout_ms,
+            }
+        )
+        return {"runId": idempotency_key, "status": "ok"}
+
+    sleep_calls = 0
+
+    async def fake_sleep(_seconds: float) -> None:
+        nonlocal sleep_calls
+        sleep_calls += 1
+        if sleep_calls == 1:
+            await database.update_mission(
+                mission_id,
+                status="completed",
+                in_progress=0,
+                phase="completed",
+                last_checkpoint='Gateway API agent "last" channel hint launch completed.',
+            )
+
+    gateway_node_method_service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        chat_send_service=fake_chat_send_service,
+        sleep=fake_sleep,
+    )
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(
+        app_settings,
+        database=database,
+        gateway_node_method_service=gateway_node_method_service,
+    )
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        launch_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "agent",
+                "params": {
+                    "message": "Ship the next verified slice.",
+                    "agentId": "main",
+                    "idempotencyKey": "agent-run-last-channel-hint-api-1",
+                    **params,
+                },
+            },
+        )
+        wait_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "agent.wait",
+                "params": {
+                    "runId": "agent-run-last-channel-hint-api-1",
+                    "timeoutMs": 5,
+                },
+            },
+        )
+
+    assert observed_send == {
+        "session_key": main_session_key,
+        "message": "Ship the next verified slice.",
+        "idempotency_key": "agent-run-last-channel-hint-api-1",
+        "thinking": None,
+        "deliver": None,
+        "timeout_ms": None,
+    }
+    assert launch_response.status_code == 200
+    launch_payload = launch_response.json()
+    assert launch_payload["runId"] == "agent-run-last-channel-hint-api-1"
+    assert launch_payload["status"] == "accepted"
+    assert isinstance(launch_payload["acceptedAt"], int)
+    assert wait_response.status_code == 200
+    wait_payload = wait_response.json()
+    assert wait_payload["runId"] == "agent-run-last-channel-hint-api-1"
+    assert wait_payload["status"] == "ok"
+    assert isinstance(wait_payload["startedAt"], int)
+    assert isinstance(wait_payload["endedAt"], int)
+    assert wait_payload["endedAt"] >= wait_payload["startedAt"]
+    assert sleep_calls == 1
+
+
 def test_gateway_node_method_call_endpoint_accepts_matching_key_and_session_id_selectors() -> None:
     tmp_path = (
         Path.cwd()
@@ -9154,6 +14377,216 @@ def test_gateway_node_method_call_endpoint_allows_empty_internal_events() -> Non
     assert wait_response.status_code == 200
     wait_payload = wait_response.json()
     assert wait_payload["runId"] == "agent-run-empty-internal-events-api-1"
+    assert wait_payload["status"] == "ok"
+    assert isinstance(wait_payload["startedAt"], int)
+    assert isinstance(wait_payload["endedAt"], int)
+    assert wait_payload["endedAt"] >= wait_payload["startedAt"]
+    assert sleep_calls == 1
+
+
+@pytest.mark.parametrize(
+    ("input_provenance", "expected_message"),
+    [
+        (
+            {"kind": "not-a-real-kind"},
+            "inputProvenance.kind must be one of: external_user, inter_session, internal_system",
+        ),
+        (
+            {"kind": "inter_session", "unexpectedField": "drift"},
+            "inputProvenance does not accept: unexpectedField",
+        ),
+    ],
+)
+def test_gateway_node_method_call_endpoint_rejects_invalid_agent_input_provenance(
+    tmp_path,
+    input_provenance: dict[str, str],
+    expected_message: str,
+) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "agent",
+                "params": {
+                    "message": "Ship the next verified slice.",
+                    "agentId": "main",
+                    "inputProvenance": input_provenance,
+                    "idempotencyKey": "agent-run-invalid-input-provenance-api-1",
+                },
+            },
+        )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == expected_message
+
+
+@pytest.mark.parametrize(
+    ("attachments",),
+    [
+        (
+            [
+                {
+                    "type": "image",
+                    "mimeType": "image/png",
+                    "fileName": "preview.png",
+                }
+            ],
+        ),
+        (
+            [
+                {
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/png",
+                    }
+                }
+            ],
+        ),
+    ],
+)
+def test_gateway_node_method_call_endpoint_ignores_inert_agent_attachments(
+    attachments: list[dict[str, object]],
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-agent-launch-inert-attachments-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-agent-launch-inert-attachments-api.db")
+    asyncio.run(database.initialize())
+    main_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+    )
+    mission_id = asyncio.run(
+        database.create_mission(
+            name="Gateway API Agent Inert Attachments Loop",
+            objective="Launch parity while treating inert attachments as omitted.",
+            status="active",
+            instance_id=7,
+            project_id=None,
+            thread_id="thread-agent-launch-inert-attachments-api",
+            session_key=main_session_key,
+            cwd=str(tmp_path),
+            model="gpt-5.4",
+            reasoning_effort=None,
+            collaboration_mode=None,
+            max_turns=None,
+            use_builtin_agents=False,
+            run_verification=False,
+            auto_commit=False,
+            pause_on_approval=True,
+            allow_auto_reflexes=True,
+            auto_recover=True,
+            auto_recover_limit=2,
+            reflex_cooldown_seconds=900,
+            allow_failover=True,
+        )
+    )
+
+    observed_send: dict[str, object] = {}
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        observed_send.update(
+            {
+                "session_key": session_key,
+                "message": message,
+                "idempotency_key": idempotency_key,
+                "thinking": thinking,
+                "deliver": deliver,
+                "timeout_ms": timeout_ms,
+            }
+        )
+        return {"runId": idempotency_key, "status": "ok"}
+
+    sleep_calls = 0
+
+    async def fake_sleep(_seconds: float) -> None:
+        nonlocal sleep_calls
+        sleep_calls += 1
+        if sleep_calls == 1:
+            await database.update_mission(
+                mission_id,
+                status="completed",
+                in_progress=0,
+                phase="completed",
+                last_checkpoint="Gateway API agent inert attachments launch completed.",
+            )
+
+    gateway_node_method_service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        chat_send_service=fake_chat_send_service,
+        sleep=fake_sleep,
+    )
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(
+        app_settings,
+        database=database,
+        gateway_node_method_service=gateway_node_method_service,
+    )
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        launch_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "agent",
+                "params": {
+                    "message": "Ship the next verified slice.",
+                    "agentId": "main",
+                    "attachments": attachments,
+                    "idempotencyKey": "agent-run-inert-attachments-api-1",
+                },
+            },
+        )
+        wait_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "agent.wait",
+                "params": {
+                    "runId": "agent-run-inert-attachments-api-1",
+                    "timeoutMs": 5,
+                },
+            },
+        )
+
+    assert observed_send == {
+        "session_key": main_session_key,
+        "message": "Ship the next verified slice.",
+        "idempotency_key": "agent-run-inert-attachments-api-1",
+        "thinking": None,
+        "deliver": None,
+        "timeout_ms": None,
+    }
+    assert launch_response.status_code == 200
+    launch_payload = launch_response.json()
+    assert launch_payload["runId"] == "agent-run-inert-attachments-api-1"
+    assert launch_payload["status"] == "accepted"
+    assert isinstance(launch_payload["acceptedAt"], int)
+    assert wait_response.status_code == 200
+    wait_payload = wait_response.json()
+    assert wait_payload["runId"] == "agent-run-inert-attachments-api-1"
     assert wait_payload["status"] == "ok"
     assert isinstance(wait_payload["startedAt"], int)
     assert isinstance(wait_payload["endedAt"], int)
@@ -10572,6 +16005,8 @@ def test_gateway_node_method_call_endpoint_supports_commands_list(tmp_path) -> N
     payload = response.json()
     assert payload["commands"]
     assert any(command["name"] == "status" for command in payload["commands"])
+    assert any(command["name"] == "agents.list" for command in payload["commands"])
+    assert any(command["name"] == "channels.status" for command in payload["commands"])
     assert any(command["name"] == "browser.open" for command in payload["commands"])
 
 
@@ -10741,7 +16176,7 @@ def test_gateway_node_method_call_endpoint_supports_system_presence(tmp_path) ->
     self_entry = next(
         entry for entry in payload["entries"] if entry.get("reason") == "self"
     )
-    assert self_entry["deviceId"].startswith("gateway-")
+    assert re.fullmatch(r"[0-9a-f]{64}", self_entry["deviceId"])
     assert self_entry["instanceId"] == self_entry["deviceId"]
     assert self_entry["mode"] == "backend"
     assert self_entry["roles"] == ["operator"]
@@ -12451,6 +17886,99 @@ def test_poll_endpoint_allows_thread_id_before_delivery_placeholder(tmp_path) ->
     }
 
 
+def test_poll_endpoint_allows_duration_hours_and_silent_before_placeholder(tmp_path) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "poll",
+                "params": {
+                    "to": "channel:C123",
+                    "question": "Ship it?",
+                    "options": ["Yes", "No"],
+                    "durationHours": 24,
+                    "silent": True,
+                    "channel": "slack",
+                    "accountId": "default",
+                    "threadId": "1710000000.9999",
+                    "idempotencyKey": "idem-poll-duration-hours",
+                },
+            },
+        )
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "detail": "poll is unavailable until channel-target poll delivery is wired"
+    }
+
+
+def test_poll_endpoint_allows_is_anonymous_before_placeholder(tmp_path) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "poll",
+                "params": {
+                    "to": "channel:C123",
+                    "question": "Ship it?",
+                    "options": ["Yes", "No"],
+                    "isAnonymous": False,
+                    "channel": "slack",
+                    "idempotencyKey": "idem-poll-anon",
+                },
+            },
+        )
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "detail": "poll is unavailable until channel-target poll delivery is wired"
+    }
+
+
+def test_poll_endpoint_allows_large_duration_hours_before_placeholder(tmp_path) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "poll",
+                "params": {
+                    "to": "channel:C123",
+                    "question": "Ship it?",
+                    "options": ["Yes", "No"],
+                    "durationHours": 100_000,
+                    "channel": "slack",
+                    "idempotencyKey": "idem-poll-duration-hours-large",
+                },
+            },
+        )
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "detail": "poll is unavailable until channel-target poll delivery is wired"
+    }
+
+
 def test_poll_endpoint_rejects_invalid_whatsapp_target_shape(tmp_path) -> None:
     app_settings = Settings(
         data_dir=tmp_path / "data",
@@ -12559,12 +18087,7 @@ def test_poll_endpoint_rejects_internal_webchat_channel(tmp_path) -> None:
         )
 
     assert response.status_code == 400
-    assert response.json() == {
-        "detail": (
-            "unsupported channel: webchat (internal-only). Use `chat.send` for WebChat UI "
-            "messages or choose a deliverable channel."
-        )
-    }
+    assert response.json() == {"detail": "unsupported poll channel: webchat"}
 
 
 def test_poll_endpoint_rejects_missing_channel_when_no_route_channels_configured(

@@ -5,6 +5,7 @@ import json
 import re
 import secrets
 import time
+import unicodedata
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta, timezone
@@ -32,7 +33,10 @@ from openzues.services.gateway_health import GatewayHealthService
 from openzues.services.gateway_identity import GatewayIdentityService
 from openzues.services.gateway_last_heartbeat import GatewayLastHeartbeatService
 from openzues.services.gateway_logs import GatewayLogsService, GatewayLogsUnavailableError
-from openzues.services.gateway_method_policy import TALK_SECRETS_GATEWAY_METHOD_SCOPE
+from openzues.services.gateway_method_policy import (
+    ADMIN_GATEWAY_METHOD_SCOPE,
+    TALK_SECRETS_GATEWAY_METHOD_SCOPE,
+)
 from openzues.services.gateway_models import GatewayModelsService
 from openzues.services.gateway_node_command_policy import (
     is_node_command_allowed,
@@ -76,6 +80,7 @@ from openzues.services.gateway_wizard import GatewayWizardService
 from openzues.services.hub import BroadcastHub
 from openzues.services.session_keys import (
     classify_session_key_shape,
+    parse_agent_session_key,
     parse_thread_session_suffix,
     resolve_agent_id_from_session_key,
     resolve_thread_session_keys,
@@ -92,6 +97,7 @@ _SESSION_PATCH_SUBAGENT_ROLE_VALUES = {"leaf", "orchestrator"}
 _SESSION_PATCH_SUBAGENT_CONTROL_SCOPE_VALUES = {"children", "none"}
 _SESSION_PATCH_SEND_POLICY_VALUES = {"allow", "deny"}
 _SESSION_PATCH_GROUP_ACTIVATION_VALUES = {"always", "mention"}
+_INPUT_PROVENANCE_KIND_VALUES = {"external_user", "inter_session", "internal_system"}
 _DEFAULT_SESSION_DELETE_ARCHIVE_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
 _KNOWN_GATEWAY_CHAT_CHANNEL_ORDER = ("discord", "slack", "telegram", "whatsapp")
 _KNOWN_GATEWAY_CHAT_CHANNEL_IDS = set(_KNOWN_GATEWAY_CHAT_CHANNEL_ORDER)
@@ -112,6 +118,8 @@ class GatewayNodeMethodError(Exception):
     code: str
     message: str
     status_code: int = 400
+    details: dict[str, Any] | None = None
+    retryable: bool = False
 
     def __str__(self) -> str:
         return self.message
@@ -152,6 +160,7 @@ class GatewayNodeMethodService:
         cron_service: GatewayCronService | None = None,
         create_task_blueprint: Callable[..., Awaitable[object]] | None = None,
         run_task_blueprint_now: Callable[..., Awaitable[object]] | None = None,
+        dispatch_cron_system_event_task: Callable[..., Awaitable[str]] | None = None,
         delete_task_blueprint: Callable[[int], Awaitable[None]] | None = None,
         health_service: GatewayHealthService | None = None,
         gateway_identity_service: GatewayIdentityService | None = None,
@@ -181,6 +190,7 @@ class GatewayNodeMethodService:
         wizard_service: GatewayWizardService | None = None,
         voicewake_service: GatewayVoiceWakeService | None = None,
         wake_service: GatewayWakeService | None = None,
+        set_heartbeats_enabled: Callable[[bool], Awaitable[bool]] | None = None,
         sync: Callable[[], Awaitable[None]] | None = None,
         wake_node: Callable[[str], Awaitable[bool]] | None = None,
         probe_secret: Callable[[int], Awaitable[str | None]] | None = None,
@@ -208,6 +218,7 @@ class GatewayNodeMethodService:
                 self._database,
                 create_task_blueprint=self._create_task_blueprint,
                 run_task_blueprint_now=run_task_blueprint_now,
+                dispatch_system_event_task=dispatch_cron_system_event_task,
                 delete_task_blueprint=delete_task_blueprint,
             )
         self._health_service = health_service or GatewayHealthService()
@@ -256,9 +267,25 @@ class GatewayNodeMethodService:
         self._wizard_service = wizard_service
         self._voicewake_service = voicewake_service
         self._wake_service = wake_service
+        self._set_heartbeats_enabled = set_heartbeats_enabled
         self._sync = sync
         self._wake_node = wake_node
         self._probe_secret = probe_secret
+
+    async def _wait_for_node_connection(
+        self,
+        node_id: str,
+        *,
+        timeout_ms: int = 1_000,
+    ) -> bool:
+        deadline = time.monotonic() + (max(timeout_ms, 0) / 1000)
+        while True:
+            if self.registry.get(node_id) is not None:
+                return True
+            remaining_seconds = deadline - time.monotonic()
+            if remaining_seconds <= 0:
+                return self.registry.get(node_id) is not None
+            await self._sleep(min(0.05, remaining_seconds))
 
     async def call(
         self,
@@ -287,8 +314,7 @@ class GatewayNodeMethodService:
             _validate_exact_keys(resolved_method, payload, allowed_keys=())
             timestamp_ms = _timestamp_ms(now_ms)
             node_payloads: dict[str, dict[str, Any]] = {
-                node.node_id: _known_node_payload(node)
-                for node in self.registry.list_known_nodes()
+                node.node_id: _known_node_payload(node) for node in self.registry.list_known_nodes()
             }
             if self._pairing_service is not None:
                 for paired_node in await self._pairing_service.list_paired_nodes():
@@ -665,6 +691,7 @@ class GatewayNodeMethodService:
                     "name",
                     "agentId",
                     "sessionKey",
+                    "notify",
                     "description",
                     "enabled",
                     "deleteAfterRun",
@@ -851,13 +878,44 @@ class GatewayNodeMethodService:
             )
 
         if resolved_method == "wake":
-            _validate_exact_keys(resolved_method, payload, allowed_keys=("mode", "text"))
             mode = _require_enum_value(
                 payload.get("mode"),
                 label="mode",
                 allowed_values={"next-heartbeat", "now"},
             )
             text = _require_non_empty_string(payload.get("text"), label="text")
+            reason = _optional_normalized_string(payload.get("reason"), label="reason")
+            session_key = _optional_non_empty_string(payload.get("sessionKey"), label="sessionKey")
+            agent_id = _optional_normalized_string(payload.get("agentId"), label="agentId")
+            if session_key is not None:
+                parsed_agent_session = parse_agent_session_key(session_key)
+                if agent_id is None and parsed_agent_session is not None:
+                    agent_id = parsed_agent_session.agent_id
+                resolved_agent_id = resolve_agent_id_from_session_key(session_key)
+                if agent_id is not None and agent_id != resolved_agent_id:
+                    raise ValueError(f'unknown agent id "{agent_id}"')
+            elif agent_id is not None:
+                if self._sessions_service is None:
+                    raise GatewayNodeMethodError(
+                        code="UNAVAILABLE",
+                        message=(
+                            "wake session targeting is unavailable until session inventory is wired"
+                        ),
+                        status_code=503,
+                    )
+                resolved_target = await self._sessions_service.resolve_key(
+                    key=None,
+                    session_id=None,
+                    label=None,
+                    agent_id=agent_id,
+                    spawned_by=None,
+                    include_global=True,
+                    include_unknown=False,
+                )
+                session_key = _require_non_empty_string(
+                    resolved_target.get("key"),
+                    label="sessionKey",
+                )
             if self._wake_service is None:
                 raise GatewayNodeMethodError(
                     code="UNAVAILABLE",
@@ -867,6 +925,9 @@ class GatewayNodeMethodService:
             return await self._wake_service.wake(
                 mode=cast(Literal["next-heartbeat", "now"], mode),
                 text=text,
+                reason=reason,
+                agent_id=agent_id,
+                session_key=session_key,
             )
 
         if resolved_method == "connect":
@@ -1446,8 +1507,7 @@ class GatewayNodeMethodService:
             raise GatewayNodeMethodError(
                 code="UNAVAILABLE",
                 message=(
-                    "secrets.resolve is unavailable until command-target secret "
-                    "resolution is wired"
+                    "secrets.resolve is unavailable until command-target secret resolution is wired"
                 ),
                 status_code=503,
             )
@@ -1656,6 +1716,9 @@ class GatewayNodeMethodService:
                     "options",
                     "maxSelections",
                     "durationSeconds",
+                    "durationHours",
+                    "silent",
+                    "isAnonymous",
                     "channel",
                     "accountId",
                     "threadId",
@@ -1683,9 +1746,17 @@ class GatewayNodeMethodService:
                 minimum=1,
                 maximum=604_800,
             )
+            _optional_min_int(
+                payload.get("durationHours"),
+                label="durationHours",
+                minimum=1,
+            )
+            _optional_bool(payload.get("silent"), label="silent")
+            _optional_bool(payload.get("isAnonymous"), label="isAnonymous")
             resolved_channel = await self._resolve_gateway_outbound_channel(
                 payload.get("channel"),
                 reject_webchat_as_internal_only=True,
+                rejected_webchat_message="unsupported poll channel: webchat",
             )
             _validate_gateway_outbound_target(resolved_channel, to)
             if "accountId" in payload and payload.get("accountId") is not None:
@@ -1743,7 +1814,14 @@ class GatewayNodeMethodService:
                     "message",
                     "thinking",
                     "deliver",
+                    "originatingChannel",
+                    "originatingTo",
+                    "originatingAccountId",
+                    "originatingThreadId",
+                    "attachments",
                     "timeoutMs",
+                    "systemInputProvenance",
+                    "systemProvenanceReceipt",
                     "idempotencyKey",
                 ),
             )
@@ -1754,13 +1832,63 @@ class GatewayNodeMethodService:
                     status_code=503,
                 )
             session_key = _require_non_empty_string(payload.get("sessionKey"), label="sessionKey")
-            message = _require_string(payload.get("message"), label="message")
+            message = _sanitize_gateway_chat_send_message_input(
+                _require_string(payload.get("message"), label="message")
+            )
             thinking = (
                 _require_string(payload.get("thinking"), label="thinking")
                 if "thinking" in payload and payload.get("thinking") is not None
                 else None
             )
             deliver = _optional_bool(payload.get("deliver"), label="deliver")
+            explicit_origin = _normalize_gateway_chat_send_explicit_origin(
+                originating_channel=payload.get("originatingChannel"),
+                originating_to=payload.get("originatingTo"),
+                originating_account_id=payload.get("originatingAccountId"),
+                originating_thread_id=payload.get("originatingThreadId"),
+            )
+            raw_system_input_provenance = payload.get("systemInputProvenance")
+            raw_system_provenance_receipt = payload.get("systemProvenanceReceipt")
+            if raw_system_provenance_receipt is not None:
+                _require_string(
+                    raw_system_provenance_receipt,
+                    label="systemProvenanceReceipt",
+                )
+            has_raw_system_input_provenance = _has_truthy_gateway_system_input_provenance(
+                raw_system_input_provenance
+            )
+            has_raw_system_provenance_receipt = isinstance(
+                raw_system_provenance_receipt,
+                str,
+            ) and bool(raw_system_provenance_receipt)
+            if (
+                (
+                    has_raw_system_input_provenance
+                    or has_raw_system_provenance_receipt
+                    or explicit_origin is not None
+                )
+                and resolved_requester.caller_scopes is not None
+                and ADMIN_GATEWAY_METHOD_SCOPE not in resolved_requester.caller_scopes
+            ):
+                raise ValueError(
+                    "system provenance fields require admin scope"
+                    if has_raw_system_input_provenance or has_raw_system_provenance_receipt
+                    else "originating route fields require admin scope"
+                )
+            system_input_provenance = _normalize_gateway_optional_input_provenance(
+                raw_system_input_provenance
+            )
+            system_provenance_receipt = _sanitize_gateway_optional_chat_system_receipt(
+                payload.get("systemProvenanceReceipt"),
+            )
+            attachments = payload.get("attachments")
+            has_effective_attachments = False
+            if attachments is not None:
+                if not isinstance(attachments, list):
+                    raise ValueError("attachments must be an array")
+                has_effective_attachments = _has_effective_agent_attachments(attachments)
+            if not message.strip() and not has_effective_attachments:
+                raise ValueError("message or attachment required")
             timeout_ms = _optional_bounded_int(
                 payload.get("timeoutMs"),
                 label="timeoutMs",
@@ -1771,6 +1899,38 @@ class GatewayNodeMethodService:
                 payload.get("idempotencyKey"),
                 label="idempotencyKey",
             )
+            if _is_gateway_chat_stop_command_text(message):
+                return await self._abort_gateway_chat_run(
+                    session_key=session_key,
+                    run_id=None,
+                )
+            if explicit_origin is not None:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message=(
+                        "chat.send originating route fields are unavailable until control chat "
+                        "route provenance is wired"
+                    ),
+                    status_code=503,
+                )
+            if system_input_provenance is not None or system_provenance_receipt is not None:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message=(
+                        "chat.send system provenance fields are unavailable until control chat "
+                        "provenance injection is wired"
+                    ),
+                    status_code=503,
+                )
+            if has_effective_attachments:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message=(
+                        "chat.send attachments are unavailable until control chat "
+                        "attachment runtime is wired"
+                    ),
+                    status_code=503,
+                )
             timestamp_ms = _timestamp_ms(now_ms)
             send_result = await self._chat_send_service(
                 session_key=session_key,
@@ -1845,18 +2005,22 @@ class GatewayNodeMethodService:
                     status_code=503,
                 )
             session_key = _require_non_empty_string(payload.get("key"), label="key")
-            message = _require_string(payload.get("message"), label="message")
+            message = _sanitize_gateway_chat_send_message_input(
+                _require_string(payload.get("message"), label="message")
+            )
             thinking = (
                 _require_string(payload.get("thinking"), label="thinking")
                 if "thinking" in payload and payload.get("thinking") is not None
                 else None
             )
             attachments = payload.get("attachments")
+            has_effective_attachments = False
             if attachments is not None:
                 if not isinstance(attachments, list):
                     raise ValueError("attachments must be an array")
-                if attachments:
-                    raise ValueError("sessions.send attachments are not supported in OpenZues yet")
+                has_effective_attachments = _has_effective_agent_attachments(attachments)
+            if not message.strip() and not has_effective_attachments:
+                raise ValueError("message or attachment required")
             timeout_ms = _optional_bounded_int(
                 payload.get("timeoutMs"),
                 label="timeoutMs",
@@ -1867,6 +2031,31 @@ class GatewayNodeMethodService:
                 payload.get("idempotencyKey"),
                 label="idempotencyKey",
             ) or secrets.token_urlsafe(18)
+            if _is_gateway_chat_stop_command_text(message):
+                stop_result = await self._abort_gateway_chat_run(
+                    session_key=session_key,
+                    run_id=None,
+                )
+                await self._publish_sessions_changed_event(
+                    session_key=session_key,
+                    reason="send",
+                    now_ms=now_ms,
+                )
+                return stop_result
+            if has_effective_attachments:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message=(
+                        "sessions.send attachments are unavailable until control chat "
+                        "attachment runtime is wired"
+                    ),
+                    status_code=503,
+                )
+            pending_message_seq = (
+                await self._database.count_control_chat_messages(session_key=session_key) + 1
+                if self._database is not None
+                else None
+            )
             timestamp_ms = _timestamp_ms(now_ms)
             send_result = await self._chat_send_service(
                 session_key=session_key,
@@ -1876,6 +2065,13 @@ class GatewayNodeMethodService:
                 deliver=None,
                 timeout_ms=timeout_ms,
             )
+            if pending_message_seq is not None and _should_attach_pending_session_message_seq(
+                send_result
+            ):
+                send_result = {
+                    **send_result,
+                    "messageSeq": pending_message_seq,
+                }
             self._remember_gateway_chat_run(
                 session_key,
                 send_result,
@@ -1902,18 +2098,22 @@ class GatewayNodeMethodService:
                 ),
             )
             session_key = _require_non_empty_string(payload.get("key"), label="key")
-            message = _require_string(payload.get("message"), label="message")
+            message = _sanitize_gateway_chat_send_message_input(
+                _require_string(payload.get("message"), label="message")
+            )
             thinking = (
                 _require_string(payload.get("thinking"), label="thinking")
                 if "thinking" in payload and payload.get("thinking") is not None
                 else None
             )
             attachments = payload.get("attachments")
+            has_effective_attachments = False
             if attachments is not None:
                 if not isinstance(attachments, list):
                     raise ValueError("attachments must be an array")
-                if attachments:
-                    raise ValueError("sessions.steer attachments are not supported in OpenZues yet")
+                has_effective_attachments = _has_effective_agent_attachments(attachments)
+            if not message.strip() and not has_effective_attachments:
+                raise ValueError("message or attachment required")
             timeout_ms = _optional_bounded_int(
                 payload.get("timeoutMs"),
                 label="timeoutMs",
@@ -1933,8 +2133,41 @@ class GatewayNodeMethodService:
                     ),
                     status_code=503,
                 )
+            interrupted_active_run = False
             if self._tracked_gateway_chat_run_id(session_key) is not None:
                 await self._abort_gateway_chat_run(session_key=session_key, run_id=None)
+                interrupted_active_run = True
+            steer_event_reason = "steer" if interrupted_active_run else "send"
+            if _is_gateway_chat_stop_command_text(message):
+                stop_result = await self._abort_gateway_chat_run(
+                    session_key=session_key,
+                    run_id=None,
+                )
+                if interrupted_active_run and stop_result.get("ok") is True:
+                    stop_result = {
+                        **stop_result,
+                        "interruptedActiveRun": True,
+                    }
+                await self._publish_sessions_changed_event(
+                    session_key=session_key,
+                    reason=steer_event_reason,
+                    now_ms=now_ms,
+                )
+                return stop_result
+            if has_effective_attachments:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message=(
+                        "sessions.steer attachments are unavailable until control chat "
+                        "attachment runtime is wired"
+                    ),
+                    status_code=503,
+                )
+            pending_message_seq = (
+                await self._database.count_control_chat_messages(session_key=session_key) + 1
+                if self._database is not None
+                else None
+            )
             steer_result = await self._chat_send_service(
                 session_key=session_key,
                 message=message,
@@ -1943,6 +2176,18 @@ class GatewayNodeMethodService:
                 deliver=None,
                 timeout_ms=timeout_ms,
             )
+            if pending_message_seq is not None and _should_attach_pending_session_message_seq(
+                steer_result
+            ):
+                steer_result = {
+                    **steer_result,
+                    "messageSeq": pending_message_seq,
+                }
+            if interrupted_active_run and isinstance(steer_result, dict):
+                steer_result = {
+                    **steer_result,
+                    "interruptedActiveRun": True,
+                }
             self._remember_gateway_chat_run(
                 session_key,
                 steer_result,
@@ -1950,7 +2195,7 @@ class GatewayNodeMethodService:
             )
             await self._publish_sessions_changed_event(
                 session_key=session_key,
-                reason="steer",
+                reason=steer_event_reason,
                 now_ms=now_ms,
             )
             return steer_result
@@ -2001,8 +2246,7 @@ class GatewayNodeMethodService:
                 raise GatewayNodeMethodError(
                     code="UNAVAILABLE",
                     message=(
-                        "sessions.reset is unavailable until control chat session reset "
-                        "is wired"
+                        "sessions.reset is unavailable until control chat session reset is wired"
                     ),
                     status_code=503,
                 )
@@ -2064,9 +2308,7 @@ class GatewayNodeMethodService:
             if canonical_key in set(_session_key_aliases(main_session_key)):
                 raise ValueError(f"Cannot delete the main session ({main_session_key}).")
 
-            resolved_delete_transcript = (
-                True if delete_transcript is None else delete_transcript
-            )
+            resolved_delete_transcript = True if delete_transcript is None else delete_transcript
             metadata_row = await self._database.get_gateway_session_metadata(canonical_key)
             message_count = await self._database.count_control_chat_messages(
                 session_key=canonical_key
@@ -2234,9 +2476,7 @@ class GatewayNodeMethodService:
                     ),
                     status_code=503,
                 )
-            return await self._session_compaction_service.list_checkpoints(
-                session_key=session_key
-            )
+            return await self._session_compaction_service.list_checkpoints(session_key=session_key)
 
         if resolved_method == "sessions.compaction.get":
             _validate_exact_keys(
@@ -2305,9 +2545,7 @@ class GatewayNodeMethodService:
                 label="label",
             )
             branch_metadata["label"] = (
-                f"{label_source} (checkpoint)"
-                if label_source is not None
-                else "Checkpoint branch"
+                f"{label_source} (checkpoint)" if label_source is not None else "Checkpoint branch"
             )
             branch_metadata["parentSessionKey"] = canonical_key
             model_override = _optional_non_empty_string(
@@ -2591,11 +2829,7 @@ class GatewayNodeMethodService:
 
             metadata_row = await self._database.get_gateway_session_metadata(canonical_key)
             raw_metadata = metadata_row.get("metadata") if metadata_row is not None else None
-            metadata = (
-                dict(raw_metadata)
-                if isinstance(raw_metadata, dict)
-                else {}
-            )
+            metadata = dict(raw_metadata) if isinstance(raw_metadata, dict) else {}
             label = _optional_non_empty_string(payload.get("label"), label="label")
             model = _optional_non_empty_string(payload.get("model"), label="model")
             if label is not None:
@@ -2887,6 +3121,12 @@ class GatewayNodeMethodService:
                 payload.get("replyChannel"),
                 label="replyChannel",
             )
+            for channel_hint in (requested_channel, requested_reply_channel):
+                _validate_agent_channel_hint(channel_hint)
+            if requested_channel is not None and requested_channel.lower() == "last":
+                requested_channel = None
+            if requested_reply_channel is not None and requested_reply_channel.lower() == "last":
+                requested_reply_channel = None
             requested_account_id = _optional_normalized_string(
                 payload.get("accountId"),
                 label="accountId",
@@ -2923,6 +3163,7 @@ class GatewayNodeMethodService:
             attachments = payload.get("attachments")
             if attachments is not None and not isinstance(attachments, list):
                 raise ValueError("attachments must be an array")
+            has_effective_attachments = _has_effective_agent_attachments(attachments)
             _optional_min_int(payload.get("timeout"), label="timeout", minimum=0)
             requested_best_effort_deliver = _optional_bool(
                 payload.get("bestEffortDeliver"),
@@ -2992,31 +3233,35 @@ class GatewayNodeMethodService:
                     message="agent is unavailable until gateway agent runtime bridge is wired",
                     status_code=503,
                 )
-            if any(
-                value is not None
-                for value in (
-                    requested_provider,
-                    requested_model,
-                    requested_to,
-                    requested_reply_to,
-                    requested_channel,
-                    requested_reply_channel,
-                    requested_account_id,
-                    requested_reply_account_id,
-                    requested_thread_id,
-                    requested_group_id,
-                    requested_group_channel,
-                    requested_group_space,
-                    requested_lane,
-                    requested_extra_system_prompt,
-                    payload.get("bootstrapContextMode"),
-                    payload.get("bootstrapContextRunKind"),
-                    payload.get("inputProvenance"),
+            if (
+                any(
+                    value is not None
+                    for value in (
+                        requested_provider,
+                        requested_model,
+                        requested_to,
+                        requested_reply_to,
+                        requested_channel,
+                        requested_reply_channel,
+                        requested_account_id,
+                        requested_reply_account_id,
+                        requested_thread_id,
+                        requested_group_id,
+                        requested_group_channel,
+                        requested_group_space,
+                        requested_lane,
+                        requested_extra_system_prompt,
+                        payload.get("bootstrapContextMode"),
+                        payload.get("bootstrapContextRunKind"),
+                        payload.get("inputProvenance"),
+                    )
                 )
-            ) or bool(payload.get("internalEvents")) or (
-                requested_deliver is True
-                or requested_best_effort_deliver is True
-                or bool(payload.get("attachments"))
+                or bool(payload.get("internalEvents"))
+                or (
+                    requested_deliver is True
+                    or requested_best_effort_deliver is True
+                    or has_effective_attachments
+                )
             ):
                 raise GatewayNodeMethodError(
                     code="UNAVAILABLE",
@@ -3027,10 +3272,7 @@ class GatewayNodeMethodService:
                     status_code=503,
                 )
             timestamp_ms = _timestamp_ms(now_ms)
-            if (
-                requested_session_key is None
-                and requested_session_id is None
-            ):
+            if requested_session_key is None and requested_session_id is None:
                 target_session_key = await self._sessions_service.main_session_key()
             else:
                 resolved_session = await self._sessions_service.resolve_key(
@@ -3185,8 +3427,7 @@ class GatewayNodeMethodService:
             raise GatewayNodeMethodError(
                 code="UNAVAILABLE",
                 message=(
-                    f"{resolved_method} is unavailable until gateway dreaming runtime is "
-                    "wired"
+                    f"{resolved_method} is unavailable until gateway dreaming runtime is wired"
                 ),
                 status_code=503,
             )
@@ -3235,8 +3476,7 @@ class GatewayNodeMethodService:
                 raise GatewayNodeMethodError(
                     code="UNAVAILABLE",
                     message=(
-                        "agents.files.list is unavailable until workspace file inventory "
-                        "is wired"
+                        "agents.files.list is unavailable until workspace file inventory is wired"
                     ),
                     status_code=503,
                 )
@@ -3387,15 +3627,17 @@ class GatewayNodeMethodService:
 
         if resolved_method == "set-heartbeats":
             _validate_exact_keys(resolved_method, payload, allowed_keys=("enabled",))
-            _require_bool(payload.get("enabled"), label="enabled")
-            raise GatewayNodeMethodError(
-                code="UNAVAILABLE",
-                message=(
-                    "set-heartbeats is unavailable until gateway heartbeat toggle runtime "
-                    "is wired"
-                ),
-                status_code=503,
-            )
+            enabled_value = _require_bool(payload.get("enabled"), label="enabled")
+            if self._set_heartbeats_enabled is None:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message=(
+                        "set-heartbeats is unavailable until gateway heartbeat toggle runtime "
+                        "is wired"
+                    ),
+                    status_code=503,
+                )
+            return {"ok": True, "enabled": await self._set_heartbeats_enabled(enabled_value)}
 
         if resolved_method == "voicewake.set":
             _validate_exact_keys(resolved_method, payload, allowed_keys=("triggers",))
@@ -3741,9 +3983,7 @@ class GatewayNodeMethodService:
                     approved.get("missingScope"),
                     label="missingScope",
                 )
-                raise ValueError(
-                    f"missing scope: {missing_scope}"
-                )
+                raise ValueError(f"missing scope: {missing_scope}")
             approved_node = approved.get("node")
             if isinstance(approved_node, dict):
                 await self._publish_gateway_event(
@@ -3797,9 +4037,7 @@ class GatewayNodeMethodService:
             if described_node is not None:
                 payload_node = _known_node_payload(described_node)
                 if self._pairing_service is not None:
-                    merged_paired_node = await self._pairing_service.get_paired_node(
-                        wanted_node_id
-                    )
+                    merged_paired_node = await self._pairing_service.get_paired_node(wanted_node_id)
                     if merged_paired_node is not None:
                         payload_node = _merge_known_node_payload(
                             _known_paired_node_payload(merged_paired_node),
@@ -3807,9 +4045,7 @@ class GatewayNodeMethodService:
                         )
                 return {"ts": timestamp_ms, **payload_node}
             if self._pairing_service is not None:
-                stored_paired_node = await self._pairing_service.get_paired_node(
-                    wanted_node_id
-                )
+                stored_paired_node = await self._pairing_service.get_paired_node(wanted_node_id)
                 if stored_paired_node is not None:
                     return {
                         "ts": timestamp_ms,
@@ -3925,7 +4161,9 @@ class GatewayNodeMethodService:
             if target_node is None:
                 raise ValueError("unknown nodeId")
             if self.registry.get(target_node_id) is None and self._wake_node is not None:
-                await self._wake_node(target_node_id)
+                wake_triggered = await self._wake_node(target_node_id)
+                if wake_triggered and self.registry.get(target_node_id) is None:
+                    await self._wait_for_node_connection(target_node_id)
                 refreshed_node = self.registry.describe_known_node(target_node_id)
                 if refreshed_node is not None:
                     target_node = refreshed_node
@@ -3939,9 +4177,7 @@ class GatewayNodeMethodService:
                 allowlist=allowlist,
             )
             if not allowed:
-                raise ValueError(
-                    _build_node_command_rejection_hint(reason, command, target_node)
-                )
+                raise ValueError(_build_node_command_rejection_hint(reason, command, target_node))
 
             result = await self.registry.invoke(
                 node_id=target_node_id,
@@ -3951,9 +4187,26 @@ class GatewayNodeMethodService:
                 idempotency_key=idempotency_key,
             )
             if not result.ok:
+                error_payload = dict(result.error or {})
+                error_code = str(error_payload.get("code") or "UNAVAILABLE")
+                error_message = str(error_payload.get("message") or "node invoke failed")
+                if error_code == "QUEUED_UNTIL_FOREGROUND":
+                    raise GatewayNodeMethodError(
+                        code="UNAVAILABLE",
+                        message=error_message,
+                        status_code=503,
+                        details={
+                            "code": "QUEUED_UNTIL_FOREGROUND",
+                            "queuedActionId": result.queued_action_id,
+                            "nodeId": target_node_id,
+                            "command": command,
+                            "nodeError": error_payload or None,
+                        },
+                        retryable=True,
+                    )
                 raise GatewayNodeMethodError(
-                    code=str((result.error or {}).get("code") or "UNAVAILABLE"),
-                    message=str((result.error or {}).get("message") or "node invoke failed"),
+                    code=error_code,
+                    message=error_message,
                     status_code=503,
                 )
             return {
@@ -4057,7 +4310,7 @@ class GatewayNodeMethodService:
             _validate_exact_keys(
                 resolved_method,
                 payload,
-                allowed_keys=("nodeId", "type", "priority", "expiresInMs", "wake"),
+                allowed_keys=("nodeId", "type", "priority", "expiresInMs", "payload", "wake"),
             )
             target_node_id = _require_non_empty_string(payload.get("nodeId"), label="nodeId")
             work_type = _require_enum_value(
@@ -4079,12 +4332,16 @@ class GatewayNodeMethodService:
             wake = payload.get("wake")
             if wake is not None and not isinstance(wake, bool):
                 raise ValueError("wake must be a boolean")
+            pending_payload = None
+            if "payload" in payload and payload["payload"] is not None:
+                pending_payload = _require_unknown_mapping(payload["payload"], label="payload")
 
             queued = self.registry.enqueue_pending_work(
                 node_id=target_node_id,
                 work_type=cast(NodePendingWorkType, work_type),
                 priority=cast(NodePendingWorkPriority | None, priority),
                 expires_in_ms=expires_in_ms,
+                payload=pending_payload,
             )
             wake_triggered = False
             if (
@@ -4173,9 +4430,7 @@ class GatewayNodeMethodService:
             _require_non_empty_string(payload.get("id"), label="id")
             raise GatewayNodeMethodError(
                 code="UNAVAILABLE",
-                message=(
-                    "exec.approval.get is unavailable until exec approval runtime is wired"
-                ),
+                message=("exec.approval.get is unavailable until exec approval runtime is wired"),
                 status_code=503,
             )
 
@@ -4183,9 +4438,7 @@ class GatewayNodeMethodService:
             _validate_exact_keys(resolved_method, payload, allowed_keys=())
             raise GatewayNodeMethodError(
                 code="UNAVAILABLE",
-                message=(
-                    "exec.approval.list is unavailable until exec approval runtime is wired"
-                ),
+                message=("exec.approval.list is unavailable until exec approval runtime is wired"),
                 status_code=503,
             )
 
@@ -4328,8 +4581,7 @@ class GatewayNodeMethodService:
             raise GatewayNodeMethodError(
                 code="UNAVAILABLE",
                 message=(
-                    "exec.approval.waitDecision is unavailable until exec approval runtime "
-                    "is wired"
+                    "exec.approval.waitDecision is unavailable until exec approval runtime is wired"
                 ),
                 status_code=503,
             )
@@ -4414,8 +4666,7 @@ class GatewayNodeMethodService:
             raise GatewayNodeMethodError(
                 code="UNAVAILABLE",
                 message=(
-                    "plugin.approval.request is unavailable until plugin approval runtime is "
-                    "wired"
+                    "plugin.approval.request is unavailable until plugin approval runtime is wired"
                 ),
                 status_code=503,
             )
@@ -4447,8 +4698,7 @@ class GatewayNodeMethodService:
             raise GatewayNodeMethodError(
                 code="UNAVAILABLE",
                 message=(
-                    "plugin.approval.resolve is unavailable until plugin approval runtime is "
-                    "wired"
+                    "plugin.approval.resolve is unavailable until plugin approval runtime is wired"
                 ),
                 status_code=503,
             )
@@ -4472,8 +4722,7 @@ class GatewayNodeMethodService:
             raise GatewayNodeMethodError(
                 code="UNAVAILABLE",
                 message=(
-                    f"{resolved_method} is unavailable until device auth pairing runtime "
-                    "is wired"
+                    f"{resolved_method} is unavailable until device auth pairing runtime is wired"
                 ),
                 status_code=503,
             )
@@ -4484,8 +4733,7 @@ class GatewayNodeMethodService:
             raise GatewayNodeMethodError(
                 code="UNAVAILABLE",
                 message=(
-                    "device.pair.remove is unavailable until device auth pairing runtime is "
-                    "wired"
+                    "device.pair.remove is unavailable until device auth pairing runtime is wired"
                 ),
                 status_code=503,
             )
@@ -4502,8 +4750,7 @@ class GatewayNodeMethodService:
             raise GatewayNodeMethodError(
                 code="UNAVAILABLE",
                 message=(
-                    "device.token.rotate is unavailable until device auth token runtime is "
-                    "wired"
+                    "device.token.rotate is unavailable until device auth token runtime is wired"
                 ),
                 status_code=503,
             )
@@ -4519,8 +4766,7 @@ class GatewayNodeMethodService:
             raise GatewayNodeMethodError(
                 code="UNAVAILABLE",
                 message=(
-                    "device.token.revoke is unavailable until device auth token runtime is "
-                    "wired"
+                    "device.token.revoke is unavailable until device auth token runtime is wired"
                 ),
                 status_code=503,
             )
@@ -4536,8 +4782,7 @@ class GatewayNodeMethodService:
             raise GatewayNodeMethodError(
                 code="UNAVAILABLE",
                 message=(
-                    "secrets.reload is unavailable until vault-backed secret inventory is "
-                    "wired"
+                    "secrets.reload is unavailable until vault-backed secret inventory is wired"
                 ),
                 status_code=503,
             )
@@ -4565,11 +4810,13 @@ class GatewayNodeMethodService:
         value: object | None,
         *,
         reject_webchat_as_internal_only: bool = False,
+        rejected_webchat_message: str | None = None,
     ) -> str:
         if value is not None:
             return _resolve_gateway_requested_channel(
                 value,
                 reject_webchat_as_internal_only=reject_webchat_as_internal_only,
+                rejected_webchat_message=rejected_webchat_message,
             )
         configured_channels = await self._configured_gateway_outbound_channels()
         if len(configured_channels) == 1:
@@ -5236,8 +5483,7 @@ async def _build_sessions_usage_logs_payload(
         if (mission_id := _int_or_none(row.get("mission_id"))) is not None
     }
     mission_by_id = {
-        mission_id: await database.get_mission(mission_id)
-        for mission_id in sorted(mission_ids)
+        mission_id: await database.get_mission(mission_id) for mission_id in sorted(mission_ids)
     }
 
     entries: list[dict[str, Any]] = []
@@ -5263,11 +5509,7 @@ async def _build_sessions_usage_logs_payload(
         entries.append(entry)
 
     latest_mission = next(
-        (
-            mission
-            for mission in reversed(list(mission_by_id.values()))
-            if mission is not None
-        ),
+        (mission for mission in reversed(list(mission_by_id.values())) if mission is not None),
         None,
     )
     if latest_mission is None:
@@ -5432,10 +5674,9 @@ async def _build_single_session_usage_entry(
     )
     message_counts = _usage_message_counts(rows)
     usage_payload = _usage_totals_from_mission(mission) or _empty_usage_totals()
-    usage_payload["sessionId"] = (
-        _string_or_none(session_payload.get("sessionId"))
-        or _string_or_none(mission.get("thread_id") if mission is not None else None)
-    )
+    usage_payload["sessionId"] = _string_or_none(
+        session_payload.get("sessionId")
+    ) or _string_or_none(mission.get("thread_id") if mission is not None else None)
     usage_payload["lastActivity"] = updated_at
     usage_payload["messageCounts"] = message_counts
     usage_payload["toolUsage"] = _empty_usage_tool_summary()
@@ -6186,9 +6427,7 @@ def _optional_utc_offset_string(value: object, *, label: str) -> str | None:
         return None
     resolved = _require_string(value, label=label)
     if not _UTC_OFFSET_RE.match(resolved):
-        raise ValueError(
-            f"{label} must match UTC+H, UTC-H, UTC+HH, UTC-HH, UTC+H:MM, or UTC-HH:MM"
-        )
+        raise ValueError(f"{label} must match UTC+H, UTC-H, UTC+HH, UTC-HH, UTC+H:MM, or UTC-HH:MM")
     return resolved
 
 
@@ -6348,8 +6587,241 @@ def _validate_agent_internal_events(value: object, *, label: str) -> None:
 
 
 def _validate_agent_input_provenance(value: object, *, label: str) -> None:
+    input_provenance = _require_unknown_mapping(value, label=label)
+    _validate_exact_keys(
+        label,
+        input_provenance,
+        allowed_keys=(
+            "kind",
+            "originSessionId",
+            "sourceSessionKey",
+            "sourceChannel",
+            "sourceTool",
+        ),
+    )
+    _require_enum_value(
+        input_provenance.get("kind"),
+        label=f"{label}.kind",
+        allowed_values=_INPUT_PROVENANCE_KIND_VALUES,
+    )
+    for field in ("originSessionId", "sourceSessionKey", "sourceChannel", "sourceTool"):
+        if field in input_provenance and input_provenance.get(field) is not None:
+            _require_string(input_provenance.get(field), label=f"{label}.{field}")
+
+
+def _normalize_gateway_optional_input_provenance(
+    value: object,
+) -> dict[str, str | None] | None:
     if not isinstance(value, dict):
-        raise ValueError(f"{label} must be an object")
+        return None
+    raw_kind = value.get("kind")
+    if not isinstance(raw_kind, str):
+        return None
+    kind = raw_kind.strip()
+    if kind not in _INPUT_PROVENANCE_KIND_VALUES:
+        return None
+    normalized: dict[str, str | None] = {"kind": kind}
+    for field in ("originSessionId", "sourceSessionKey", "sourceChannel", "sourceTool"):
+        raw_field = value.get(field)
+        if not isinstance(raw_field, str):
+            continue
+        trimmed = raw_field.strip()
+        normalized[field] = trimmed or None
+    return normalized
+
+
+def _has_truthy_gateway_system_input_provenance(value: object) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        return bool(value)
+    return True
+
+
+_GATEWAY_CHAT_ABORT_TRIGGER_VALUES = {
+    "/stop",
+    "stop",
+    "esc",
+    "abort",
+    "wait",
+    "exit",
+    "interrupt",
+    "detente",
+    "deten",
+    "det\u00e9n",
+    "arrete",
+    "arr\u00eate",
+    "\u505c\u6b62",
+    "\u3084\u3081\u3066",
+    "\u6b62\u3081\u3066",
+    "\u0930\u0941\u0915\u094b",
+    "\u062a\u0648\u0642\u0641",
+    "\u0441\u0442\u043e\u043f",
+    "\u043e\u0441\u0442\u0430\u043d\u043e\u0432\u0438\u0441\u044c",
+    "\u043e\u0441\u0442\u0430\u043d\u043e\u0432\u0438",
+    "\u043e\u0441\u0442\u0430\u043d\u043e\u0432\u0438\u0442\u044c",
+    "\u043f\u0440\u0435\u043a\u0440\u0430\u0442\u0438",
+    "halt",
+    "anhalten",
+    "aufh\u00f6ren",
+    "hoer auf",
+    "stopp",
+    "pare",
+    "stop openclaw",
+    "openclaw stop",
+    "stop action",
+    "stop current action",
+    "stop run",
+    "stop current run",
+    "stop agent",
+    "stop the agent",
+    "stop don't do anything",
+    "stop dont do anything",
+    "stop do not do anything",
+    "stop doing anything",
+    "do not do that",
+    "please stop",
+    "stop please",
+}
+_GATEWAY_CHAT_ABORT_TRAILING_PUNCTUATION_RE = re.compile(
+    r"""[.!?,\u2026\uFF0C\u3002;\uFF1B:\uFF1A'"`\u2019\u201D)\]}]+$"""
+)
+
+
+def _normalize_gateway_chat_stop_command_body(raw: str) -> str:
+    trimmed = raw.strip()
+    if not trimmed.startswith("/"):
+        return trimmed
+    newline_index = trimmed.find("\n")
+    single_line = trimmed if newline_index == -1 else trimmed[:newline_index].strip()
+    colon_match = re.match(r"^/([^\s:]+)\s*:(.*)$", single_line)
+    if colon_match is None:
+        return single_line
+    command, rest = colon_match.groups()
+    normalized_rest = rest.lstrip()
+    if not normalized_rest:
+        return f"/{command}"
+    return f"/{command} {normalized_rest}"
+
+
+def _normalize_gateway_chat_abort_trigger_text(text: str) -> str:
+    normalized = unicodedata.normalize("NFC", text).casefold()
+    normalized = normalized.replace("\u2019", "'").replace("`", "'")
+    normalized = re.sub(r"\s+", " ", normalized)
+    normalized = _GATEWAY_CHAT_ABORT_TRAILING_PUNCTUATION_RE.sub("", normalized)
+    return normalized.strip()
+
+
+def _is_gateway_chat_stop_command_text(text: str) -> bool:
+    normalized = _normalize_gateway_chat_stop_command_body(text).strip()
+    if not normalized:
+        return False
+    normalized_lower = unicodedata.normalize("NFC", normalized).casefold()
+    normalized_trigger = _normalize_gateway_chat_abort_trigger_text(normalized_lower)
+    return normalized_lower == "/stop" or normalized_trigger in _GATEWAY_CHAT_ABORT_TRIGGER_VALUES
+
+
+def _sanitize_gateway_chat_send_message_input(message: str) -> str:
+    normalized = unicodedata.normalize("NFC", message)
+    if "\x00" in normalized:
+        raise ValueError("message must not contain null bytes")
+    sanitized: list[str] = []
+    for char in normalized:
+        code = ord(char)
+        if code in {9, 10, 13} or (code >= 32 and code != 127):
+            sanitized.append(char)
+    return "".join(sanitized)
+
+
+def _should_attach_pending_session_message_seq(payload: object) -> bool:
+    return isinstance(payload, dict) and payload.get("status") == "started"
+
+
+def _sanitize_gateway_optional_chat_system_receipt(value: object) -> str | None:
+    if value is None:
+        return None
+    sanitized = _sanitize_gateway_chat_send_message_input(
+        _require_string(value, label="systemProvenanceReceipt")
+    ).strip()
+    return sanitized or None
+
+
+def _normalize_gateway_chat_send_explicit_origin(
+    *,
+    originating_channel: object,
+    originating_to: object,
+    originating_account_id: object,
+    originating_thread_id: object,
+) -> dict[str, str] | None:
+    normalized_channel = _optional_normalized_string(
+        originating_channel,
+        label="originatingChannel",
+    )
+    normalized_to = _optional_normalized_string(originating_to, label="originatingTo")
+    normalized_account_id = _optional_normalized_string(
+        originating_account_id,
+        label="originatingAccountId",
+    )
+    normalized_thread_id = _optional_normalized_string(
+        originating_thread_id,
+        label="originatingThreadId",
+    )
+    if (
+        normalized_channel is None
+        and normalized_to is None
+        and normalized_account_id is None
+        and normalized_thread_id is None
+    ):
+        return None
+    resolved_channel = (
+        _normalize_gateway_chat_channel_id(normalized_channel)
+        if normalized_channel is not None
+        else None
+    )
+    if resolved_channel is None:
+        raise ValueError("originatingChannel is required when using originating route fields")
+    if normalized_to is None:
+        raise ValueError("originatingTo is required when using originating route fields")
+    explicit_origin = {
+        "originatingChannel": resolved_channel,
+        "originatingTo": normalized_to,
+    }
+    if normalized_account_id is not None:
+        explicit_origin["originatingAccountId"] = normalized_account_id
+    if normalized_thread_id is not None:
+        explicit_origin["originatingThreadId"] = normalized_thread_id
+    return explicit_origin
+
+
+def _has_effective_agent_attachment_content(value: object) -> bool:
+    if isinstance(value, str):
+        return value != ""
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return len(value) > 0
+    return False
+
+
+def _has_effective_agent_attachments(value: object) -> bool:
+    if not isinstance(value, list):
+        return False
+    for entry in value:
+        if not isinstance(entry, dict):
+            continue
+        if _has_effective_agent_attachment_content(entry.get("content")):
+            return True
+        source = entry.get("source")
+        if not isinstance(source, dict):
+            continue
+        source_type = source.get("type")
+        if not isinstance(source_type, str) or source_type != "base64":
+            continue
+        if _has_effective_agent_attachment_content(source.get("data")):
+            return True
+    return False
 
 
 def _normalize_gateway_chat_channel_id(raw: str) -> str | None:
@@ -6357,6 +6829,17 @@ def _normalize_gateway_chat_channel_id(raw: str) -> str | None:
     if not normalized:
         return None
     return normalized if normalized in _KNOWN_GATEWAY_CHAT_CHANNEL_IDS else None
+
+
+def _validate_agent_channel_hint(value: str | None) -> None:
+    if value is None:
+        return
+    normalized = value.strip().lower()
+    if not normalized or normalized == "last":
+        return
+    if _normalize_gateway_chat_channel_id(normalized) is not None:
+        return
+    raise ValueError(f"invalid agent params: unknown channel: {normalized}")
 
 
 def _gateway_chat_channel_sort_key(channel: str) -> tuple[int, str]:
@@ -6432,6 +6915,7 @@ def _resolve_gateway_requested_channel(
     *,
     label: str = "channel",
     reject_webchat_as_internal_only: bool = False,
+    rejected_webchat_message: str | None = None,
 ) -> str:
     channel = _require_non_empty_string(value, label=label)
     normalized = _normalize_gateway_chat_channel_id(channel)
@@ -6441,8 +6925,9 @@ def _resolve_gateway_requested_channel(
         raise GatewayNodeMethodError(
             code="INVALID_REQUEST",
             message=(
-                "unsupported channel: webchat (internal-only). Use `chat.send` for WebChat UI "
-                "messages or choose a deliverable channel."
+                rejected_webchat_message
+                or "unsupported channel: webchat (internal-only). Use `chat.send` for "
+                "WebChat UI messages or choose a deliverable channel."
             ),
             status_code=400,
         )
@@ -6568,7 +7053,7 @@ def _build_node_command_rejection_hint(
     platform = node.platform or "unknown"
     if reason == "command not declared by node":
         return (
-            f'node command not allowed: the node (platform: {platform}) '
+            f"node command not allowed: the node (platform: {platform}) "
             f'does not support "{command}"'
         )
     if reason == "command not allowlisted":

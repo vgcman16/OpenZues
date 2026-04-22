@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -18,6 +19,8 @@ from openzues.schemas import (
     SkillPinView,
 )
 from openzues.services.ecc_catalog import configure_ecc_catalog
+from openzues.services.gateway_cron import build_gateway_cron_task_blueprint
+from openzues.services.gateway_wake import GatewayWakeService
 from openzues.services.hermes_skills import configure_hermes_skill_catalog
 from openzues.services.hub import BroadcastHub
 from openzues.services.memory_protocol import (
@@ -39,6 +42,7 @@ from openzues.services.ops_mesh import (
     _serialize_task,
     build_ops_mesh,
 )
+from openzues.services.session_keys import resolve_thread_session_keys
 from openzues.services.vault import VaultService
 from openzues.settings import Settings
 
@@ -1055,6 +1059,1604 @@ async def test_ops_mesh_service_launches_due_task(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_launches_cron_announce_target_into_mission_draft(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+
+    fake_missions = FakeMissionService()
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        fake_missions,  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+    task = await service.create_task_blueprint(
+        build_gateway_cron_task_blueprint(
+            {
+                "name": "Cron Announce Delivery",
+                "enabled": True,
+                "schedule": {"kind": "every", "everyMs": 3_600_000},
+                "sessionTarget": "isolated",
+                "wakeMode": "next-heartbeat",
+                "payload": {
+                    "kind": "agentTurn",
+                    "message": "Route this cron run through the announce target.",
+                },
+                "delivery": {
+                    "mode": "announce",
+                    "channel": "telegram",
+                    "to": "7200373102",
+                    "accountId": "coordinator",
+                },
+            }
+        )
+    )
+
+    await service.run_task_blueprint_now(task.id, trigger="schedule")
+
+    assert len(fake_missions.created_payloads) == 1
+    payload = fake_missions.created_payloads[0]
+    assert payload.conversation_target is not None
+    assert payload.conversation_target.channel == "telegram"
+    assert payload.conversation_target.account_id == "coordinator"
+    assert payload.conversation_target.peer_kind == "channel"
+    assert payload.conversation_target.peer_id == "7200373102"
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_posts_explicit_cron_webhook_delivery_for_completed_mission(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+    task = await service.create_task_blueprint(
+        build_gateway_cron_task_blueprint(
+            {
+                "name": "Cron Webhook Delivery",
+                "enabled": True,
+                "schedule": {"kind": "every", "everyMs": 3_600_000},
+                "sessionTarget": "isolated",
+                "wakeMode": "next-heartbeat",
+                "payload": {
+                    "kind": "agentTurn",
+                    "message": "Ship the cron webhook delivery seam.",
+                },
+                "delivery": {
+                    "mode": "webhook",
+                    "to": "https://example.invalid/cron-finished",
+                },
+            }
+        )
+    )
+    mission_id = await database.create_mission(
+        name="Cron Webhook Delivery",
+        objective="Ship the cron webhook delivery seam.",
+        status="completed",
+        instance_id=task.instance_id or 1,
+        project_id=task.project_id,
+        task_blueprint_id=task.id,
+        thread_id="thread_cron_webhook",
+        cwd=str(tmp_path),
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=4,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        toolsets=[],
+    )
+    await database.update_mission(
+        mission_id,
+        last_checkpoint="Webhook summary ready.",
+        last_activity_at=datetime.now(UTC).isoformat(),
+    )
+
+    webhook_calls: list[tuple[str, dict[str, object]]] = []
+
+    def fake_post_json_webhook(
+        self,  # noqa: ANN001
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> None:
+        del self, secret_header_name, secret_token
+        webhook_calls.append((target, payload))
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_post_json_webhook",
+        fake_post_json_webhook,
+        raising=False,
+    )
+
+    await service.handle_mission_event("mission/completed", {"missionId": mission_id})
+
+    assert webhook_calls == [
+        (
+            "https://example.invalid/cron-finished",
+            {
+                "action": "finished",
+                "missionId": mission_id,
+                "taskId": task.id,
+                "jobId": f"task-blueprint:{task.id}",
+                "jobName": "Cron Webhook Delivery",
+                "status": "ok",
+                "summary": "Webhook summary ready.",
+            },
+        )
+    ]
+    deliveries = await service.list_outbound_delivery_views(limit=10)
+    assert len(deliveries) == 1
+    assert deliveries[0].route_id is None
+    assert deliveries[0].route_kind == "webhook"
+    assert deliveries[0].route_target == "https://example.invalid/cron-finished"
+    assert deliveries[0].event_type == "cron/finished"
+    assert deliveries[0].delivery_state == "delivered"
+    assert deliveries[0].event_payload is not None
+    assert deliveries[0].event_payload["jobId"] == f"task-blueprint:{task.id}"
+    assert deliveries[0].event_payload["summary"] == "Webhook summary ready."
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_posts_legacy_notify_cron_webhook_when_configured(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        cron_webhook_url="https://legacy.example.invalid/cron-finished",
+        cron_webhook_token="cron-webhook-token",
+    )
+    task = await service.create_task_blueprint(
+        build_gateway_cron_task_blueprint(
+            {
+                "name": "Legacy Notify Webhook",
+                "enabled": True,
+                "notify": True,
+                "schedule": {"kind": "every", "everyMs": 3_600_000},
+                "sessionTarget": "main",
+                "wakeMode": "next-heartbeat",
+                "payload": {
+                    "kind": "systemEvent",
+                    "text": "Use the legacy cron webhook fallback.",
+                },
+            }
+        )
+    )
+    mission_id = await database.create_mission(
+        name="Legacy Notify Webhook",
+        objective="Use the legacy cron webhook fallback.",
+        status="completed",
+        instance_id=task.instance_id or 1,
+        project_id=task.project_id,
+        task_blueprint_id=task.id,
+        thread_id="thread_cron_legacy_notify",
+        cwd=str(tmp_path),
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=4,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        toolsets=[],
+    )
+    await database.update_mission(
+        mission_id,
+        last_checkpoint="Legacy webhook summary ready.",
+        last_activity_at=datetime.now(UTC).isoformat(),
+    )
+
+    webhook_calls: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_post_json_webhook(
+        self,  # noqa: ANN001
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> None:
+        del self
+        webhook_calls.append((target, payload, secret_header_name, secret_token))
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_post_json_webhook",
+        fake_post_json_webhook,
+        raising=False,
+    )
+
+    await service.handle_mission_event("mission/completed", {"missionId": mission_id})
+
+    assert webhook_calls == [
+        (
+            "https://legacy.example.invalid/cron-finished",
+            {
+                "action": "finished",
+                "missionId": mission_id,
+                "taskId": task.id,
+                "jobId": f"task-blueprint:{task.id}",
+                "jobName": "Legacy Notify Webhook",
+                "status": "ok",
+                "summary": "Legacy webhook summary ready.",
+            },
+            "Authorization",
+            "Bearer cron-webhook-token",
+        )
+    ]
+    deliveries = await service.list_outbound_delivery_views(limit=10)
+    assert len(deliveries) == 1
+    assert deliveries[0].route_target == "https://legacy.example.invalid/cron-finished"
+    assert deliveries[0].event_type == "cron/finished"
+    assert deliveries[0].delivery_state == "delivered"
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_skips_explicit_cron_webhook_delivery_without_summary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+    task = await service.create_task_blueprint(
+        build_gateway_cron_task_blueprint(
+            {
+                "name": "Silent Cron Webhook",
+                "enabled": True,
+                "schedule": {"kind": "every", "everyMs": 3_600_000},
+                "sessionTarget": "isolated",
+                "wakeMode": "next-heartbeat",
+                "payload": {
+                    "kind": "agentTurn",
+                    "message": "Do not send a webhook without a real summary.",
+                },
+                "delivery": {
+                    "mode": "webhook",
+                    "to": "https://example.invalid/cron-finished",
+                },
+            }
+        )
+    )
+    mission_id = await database.create_mission(
+        name="Silent Cron Webhook",
+        objective="Do not send a webhook without a real summary.",
+        status="completed",
+        instance_id=task.instance_id or 1,
+        project_id=task.project_id,
+        task_blueprint_id=task.id,
+        thread_id="thread_cron_webhook_silent",
+        cwd=str(tmp_path),
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=4,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        toolsets=[],
+    )
+    await database.update_mission(
+        mission_id,
+        last_checkpoint=None,
+        last_error=None,
+        last_activity_at=datetime.now(UTC).isoformat(),
+    )
+
+    webhook_calls: list[tuple[str, dict[str, object]]] = []
+
+    def fake_post_json_webhook(
+        self,  # noqa: ANN001
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> None:
+        del self, secret_header_name, secret_token
+        webhook_calls.append((target, payload))
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_post_json_webhook",
+        fake_post_json_webhook,
+        raising=False,
+    )
+
+    await service.handle_mission_event("mission/completed", {"missionId": mission_id})
+
+    assert webhook_calls == []
+    deliveries = await service.list_outbound_delivery_views(limit=10)
+    assert deliveries == []
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_posts_cron_failure_destination_webhook_for_failed_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+    task = await service.create_task_blueprint(
+        build_gateway_cron_task_blueprint(
+            {
+                "name": "Failure Destination Webhook",
+                "enabled": True,
+                "schedule": {"kind": "every", "everyMs": 3_600_000},
+                "sessionTarget": "isolated",
+                "wakeMode": "next-heartbeat",
+                "payload": {
+                    "kind": "agentTurn",
+                    "message": "Send a failure destination webhook on isolated cron failure.",
+                },
+                "delivery": {
+                    "mode": "announce",
+                    "channel": "telegram",
+                    "to": "19098680",
+                    "failureDestination": {
+                        "mode": "webhook",
+                        "to": "https://example.invalid/failure-destination",
+                    },
+                },
+            }
+        )
+    )
+    mission_id = await database.create_mission(
+        name="Failure Destination Webhook",
+        objective="Send a failure destination webhook on isolated cron failure.",
+        status="failed",
+        instance_id=task.instance_id or 1,
+        project_id=task.project_id,
+        task_blueprint_id=task.id,
+        thread_id="thread_cron_failure_destination",
+        cwd=str(tmp_path),
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=4,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        toolsets=[],
+    )
+    await database.update_mission(
+        mission_id,
+        last_checkpoint="delivery failed",
+        last_error=None,
+        last_activity_at=datetime.now(UTC).isoformat(),
+    )
+
+    webhook_calls: list[tuple[str, dict[str, object]]] = []
+
+    def fake_post_json_webhook(
+        self,  # noqa: ANN001
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> None:
+        del self, secret_header_name, secret_token
+        webhook_calls.append((target, payload))
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_post_json_webhook",
+        fake_post_json_webhook,
+        raising=False,
+    )
+
+    await service.handle_mission_event("mission/failed", {"missionId": mission_id})
+
+    assert webhook_calls == [
+        (
+            "https://example.invalid/failure-destination",
+            {
+                "missionId": mission_id,
+                "taskId": task.id,
+                "jobId": f"task-blueprint:{task.id}",
+                "jobName": "Failure Destination Webhook",
+                "message": 'Cron job "Failure Destination Webhook" failed: unknown error',
+                "status": "error",
+                "error": None,
+            },
+        )
+    ]
+    deliveries = await service.list_outbound_delivery_views(limit=10)
+    assert len(deliveries) == 1
+    assert deliveries[0].route_target == "https://example.invalid/failure-destination"
+    assert deliveries[0].event_type == "cron/failure"
+    assert deliveries[0].delivery_state == "delivered"
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_delivers_last_channel_cron_failure_destination_to_session_key(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+
+    session_deliveries: list[tuple[str, str]] = []
+
+    async def fake_session_delivery(session_key: str, message: str) -> None:
+        session_deliveries.append((session_key, message))
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_session_delivery,
+    )
+    task = await service.create_task_blueprint(
+        build_gateway_cron_task_blueprint(
+            {
+                "name": "Failure Destination Session Delivery",
+                "enabled": True,
+                "schedule": {"kind": "every", "everyMs": 3_600_000},
+                "sessionTarget": "isolated",
+                "wakeMode": "next-heartbeat",
+                "payload": {
+                    "kind": "agentTurn",
+                    "message": (
+                        "Send a failure destination session delivery on isolated cron failure."
+                    ),
+                },
+                "delivery": {
+                    "mode": "announce",
+                    "channel": "telegram",
+                    "to": "19098680",
+                    "failureDestination": {
+                        "mode": "announce",
+                        "channel": "last",
+                    },
+                },
+            }
+        )
+    )
+    mission_id = await database.create_mission(
+        name="Failure Destination Session Delivery",
+        objective="Send a failure destination session delivery on isolated cron failure.",
+        status="failed",
+        instance_id=task.instance_id or 1,
+        project_id=task.project_id,
+        task_blueprint_id=task.id,
+        thread_id="thread_cron_failure_destination_session_delivery",
+        cwd=str(tmp_path),
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=4,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        toolsets=[],
+    )
+    session_key = "agent:main:telegram:direct:123:thread:99"
+    await database.update_mission(
+        mission_id,
+        last_checkpoint="failure destination session delivery failed",
+        last_error="lane timed out",
+        last_activity_at=datetime.now(UTC).isoformat(),
+        session_key=session_key,
+    )
+
+    await service.handle_mission_event("mission/failed", {"missionId": mission_id})
+
+    assert session_deliveries == [
+        (
+            session_key,
+            '\u26a0\ufe0f Cron job "Failure Destination Session Delivery" failed: lane timed out',
+        )
+    ]
+    deliveries = await service.list_outbound_delivery_views(limit=10)
+    assert len(deliveries) == 1
+    assert deliveries[0].route_kind == "session"
+    assert deliveries[0].route_target == session_key
+    assert deliveries[0].event_type == "cron/failure"
+    assert deliveries[0].delivery_state == "delivered"
+    assert deliveries[0].session_key == session_key
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_delivers_explicit_cron_failure_to_announce_target(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+
+    session_deliveries: list[tuple[str, str]] = []
+
+    async def fake_session_delivery(session_key: str, message: str) -> None:
+        session_deliveries.append((session_key, message))
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_session_delivery,
+    )
+    task = await service.create_task_blueprint(
+        build_gateway_cron_task_blueprint(
+            {
+                "name": "Explicit Announce Failure Delivery",
+                "enabled": True,
+                "schedule": {"kind": "every", "everyMs": 3_600_000},
+                "sessionTarget": "isolated",
+                "wakeMode": "next-heartbeat",
+                "payload": {
+                    "kind": "agentTurn",
+                    "message": (
+                        "Deliver the cron failure directly to the explicit announce target."
+                    ),
+                },
+                "delivery": {
+                    "mode": "announce",
+                    "channel": "telegram",
+                    "to": "deploy-room",
+                    "accountId": "coordinator",
+                },
+            }
+        )
+    )
+    mission_id = await database.create_mission(
+        name="Explicit Announce Failure Delivery",
+        objective=(
+            "Deliver the cron failure directly to the explicit announce target."
+        ),
+        status="failed",
+        instance_id=task.instance_id or 1,
+        project_id=task.project_id,
+        task_blueprint_id=task.id,
+        thread_id="thread_explicit_announce_failure_delivery",
+        cwd=str(tmp_path),
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=4,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        toolsets=[],
+    )
+    await database.update_mission(
+        mission_id,
+        last_checkpoint="explicit announce delivery failed",
+        last_error="lane timed out",
+        last_activity_at=datetime.now(UTC).isoformat(),
+        session_key="agent:explicit-announce-failure-route",
+    )
+
+    await service.handle_mission_event(
+        "mission/failed",
+        {"missionId": mission_id},
+    )
+
+    expected_session_key = (
+        "launch:mode:workspace_affinity:channel:telegram:account:coordinator:"
+        "peer:channel:deploy-room"
+    )
+    assert session_deliveries == [
+        (
+            expected_session_key,
+            '\u26a0\ufe0f Cron job "Explicit Announce Failure Delivery" failed: lane timed out',
+        )
+    ]
+    deliveries = await service.list_outbound_delivery_views(limit=10)
+    assert len(deliveries) == 1
+    assert deliveries[0].route_kind == "announce"
+    assert deliveries[0].event_type == "cron/failure"
+    assert deliveries[0].delivery_state == "delivered"
+    assert deliveries[0].session_key == expected_session_key
+    assert deliveries[0].route_scope.route_match == "explicitTarget"
+    assert deliveries[0].conversation_target is not None
+    assert deliveries[0].conversation_target.channel == "telegram"
+    assert deliveries[0].conversation_target.account_id == "coordinator"
+    assert deliveries[0].conversation_target.peer_kind == "channel"
+    assert deliveries[0].conversation_target.peer_id == "deploy-room"
+    assert deliveries[0].event_payload is not None
+    assert deliveries[0].event_payload["sessionKey"] == expected_session_key
+    payload_conversation_target = deliveries[0].event_payload["conversationTarget"]
+    assert payload_conversation_target["channel"] == "telegram"
+    assert payload_conversation_target["account_id"] == "coordinator"
+    assert payload_conversation_target["peer_kind"] == "channel"
+    assert payload_conversation_target["peer_id"] == "deploy-room"
+    assert str(payload_conversation_target["summary"]).startswith("telegram")
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_delivers_explicit_cron_failure_to_announce_thread_target(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+
+    session_deliveries: list[tuple[str, str]] = []
+
+    async def fake_session_delivery(session_key: str, message: str) -> None:
+        session_deliveries.append((session_key, message))
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_session_delivery,
+    )
+    task = await service.create_task_blueprint(
+        build_gateway_cron_task_blueprint(
+            {
+                "name": "Explicit Announce Failure Thread Delivery",
+                "enabled": True,
+                "schedule": {"kind": "every", "everyMs": 3_600_000},
+                "sessionTarget": "isolated",
+                "wakeMode": "next-heartbeat",
+                "payload": {
+                    "kind": "agentTurn",
+                    "message": (
+                        "Deliver the cron failure directly to the explicit announce thread."
+                    ),
+                },
+                "delivery": {
+                    "mode": "announce",
+                    "channel": "telegram",
+                    "to": "deploy-room",
+                    "accountId": "coordinator",
+                    "threadId": 77,
+                },
+            }
+        )
+    )
+    mission_id = await database.create_mission(
+        name="Explicit Announce Failure Thread Delivery",
+        objective=(
+            "Deliver the cron failure directly to the explicit announce thread."
+        ),
+        status="failed",
+        instance_id=task.instance_id or 1,
+        project_id=task.project_id,
+        task_blueprint_id=task.id,
+        thread_id="thread_explicit_announce_failure_thread_delivery",
+        cwd=str(tmp_path),
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=4,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        toolsets=[],
+    )
+    await database.update_mission(
+        mission_id,
+        last_checkpoint="explicit announce thread delivery failed",
+        last_error="lane timed out",
+        last_activity_at=datetime.now(UTC).isoformat(),
+        session_key="agent:explicit-announce-failure-thread-route",
+    )
+
+    await service.handle_mission_event(
+        "mission/failed",
+        {"missionId": mission_id},
+    )
+
+    expected_base_session_key = (
+        "launch:mode:workspace_affinity:channel:telegram:account:coordinator:"
+        "peer:channel:deploy-room"
+    )
+    expected_session_key = resolve_thread_session_keys(
+        base_session_key=expected_base_session_key,
+        thread_id="77",
+    ).session_key
+    assert session_deliveries == [
+        (
+            expected_session_key,
+            (
+                '\u26a0\ufe0f Cron job "Explicit Announce Failure Thread Delivery" '
+                "failed: lane timed out"
+            ),
+        )
+    ]
+    deliveries = await service.list_outbound_delivery_views(limit=10)
+    assert len(deliveries) == 1
+    assert deliveries[0].route_kind == "announce"
+    assert deliveries[0].event_type == "cron/failure"
+    assert deliveries[0].delivery_state == "delivered"
+    assert deliveries[0].session_key == expected_session_key
+    assert deliveries[0].route_scope.route_match == "explicitTarget"
+    assert deliveries[0].event_payload is not None
+    assert deliveries[0].event_payload["sessionKey"] == expected_session_key
+    assert deliveries[0].event_payload["threadId"] == 77
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_delivers_explicit_cron_failure_destination_to_announce_target(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+
+    session_deliveries: list[tuple[str, str]] = []
+
+    async def fake_session_delivery(session_key: str, message: str) -> None:
+        session_deliveries.append((session_key, message))
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_session_delivery,
+    )
+    task = await service.create_task_blueprint(
+        build_gateway_cron_task_blueprint(
+            {
+                "name": "Explicit Announce Failure Destination",
+                "enabled": True,
+                "schedule": {"kind": "every", "everyMs": 3_600_000},
+                "sessionTarget": "isolated",
+                "wakeMode": "next-heartbeat",
+                "payload": {
+                    "kind": "agentTurn",
+                    "message": (
+                        "Send the cron failure to the explicit failure destination."
+                    ),
+                },
+                "delivery": {
+                    "mode": "announce",
+                    "channel": "telegram",
+                    "to": "deploy-room",
+                    "accountId": "coordinator",
+                    "failureDestination": {
+                        "mode": "announce",
+                        "channel": "signal",
+                        "to": "escalation-room",
+                        "accountId": "escalations",
+                    },
+                },
+            }
+        )
+    )
+    mission_id = await database.create_mission(
+        name="Explicit Announce Failure Destination",
+        objective="Send the cron failure to the explicit failure destination.",
+        status="failed",
+        instance_id=task.instance_id or 1,
+        project_id=task.project_id,
+        task_blueprint_id=task.id,
+        thread_id="thread_explicit_announce_failure_destination",
+        cwd=str(tmp_path),
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=4,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        toolsets=[],
+    )
+    await database.update_mission(
+        mission_id,
+        last_checkpoint="explicit announce failure destination failed",
+        last_error="lane timed out",
+        last_activity_at=datetime.now(UTC).isoformat(),
+        session_key="agent:explicit-announce-failure-destination",
+    )
+
+    await service.handle_mission_event(
+        "mission/failed",
+        {"missionId": mission_id},
+    )
+
+    expected_session_key = (
+        "launch:mode:workspace_affinity:channel:signal:account:escalations:"
+        "peer:channel:escalation-room"
+    )
+    assert session_deliveries == [
+        (
+            expected_session_key,
+            '\u26a0\ufe0f Cron job "Explicit Announce Failure Destination" failed: lane timed out',
+        )
+    ]
+    deliveries = await service.list_outbound_delivery_views(limit=10)
+    assert len(deliveries) == 1
+    assert deliveries[0].route_kind == "announce"
+    assert deliveries[0].event_type == "cron/failure"
+    assert deliveries[0].delivery_state == "delivered"
+    assert deliveries[0].session_key == expected_session_key
+    assert deliveries[0].route_scope.route_match == "explicitTarget"
+    assert deliveries[0].conversation_target is not None
+    assert deliveries[0].conversation_target.channel == "signal"
+    assert deliveries[0].conversation_target.account_id == "escalations"
+    assert deliveries[0].conversation_target.peer_kind == "channel"
+    assert deliveries[0].conversation_target.peer_id == "escalation-room"
+    assert deliveries[0].event_payload is not None
+    assert deliveries[0].event_payload["sessionKey"] == expected_session_key
+    payload_conversation_target = deliveries[0].event_payload["conversationTarget"]
+    assert payload_conversation_target["channel"] == "signal"
+    assert payload_conversation_target["account_id"] == "escalations"
+    assert payload_conversation_target["peer_kind"] == "channel"
+    assert payload_conversation_target["peer_id"] == "escalation-room"
+    assert str(payload_conversation_target["summary"]).startswith("signal")
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_routes_cron_failure_to_matching_announce_notification_route(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Cron Failure Announce Route",
+        kind="webhook",
+        target="https://example.invalid/cron-failure-route",
+        events=["cron/failure"],
+        conversation_target={
+            "channel": "telegram",
+            "account_id": "coordinator",
+            "peer_kind": "channel",
+            "peer_id": "19098680",
+        },
+        enabled=True,
+        secret_header_name=None,
+        secret_token=None,
+        vault_secret_id=None,
+    )
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+    task = await service.create_task_blueprint(
+        build_gateway_cron_task_blueprint(
+            {
+                "name": "Announce Failure Route",
+                "enabled": True,
+                "schedule": {"kind": "every", "everyMs": 3_600_000},
+                "sessionTarget": "isolated",
+                "wakeMode": "next-heartbeat",
+                "payload": {
+                    "kind": "agentTurn",
+                    "message": (
+                        "Route cron failure through the announce target when no explicit "
+                        "destination exists."
+                    ),
+                },
+                "delivery": {
+                    "mode": "announce",
+                    "channel": "telegram",
+                    "to": "19098680",
+                    "accountId": "coordinator",
+                },
+            }
+        )
+    )
+    mission_id = await database.create_mission(
+        name="Announce Failure Route",
+        objective=(
+            "Route cron failure through the announce target when no explicit destination "
+            "exists."
+        ),
+        status="failed",
+        instance_id=task.instance_id or 1,
+        project_id=task.project_id,
+        task_blueprint_id=task.id,
+        thread_id="thread_cron_failure_announce_route",
+        cwd=str(tmp_path),
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=4,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        toolsets=[],
+    )
+    await database.update_mission(
+        mission_id,
+        last_checkpoint="announce delivery failed",
+        last_error="lane timed out",
+        last_activity_at=datetime.now(UTC).isoformat(),
+        session_key="agent:announce-failure-route",
+    )
+
+    webhook_calls: list[tuple[str, str, dict[str, object]]] = []
+
+    def fake_post_webhook(
+        self,  # noqa: ANN001
+        route: dict[str, object],
+        event_type: str,
+        event: dict[str, object],
+        secret_token: str | None,
+    ) -> None:
+        del self, secret_token
+        webhook_calls.append((str(route.get("target") or ""), event_type, event))
+
+    monkeypatch.setattr(OpsMeshService, "_post_webhook", fake_post_webhook)
+
+    await service.handle_mission_event("mission/failed", {"missionId": mission_id})
+
+    assert len(webhook_calls) == 1
+    route_target, delivered_event_type, delivered_event = webhook_calls[0]
+    assert route_target == "https://example.invalid/cron-failure-route"
+    assert delivered_event_type == "cron/failure"
+    assert delivered_event["missionId"] == mission_id
+    assert delivered_event["taskId"] == task.id
+    assert delivered_event["jobId"] == f"task-blueprint:{task.id}"
+    assert delivered_event["jobName"] == "Announce Failure Route"
+    assert delivered_event["message"] == 'Cron job "Announce Failure Route" failed: lane timed out'
+    assert delivered_event["status"] == "error"
+    assert delivered_event["error"] == "lane timed out"
+    assert delivered_event["sessionKey"] == "agent:announce-failure-route"
+    assert delivered_event["routeMatch"] == "peer"
+    conversation_target = delivered_event["conversationTarget"]
+    assert isinstance(conversation_target, dict)
+    assert conversation_target["channel"] == "telegram"
+    assert conversation_target["account_id"] == "coordinator"
+    assert conversation_target["peer_kind"] == "channel"
+    assert conversation_target["peer_id"] == "19098680"
+    route_conversation_target = delivered_event["routeConversationTarget"]
+    assert isinstance(route_conversation_target, dict)
+    assert route_conversation_target["channel"] == "telegram"
+    assert route_conversation_target["account_id"] == "coordinator"
+    assert route_conversation_target["peer_kind"] == "channel"
+    assert route_conversation_target["peer_id"] == "19098680"
+    deliveries = await service.list_outbound_delivery_views(limit=10)
+    assert len(deliveries) == 1
+    assert deliveries[0].route_target == "https://example.invalid/cron-failure-route"
+    assert deliveries[0].event_type == "cron/failure"
+    assert deliveries[0].delivery_state == "delivered"
+    assert deliveries[0].session_key == "agent:announce-failure-route"
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_routes_last_channel_cron_failure_without_conversation_target(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Cron Failure Session Route",
+        kind="webhook",
+        target="https://example.invalid/cron-failure-session-route",
+        events=["cron/failure"],
+        conversation_target=None,
+        enabled=True,
+        secret_header_name=None,
+        secret_token=None,
+        vault_secret_id=None,
+    )
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+    task = await service.create_task_blueprint(
+        build_gateway_cron_task_blueprint(
+            {
+                "name": "Last Channel Failure Route",
+                "enabled": True,
+                "schedule": {"kind": "every", "everyMs": 3_600_000},
+                "sessionTarget": "isolated",
+                "wakeMode": "next-heartbeat",
+                "payload": {
+                    "kind": "agentTurn",
+                    "message": (
+                        "Route cron failure through the session-scoped last-channel fallback."
+                    ),
+                },
+                "delivery": {
+                    "mode": "announce",
+                    "channel": "last",
+                },
+            }
+        )
+    )
+    mission_id = await database.create_mission(
+        name="Last Channel Failure Route",
+        objective="Route cron failure through the session-scoped last-channel fallback.",
+        status="failed",
+        instance_id=task.instance_id or 1,
+        project_id=task.project_id,
+        task_blueprint_id=task.id,
+        thread_id="thread_cron_failure_last_channel_route",
+        cwd=str(tmp_path),
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=4,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        toolsets=[],
+    )
+    await database.update_mission(
+        mission_id,
+        last_checkpoint="last-channel delivery failed",
+        last_error="lane timed out",
+        last_activity_at=datetime.now(UTC).isoformat(),
+        session_key="agent:main:telegram:direct:123:thread:99",
+    )
+
+    webhook_calls: list[tuple[str, str, dict[str, object]]] = []
+
+    def fake_post_webhook(
+        self,  # noqa: ANN001
+        route: dict[str, object],
+        event_type: str,
+        event: dict[str, object],
+        secret_token: str | None,
+    ) -> None:
+        del self, secret_token
+        webhook_calls.append((str(route.get("target") or ""), event_type, event))
+
+    monkeypatch.setattr(OpsMeshService, "_post_webhook", fake_post_webhook)
+
+    await service.handle_mission_event("mission/failed", {"missionId": mission_id})
+
+    assert len(webhook_calls) == 1
+    route_target, delivered_event_type, delivered_event = webhook_calls[0]
+    assert route_target == "https://example.invalid/cron-failure-session-route"
+    assert delivered_event_type == "cron/failure"
+    assert delivered_event["missionId"] == mission_id
+    assert delivered_event["taskId"] == task.id
+    assert delivered_event["jobId"] == f"task-blueprint:{task.id}"
+    assert delivered_event["jobName"] == "Last Channel Failure Route"
+    assert (
+        delivered_event["message"]
+        == 'Cron job "Last Channel Failure Route" failed: lane timed out'
+    )
+    assert delivered_event["status"] == "error"
+    assert delivered_event["error"] == "lane timed out"
+    assert delivered_event["sessionKey"] == "agent:main:telegram:direct:123:thread:99"
+    assert "conversationTarget" not in delivered_event
+    assert "routeConversationTarget" not in delivered_event
+    deliveries = await service.list_outbound_delivery_views(limit=10)
+    assert len(deliveries) == 1
+    assert deliveries[0].route_target == "https://example.invalid/cron-failure-session-route"
+    assert deliveries[0].event_type == "cron/failure"
+    assert deliveries[0].delivery_state == "delivered"
+    assert deliveries[0].session_key == "agent:main:telegram:direct:123:thread:99"
+    assert deliveries[0].conversation_target is None
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_delivers_last_channel_cron_failure_to_session_key(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Cron Failure Session Route",
+        kind="webhook",
+        target="https://example.invalid/cron-failure-session-route",
+        events=["cron/failure"],
+        conversation_target=None,
+        enabled=True,
+        secret_header_name=None,
+        secret_token=None,
+        vault_secret_id=None,
+    )
+
+    session_deliveries: list[tuple[str, str]] = []
+
+    async def fake_session_delivery(session_key: str, message: str) -> None:
+        session_deliveries.append((session_key, message))
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_session_delivery,
+    )
+    task = await service.create_task_blueprint(
+        build_gateway_cron_task_blueprint(
+            {
+                "name": "Last Channel Failure Session Delivery",
+                "enabled": True,
+                "schedule": {"kind": "every", "everyMs": 3_600_000},
+                "sessionTarget": "isolated",
+                "wakeMode": "next-heartbeat",
+                "payload": {
+                    "kind": "agentTurn",
+                    "message": "Deliver cron failure through the live session key.",
+                },
+                "delivery": {
+                    "mode": "announce",
+                    "channel": "last",
+                },
+            }
+        )
+    )
+    mission_id = await database.create_mission(
+        name="Last Channel Failure Session Delivery",
+        objective="Deliver cron failure through the live session key.",
+        status="failed",
+        instance_id=task.instance_id or 1,
+        project_id=task.project_id,
+        task_blueprint_id=task.id,
+        thread_id="thread_cron_failure_last_channel_session_delivery",
+        cwd=str(tmp_path),
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=4,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        toolsets=[],
+    )
+    session_key = "agent:main:telegram:direct:123:thread:99"
+    await database.update_mission(
+        mission_id,
+        last_checkpoint="last-channel session delivery failed",
+        last_error="lane timed out",
+        last_activity_at=datetime.now(UTC).isoformat(),
+        session_key=session_key,
+    )
+
+    webhook_calls: list[tuple[str, str, dict[str, object]]] = []
+
+    def fake_post_webhook(
+        self,  # noqa: ANN001
+        route: dict[str, object],
+        event_type: str,
+        event: dict[str, object],
+        secret_token: str | None,
+    ) -> None:
+        del self, secret_token
+        webhook_calls.append((str(route.get("target") or ""), event_type, event))
+
+    monkeypatch.setattr(OpsMeshService, "_post_webhook", fake_post_webhook)
+
+    await service.handle_mission_event("mission/failed", {"missionId": mission_id})
+
+    assert session_deliveries == [
+        (
+            session_key,
+            (
+                '\u26a0\ufe0f Cron job "Last Channel Failure Session Delivery" failed: '
+                "lane timed out"
+            ),
+        )
+    ]
+    assert webhook_calls == []
+    deliveries = await service.list_outbound_delivery_views(limit=10)
+    assert len(deliveries) == 1
+    assert deliveries[0].route_kind == "session"
+    assert deliveries[0].route_target == session_key
+    assert deliveries[0].event_type == "cron/failure"
+    assert deliveries[0].delivery_state == "delivered"
+    assert deliveries[0].session_key == session_key
+    assert deliveries[0].conversation_target is None
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_prefers_stored_cron_session_key_for_last_channel_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-stored-cron-session-key"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Cron Failure Session Route",
+        kind="webhook",
+        target="https://example.invalid/cron-failure-session-route",
+        events=["cron/failure"],
+        conversation_target=None,
+        enabled=True,
+        secret_header_name=None,
+        secret_token=None,
+        vault_secret_id=None,
+    )
+
+    session_deliveries: list[tuple[str, str]] = []
+
+    async def fake_session_delivery(session_key: str, message: str) -> None:
+        session_deliveries.append((session_key, message))
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_session_delivery,
+    )
+    task = await service.create_task_blueprint(
+        build_gateway_cron_task_blueprint(
+            {
+                "name": "Stored Session Key Failure Delivery",
+                "enabled": True,
+                "schedule": {"kind": "every", "everyMs": 3_600_000},
+                "sessionKey": "telegram:direct:123:thread:77",
+                "sessionTarget": "isolated",
+                "wakeMode": "next-heartbeat",
+                "payload": {
+                    "kind": "agentTurn",
+                    "message": "Deliver cron failure through the stored session key.",
+                },
+                "delivery": {
+                    "mode": "announce",
+                    "channel": "last",
+                },
+            }
+        )
+    )
+    mission_id = await database.create_mission(
+        name="Stored Session Key Failure Delivery",
+        objective="Deliver cron failure through the stored session key.",
+        status="failed",
+        instance_id=task.instance_id or 1,
+        project_id=task.project_id,
+        task_blueprint_id=task.id,
+        thread_id="thread_cron_failure_stored_session_key",
+        cwd=str(tmp_path),
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=4,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        toolsets=[],
+    )
+    stored_session_key = "agent:openzues:telegram:direct:123:thread:77"
+    await database.update_mission(
+        mission_id,
+        last_checkpoint="stored-session-key delivery failed",
+        last_error="lane timed out",
+        last_activity_at=datetime.now(UTC).isoformat(),
+        session_key="agent:openzues:cron:task-blueprint:1:run:latest",
+    )
+
+    webhook_calls: list[tuple[str, str, dict[str, object]]] = []
+
+    def fake_post_webhook(
+        self,  # noqa: ANN001
+        route: dict[str, object],
+        event_type: str,
+        event: dict[str, object],
+        secret_token: str | None,
+    ) -> None:
+        del self, secret_token
+        webhook_calls.append((str(route.get("target") or ""), event_type, event))
+
+    monkeypatch.setattr(OpsMeshService, "_post_webhook", fake_post_webhook)
+
+    await service.handle_mission_event("mission/failed", {"missionId": mission_id})
+
+    assert session_deliveries == [
+        (
+            stored_session_key,
+            (
+                '\u26a0\ufe0f Cron job "Stored Session Key Failure Delivery" failed: '
+                "lane timed out"
+            ),
+        )
+    ]
+    assert webhook_calls == []
+    deliveries = await service.list_outbound_delivery_views(limit=10)
+    assert len(deliveries) == 1
+    assert deliveries[0].route_kind == "session"
+    assert deliveries[0].route_target == stored_session_key
+    assert deliveries[0].event_type == "cron/failure"
+    assert deliveries[0].delivery_state == "delivered"
+    assert deliveries[0].session_key == stored_session_key
+    assert deliveries[0].conversation_target is None
+    assert deliveries[0].event_payload is not None
+    assert deliveries[0].event_payload["sessionKey"] == stored_session_key
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_skips_cron_failure_destination_when_best_effort(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+    task = await service.create_task_blueprint(
+        build_gateway_cron_task_blueprint(
+            {
+                "name": "Best Effort Failure Destination",
+                "enabled": True,
+                "schedule": {"kind": "every", "everyMs": 3_600_000},
+                "sessionTarget": "isolated",
+                "wakeMode": "next-heartbeat",
+                "payload": {
+                    "kind": "agentTurn",
+                    "message": "Do not send failure destination when best effort is enabled.",
+                },
+                "delivery": {
+                    "mode": "announce",
+                    "channel": "telegram",
+                    "to": "19098680",
+                    "bestEffort": True,
+                    "failureDestination": {
+                        "mode": "webhook",
+                        "to": "https://example.invalid/failure-destination",
+                    },
+                },
+            }
+        )
+    )
+    mission_id = await database.create_mission(
+        name="Best Effort Failure Destination",
+        objective="Do not send failure destination when best effort is enabled.",
+        status="failed",
+        instance_id=task.instance_id or 1,
+        project_id=task.project_id,
+        task_blueprint_id=task.id,
+        thread_id="thread_cron_best_effort_failure_destination",
+        cwd=str(tmp_path),
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=4,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        toolsets=[],
+    )
+    await database.update_mission(
+        mission_id,
+        last_checkpoint="best-effort failed",
+        last_error=None,
+        last_activity_at=datetime.now(UTC).isoformat(),
+    )
+
+    webhook_calls: list[tuple[str, dict[str, object]]] = []
+
+    def fake_post_json_webhook(
+        self,  # noqa: ANN001
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> None:
+        del self, secret_header_name, secret_token
+        webhook_calls.append((target, payload))
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_post_json_webhook",
+        fake_post_json_webhook,
+        raising=False,
+    )
+
+    await service.handle_mission_event("mission/failed", {"missionId": mission_id})
+
+    assert webhook_calls == []
+    deliveries = await service.list_outbound_delivery_views(limit=10)
+    assert deliveries == []
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_launches_due_one_shot_task(tmp_path: Path) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_project(path="C:/workspace", label="OpenZues Workspace")
+    await database.create_task_blueprint(
+        name="One Shot",
+        summary="Run exactly once.",
+        project_id=1,
+        instance_id=1,
+        cadence_minutes=None,
+        enabled=True,
+        payload={
+            "objective_template": "Run exactly once.",
+            "schedule_kind": "at",
+            "schedule_at": (datetime.now(UTC) - timedelta(minutes=5)).isoformat(),
+            "cwd": "C:/workspace",
+            "model": "gpt-5.4",
+            "reasoning_effort": None,
+            "collaboration_mode": None,
+            "max_turns": 2,
+            "use_builtin_agents": True,
+            "run_verification": True,
+            "auto_commit": False,
+            "pause_on_approval": True,
+            "allow_auto_reflexes": True,
+            "auto_recover": True,
+            "auto_recover_limit": 2,
+            "reflex_cooldown_seconds": 900,
+            "allow_failover": True,
+        },
+    )
+
+    fake_missions = FakeMissionService()
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        fake_missions,  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    await service.tick_once()
+
+    assert len(fake_missions.created_payloads) == 1
+    payload = fake_missions.created_payloads[0]
+    assert payload.task_blueprint_id == 1
+    stored = await database.get_task_blueprint(1)
+    assert stored is not None
+    assert stored["last_status"] == "active"
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_launches_due_mempalace_memory_task(tmp_path: Path) -> None:
     database = Database(tmp_path / "ops.db")
     await database.initialize()
@@ -1248,6 +2850,140 @@ async def test_ops_mesh_service_auto_chains_continuous_task_after_completed_slic
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_routes_due_main_system_event_task_through_wake_queue(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_project(path="C:/workspace", label="OpenZues Workspace")
+    await database.create_task_blueprint(
+        name="Wake Main Lane",
+        summary="Nudge the main lane on the next heartbeat.",
+        project_id=1,
+        instance_id=1,
+        cadence_minutes=60,
+        enabled=True,
+        payload={
+            "objective_template": "Resume the main lane from cron.",
+            "cron_session_target": "main",
+            "cron_wake_mode": "next-heartbeat",
+            "cron_payload_kind": "systemEvent",
+            "cron_payload_text": "Resume the main lane from cron.",
+            "cwd": "C:/workspace",
+            "model": "gpt-5.4",
+            "reasoning_effort": None,
+            "collaboration_mode": None,
+            "max_turns": 2,
+            "use_builtin_agents": True,
+            "run_verification": True,
+            "auto_commit": False,
+            "pause_on_approval": True,
+            "allow_auto_reflexes": True,
+            "auto_recover": True,
+            "auto_recover_limit": 2,
+            "reflex_cooldown_seconds": 900,
+            "allow_failover": True,
+        },
+    )
+    await database.update_task_blueprint(
+        1,
+        last_launched_at=(datetime.now(UTC) - timedelta(hours=2)).isoformat(),
+        last_status="completed",
+        last_result_summary="Previous cron wake finished.",
+    )
+
+    fake_missions = FakeMissionService()
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        fake_missions,  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        wake_service=GatewayWakeService(database),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    await service.tick_once()
+
+    wake_requests = await database.list_gateway_wake_requests()
+    stored = await database.get_task_blueprint(1)
+
+    assert fake_missions.created_payloads == []
+    assert len(wake_requests) == 1
+    assert wake_requests[0]["mode"] == "next-heartbeat"
+    assert wake_requests[0]["text"] == "Resume the main lane from cron."
+    assert wake_requests[0]["status"] == "pending"
+    assert stored is not None
+    assert stored["last_status"] == "completed"
+    assert stored["last_result_summary"] == "Resume the main lane from cron."
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_disables_consumed_one_shot_main_system_event_task_after_queueing(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_project(path="C:/workspace", label="OpenZues Workspace")
+    await database.create_task_blueprint(
+        name="Wake Once",
+        summary="Nudge the main lane once.",
+        project_id=1,
+        instance_id=1,
+        cadence_minutes=None,
+        enabled=True,
+        payload={
+            "objective_template": "Wake the main lane once.",
+            "schedule_kind": "at",
+            "schedule_at": (datetime.now(UTC) - timedelta(minutes=1))
+            .isoformat(timespec="milliseconds")
+            .replace("+00:00", "Z"),
+            "cron_session_target": "main",
+            "cron_wake_mode": "next-heartbeat",
+            "cron_payload_kind": "systemEvent",
+            "cron_payload_text": "Wake the main lane once.",
+            "cwd": "C:/workspace",
+            "model": "gpt-5.4",
+            "reasoning_effort": None,
+            "collaboration_mode": None,
+            "max_turns": 2,
+            "use_builtin_agents": True,
+            "run_verification": True,
+            "auto_commit": False,
+            "pause_on_approval": True,
+            "allow_auto_reflexes": True,
+            "auto_recover": True,
+            "auto_recover_limit": 2,
+            "reflex_cooldown_seconds": 900,
+            "allow_failover": True,
+        },
+    )
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        wake_service=GatewayWakeService(database),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    await service.tick_once()
+
+    wake_requests = await database.list_gateway_wake_requests()
+    stored = await database.get_task_blueprint(1)
+
+    assert len(wake_requests) == 1
+    assert wake_requests[0]["text"] == "Wake the main lane once."
+    assert stored is not None
+    assert stored["enabled"] == 0
+    assert stored["last_status"] == "completed"
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_stops_continuous_task_when_completion_marker_seen(
     tmp_path: Path,
 ) -> None:
@@ -1328,6 +3064,93 @@ async def test_ops_mesh_service_stops_continuous_task_when_completion_marker_see
     assert stored["enabled"] == 0
     assert stored["last_status"] == "completed"
     assert "PARITY COMPLETE" in stored["last_result_summary"]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_disables_consumed_one_shot_task_on_completion(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_project(path="C:/workspace", label="OpenZues Workspace")
+    await database.create_task_blueprint(
+        name="One Shot",
+        summary="Run exactly once.",
+        project_id=1,
+        instance_id=1,
+        cadence_minutes=None,
+        enabled=True,
+        payload={
+            "objective_template": "Run exactly once.",
+            "schedule_kind": "at",
+            "schedule_at": "2026-04-18T12:00:00.000Z",
+            "cwd": "C:/workspace",
+            "model": "gpt-5.4",
+            "reasoning_effort": None,
+            "collaboration_mode": None,
+            "max_turns": 2,
+            "use_builtin_agents": True,
+            "run_verification": True,
+            "auto_commit": False,
+            "pause_on_approval": True,
+            "allow_auto_reflexes": True,
+            "auto_recover": True,
+            "auto_recover_limit": 2,
+            "reflex_cooldown_seconds": 900,
+            "allow_failover": True,
+        },
+    )
+    await database.update_task_blueprint(
+        1,
+        last_launched_at="2026-04-18T12:05:00+00:00",
+        last_status="active",
+    )
+    mission_id = await database.create_mission(
+        name="One Shot",
+        objective="Run exactly once.",
+        status="completed",
+        instance_id=1,
+        project_id=1,
+        task_blueprint_id=1,
+        thread_id="thread_one_shot",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=2,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+    )
+    await database.update_mission(
+        mission_id,
+        last_checkpoint="Completed the one-shot reminder.",
+        last_activity_at=datetime.now(UTC).isoformat(),
+    )
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    await service.handle_mission_event("mission/completed", {"missionId": mission_id})
+
+    stored = await database.get_task_blueprint(1)
+    assert stored is not None
+    assert stored["enabled"] == 0
+    assert stored["last_status"] == "completed"
+    assert stored["last_result_summary"] == "Completed the one-shot reminder."
 
 
 @pytest.mark.asyncio

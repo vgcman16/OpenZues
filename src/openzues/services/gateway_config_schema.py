@@ -9,6 +9,8 @@ from openzues.database import utcnow
 
 _SCHEMA_VERSION = "openzues-control-ui-bootstrap-v1"
 _PATH_INDEX_RE = re.compile(r"\[(\d+)\]")
+_LOOKUP_PATH_PATTERN = re.compile(r"^[A-Za-z0-9_./\[\]\-*]+$")
+_LOOKUP_PATH_MAX_LENGTH = 1024
 _ROOT_REQUIRED = ("assistantName", "assistantAvatar", "assistantAgentId")
 _ROOT_PROPERTIES: dict[str, dict[str, Any]] = {
     "basePath": {
@@ -84,6 +86,8 @@ class GatewayConfigSchemaService:
 
     def lookup(self, path: str) -> dict[str, Any] | None:
         normalized_path = _normalize_lookup_path(path)
+        if normalized_path is None:
+            return None
         node = _lookup_schema_node(normalized_path)
         if node is None:
             return None
@@ -116,8 +120,19 @@ def _normalize_generated_at(value: str) -> str:
     return normalized.replace("+00:00", "Z")
 
 
-def _normalize_lookup_path(path: str) -> str:
-    normalized = _PATH_INDEX_RE.sub(r".\1", path.strip())
+def _normalize_lookup_path(path: str) -> str | None:
+    if path == "":
+        return ""
+
+    normalized = path.strip()
+    if not normalized:
+        return None
+    if len(normalized) > _LOOKUP_PATH_MAX_LENGTH:
+        return None
+    if not _LOOKUP_PATH_PATTERN.fullmatch(normalized):
+        return None
+
+    normalized = _PATH_INDEX_RE.sub(r".\1", normalized)
     normalized = normalized.strip(".")
     return normalized
 

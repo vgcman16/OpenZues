@@ -43,6 +43,53 @@ class _GatewayWizardSession:
         return self.base.get(key)
 
 
+def _text_step(
+    *,
+    field: str,
+    title: str,
+    message: str,
+    placeholder: str | None = None,
+    initial_value: object = None,
+) -> _PendingWizardStep:
+    step_id = str(uuid4())
+    payload: dict[str, object] = {
+        "id": step_id,
+        "type": "text",
+        "title": title,
+        "message": message,
+        "executor": "client",
+    }
+    if placeholder is not None:
+        payload["placeholder"] = placeholder
+    initial_text = _string_or_none(initial_value)
+    if initial_text is not None:
+        payload["initialvalue"] = initial_text
+    return _PendingWizardStep(field=field, payload=payload)
+
+
+def _select_step(
+    *,
+    field: str,
+    title: str,
+    message: str,
+    options: list[dict[str, object]],
+    initial_value: object = None,
+) -> _PendingWizardStep:
+    step_id = str(uuid4())
+    payload: dict[str, object] = {
+        "id": step_id,
+        "type": "select",
+        "title": title,
+        "message": message,
+        "options": [dict(option) for option in options],
+        "executor": "client",
+    }
+    initial_text = _string_or_none(initial_value)
+    if initial_text is not None:
+        payload["initialvalue"] = initial_text
+    return _PendingWizardStep(field=field, payload=payload)
+
+
 class GatewayWizardService:
     def __init__(
         self,
@@ -96,6 +143,7 @@ class GatewayWizardService:
                 pending.field,
                 answer.get("value"),
             )
+            _apply_dependent_defaults(session, pending.field)
         result = await self._advance(session_id, session)
         if result.get("done") is True:
             self._sessions.pop(session_id, None)
@@ -155,44 +203,88 @@ class GatewayWizardService:
 
 
 def _build_next_step(session: _GatewayWizardSession) -> _PendingWizardStep | None:
+    mode = _normalized_mode_value(session.merged_value("mode"))
+    if mode is None:
+        return _select_step(
+            field="mode",
+            title="Setup Mode",
+            message="Choose how you want the gateway wizard to stage setup.",
+            options=[
+                {
+                    "value": "local",
+                    "label": "Local",
+                    "hint": "Use a local control plane and desktop lane.",
+                },
+                {
+                    "value": "remote",
+                    "label": "Remote",
+                    "hint": "Stage the workspace spine first and bind a lane later.",
+                },
+            ],
+            initial_value="local",
+        )
+
     project_path = _string_or_none(session.merged_value("project_path"))
     if project_path is None:
-        step_id = str(uuid4())
-        return _PendingWizardStep(
+        return _text_step(
             field="project_path",
-            payload={
-                "id": step_id,
-                "type": "text",
-                "title": "Workspace",
-                "message": "Enter the workspace path to stage for setup.",
-                "placeholder": "C:/workspace",
-                "executor": "client",
-            },
+            title="Workspace",
+            message="Enter the workspace path to stage for setup.",
+            placeholder="C:/workspace",
         )
+
+    if mode == "local":
+        operator_name = _string_or_none(session.merged_value("operator_name"))
+        if operator_name is None:
+            return _text_step(
+                field="operator_name",
+                title="Operator Name",
+                message="Name the operator who should receive the local bootstrap access.",
+                placeholder="Operator",
+            )
 
     task_name = _string_or_none(session.merged_value("task_name"))
     if task_name is None:
-        step_id = str(uuid4())
-        return _PendingWizardStep(
+        return _text_step(
             field="task_name",
-            payload={
-                "id": step_id,
-                "type": "text",
-                "title": "Task Name",
-                "message": "Name the recurring setup task.",
-                "executor": "client",
-            },
+            title="Task Name",
+            message="Name the recurring setup task.",
         )
 
     return None
 
 
 def _coerce_answer_value(field: str, value: object) -> str:
+    if field == "mode":
+        normalized = _normalized_mode_value(value)
+        if normalized is None:
+            raise ValueError("mode must be local or remote")
+        return normalized
     if field == "project_path":
         return _require_non_empty_text(value, label="workspace")
+    if field == "operator_name":
+        return _require_non_empty_text(value, label="operator name")
     if field == "task_name":
         return _require_non_empty_text(value, label="task name")
     return _require_non_empty_text(value, label=field)
+
+
+def _normalized_mode_value(value: object) -> str | None:
+    text = _string_or_none(value)
+    if text is None:
+        return None
+    lowered = text.lower()
+    if lowered in {"local", "remote"}:
+        return lowered
+    return None
+
+
+def _apply_dependent_defaults(session: _GatewayWizardSession, field: str) -> None:
+    if field != "mode":
+        return
+    mode = _normalized_mode_value(session.patch.get("mode"))
+    if mode == "remote":
+        session.patch["flow"] = "advanced"
 
 
 def _status_payload(session: _GatewayWizardSession) -> dict[str, object]:

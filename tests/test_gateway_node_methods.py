@@ -2,14 +2,19 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import json
 import os
+import re
 import shutil
 import sqlite3
+import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from openzues.database import Database, utcnow
 from openzues.schemas import (
@@ -21,8 +26,10 @@ from openzues.schemas import (
 from openzues.services.gateway_agent_files import GatewayAgentFilesService
 from openzues.services.gateway_channels import GatewayChannelsService
 from openzues.services.gateway_config import GatewayConfigService
+from openzues.services.gateway_cron import build_gateway_cron_task_blueprint
 from openzues.services.gateway_health import GatewayHealthService
 from openzues.services.gateway_identity import GatewayIdentityService
+from openzues.services.gateway_method_policy import ADMIN_GATEWAY_METHOD_SCOPE
 from openzues.services.gateway_node_methods import (
     GatewayNodeMethodError,
     GatewayNodeMethodRequester,
@@ -85,6 +92,37 @@ class AutoReplyNodeConnection(FakeNodeConnection):
         )
 
 
+class BackgroundUnavailableNodeConnection(FakeNodeConnection):
+    def __init__(self, registry: GatewayNodeRegistry, conn_id: str) -> None:
+        super().__init__(conn_id)
+        self.registry = registry
+
+    def send_gateway_event(self, event: str, payload: object) -> None:
+        super().send_gateway_event(event, payload)
+        if event != "node.invoke.request" or not isinstance(payload, dict):
+            return
+        request_id = str(payload.get("id") or "")
+        node_id = str(payload.get("nodeId") or "")
+        if not request_id or not node_id:
+            return
+        asyncio.get_running_loop().call_soon(
+            lambda: self.registry.handle_invoke_result(
+                request_id=request_id,
+                node_id=node_id,
+                ok=False,
+                payload=None,
+                payload_json=None,
+                error={
+                    "code": "NODE_BACKGROUND_UNAVAILABLE",
+                    "message": (
+                        "NODE_BACKGROUND_UNAVAILABLE: canvas/camera/screen commands "
+                        "require foreground"
+                    ),
+                },
+            )
+        )
+
+
 class FakeCronTaskRunner:
     def __init__(self) -> None:
         self.calls: list[tuple[int, str]] = []
@@ -136,7 +174,7 @@ def _register_ios_node(registry: GatewayNodeRegistry) -> None:
         ),
         remote_ip="10.0.0.5",
         connected_at_ms=321,
-        )
+    )
 
 
 def _task_blueprint_payload(
@@ -167,6 +205,14 @@ def _task_blueprint_payload(
         "toolsets": [],
         "enabled": True,
     }
+
+
+def _json_conversation_target(payload: TaskBlueprintCreate) -> dict[str, object] | None:
+    return (
+        payload.conversation_target.model_dump(mode="json")
+        if payload.conversation_target is not None
+        else None
+    )
 
 
 async def _create_scheduled_mission(
@@ -291,6 +337,7 @@ async def test_voicewake_methods_surface_defaults_persist_updates_and_broadcast(
             platform="ios",
         ),
     )
+
     class _RecordingBroadcastHub(BroadcastHub):
         def __init__(self) -> None:
             super().__init__()
@@ -319,7 +366,7 @@ async def test_voicewake_methods_surface_defaults_persist_updates_and_broadcast(
 
     reloaded = await service.call("voicewake.get", {})
 
-    assert initial == {"triggers": ["openclaw", "claude", "computer"]}
+    assert initial == {"triggers": ["openclaw", "claude"]}
     assert updated == {"triggers": ["hello", "world"]}
     assert reloaded == {"triggers": ["hello", "world"]}
     assert connection.sent_events[-1] == {
@@ -344,6 +391,7 @@ async def test_talk_mode_persists_updates_and_broadcast(tmp_path) -> None:
             platform="ios",
         ),
     )
+
     class _RecordingBroadcastHub(BroadcastHub):
         def __init__(self) -> None:
             super().__init__()
@@ -403,10 +451,66 @@ async def test_gateway_identity_get_returns_stable_persisted_device_identity(tmp
     second = await service.call("gateway.identity.get", {})
 
     assert first == second
-    assert first["id"].startswith("gateway-")
+    assert re.fullmatch(r"[0-9a-f]{64}", first["id"])
     assert isinstance(first["publicKey"], str)
+    assert re.fullmatch(r"[A-Za-z0-9_-]{43}", first["publicKey"])
     assert len(first["publicKey"]) > 20
-    assert (tmp_path / "settings" / "gateway-identity.json").exists()
+    identity_path = tmp_path / "settings" / "gateway-identity.json"
+    assert identity_path.exists()
+    stored = json.loads(identity_path.read_text(encoding="utf-8"))
+    assert stored["version"] == 1
+    assert stored["deviceId"] == first["id"]
+    assert "BEGIN PUBLIC KEY" in stored["publicKeyPem"]
+    assert "BEGIN PRIVATE KEY" in stored["privateKeyPem"]
+    assert isinstance(stored["createdAtMs"], int)
+
+
+@pytest.mark.asyncio
+async def test_gateway_identity_get_repairs_mismatched_openclaw_device_id(tmp_path) -> None:
+    private_key = Ed25519PrivateKey.generate()
+    public_key_bytes = private_key.public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+    expected_id = hashlib.sha256(public_key_bytes).hexdigest()
+    expected_public_key = base64.urlsafe_b64encode(public_key_bytes).decode("ascii").rstrip("=")
+    identity_path = tmp_path / "settings" / "gateway-identity.json"
+    identity_path.parent.mkdir(parents=True, exist_ok=True)
+    identity_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "deviceId": "stale-device-id",
+                "publicKeyPem": private_key.public_key()
+                .public_bytes(
+                    encoding=serialization.Encoding.PEM,
+                    format=serialization.PublicFormat.SubjectPublicKeyInfo,
+                )
+                .decode("utf-8"),
+                "privateKeyPem": private_key.private_bytes(
+                    encoding=serialization.Encoding.PEM,
+                    format=serialization.PrivateFormat.PKCS8,
+                    encryption_algorithm=serialization.NoEncryption(),
+                ).decode("utf-8"),
+                "createdAtMs": 123,
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        gateway_identity_service=GatewayIdentityService(tmp_path),
+    )
+
+    payload = await service.call("gateway.identity.get", {})
+    stored = json.loads(identity_path.read_text(encoding="utf-8"))
+
+    assert payload == {"id": expected_id, "publicKey": expected_public_key}
+    assert stored["deviceId"] == expected_id
+    assert stored["createdAtMs"] == 123
 
 
 @pytest.mark.asyncio
@@ -863,17 +967,24 @@ async def test_exec_approvals_family_returns_explicit_unavailable_contract(
 
 
 @pytest.mark.asyncio
-async def test_set_heartbeats_returns_explicit_unavailable_contract() -> None:
-    service = GatewayNodeMethodService(GatewayNodeRegistry())
+async def test_set_heartbeats_returns_ok_payload_when_runtime_is_wired() -> None:
+    calls: list[bool] = []
 
-    with pytest.raises(GatewayNodeMethodError) as exc_info:
-        await service.call("set-heartbeats", {"enabled": True})
+    async def fake_set_heartbeats_enabled(enabled: bool) -> bool:
+        calls.append(enabled)
+        return enabled
 
-    assert exc_info.value.code == "UNAVAILABLE"
-    assert exc_info.value.status_code == 503
-    assert str(exc_info.value) == (
-        "set-heartbeats is unavailable until gateway heartbeat toggle runtime is wired"
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        set_heartbeats_enabled=fake_set_heartbeats_enabled,
     )
+
+    disabled = await service.call("set-heartbeats", {"enabled": False})
+    enabled = await service.call("set-heartbeats", {"enabled": True})
+
+    assert calls == [False, True]
+    assert disabled == {"ok": True, "enabled": False}
+    assert enabled == {"ok": True, "enabled": True}
 
 
 @pytest.mark.asyncio
@@ -932,6 +1043,29 @@ async def test_config_schema_lookup_returns_field_summary_and_children() -> None
 
 
 @pytest.mark.asyncio
+async def test_config_schema_lookup_supports_array_paths_and_rejects_invalid_lookup_paths() -> None:
+    service = GatewayNodeMethodService(GatewayNodeRegistry())
+
+    array_lookup = await service.call(
+        "config.schema.lookup",
+        {"path": "localMediaPreviewRoots[0]"},
+    )
+
+    assert array_lookup == {
+        "path": "localMediaPreviewRoots.0",
+        "schema": {
+            "type": "string",
+            "title": "Local Media Preview Root",
+        },
+        "children": [],
+    }
+
+    for path in ["   ", "gateway.auth\nspoof", "gateway." + ("a" * 1020)]:
+        with pytest.raises(ValueError, match="config schema path not found"):
+            await service.call("config.schema.lookup", {"path": path})
+
+
+@pytest.mark.asyncio
 async def test_config_schema_lookup_rejects_unknown_path() -> None:
     service = GatewayNodeMethodService(GatewayNodeRegistry())
 
@@ -982,9 +1116,7 @@ async def test_tools_catalog_returns_bounded_openzues_toolset_inventory() -> Non
     assert safe_tool == {
         "id": "safe",
         "label": "safe",
-        "description": (
-            "Use the safest available lane behavior and keep approval edges explicit."
-        ),
+        "description": ("Use the safest available lane behavior and keep approval edges explicit."),
         "source": "core",
         "defaultProfiles": ["coding", "full"],
     }
@@ -996,13 +1128,21 @@ async def test_tools_catalog_returns_bounded_openzues_toolset_inventory() -> Non
         "source": "core",
         "defaultProfiles": ["messaging", "full"],
     }
-    session_search_tool = next(
-        tool for tool in group["tools"] if tool["id"] == "session_search"
-    )
+    session_search_tool = next(tool for tool in group["tools"] if tool["id"] == "session_search")
     assert session_search_tool["description"] == (
         "Search saved missions, checkpoints, and proof handoffs before "
         "restating the same uncertainty."
     )
+    browser_tool = next(tool for tool in group["tools"] if tool["id"] == "browser")
+    assert browser_tool == {
+        "id": "browser",
+        "label": "browser",
+        "description": (
+            "Use browser-driven verification for web flows, dashboards, and UI regressions."
+        ),
+        "source": "core",
+        "defaultProfiles": ["coding", "full"],
+    }
 
 
 @pytest.mark.asyncio
@@ -1079,6 +1219,72 @@ async def test_tools_effective_returns_bounded_effective_inventory_from_session_
         "debugging",
     ]
     assert group["tools"][0]["rawDescription"] == group["tools"][0]["description"]
+
+
+@pytest.mark.asyncio
+async def test_tools_effective_returns_minimal_profile_when_session_has_no_toolsets() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-tools-effective-minimal-service"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-tools-effective-minimal.db")
+    await database.initialize()
+    main_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+    )
+    session_key = resolve_thread_session_keys(
+        base_session_key=main_session_key,
+        thread_id="thread-empty-tools",
+    ).session_key
+    await database.create_mission(
+        name="Minimal Tool Mission",
+        objective="Keep the minimal effective tool posture aligned with the session.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        task_blueprint_id=None,
+        thread_id="thread-empty-tools",
+        session_key=session_key,
+        cwd=str(tmp_path),
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        toolsets=[],
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    payload = await service.call(
+        "tools.effective",
+        {"sessionKey": session_key, "agentId": "main"},
+    )
+
+    assert payload["agentId"] == "main"
+    assert payload["profile"] == "minimal"
+    assert payload["groups"] == [
+        {
+            "id": "core",
+            "label": "Built-in tools",
+            "source": "core",
+            "tools": [],
+        }
+    ]
 
 
 @pytest.mark.asyncio
@@ -1208,6 +1414,942 @@ async def test_chat_send_returns_run_ack_from_injected_control_chat_bridge() -> 
         "timeout_ms": 30_000,
     }
     assert payload == {"runId": "run-chat-send-1", "status": "ok"}
+
+
+@pytest.mark.asyncio
+async def test_chat_send_stop_command_aborts_tracked_runtime_without_submitting_new_message() -> (
+    None
+):
+    send_calls: list[dict[str, object]] = []
+    observed_interrupt: dict[str, object] = {}
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        send_calls.append(
+            {
+                "session_key": session_key,
+                "message": message,
+                "idempotency_key": idempotency_key,
+                "thinking": thinking,
+                "deliver": deliver,
+                "timeout_ms": timeout_ms,
+            }
+        )
+        return {"runId": idempotency_key, "status": "ok"}
+
+    async def fake_chat_abort_service(
+        *,
+        session_key: str,
+        run_id: str | None,
+    ) -> dict[str, object]:
+        observed_interrupt.update({"session_key": session_key, "run_id": run_id})
+        return {"ok": True}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        chat_send_service=fake_chat_send_service,
+        chat_abort_service=fake_chat_abort_service,
+    )
+
+    await service.call(
+        "chat.send",
+        {
+            "sessionKey": "openzues:thread:demo",
+            "message": "status",
+            "idempotencyKey": "run-chat-send-1",
+        },
+    )
+    payload = await service.call(
+        "chat.send",
+        {
+            "sessionKey": "openzues:thread:demo",
+            "message": " /STOP!!! ",
+            "idempotencyKey": "run-chat-send-stop-1",
+        },
+    )
+
+    assert send_calls == [
+        {
+            "session_key": "openzues:thread:demo",
+            "message": "status",
+            "idempotency_key": "run-chat-send-1",
+            "thinking": None,
+            "deliver": None,
+            "timeout_ms": None,
+        }
+    ]
+    assert observed_interrupt == {
+        "session_key": "openzues:thread:demo",
+        "run_id": None,
+    }
+    assert payload == {"ok": True, "aborted": True, "runIds": ["run-chat-send-1"]}
+
+
+@pytest.mark.asyncio
+async def test_chat_send_stop_command_reports_no_active_run_without_submitting_message() -> None:
+    send_calls: list[dict[str, object]] = []
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        send_calls.append(
+            {
+                "session_key": session_key,
+                "message": message,
+                "idempotency_key": idempotency_key,
+                "thinking": thinking,
+                "deliver": deliver,
+                "timeout_ms": timeout_ms,
+            }
+        )
+        return {"runId": idempotency_key, "status": "ok"}
+
+    async def fake_chat_abort_service(
+        *,
+        session_key: str,
+        run_id: str | None,
+    ) -> dict[str, object]:
+        del session_key, run_id
+        return {"ok": False, "reason": "no_active_turn"}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        chat_send_service=fake_chat_send_service,
+        chat_abort_service=fake_chat_abort_service,
+    )
+
+    payload = await service.call(
+        "chat.send",
+        {
+            "sessionKey": "openzues:thread:demo",
+            "message": "stop please",
+            "idempotencyKey": "run-chat-send-stop-idle-1",
+        },
+    )
+
+    assert send_calls == []
+    assert payload == {"ok": True, "aborted": False, "runIds": []}
+
+
+@pytest.mark.asyncio
+async def test_chat_send_ignores_blank_originating_route_fields_without_rejecting_request() -> None:
+    observed: dict[str, object] = {}
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        observed.update(
+            {
+                "session_key": session_key,
+                "message": message,
+                "idempotency_key": idempotency_key,
+                "thinking": thinking,
+                "deliver": deliver,
+                "timeout_ms": timeout_ms,
+            }
+        )
+        return {"runId": idempotency_key, "status": "ok"}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        chat_send_service=fake_chat_send_service,
+    )
+
+    payload = await service.call(
+        "chat.send",
+        {
+            "sessionKey": "openzues:thread:demo",
+            "message": "status",
+            "originatingChannel": "   ",
+            "originatingTo": "   ",
+            "originatingAccountId": "   ",
+            "originatingThreadId": "   ",
+            "idempotencyKey": "run-chat-send-blank-origin-1",
+        },
+    )
+
+    assert observed == {
+        "session_key": "openzues:thread:demo",
+        "message": "status",
+        "idempotency_key": "run-chat-send-blank-origin-1",
+        "thinking": None,
+        "deliver": None,
+        "timeout_ms": None,
+    }
+    assert payload == {"runId": "run-chat-send-blank-origin-1", "status": "ok"}
+
+
+@pytest.mark.asyncio
+async def test_chat_send_originating_route_fields_require_admin_scope_before_runtime() -> None:
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        del session_key, message, idempotency_key, thinking, deliver, timeout_ms
+        return {"runId": "unused", "status": "ok"}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        chat_send_service=fake_chat_send_service,
+    )
+
+    with pytest.raises(ValueError, match="originating route fields require admin scope"):
+        await service.call(
+            "chat.send",
+            {
+                "sessionKey": "openzues:thread:demo",
+                "message": "status",
+                "originatingChannel": "slack",
+                "originatingTo": "C12345",
+                "idempotencyKey": "run-chat-send-origin-scope-1",
+            },
+            requester=GatewayNodeMethodRequester(caller_scopes=()),
+        )
+
+
+@pytest.mark.asyncio
+async def test_chat_send_originating_route_fields_fail_as_unavailable_runtime() -> None:
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        del session_key, message, idempotency_key, thinking, deliver, timeout_ms
+        return {"runId": "unused", "status": "ok"}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        chat_send_service=fake_chat_send_service,
+    )
+
+    with pytest.raises(GatewayNodeMethodError) as exc_info:
+        await service.call(
+            "chat.send",
+            {
+                "sessionKey": "openzues:thread:demo",
+                "message": "status",
+                "originatingChannel": "slack",
+                "originatingTo": "C12345",
+                "idempotencyKey": "run-chat-send-origin-runtime-1",
+            },
+            requester=GatewayNodeMethodRequester(caller_scopes=(ADMIN_GATEWAY_METHOD_SCOPE,)),
+        )
+
+    assert exc_info.value.code == "UNAVAILABLE"
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.message == (
+        "chat.send originating route fields are unavailable until control chat route "
+        "provenance is wired"
+    )
+
+
+@pytest.mark.asyncio
+async def test_chat_send_system_provenance_fields_require_admin_scope_before_runtime() -> None:
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        del session_key, message, idempotency_key, thinking, deliver, timeout_ms
+        return {"runId": "unused", "status": "ok"}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        chat_send_service=fake_chat_send_service,
+    )
+
+    with pytest.raises(ValueError, match="system provenance fields require admin scope"):
+        await service.call(
+            "chat.send",
+            {
+                "sessionKey": "openzues:thread:demo",
+                "message": "status",
+                "systemInputProvenance": {"kind": "internal_system"},
+                "idempotencyKey": "run-chat-send-system-scope-1",
+            },
+            requester=GatewayNodeMethodRequester(caller_scopes=()),
+        )
+
+
+@pytest.mark.asyncio
+async def test_chat_send_system_provenance_fields_fail_as_unavailable_runtime() -> None:
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        del session_key, message, idempotency_key, thinking, deliver, timeout_ms
+        return {"runId": "unused", "status": "ok"}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        chat_send_service=fake_chat_send_service,
+    )
+
+    with pytest.raises(GatewayNodeMethodError) as exc_info:
+        await service.call(
+            "chat.send",
+            {
+                "sessionKey": "openzues:thread:demo",
+                "message": "status",
+                "systemInputProvenance": {"kind": "internal_system"},
+                "systemProvenanceReceipt": "Gateway witness",
+                "idempotencyKey": "run-chat-send-system-runtime-1",
+            },
+            requester=GatewayNodeMethodRequester(caller_scopes=(ADMIN_GATEWAY_METHOD_SCOPE,)),
+        )
+
+    assert exc_info.value.code == "UNAVAILABLE"
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.message == (
+        "chat.send system provenance fields are unavailable until control chat "
+        "provenance injection is wired"
+    )
+
+
+@pytest.mark.asyncio
+async def test_chat_send_blank_system_receipt_requires_admin_scope_before_runtime() -> None:
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        del session_key, message, idempotency_key, thinking, deliver, timeout_ms
+        return {"runId": "unused", "status": "ok"}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        chat_send_service=fake_chat_send_service,
+    )
+
+    with pytest.raises(ValueError, match="system provenance fields require admin scope"):
+        await service.call(
+            "chat.send",
+            {
+                "sessionKey": "openzues:thread:demo",
+                "message": "status",
+                "systemProvenanceReceipt": "   ",
+                "idempotencyKey": "run-chat-send-blank-system-receipt-scope-1",
+            },
+            requester=GatewayNodeMethodRequester(caller_scopes=()),
+        )
+
+
+@pytest.mark.asyncio
+async def test_chat_send_blank_system_receipt_is_omitted_after_admin_scope() -> None:
+    observed: dict[str, object] = {}
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        observed.update(
+            {
+                "session_key": session_key,
+                "message": message,
+                "idempotency_key": idempotency_key,
+                "thinking": thinking,
+                "deliver": deliver,
+                "timeout_ms": timeout_ms,
+            }
+        )
+        return {"runId": idempotency_key, "status": "ok"}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        chat_send_service=fake_chat_send_service,
+    )
+
+    payload = await service.call(
+        "chat.send",
+        {
+            "sessionKey": "openzues:thread:demo",
+            "message": "status",
+            "systemProvenanceReceipt": "   ",
+            "idempotencyKey": "run-chat-send-blank-system-receipt-runtime-1",
+        },
+        requester=GatewayNodeMethodRequester(caller_scopes=(ADMIN_GATEWAY_METHOD_SCOPE,)),
+    )
+
+    assert observed == {
+        "session_key": "openzues:thread:demo",
+        "message": "status",
+        "idempotency_key": "run-chat-send-blank-system-receipt-runtime-1",
+        "thinking": None,
+        "deliver": None,
+        "timeout_ms": None,
+    }
+    assert payload == {
+        "runId": "run-chat-send-blank-system-receipt-runtime-1",
+        "status": "ok",
+    }
+
+
+@pytest.mark.asyncio
+async def test_chat_send_system_receipt_rejects_null_bytes_before_runtime() -> None:
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        del session_key, message, idempotency_key, thinking, deliver, timeout_ms
+        return {"runId": "unused", "status": "ok"}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        chat_send_service=fake_chat_send_service,
+    )
+
+    with pytest.raises(ValueError, match="message must not contain null bytes"):
+        await service.call(
+            "chat.send",
+            {
+                "sessionKey": "openzues:thread:demo",
+                "message": "status",
+                "systemProvenanceReceipt": "wit\x00ness",
+                "idempotencyKey": "run-chat-send-null-system-receipt-1",
+            },
+            requester=GatewayNodeMethodRequester(caller_scopes=(ADMIN_GATEWAY_METHOD_SCOPE,)),
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("extra_params",),
+    [
+        (
+            {
+                "originatingChannel": "slack",
+                "originatingTo": "C12345",
+            },
+        ),
+        (
+            {
+                "systemInputProvenance": {"kind": "internal_system"},
+            },
+        ),
+        (
+            {
+                "systemProvenanceReceipt": "Gateway witness",
+            },
+        ),
+    ],
+)
+async def test_chat_send_blank_message_with_provenance_requires_message_or_attachment(
+    extra_params: dict[str, object],
+) -> None:
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        del session_key, message, idempotency_key, thinking, deliver, timeout_ms
+        return {"runId": "unused", "status": "ok"}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        chat_send_service=fake_chat_send_service,
+    )
+
+    with pytest.raises(ValueError, match="message or attachment required"):
+        await service.call(
+            "chat.send",
+            {
+                "sessionKey": "openzues:thread:demo",
+                "message": "",
+                "idempotencyKey": "run-chat-send-empty-with-provenance-1",
+                **extra_params,
+            },
+            requester=GatewayNodeMethodRequester(caller_scopes=(ADMIN_GATEWAY_METHOD_SCOPE,)),
+        )
+
+
+@pytest.mark.asyncio
+async def test_chat_send_invalid_system_input_provenance_is_omitted_after_admin_scope() -> None:
+    observed: dict[str, object] = {}
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        observed.update(
+            {
+                "session_key": session_key,
+                "message": message,
+                "idempotency_key": idempotency_key,
+                "thinking": thinking,
+                "deliver": deliver,
+                "timeout_ms": timeout_ms,
+            }
+        )
+        return {"runId": idempotency_key, "status": "ok"}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        chat_send_service=fake_chat_send_service,
+    )
+
+    payload = await service.call(
+        "chat.send",
+        {
+            "sessionKey": "openzues:thread:demo",
+            "message": "status",
+            "systemInputProvenance": {"kind": "not-a-real-kind"},
+            "idempotencyKey": "run-chat-send-invalid-system-provenance-1",
+        },
+        requester=GatewayNodeMethodRequester(caller_scopes=(ADMIN_GATEWAY_METHOD_SCOPE,)),
+    )
+
+    assert observed == {
+        "session_key": "openzues:thread:demo",
+        "message": "status",
+        "idempotency_key": "run-chat-send-invalid-system-provenance-1",
+        "thinking": None,
+        "deliver": None,
+        "timeout_ms": None,
+    }
+    assert payload == {
+        "runId": "run-chat-send-invalid-system-provenance-1",
+        "status": "ok",
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("raw_value",), [("",), (0,), (False,)])
+async def test_chat_send_falsey_scalar_system_input_provenance_is_omitted_before_scope_gate(
+    raw_value: object,
+) -> None:
+    observed: dict[str, object] = {}
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        observed.update(
+            {
+                "session_key": session_key,
+                "message": message,
+                "idempotency_key": idempotency_key,
+                "thinking": thinking,
+                "deliver": deliver,
+                "timeout_ms": timeout_ms,
+            }
+        )
+        return {"runId": idempotency_key, "status": "ok"}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        chat_send_service=fake_chat_send_service,
+    )
+
+    payload = await service.call(
+        "chat.send",
+        {
+            "sessionKey": "openzues:thread:demo",
+            "message": "status",
+            "systemInputProvenance": raw_value,
+            "idempotencyKey": "run-chat-send-falsey-system-provenance-1",
+        },
+        requester=GatewayNodeMethodRequester(caller_scopes=("operator",)),
+    )
+
+    assert observed == {
+        "session_key": "openzues:thread:demo",
+        "message": "status",
+        "idempotency_key": "run-chat-send-falsey-system-provenance-1",
+        "thinking": None,
+        "deliver": None,
+        "timeout_ms": None,
+    }
+    assert payload == {
+        "runId": "run-chat-send-falsey-system-provenance-1",
+        "status": "ok",
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("attachments",),
+    [
+        (
+            [
+                {
+                    "type": "image",
+                    "mimeType": "image/png",
+                    "fileName": "preview.png",
+                }
+            ],
+        ),
+        (
+            [
+                {
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/png",
+                    }
+                }
+            ],
+        ),
+    ],
+)
+async def test_chat_send_ignores_inert_attachments_without_effective_content(
+    attachments: list[dict[str, object]],
+) -> None:
+    observed: dict[str, object] = {}
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        observed.update(
+            {
+                "session_key": session_key,
+                "message": message,
+                "idempotency_key": idempotency_key,
+                "thinking": thinking,
+                "deliver": deliver,
+                "timeout_ms": timeout_ms,
+            }
+        )
+        return {"runId": idempotency_key, "status": "ok"}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        chat_send_service=fake_chat_send_service,
+    )
+
+    payload = await service.call(
+        "chat.send",
+        {
+            "sessionKey": "openzues:thread:demo",
+            "message": "status",
+            "attachments": attachments,
+            "idempotencyKey": "run-chat-send-inert-attachments-1",
+        },
+    )
+
+    assert observed == {
+        "session_key": "openzues:thread:demo",
+        "message": "status",
+        "idempotency_key": "run-chat-send-inert-attachments-1",
+        "thinking": None,
+        "deliver": None,
+        "timeout_ms": None,
+    }
+    assert payload == {"runId": "run-chat-send-inert-attachments-1", "status": "ok"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("attachments",),
+    [
+        (
+            [
+                {
+                    "type": "image",
+                    "mimeType": "image/png",
+                    "fileName": "preview.png",
+                    "content": "Zm9v",
+                }
+            ],
+        ),
+        (
+            [
+                {
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/png",
+                        "data": "Zm9v",
+                    }
+                }
+            ],
+        ),
+    ],
+)
+async def test_chat_send_effective_attachments_fail_as_unavailable_runtime(
+    attachments: list[dict[str, object]],
+) -> None:
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        del session_key, message, idempotency_key, thinking, deliver, timeout_ms
+        return {"runId": "unused", "status": "ok"}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        chat_send_service=fake_chat_send_service,
+    )
+
+    with pytest.raises(GatewayNodeMethodError) as exc_info:
+        await service.call(
+            "chat.send",
+            {
+                "sessionKey": "openzues:thread:demo",
+                "message": "status",
+                "attachments": attachments,
+                "idempotencyKey": "run-chat-send-effective-attachments-1",
+            },
+        )
+
+    assert exc_info.value.code == "UNAVAILABLE"
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.message == (
+        "chat.send attachments are unavailable until control chat attachment runtime is wired"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method", "session_field"),
+    [
+        ("chat.send", "sessionKey"),
+        ("sessions.send", "key"),
+        ("sessions.steer", "key"),
+    ],
+)
+async def test_chat_and_session_send_variants_require_message_or_effective_attachment(
+    method: str,
+    session_field: str,
+) -> None:
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        del session_key, message, idempotency_key, thinking, deliver, timeout_ms
+        return {"runId": "unused", "status": "ok"}
+
+    async def fake_chat_abort_service(
+        *,
+        session_key: str,
+        run_id: str | None,
+    ) -> dict[str, object]:
+        del session_key, run_id
+        return {"ok": True}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        chat_send_service=fake_chat_send_service,
+        chat_abort_service=fake_chat_abort_service,
+    )
+
+    with pytest.raises(ValueError, match="message or attachment required"):
+        await service.call(
+            method,
+            {
+                session_field: "openzues:thread:demo",
+                "message": "",
+                "attachments": [
+                    {
+                        "type": "image",
+                        "mimeType": "image/png",
+                        "fileName": "preview.png",
+                    }
+                ],
+                "idempotencyKey": f"run-{method.replace('.', '-')}-empty-message-1",
+            },
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method", "session_field"),
+    [
+        ("chat.send", "sessionKey"),
+        ("sessions.send", "key"),
+        ("sessions.steer", "key"),
+    ],
+)
+async def test_chat_and_session_send_variants_reject_null_bytes_in_message(
+    method: str,
+    session_field: str,
+) -> None:
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        del session_key, message, idempotency_key, thinking, deliver, timeout_ms
+        return {"runId": "unused", "status": "ok"}
+
+    async def fake_chat_abort_service(
+        *,
+        session_key: str,
+        run_id: str | None,
+    ) -> dict[str, object]:
+        del session_key, run_id
+        return {"ok": True}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        chat_send_service=fake_chat_send_service,
+        chat_abort_service=fake_chat_abort_service,
+    )
+
+    with pytest.raises(ValueError, match="message must not contain null bytes"):
+        await service.call(
+            method,
+            {
+                session_field: "openzues:thread:demo",
+                "message": "sta\x00tus",
+                "idempotencyKey": f"run-{method.replace('.', '-')}-null-byte-1",
+            },
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method", "session_field"),
+    [
+        ("chat.send", "sessionKey"),
+        ("sessions.send", "key"),
+        ("sessions.steer", "key"),
+    ],
+)
+async def test_chat_and_session_send_variants_sanitize_message_before_runtime(
+    method: str,
+    session_field: str,
+) -> None:
+    observed: dict[str, object] = {}
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        observed.update(
+            {
+                "session_key": session_key,
+                "message": message,
+                "idempotency_key": idempotency_key,
+                "thinking": thinking,
+                "deliver": deliver,
+                "timeout_ms": timeout_ms,
+            }
+        )
+        return {"runId": idempotency_key, "status": "ok"}
+
+    async def fake_chat_abort_service(
+        *,
+        session_key: str,
+        run_id: str | None,
+    ) -> dict[str, object]:
+        del session_key, run_id
+        return {"ok": True}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        chat_send_service=fake_chat_send_service,
+        chat_abort_service=fake_chat_abort_service,
+    )
+
+    payload = await service.call(
+        method,
+        {
+            session_field: "openzues:thread:demo",
+            "message": "Cafe\u0301\u0007",
+            "idempotencyKey": f"run-{method.replace('.', '-')}-sanitize-1",
+        },
+    )
+
+    assert observed == {
+        "session_key": "openzues:thread:demo",
+        "message": "Café",
+        "idempotency_key": f"run-{method.replace('.', '-')}-sanitize-1",
+        "thinking": None,
+        "deliver": None if method != "chat.send" else None,
+        "timeout_ms": None,
+    }
+    assert payload == {
+        "runId": f"run-{method.replace('.', '-')}-sanitize-1",
+        "status": "ok",
+    }
 
 
 @pytest.mark.asyncio
@@ -1379,6 +2521,266 @@ async def test_sessions_send_routes_key_to_bounded_control_chat_runtime() -> Non
         "timeout_ms": 30_000,
     }
     assert payload == {"runId": "run-session-send-1", "status": "ok"}
+
+
+@pytest.mark.asyncio
+async def test_sessions_send_stop_command_aborts_tracked_runtime_without_submitting_message() -> (
+    None
+):
+    send_calls: list[dict[str, object]] = []
+    observed_interrupt: dict[str, object] = {}
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        send_calls.append(
+            {
+                "session_key": session_key,
+                "message": message,
+                "idempotency_key": idempotency_key,
+                "thinking": thinking,
+                "deliver": deliver,
+                "timeout_ms": timeout_ms,
+            }
+        )
+        return {"runId": idempotency_key, "status": "ok"}
+
+    async def fake_chat_abort_service(
+        *,
+        session_key: str,
+        run_id: str | None,
+    ) -> dict[str, object]:
+        observed_interrupt.update({"session_key": session_key, "run_id": run_id})
+        return {"ok": True}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        chat_send_service=fake_chat_send_service,
+        chat_abort_service=fake_chat_abort_service,
+    )
+
+    await service.call(
+        "sessions.send",
+        {
+            "key": "openzues:thread:demo",
+            "message": "status",
+            "idempotencyKey": "run-session-send-1",
+        },
+    )
+    payload = await service.call(
+        "sessions.send",
+        {
+            "key": "openzues:thread:demo",
+            "message": " /STOP!!! ",
+            "idempotencyKey": "run-session-send-stop-1",
+        },
+    )
+
+    assert send_calls == [
+        {
+            "session_key": "openzues:thread:demo",
+            "message": "status",
+            "idempotency_key": "run-session-send-1",
+            "thinking": None,
+            "deliver": None,
+            "timeout_ms": None,
+        }
+    ]
+    assert observed_interrupt == {
+        "session_key": "openzues:thread:demo",
+        "run_id": None,
+    }
+    assert payload == {"ok": True, "aborted": True, "runIds": ["run-session-send-1"]}
+
+
+@pytest.mark.asyncio
+async def test_sessions_send_stop_command_reports_no_active_run_without_submitting_message() -> (
+    None
+):
+    send_calls: list[dict[str, object]] = []
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        send_calls.append(
+            {
+                "session_key": session_key,
+                "message": message,
+                "idempotency_key": idempotency_key,
+                "thinking": thinking,
+                "deliver": deliver,
+                "timeout_ms": timeout_ms,
+            }
+        )
+        return {"runId": idempotency_key, "status": "ok"}
+
+    async def fake_chat_abort_service(
+        *,
+        session_key: str,
+        run_id: str | None,
+    ) -> dict[str, object]:
+        del session_key, run_id
+        return {"ok": False, "reason": "no_active_turn"}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        chat_send_service=fake_chat_send_service,
+        chat_abort_service=fake_chat_abort_service,
+    )
+
+    payload = await service.call(
+        "sessions.send",
+        {
+            "key": "openzues:thread:demo",
+            "message": "stop please",
+            "idempotencyKey": "run-session-send-stop-idle-1",
+        },
+    )
+
+    assert send_calls == []
+    assert payload == {"ok": True, "aborted": False, "runIds": []}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("attachments",),
+    [
+        (
+            [
+                {
+                    "type": "image",
+                    "mimeType": "image/png",
+                    "fileName": "preview.png",
+                }
+            ],
+        ),
+        (
+            [
+                {
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/png",
+                    }
+                }
+            ],
+        ),
+    ],
+)
+async def test_sessions_send_ignores_inert_attachments_without_effective_content(
+    attachments: list[dict[str, object]],
+) -> None:
+    observed: dict[str, object] = {}
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        observed.update(
+            {
+                "session_key": session_key,
+                "message": message,
+                "idempotency_key": idempotency_key,
+                "thinking": thinking,
+                "deliver": deliver,
+                "timeout_ms": timeout_ms,
+            }
+        )
+        return {"runId": idempotency_key, "status": "ok"}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        chat_send_service=fake_chat_send_service,
+    )
+
+    payload = await service.call(
+        "sessions.send",
+        {
+            "key": "openzues:thread:demo",
+            "message": "status",
+            "attachments": attachments,
+            "idempotencyKey": "run-session-send-inert-attachments-1",
+        },
+    )
+
+    assert observed == {
+        "session_key": "openzues:thread:demo",
+        "message": "status",
+        "idempotency_key": "run-session-send-inert-attachments-1",
+        "thinking": None,
+        "deliver": None,
+        "timeout_ms": None,
+    }
+    assert payload == {"runId": "run-session-send-inert-attachments-1", "status": "ok"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("attachments",),
+    [
+        (
+            [
+                {
+                    "type": "image",
+                    "mimeType": "image/png",
+                    "fileName": "preview.png",
+                    "content": "Zm9v",
+                }
+            ],
+        ),
+        (
+            [
+                {
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/png",
+                        "data": "Zm9v",
+                    }
+                }
+            ],
+        ),
+    ],
+)
+async def test_sessions_send_effective_attachments_fail_as_unavailable_runtime(
+    attachments: list[dict[str, object]],
+) -> None:
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        chat_send_service=lambda **_kwargs: None,
+    )
+
+    with pytest.raises(GatewayNodeMethodError) as exc_info:
+        await service.call(
+            "sessions.send",
+            {
+                "key": "openzues:thread:demo",
+                "message": "status",
+                "attachments": attachments,
+                "idempotencyKey": "run-session-send-effective-attachments-1",
+            },
+        )
+
+    assert exc_info.value.code == "UNAVAILABLE"
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.message == (
+        "sessions.send attachments are unavailable until control chat attachment runtime is wired"
+    )
 
 
 @pytest.mark.asyncio
@@ -1574,6 +2976,228 @@ async def test_sessions_send_publishes_openclaw_sessions_changed_gateway_event()
 
 
 @pytest.mark.asyncio
+async def test_sessions_send_started_ack_attaches_pending_message_seq() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-send-started-service"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-sessions-send-started.db")
+    await database.initialize()
+    session_key = "openzues:thread:demo"
+    await database.append_control_chat_message(
+        role="user",
+        content="Existing transcript line.",
+        session_key=session_key,
+    )
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        del session_key, message, thinking, deliver, timeout_ms
+        return {"runId": idempotency_key, "status": "started"}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        chat_send_service=fake_chat_send_service,
+    )
+
+    payload = await service.call(
+        "sessions.send",
+        {
+            "key": session_key,
+            "message": "status",
+            "idempotencyKey": "run-session-send-started-1",
+        },
+    )
+
+    assert payload == {
+        "runId": "run-session-send-started-1",
+        "status": "started",
+        "messageSeq": 2,
+    }
+
+
+@pytest.mark.asyncio
+async def test_sessions_steer_without_interrupt_publishes_send_reason_gateway_event() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-steer-event-service"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-sessions-steer-event.db")
+    await database.initialize()
+
+    class _RecordingBroadcastHub(BroadcastHub):
+        def __init__(self) -> None:
+            super().__init__()
+            self.published_events: list[dict[str, object]] = []
+
+        async def publish(self, event: dict[str, object]) -> None:
+            self.published_events.append(dict(event))
+            await super().publish(event)
+
+    hub = _RecordingBroadcastHub()
+    session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+    )
+    await database.upsert_gateway_session_metadata(
+        session_key=session_key,
+        metadata={"traceLevel": "verbose"},
+    )
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        del session_key, message, thinking, deliver, timeout_ms
+        return {"runId": idempotency_key, "status": "ok"}
+
+    async def fake_chat_abort_service(
+        *,
+        session_key: str,
+        run_id: str | None,
+    ) -> dict[str, object]:
+        del session_key, run_id
+        raise AssertionError("sessions.steer without a tracked run should not abort first")
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        hub=hub,
+        chat_send_service=fake_chat_send_service,
+        chat_abort_service=fake_chat_abort_service,
+    )
+
+    payload = await service.call(
+        "sessions.steer",
+        {
+            "key": session_key,
+            "message": "redirect",
+            "idempotencyKey": "run-session-steer-standalone-1",
+        },
+        now_ms=222,
+    )
+
+    assert payload == {"runId": "run-session-steer-standalone-1", "status": "ok"}
+    sessions_changed = [
+        event
+        for event in hub.published_events
+        if event.get("type") == "gateway_event" and event.get("event") == "sessions.changed"
+    ]
+    assert len(sessions_changed) == 1
+    assert sessions_changed[0]["payload"] == {
+        "sessionKey": session_key,
+        "reason": "send",
+        "ts": 222,
+        "updatedAt": sessions_changed[0]["payload"]["updatedAt"],
+        "sessionId": None,
+        "kind": "global",
+        "subject": "Operator control chat",
+        "displayName": "OpenZues Control Chat",
+        "systemSent": None,
+        "abortedLastRun": None,
+        "thinkingLevel": None,
+        "verboseLevel": None,
+        "traceLevel": "verbose",
+        "inputTokens": None,
+        "outputTokens": None,
+        "totalTokens": None,
+        "contextTokens": None,
+        "modelProvider": "openai",
+        "model": "gpt-5.4",
+        "space": None,
+    }
+    assert isinstance(sessions_changed[0]["createdAt"], str)
+    assert isinstance(sessions_changed[0]["payload"]["updatedAt"], int)
+
+
+@pytest.mark.asyncio
+async def test_sessions_steer_started_ack_attaches_message_seq_and_interrupt_flag() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-steer-started-service"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-sessions-steer-started.db")
+    await database.initialize()
+    session_key = "openzues:thread:demo"
+    await database.append_control_chat_message(
+        role="assistant",
+        content="Existing transcript line.",
+        session_key=session_key,
+    )
+    events: list[tuple[str, str, str | None]] = []
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        del message, thinking, deliver, timeout_ms
+        events.append(("send", session_key, idempotency_key))
+        return {"runId": idempotency_key, "status": "started"}
+
+    async def fake_chat_abort_service(
+        *,
+        session_key: str,
+        run_id: str | None,
+    ) -> dict[str, object]:
+        events.append(("abort", session_key, run_id))
+        return {"ok": True}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        chat_send_service=fake_chat_send_service,
+        chat_abort_service=fake_chat_abort_service,
+    )
+
+    await service.call(
+        "sessions.send",
+        {
+            "key": session_key,
+            "message": "status",
+            "idempotencyKey": "run-session-send-started-1",
+        },
+    )
+    payload = await service.call(
+        "sessions.steer",
+        {
+            "key": session_key,
+            "message": "redirect",
+            "idempotencyKey": "run-session-steer-started-1",
+        },
+    )
+
+    assert events == [
+        ("send", session_key, "run-session-send-started-1"),
+        ("abort", session_key, None),
+        ("send", session_key, "run-session-steer-started-1"),
+    ]
+    assert payload == {
+        "runId": "run-session-steer-started-1",
+        "status": "started",
+        "messageSeq": 2,
+        "interruptedActiveRun": True,
+    }
+
+
+@pytest.mark.asyncio
 async def test_chat_abort_does_not_interrupt_when_run_id_is_not_the_tracked_gateway_run() -> None:
     called = False
 
@@ -1623,9 +3247,7 @@ async def test_chat_abort_does_not_interrupt_when_run_id_is_not_the_tracked_gate
 
 
 @pytest.mark.asyncio
-async def test_sessions_abort_translates_tracked_gateway_run_into_session_status_payload() -> (
-    None
-):
+async def test_sessions_abort_translates_tracked_gateway_run_into_session_status_payload() -> None:
     async def fake_chat_send_service(
         *,
         session_key: str,
@@ -1722,7 +3344,298 @@ async def test_sessions_steer_interrupts_tracked_run_before_sending_follow_up() 
         ("abort", "openzues:thread:demo", None),
         ("send", "openzues:thread:demo", "run-session-steer-1"),
     ]
-    assert payload == {"runId": "run-session-steer-1", "status": "ok"}
+    assert payload == {
+        "runId": "run-session-steer-1",
+        "status": "ok",
+        "interruptedActiveRun": True,
+    }
+
+
+@pytest.mark.asyncio
+async def test_sessions_steer_stop_command_aborts_without_submitting_follow_up() -> None:
+    send_calls: list[dict[str, object]] = []
+    abort_calls: list[dict[str, str | None]] = []
+    abort_results = [
+        {"ok": True},
+        {"ok": False, "reason": "no_active_turn"},
+    ]
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        send_calls.append(
+            {
+                "session_key": session_key,
+                "message": message,
+                "idempotency_key": idempotency_key,
+                "thinking": thinking,
+                "deliver": deliver,
+                "timeout_ms": timeout_ms,
+            }
+        )
+        return {"runId": idempotency_key, "status": "ok"}
+
+    async def fake_chat_abort_service(
+        *,
+        session_key: str,
+        run_id: str | None,
+    ) -> dict[str, object]:
+        abort_calls.append({"session_key": session_key, "run_id": run_id})
+        if abort_results:
+            return abort_results.pop(0)
+        return {"ok": False, "reason": "no_active_turn"}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        chat_send_service=fake_chat_send_service,
+        chat_abort_service=fake_chat_abort_service,
+    )
+
+    await service.call(
+        "sessions.send",
+        {
+            "key": "openzues:thread:demo",
+            "message": "status",
+            "idempotencyKey": "run-session-send-1",
+        },
+    )
+    payload = await service.call(
+        "sessions.steer",
+        {
+            "key": "openzues:thread:demo",
+            "message": " /STOP!!! ",
+            "idempotencyKey": "run-session-steer-stop-1",
+        },
+    )
+
+    assert send_calls == [
+        {
+            "session_key": "openzues:thread:demo",
+            "message": "status",
+            "idempotency_key": "run-session-send-1",
+            "thinking": None,
+            "deliver": None,
+            "timeout_ms": None,
+        }
+    ]
+    assert abort_calls[0] == {
+        "session_key": "openzues:thread:demo",
+        "run_id": None,
+    }
+    assert payload == {
+        "ok": True,
+        "aborted": False,
+        "runIds": [],
+        "interruptedActiveRun": True,
+    }
+
+
+@pytest.mark.asyncio
+async def test_sessions_steer_stop_command_reports_no_active_run_without_submitting_message() -> (
+    None
+):
+    send_calls: list[dict[str, object]] = []
+    abort_calls: list[dict[str, str | None]] = []
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        send_calls.append(
+            {
+                "session_key": session_key,
+                "message": message,
+                "idempotency_key": idempotency_key,
+                "thinking": thinking,
+                "deliver": deliver,
+                "timeout_ms": timeout_ms,
+            }
+        )
+        return {"runId": idempotency_key, "status": "ok"}
+
+    async def fake_chat_abort_service(
+        *,
+        session_key: str,
+        run_id: str | None,
+    ) -> dict[str, object]:
+        abort_calls.append({"session_key": session_key, "run_id": run_id})
+        return {"ok": False, "reason": "no_active_turn"}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        chat_send_service=fake_chat_send_service,
+        chat_abort_service=fake_chat_abort_service,
+    )
+
+    payload = await service.call(
+        "sessions.steer",
+        {
+            "key": "openzues:thread:demo",
+            "message": "stop please",
+            "idempotencyKey": "run-session-steer-stop-idle-1",
+        },
+    )
+
+    assert send_calls == []
+    assert abort_calls == [
+        {
+            "session_key": "openzues:thread:demo",
+            "run_id": None,
+        }
+    ]
+    assert payload == {"ok": True, "aborted": False, "runIds": []}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("attachments",),
+    [
+        (
+            [
+                {
+                    "type": "image",
+                    "mimeType": "image/png",
+                    "fileName": "preview.png",
+                }
+            ],
+        ),
+        (
+            [
+                {
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/png",
+                    }
+                }
+            ],
+        ),
+    ],
+)
+async def test_sessions_steer_ignores_inert_attachments_without_effective_content(
+    attachments: list[dict[str, object]],
+) -> None:
+    events: list[tuple[str, str, str | None]] = []
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        del thinking, deliver, timeout_ms
+        events.append(("send", session_key, idempotency_key))
+        return {"runId": idempotency_key, "status": "ok"}
+
+    async def fake_chat_abort_service(
+        *,
+        session_key: str,
+        run_id: str | None,
+    ) -> dict[str, object]:
+        events.append(("abort", session_key, run_id))
+        return {"ok": True}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        chat_send_service=fake_chat_send_service,
+        chat_abort_service=fake_chat_abort_service,
+    )
+
+    await service.call(
+        "sessions.send",
+        {
+            "key": "openzues:thread:demo",
+            "message": "status",
+            "idempotencyKey": "run-session-send-steer-inert-1",
+        },
+    )
+    payload = await service.call(
+        "sessions.steer",
+        {
+            "key": "openzues:thread:demo",
+            "message": "redirect",
+            "attachments": attachments,
+            "idempotencyKey": "run-session-steer-inert-1",
+        },
+    )
+
+    assert events == [
+        ("send", "openzues:thread:demo", "run-session-send-steer-inert-1"),
+        ("abort", "openzues:thread:demo", None),
+        ("send", "openzues:thread:demo", "run-session-steer-inert-1"),
+    ]
+    assert payload == {
+        "runId": "run-session-steer-inert-1",
+        "status": "ok",
+        "interruptedActiveRun": True,
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("attachments",),
+    [
+        (
+            [
+                {
+                    "type": "image",
+                    "mimeType": "image/png",
+                    "fileName": "preview.png",
+                    "content": "Zm9v",
+                }
+            ],
+        ),
+        (
+            [
+                {
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/png",
+                        "data": "Zm9v",
+                    }
+                }
+            ],
+        ),
+    ],
+)
+async def test_sessions_steer_effective_attachments_fail_as_unavailable_runtime(
+    attachments: list[dict[str, object]],
+) -> None:
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        chat_send_service=lambda **_kwargs: None,
+        chat_abort_service=lambda **_kwargs: None,
+    )
+
+    with pytest.raises(GatewayNodeMethodError) as exc_info:
+        await service.call(
+            "sessions.steer",
+            {
+                "key": "openzues:thread:demo",
+                "message": "redirect",
+                "attachments": attachments,
+                "idempotencyKey": "run-session-steer-effective-attachments-1",
+            },
+        )
+
+    assert exc_info.value.code == "UNAVAILABLE"
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.message == (
+        "sessions.steer attachments are unavailable until control chat attachment runtime is wired"
+    )
 
 
 @pytest.mark.asyncio
@@ -2024,8 +3937,9 @@ async def test_sessions_delete_removes_metadata_backed_session_and_transcript() 
 
 
 @pytest.mark.asyncio
-async def test_sessions_compact_archives_trimmed_control_chat_messages_into_checkpoint_inventory(
-) -> None:
+async def test_sessions_compact_archives_trimmed_control_chat_messages_into_checkpoint_inventory() -> (
+    None
+):
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-compact-service"
     shutil.rmtree(tmp_path, ignore_errors=True)
     tmp_path.mkdir(parents=True, exist_ok=True)
@@ -2050,6 +3964,7 @@ async def test_sessions_compact_archives_trimmed_control_chat_messages_into_chec
         mission_id=None,
         session_key=session_key,
     )
+
     class _RecordingBroadcastHub(BroadcastHub):
         def __init__(self) -> None:
             super().__init__()
@@ -2135,8 +4050,7 @@ async def test_sessions_compact_archives_trimmed_control_chat_messages_into_chec
     assert sessions_changed[0]["payload"]["compacted"] is True
     assert sessions_changed[0]["payload"]["compactionCheckpointCount"] == 1
     assert (
-        sessions_changed[0]["payload"]["latestCompactionCheckpoint"]
-        == inventory["checkpoints"][0]
+        sessions_changed[0]["payload"]["latestCompactionCheckpoint"] == inventory["checkpoints"][0]
     )
 
 
@@ -2260,8 +4174,7 @@ async def test_sessions_compact_without_max_lines_rewrites_history_into_summary_
     assert sessions_changed[0]["payload"]["compacted"] is True
     assert sessions_changed[0]["payload"]["compactionCheckpointCount"] == 1
     assert (
-        sessions_changed[0]["payload"]["latestCompactionCheckpoint"]
-        == inventory["checkpoints"][0]
+        sessions_changed[0]["payload"]["latestCompactionCheckpoint"] == inventory["checkpoints"][0]
     )
 
 
@@ -3003,6 +4916,48 @@ async def test_logs_tail_returns_latest_workspace_log_lines(
 
 
 @pytest.mark.asyncio
+async def test_logs_tail_redacts_sensitive_tokens_from_returned_lines(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    logs_root = tmp_path / "logs"
+    logs_root.mkdir(parents=True, exist_ok=True)
+    log_file = logs_root / "openzues-sensitive.log"
+    raw_line = (
+        "starting --hook-token hook-token-aaaaaaaaaaaaaaaaaaaa "
+        "OPENAI_API_KEY=sk-1234567890abcdef "
+        "ghp_1234567890abcdefghijklmn "
+        "Authorization: Bearer abcdef1234567890ghij\n"
+    )
+    log_file.write_text(raw_line, encoding="utf-8")
+
+    service = GatewayNodeMethodService(GatewayNodeRegistry())
+    payload = await service.call(
+        "logs.tail",
+        {
+            "limit": 10,
+            "maxBytes": 1_000,
+        },
+    )
+
+    assert payload["file"] == str(log_file)
+    lines = payload["lines"]
+    assert isinstance(lines, list)
+    assert len(lines) == 1
+    line = lines[0]
+    assert isinstance(line, str)
+    assert line != raw_line.strip()
+    assert "hook-token-aaaaaaaaaaaaaaaaaaaa" not in line
+    assert "sk-1234567890abcdef" not in line
+    assert "ghp_1234567890abcdefghijklmn" not in line
+    assert "abcdef1234567890ghij" not in line
+    assert "--hook-token " in line
+    assert "OPENAI_API_KEY=" in line
+    assert "Authorization: Bearer " in line
+
+
+@pytest.mark.asyncio
 async def test_update_run_triggers_runtime_update_tick_and_returns_fresh_view() -> None:
     payload: dict[str, object] = {
         "headline": "Runtime self-update is watching the repo",
@@ -3378,9 +5333,7 @@ async def test_sessions_subscribe_registers_client_scoped_filter_when_client_id_
 
 
 @pytest.mark.asyncio
-async def test_sessions_unsubscribe_returns_stateless_ack_without_connection_context() -> (
-    None
-):
+async def test_sessions_unsubscribe_returns_stateless_ack_without_connection_context() -> None:
     service = GatewayNodeMethodService(GatewayNodeRegistry())
 
     payload = await service.call("sessions.unsubscribe", {})
@@ -4903,9 +6856,7 @@ async def test_agent_launches_bounded_main_session_run_with_explicit_non_deliver
 
 @pytest.mark.asyncio
 async def test_agent_launches_bounded_main_session_run_with_best_effort_deliver_false() -> None:
-    tmp_path = (
-        Path.cwd() / ".tmp-pytest-local" / "gateway-agent-launch-best-effort-false-service"
-    )
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-agent-launch-best-effort-false-service"
     shutil.rmtree(tmp_path, ignore_errors=True)
     tmp_path.mkdir(parents=True, exist_ok=True)
     database = Database(tmp_path / "gateway-agent-launch-best-effort-false.db")
@@ -5046,8 +6997,8 @@ async def test_agent_rejects_malformed_session_keys_before_session_lookup() -> N
                 "agentId": "main",
                 "sessionKey": "agent::main",
                 "idempotencyKey": "agent-run-malformed-session-key-1",
-                },
-            )
+            },
+        )
 
 
 @pytest.mark.asyncio
@@ -5070,8 +7021,191 @@ async def test_agent_rejects_agent_id_that_conflicts_with_session_key_agent() ->
                 "agentId": "main",
                 "sessionKey": "agent:other-agent:main",
                 "idempotencyKey": "agent-run-session-key-agent-mismatch-1",
-                },
+            },
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("params", "expected_channel"),
+    [
+        (
+            {
+                "channel": "not-a-real-channel",
+            },
+            "not-a-real-channel",
+        ),
+        (
+            {
+                "replyChannel": "not-a-real-reply-channel",
+            },
+            "not-a-real-reply-channel",
+        ),
+    ],
+)
+async def test_agent_rejects_unknown_channel_hints_before_runtime_bridge(
+    params: dict[str, str],
+    expected_channel: str,
+) -> None:
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=Database(Path.cwd() / ".tmp-pytest-local" / "noop-agent-unknown-channel.db"),
+        sessions_service=None,
+        chat_send_service=None,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=f"invalid agent params: unknown channel: {re.escape(expected_channel)}",
+    ):
+        await service.call(
+            "agent",
+            {
+                "message": "Ship the next verified slice.",
+                "agentId": "main",
+                "idempotencyKey": f"agent-run-unknown-channel-{expected_channel}",
+                **params,
+            },
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("params",),
+    [
+        (
+            {
+                "channel": "last",
+            },
+        ),
+        (
+            {
+                "replyChannel": "last",
+            },
+        ),
+    ],
+)
+async def test_agent_launch_treats_last_channel_hints_as_omitted(
+    params: dict[str, str],
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-agent-launch-last-channel-hint"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-agent-launch-last-channel-hint.db")
+    await database.initialize()
+    main_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+    )
+    mission_id = await database.create_mission(
+        name="Gateway Agent Last Channel Hint Loop",
+        objective='Launch parity while treating "last" channel hints as omitted.',
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread-agent-launch-last-channel-hint",
+        session_key=main_session_key,
+        cwd=str(tmp_path),
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=False,
+        run_verification=False,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+    )
+
+    observed_send: dict[str, object] = {}
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        observed_send.update(
+            {
+                "session_key": session_key,
+                "message": message,
+                "idempotency_key": idempotency_key,
+                "thinking": thinking,
+                "deliver": deliver,
+                "timeout_ms": timeout_ms,
+            }
+        )
+        return {"runId": idempotency_key, "status": "ok"}
+
+    sleep_calls = 0
+
+    async def fake_sleep(_seconds: float) -> None:
+        nonlocal sleep_calls
+        sleep_calls += 1
+        if sleep_calls == 1:
+            await database.update_mission(
+                mission_id,
+                status="completed",
+                in_progress=0,
+                phase="completed",
+                last_checkpoint='Gateway agent "last" channel hint launch completed.',
             )
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        chat_send_service=fake_chat_send_service,
+        sleep=fake_sleep,
+    )
+
+    launch_payload = await service.call(
+        "agent",
+        {
+            "message": "Ship the next verified slice.",
+            "agentId": "main",
+            "idempotencyKey": "agent-run-last-channel-hint-1",
+            **params,
+        },
+        now_ms=6122,
+    )
+
+    assert observed_send == {
+        "session_key": main_session_key,
+        "message": "Ship the next verified slice.",
+        "idempotency_key": "agent-run-last-channel-hint-1",
+        "thinking": None,
+        "deliver": None,
+        "timeout_ms": None,
+    }
+    assert launch_payload["runId"] == "agent-run-last-channel-hint-1"
+    assert launch_payload["status"] == "accepted"
+    assert isinstance(launch_payload["acceptedAt"], int)
+
+    wait_payload = await service.call(
+        "agent.wait",
+        {
+            "runId": "agent-run-last-channel-hint-1",
+            "timeoutMs": 5,
+        },
+    )
+
+    assert wait_payload["runId"] == "agent-run-last-channel-hint-1"
+    assert wait_payload["status"] == "ok"
+    assert wait_payload["startedAt"] == 6122
+    assert isinstance(wait_payload["endedAt"], int)
+    assert wait_payload["endedAt"] >= wait_payload["startedAt"]
+    assert sleep_calls == 1
 
 
 @pytest.mark.asyncio
@@ -5949,6 +8083,191 @@ async def test_agent_launch_allows_empty_internal_events_array() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("input_provenance", "expected_message"),
+    [
+        (
+            {"kind": "not-a-real-kind"},
+            "inputProvenance.kind must be one of: external_user, inter_session, internal_system",
+        ),
+        (
+            {"kind": "inter_session", "unexpectedField": "drift"},
+            "inputProvenance does not accept: unexpectedField",
+        ),
+    ],
+)
+async def test_agent_rejects_invalid_input_provenance_before_runtime_bridge(
+    input_provenance: dict[str, str],
+    expected_message: str,
+) -> None:
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=Database(Path.cwd() / ".tmp-pytest-local" / "noop-agent-input-provenance.db"),
+        sessions_service=None,
+        chat_send_service=None,
+    )
+
+    with pytest.raises(ValueError, match=re.escape(expected_message)):
+        await service.call(
+            "agent",
+            {
+                "message": "Ship the next verified slice.",
+                "agentId": "main",
+                "inputProvenance": input_provenance,
+                "idempotencyKey": "agent-run-invalid-input-provenance-1",
+            },
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("attachments",),
+    [
+        (
+            [
+                {
+                    "type": "image",
+                    "mimeType": "image/png",
+                    "fileName": "preview.png",
+                }
+            ],
+        ),
+        (
+            [
+                {
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/png",
+                    }
+                }
+            ],
+        ),
+    ],
+)
+async def test_agent_launch_ignores_inert_attachments_without_effective_content(
+    attachments: list[dict[str, object]],
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-agent-launch-inert-attachments"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-agent-launch-inert-attachments.db")
+    await database.initialize()
+    main_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+    )
+    mission_id = await database.create_mission(
+        name="Gateway Agent Inert Attachments Loop",
+        objective="Launch parity while treating inert attachments as omitted.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread-agent-launch-inert-attachments",
+        session_key=main_session_key,
+        cwd=str(tmp_path),
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=False,
+        run_verification=False,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+    )
+
+    observed_send: dict[str, object] = {}
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        observed_send.update(
+            {
+                "session_key": session_key,
+                "message": message,
+                "idempotency_key": idempotency_key,
+                "thinking": thinking,
+                "deliver": deliver,
+                "timeout_ms": timeout_ms,
+            }
+        )
+        return {"runId": idempotency_key, "status": "ok"}
+
+    sleep_calls = 0
+
+    async def fake_sleep(_seconds: float) -> None:
+        nonlocal sleep_calls
+        sleep_calls += 1
+        if sleep_calls == 1:
+            await database.update_mission(
+                mission_id,
+                status="completed",
+                in_progress=0,
+                phase="completed",
+                last_checkpoint="Gateway agent inert attachments launch completed.",
+            )
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        chat_send_service=fake_chat_send_service,
+        sleep=fake_sleep,
+    )
+
+    launch_payload = await service.call(
+        "agent",
+        {
+            "message": "Ship the next verified slice.",
+            "agentId": "main",
+            "attachments": attachments,
+            "idempotencyKey": "agent-run-inert-attachments-1",
+        },
+        now_ms=5558,
+    )
+
+    assert observed_send == {
+        "session_key": main_session_key,
+        "message": "Ship the next verified slice.",
+        "idempotency_key": "agent-run-inert-attachments-1",
+        "thinking": None,
+        "deliver": None,
+        "timeout_ms": None,
+    }
+    assert launch_payload["runId"] == "agent-run-inert-attachments-1"
+    assert launch_payload["status"] == "accepted"
+    assert isinstance(launch_payload["acceptedAt"], int)
+
+    wait_payload = await service.call(
+        "agent.wait",
+        {
+            "runId": "agent-run-inert-attachments-1",
+            "timeoutMs": 5,
+        },
+    )
+
+    assert wait_payload["runId"] == "agent-run-inert-attachments-1"
+    assert wait_payload["status"] == "ok"
+    assert wait_payload["startedAt"] == 5558
+    assert isinstance(wait_payload["endedAt"], int)
+    assert wait_payload["endedAt"] >= wait_payload["startedAt"]
+    assert sleep_calls == 1
+
+
+@pytest.mark.asyncio
 async def test_cron_list_returns_paged_scheduled_task_inventory() -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-list-service"
     shutil.rmtree(tmp_path, ignore_errors=True)
@@ -6082,6 +8401,47 @@ async def test_cron_status_returns_bounded_scheduler_summary() -> None:
 
 
 @pytest.mark.asyncio
+async def test_cron_status_counts_one_shot_jobs_and_surfaces_their_next_wake() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-status-at-service"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-cron-status-at.db")
+    await database.initialize()
+    await database.create_task_blueprint(
+        name="One Shot",
+        summary="Run once at noon UTC.",
+        project_id=None,
+        instance_id=None,
+        cadence_minutes=None,
+        enabled=True,
+        payload={
+            **_task_blueprint_payload("Run once at noon UTC."),
+            "schedule_kind": "at",
+            "schedule_at": "2026-04-18T12:00:00.000Z",
+        },
+    )
+    await database.create_task_blueprint(
+        name="Manual Repair",
+        summary="Manual-only work should not count.",
+        project_id=None,
+        instance_id=None,
+        cadence_minutes=None,
+        enabled=True,
+        payload=_task_blueprint_payload("Repair queue drift."),
+    )
+    service = GatewayNodeMethodService(GatewayNodeRegistry(), database=database)
+
+    payload = await service.call("cron.status", {})
+
+    assert payload == {
+        "enabled": True,
+        "storePath": str(database.path),
+        "jobs": 1,
+        "nextWakeAtMs": int(datetime(2026, 4, 18, 12, 0, tzinfo=UTC).timestamp() * 1000),
+    }
+
+
+@pytest.mark.asyncio
 async def test_cron_runs_returns_finished_scheduled_mission_history_page() -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-runs-service"
     shutil.rmtree(tmp_path, ignore_errors=True)
@@ -6163,6 +8523,92 @@ async def test_cron_runs_returns_finished_scheduled_mission_history_page() -> No
 
 
 @pytest.mark.asyncio
+async def test_cron_runs_surfaces_delivered_webhook_delivery_status() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-runs-delivery-service"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-cron-runs-delivery.db")
+    await database.initialize()
+    created_task = build_gateway_cron_task_blueprint(
+        {
+            "name": "Nightly Ship Webhook",
+            "enabled": True,
+            "schedule": {"kind": "every", "everyMs": 3_600_000},
+            "sessionTarget": "isolated",
+            "wakeMode": "next-heartbeat",
+            "payload": {
+                "kind": "agentTurn",
+                "message": "Ship the next verified webhook slice.",
+            },
+            "delivery": {
+                "mode": "webhook",
+                "to": "https://example.invalid/cron-finished",
+            },
+        }
+    )
+    task_id = await database.create_task_blueprint(
+        name=created_task.name,
+        summary=created_task.summary,
+        project_id=created_task.project_id,
+        instance_id=created_task.instance_id,
+        cadence_minutes=created_task.cadence_minutes,
+        enabled=created_task.enabled,
+        payload=created_task.model_dump(
+            exclude={
+                "name",
+                "summary",
+                "project_id",
+                "instance_id",
+                "cadence_minutes",
+                "enabled",
+            }
+        ),
+    )
+    mission_id = await _create_scheduled_mission(
+        database,
+        name="Nightly Ship Webhook Run",
+        objective="Ship the next verified webhook slice.",
+        status="completed",
+        task_blueprint_id=task_id,
+        thread_id="thread-ship-webhook-ok",
+        last_checkpoint="Nightly webhook ship landed.",
+    )
+    await database.create_outbound_delivery(
+        route_id=None,
+        route_name="Cron webhook for Nightly Ship Webhook",
+        route_kind="webhook",
+        route_target="https://example.invalid/cron-finished",
+        event_type="cron/finished",
+        session_key="launch:mode:workspace_affinity",
+        conversation_target=None,
+        route_scope={
+            "route_name": "Cron webhook for Nightly Ship Webhook",
+            "route_kind": "webhook",
+            "route_target": "https://example.invalid/cron-finished",
+        },
+        event_payload={
+            "missionId": mission_id,
+            "taskId": task_id,
+            "jobId": f"task-blueprint:{task_id}",
+            "summary": "Nightly webhook ship landed.",
+        },
+        message_summary="Nightly webhook ship landed.",
+        test_delivery=False,
+        delivery_state="delivered",
+        attempt_count=1,
+        delivered_at=utcnow(),
+    )
+    service = GatewayNodeMethodService(GatewayNodeRegistry(), database=database)
+
+    payload = await service.call("cron.runs", {"id": f"task-blueprint:{task_id}", "limit": 10})
+
+    assert payload["total"] == 1
+    assert payload["entries"][0]["status"] == "ok"
+    assert payload["entries"][0]["summary"] == "Nightly webhook ship landed."
+    assert payload["entries"][0]["deliveryStatus"] == "delivered"
+
+
+@pytest.mark.asyncio
 async def test_cron_run_launches_scheduled_task_via_runtime_bridge() -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-run-service"
     shutil.rmtree(tmp_path, ignore_errors=True)
@@ -6225,6 +8671,39 @@ async def test_cron_run_due_returns_not_due_without_launching() -> None:
 
 
 @pytest.mark.asyncio
+async def test_cron_run_due_launches_due_one_shot_task() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-run-due-at-service"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-cron-run-due-at.db")
+    await database.initialize()
+    task_id = await database.create_task_blueprint(
+        name="One Shot",
+        summary="Run exactly once.",
+        project_id=None,
+        instance_id=None,
+        cadence_minutes=None,
+        enabled=True,
+        payload={
+            **_task_blueprint_payload("Run exactly once."),
+            "schedule_kind": "at",
+            "schedule_at": "2026-04-18T12:00:00.000Z",
+        },
+    )
+    runner = FakeCronTaskRunner()
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        run_task_blueprint_now=runner,
+    )
+
+    payload = await service.call("cron.run", {"id": f"task-blueprint:{task_id}", "mode": "due"})
+
+    assert payload == {"ok": True, "enqueued": True, "runId": "mission:52"}
+    assert runner.calls == [(task_id, "gateway-cron:due")]
+
+
+@pytest.mark.asyncio
 async def test_cron_remove_deletes_cadence_backed_task_blueprint() -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-remove-service"
     shutil.rmtree(tmp_path, ignore_errors=True)
@@ -6239,6 +8718,42 @@ async def test_cron_remove_deletes_cadence_backed_task_blueprint() -> None:
         cadence_minutes=60,
         enabled=True,
         payload=_task_blueprint_payload("Ship the next verified slice."),
+    )
+
+    async def delete_task(task_blueprint_id: int) -> None:
+        await database.delete_task_blueprint(task_blueprint_id)
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        delete_task_blueprint=delete_task,
+    )
+
+    payload = await service.call("cron.remove", {"id": f"task-blueprint:{task_id}"})
+
+    assert payload == {"ok": True, "removed": True}
+    assert await database.get_task_blueprint(task_id) is None
+
+
+@pytest.mark.asyncio
+async def test_cron_remove_deletes_one_shot_task_blueprint() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-remove-at-service"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-cron-remove-at.db")
+    await database.initialize()
+    task_id = await database.create_task_blueprint(
+        name="One Shot",
+        summary="Run exactly once.",
+        project_id=None,
+        instance_id=None,
+        cadence_minutes=None,
+        enabled=True,
+        payload={
+            **_task_blueprint_payload("Run exactly once."),
+            "schedule_kind": "at",
+            "schedule_at": "2026-04-18T12:00:00.000Z",
+        },
     )
 
     async def delete_task(task_blueprint_id: int) -> None:
@@ -6308,7 +8823,7 @@ async def test_cron_add_creates_every_schedule_agent_turn_job() -> None:
             enabled=payload.enabled,
             payload={
                 "objective_template": payload.objective_template,
-                "conversation_target": payload.conversation_target,
+                "conversation_target": _json_conversation_target(payload),
                 "run_until_complete": payload.run_until_complete,
                 "continuation_cooldown_minutes": payload.continuation_cooldown_minutes,
                 "completion_marker": payload.completion_marker,
@@ -6327,6 +8842,19 @@ async def test_cron_add_creates_every_schedule_agent_turn_job() -> None:
                 "reflex_cooldown_seconds": payload.reflex_cooldown_seconds,
                 "allow_failover": payload.allow_failover,
                 "toolsets": payload.toolsets,
+                "schedule_kind": payload.schedule_kind,
+                "schedule_at": payload.schedule_at,
+                "schedule_anchor_ms": payload.schedule_anchor_ms,
+                "cron_session_target": payload.cron_session_target,
+                "cron_wake_mode": payload.cron_wake_mode,
+                "cron_payload_kind": payload.cron_payload_kind,
+                "cron_payload_text": payload.cron_payload_text,
+                "cron_delivery_mode": payload.cron_delivery_mode,
+                "cron_delivery_channel": payload.cron_delivery_channel,
+                "cron_delivery_to": payload.cron_delivery_to,
+                "cron_delivery_account_id": payload.cron_delivery_account_id,
+                "cron_delivery_best_effort": payload.cron_delivery_best_effort,
+                "cron_delivery_failure_destination": payload.cron_delivery_failure_destination,
             },
         )
         return type("CreatedTask", (), {"id": task_id})()
@@ -6344,8 +8872,8 @@ async def test_cron_add_creates_every_schedule_agent_turn_job() -> None:
             "description": "Ship the next verified slice.",
             "enabled": True,
             "schedule": {"kind": "every", "everyMs": 3_600_000},
-            "sessionTarget": "main",
-            "wakeMode": "now",
+            "sessionTarget": "isolated",
+            "wakeMode": "next-heartbeat",
             "payload": {
                 "kind": "agentTurn",
                 "message": "Ship the next verified slice.",
@@ -6364,16 +8892,107 @@ async def test_cron_add_creates_every_schedule_agent_turn_job() -> None:
     assert payload["name"] == "Nightly Ship"
     assert payload["description"] == "Ship the next verified slice."
     assert payload["schedule"] == {"kind": "every", "everyMs": 3_600_000}
-    assert payload["sessionTarget"] == "main"
-    assert payload["wakeMode"] == "now"
+    assert payload["sessionTarget"] == "isolated"
+    assert payload["wakeMode"] == "next-heartbeat"
     assert payload["payload"] == {
         "kind": "agentTurn",
         "message": "Ship the next verified slice.",
         "model": "gpt-5.4",
     }
-    assert payload["delivery"] == {"mode": "none"}
+    assert payload["delivery"] == {"mode": "announce"}
     assert payload["enabled"] is True
     assert str(payload["id"]).startswith("task-blueprint:")
+
+
+@pytest.mark.asyncio
+async def test_cron_add_accepts_session_key_routing_hint() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-add-session-key-service"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-cron-add-session-key.db")
+    await database.initialize()
+    created_payloads: list[TaskBlueprintCreate] = []
+
+    async def create_task(payload: TaskBlueprintCreate) -> object:
+        created_payloads.append(payload)
+        task_id = await database.create_task_blueprint(
+            name=payload.name,
+            summary=payload.summary,
+            project_id=payload.project_id,
+            instance_id=payload.instance_id,
+            cadence_minutes=payload.cadence_minutes,
+            enabled=payload.enabled,
+            payload={
+                "objective_template": payload.objective_template,
+                "conversation_target": _json_conversation_target(payload),
+                "run_until_complete": payload.run_until_complete,
+                "continuation_cooldown_minutes": payload.continuation_cooldown_minutes,
+                "completion_marker": payload.completion_marker,
+                "cwd": payload.cwd,
+                "model": payload.model,
+                "reasoning_effort": payload.reasoning_effort,
+                "collaboration_mode": payload.collaboration_mode,
+                "max_turns": payload.max_turns,
+                "use_builtin_agents": payload.use_builtin_agents,
+                "run_verification": payload.run_verification,
+                "auto_commit": payload.auto_commit,
+                "pause_on_approval": payload.pause_on_approval,
+                "allow_auto_reflexes": payload.allow_auto_reflexes,
+                "auto_recover": payload.auto_recover,
+                "auto_recover_limit": payload.auto_recover_limit,
+                "reflex_cooldown_seconds": payload.reflex_cooldown_seconds,
+                "allow_failover": payload.allow_failover,
+                "toolsets": payload.toolsets,
+                "schedule_kind": payload.schedule_kind,
+                "schedule_at": payload.schedule_at,
+                "schedule_anchor_ms": payload.schedule_anchor_ms,
+                "cron_session_target": payload.cron_session_target,
+                "cron_session_key": payload.cron_session_key,
+                "cron_wake_mode": payload.cron_wake_mode,
+                "cron_payload_kind": payload.cron_payload_kind,
+                "cron_payload_text": payload.cron_payload_text,
+                "cron_delivery_mode": payload.cron_delivery_mode,
+                "cron_delivery_channel": payload.cron_delivery_channel,
+                "cron_delivery_to": payload.cron_delivery_to,
+                "cron_delivery_account_id": payload.cron_delivery_account_id,
+                "cron_delivery_best_effort": payload.cron_delivery_best_effort,
+                "cron_delivery_failure_destination": payload.cron_delivery_failure_destination,
+            },
+        )
+        return type("CreatedTask", (), {"id": task_id})()
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        create_task_blueprint=create_task,
+    )
+
+    payload = await service.call(
+        "cron.add",
+        {
+            "name": "Last Channel Recovery",
+            "enabled": True,
+            "schedule": {"kind": "every", "everyMs": 3_600_000},
+            "sessionKey": "telegram:direct:123:thread:77",
+            "sessionTarget": "isolated",
+            "wakeMode": "next-heartbeat",
+            "payload": {
+                "kind": "agentTurn",
+                "message": "Recover the last delivered channel from cron.",
+            },
+            "delivery": {
+                "mode": "announce",
+                "channel": "last",
+            },
+        },
+    )
+
+    assert len(created_payloads) == 1
+    assert created_payloads[0].cron_session_key == "agent:openzues:telegram:direct:123:thread:77"
+    assert payload["sessionKey"] == "telegram:direct:123:thread:77"
+    stored = await database.get_task_blueprint(1)
+    assert stored is not None
+    assert stored["cron_session_key"] == "agent:openzues:telegram:direct:123:thread:77"
 
 
 @pytest.mark.asyncio
@@ -6396,7 +9015,7 @@ async def test_cron_add_accepts_every_schedule_anchor_ms() -> None:
             enabled=payload.enabled,
             payload={
                 "objective_template": payload.objective_template,
-                "conversation_target": payload.conversation_target,
+                "conversation_target": _json_conversation_target(payload),
                 "run_until_complete": payload.run_until_complete,
                 "continuation_cooldown_minutes": payload.continuation_cooldown_minutes,
                 "completion_marker": payload.completion_marker,
@@ -6416,6 +9035,18 @@ async def test_cron_add_accepts_every_schedule_anchor_ms() -> None:
                 "allow_failover": payload.allow_failover,
                 "toolsets": payload.toolsets,
                 "schedule_anchor_ms": payload.schedule_anchor_ms,
+                "schedule_kind": payload.schedule_kind,
+                "schedule_at": payload.schedule_at,
+                "cron_session_target": payload.cron_session_target,
+                "cron_wake_mode": payload.cron_wake_mode,
+                "cron_payload_kind": payload.cron_payload_kind,
+                "cron_payload_text": payload.cron_payload_text,
+                "cron_delivery_mode": payload.cron_delivery_mode,
+                "cron_delivery_channel": payload.cron_delivery_channel,
+                "cron_delivery_to": payload.cron_delivery_to,
+                "cron_delivery_account_id": payload.cron_delivery_account_id,
+                "cron_delivery_best_effort": payload.cron_delivery_best_effort,
+                "cron_delivery_failure_destination": payload.cron_delivery_failure_destination,
             },
         )
         return type("CreatedTask", (), {"id": task_id})()
@@ -6433,8 +9064,8 @@ async def test_cron_add_accepts_every_schedule_anchor_ms() -> None:
             "description": "Ship on the anchored minute boundary.",
             "enabled": True,
             "schedule": {"kind": "every", "everyMs": 3_600_000, "anchorMs": 123},
-            "sessionTarget": "main",
-            "wakeMode": "now",
+            "sessionTarget": "isolated",
+            "wakeMode": "next-heartbeat",
             "payload": {
                 "kind": "agentTurn",
                 "message": "Ship on the anchored minute boundary.",
@@ -6449,6 +9080,1408 @@ async def test_cron_add_accepts_every_schedule_anchor_ms() -> None:
 
 
 @pytest.mark.asyncio
+async def test_cron_add_supports_one_shot_at_schedule() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-add-at-service"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-cron-add-at.db")
+    await database.initialize()
+    created_payloads: list[TaskBlueprintCreate] = []
+
+    async def create_task(payload: TaskBlueprintCreate) -> object:
+        created_payloads.append(payload)
+        task_id = await database.create_task_blueprint(
+            name=payload.name,
+            summary=payload.summary,
+            project_id=payload.project_id,
+            instance_id=payload.instance_id,
+            cadence_minutes=payload.cadence_minutes,
+            enabled=payload.enabled,
+            payload={
+                "objective_template": payload.objective_template,
+                "conversation_target": _json_conversation_target(payload),
+                "run_until_complete": payload.run_until_complete,
+                "continuation_cooldown_minutes": payload.continuation_cooldown_minutes,
+                "completion_marker": payload.completion_marker,
+                "cwd": payload.cwd,
+                "model": payload.model,
+                "reasoning_effort": payload.reasoning_effort,
+                "collaboration_mode": payload.collaboration_mode,
+                "max_turns": payload.max_turns,
+                "use_builtin_agents": payload.use_builtin_agents,
+                "run_verification": payload.run_verification,
+                "auto_commit": payload.auto_commit,
+                "pause_on_approval": payload.pause_on_approval,
+                "allow_auto_reflexes": payload.allow_auto_reflexes,
+                "auto_recover": payload.auto_recover,
+                "auto_recover_limit": payload.auto_recover_limit,
+                "reflex_cooldown_seconds": payload.reflex_cooldown_seconds,
+                "allow_failover": payload.allow_failover,
+                "toolsets": payload.toolsets,
+                "schedule_kind": payload.schedule_kind,
+                "schedule_at": payload.schedule_at,
+                "schedule_anchor_ms": payload.schedule_anchor_ms,
+                "cron_session_target": payload.cron_session_target,
+                "cron_wake_mode": payload.cron_wake_mode,
+                "cron_payload_kind": payload.cron_payload_kind,
+                "cron_payload_text": payload.cron_payload_text,
+                "cron_delivery_mode": payload.cron_delivery_mode,
+                "cron_delivery_channel": payload.cron_delivery_channel,
+                "cron_delivery_to": payload.cron_delivery_to,
+                "cron_delivery_account_id": payload.cron_delivery_account_id,
+                "cron_delivery_best_effort": payload.cron_delivery_best_effort,
+                "cron_delivery_failure_destination": payload.cron_delivery_failure_destination,
+            },
+        )
+        return type("CreatedTask", (), {"id": task_id})()
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        create_task_blueprint=create_task,
+    )
+
+    payload = await service.call(
+        "cron.add",
+        {
+            "name": "One Shot",
+            "description": "Run exactly once at noon UTC.",
+            "enabled": True,
+            "schedule": {"kind": "at", "at": "2026-04-18T12:00:00Z"},
+            "sessionTarget": "isolated",
+            "wakeMode": "next-heartbeat",
+            "payload": {
+                "kind": "agentTurn",
+                "message": "Run exactly once at noon UTC.",
+                "model": "gpt-5.4",
+            },
+        },
+    )
+
+    assert len(created_payloads) == 1
+    assert created_payloads[0].cadence_minutes is None
+    assert created_payloads[0].schedule_kind == "at"
+    assert created_payloads[0].schedule_at == "2026-04-18T12:00:00.000Z"
+    assert payload["schedule"] == {"kind": "at", "at": "2026-04-18T12:00:00.000Z"}
+
+
+@pytest.mark.asyncio
+async def test_cron_add_rejects_main_agent_turn_job() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-add-main-agent-turn-reject-service"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-cron-add-main-agent-turn-reject.db")
+    await database.initialize()
+
+    async def create_task(payload: TaskBlueprintCreate):
+        return payload
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        create_task_blueprint=create_task,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            "invalid cron.add params: "
+            "payload.kind='agentTurn' requires sessionTarget to leave 'main'"
+        ),
+    ):
+        await service.call(
+            "cron.add",
+            {
+                "name": "Nightly Ship",
+                "enabled": True,
+                "schedule": {"kind": "every", "everyMs": 3_600_000},
+                "sessionTarget": "main",
+                "wakeMode": "now",
+                "payload": {
+                    "kind": "agentTurn",
+                    "message": "Ship the next verified slice.",
+                    "model": "gpt-5.4",
+                },
+            },
+        )
+
+
+@pytest.mark.asyncio
+async def test_cron_add_accepts_main_system_event_next_heartbeat_job() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-add-system-event-service"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-cron-add-system-event.db")
+    await database.initialize()
+    created_payloads: list[TaskBlueprintCreate] = []
+
+    async def create_task(payload: TaskBlueprintCreate) -> object:
+        created_payloads.append(payload)
+        task_id = await database.create_task_blueprint(
+            name=payload.name,
+            summary=payload.summary,
+            project_id=payload.project_id,
+            instance_id=payload.instance_id,
+            cadence_minutes=payload.cadence_minutes,
+            enabled=payload.enabled,
+            payload={
+                "objective_template": payload.objective_template,
+                "conversation_target": _json_conversation_target(payload),
+                "run_until_complete": payload.run_until_complete,
+                "continuation_cooldown_minutes": payload.continuation_cooldown_minutes,
+                "completion_marker": payload.completion_marker,
+                "cwd": payload.cwd,
+                "model": payload.model,
+                "reasoning_effort": payload.reasoning_effort,
+                "collaboration_mode": payload.collaboration_mode,
+                "max_turns": payload.max_turns,
+                "use_builtin_agents": payload.use_builtin_agents,
+                "run_verification": payload.run_verification,
+                "auto_commit": payload.auto_commit,
+                "pause_on_approval": payload.pause_on_approval,
+                "allow_auto_reflexes": payload.allow_auto_reflexes,
+                "auto_recover": payload.auto_recover,
+                "auto_recover_limit": payload.auto_recover_limit,
+                "reflex_cooldown_seconds": payload.reflex_cooldown_seconds,
+                "allow_failover": payload.allow_failover,
+                "toolsets": payload.toolsets,
+                "cron_session_target": payload.cron_session_target,
+                "cron_wake_mode": payload.cron_wake_mode,
+                "cron_payload_kind": payload.cron_payload_kind,
+                "cron_payload_text": payload.cron_payload_text,
+                "cron_delivery_mode": payload.cron_delivery_mode,
+                "cron_delivery_channel": payload.cron_delivery_channel,
+                "cron_delivery_to": payload.cron_delivery_to,
+                "cron_delivery_account_id": payload.cron_delivery_account_id,
+                "cron_delivery_best_effort": payload.cron_delivery_best_effort,
+                "cron_delivery_failure_destination": payload.cron_delivery_failure_destination,
+            },
+        )
+        return type("CreatedTask", (), {"id": task_id})()
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        create_task_blueprint=create_task,
+    )
+
+    payload = await service.call(
+        "cron.add",
+        {
+            "name": "Wake Main Lane",
+            "description": "Nudge the main lane on the next heartbeat.",
+            "enabled": True,
+            "schedule": {"kind": "every", "everyMs": 3_600_000},
+            "sessionTarget": "main",
+            "wakeMode": "next-heartbeat",
+            "payload": {
+                "kind": "systemEvent",
+                "text": "Resume the main lane from cron.",
+            },
+        },
+    )
+
+    assert len(created_payloads) == 1
+    created = created_payloads[0]
+    assert created.objective_template == "Resume the main lane from cron."
+    assert created.cron_session_target == "main"
+    assert created.cron_wake_mode == "next-heartbeat"
+    assert created.cron_payload_kind == "systemEvent"
+    assert created.cron_payload_text == "Resume the main lane from cron."
+    assert payload["sessionTarget"] == "main"
+    assert payload["wakeMode"] == "next-heartbeat"
+    assert payload["payload"] == {
+        "kind": "systemEvent",
+        "text": "Resume the main lane from cron.",
+    }
+
+
+@pytest.mark.asyncio
+async def test_cron_add_accepts_isolated_agent_turn_next_heartbeat_job() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-add-isolated-service"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-cron-add-isolated.db")
+    await database.initialize()
+    created_payloads: list[TaskBlueprintCreate] = []
+
+    async def create_task(payload: TaskBlueprintCreate) -> object:
+        created_payloads.append(payload)
+        task_id = await database.create_task_blueprint(
+            name=payload.name,
+            summary=payload.summary,
+            project_id=payload.project_id,
+            instance_id=payload.instance_id,
+            cadence_minutes=payload.cadence_minutes,
+            enabled=payload.enabled,
+            payload={
+                "objective_template": payload.objective_template,
+                "conversation_target": _json_conversation_target(payload),
+                "run_until_complete": payload.run_until_complete,
+                "continuation_cooldown_minutes": payload.continuation_cooldown_minutes,
+                "completion_marker": payload.completion_marker,
+                "cwd": payload.cwd,
+                "model": payload.model,
+                "reasoning_effort": payload.reasoning_effort,
+                "collaboration_mode": payload.collaboration_mode,
+                "max_turns": payload.max_turns,
+                "use_builtin_agents": payload.use_builtin_agents,
+                "run_verification": payload.run_verification,
+                "auto_commit": payload.auto_commit,
+                "pause_on_approval": payload.pause_on_approval,
+                "allow_auto_reflexes": payload.allow_auto_reflexes,
+                "auto_recover": payload.auto_recover,
+                "auto_recover_limit": payload.auto_recover_limit,
+                "reflex_cooldown_seconds": payload.reflex_cooldown_seconds,
+                "allow_failover": payload.allow_failover,
+                "toolsets": payload.toolsets,
+                "cron_session_target": payload.cron_session_target,
+                "cron_wake_mode": payload.cron_wake_mode,
+                "cron_payload_kind": payload.cron_payload_kind,
+                "cron_delivery_mode": payload.cron_delivery_mode,
+            },
+        )
+        return type("CreatedTask", (), {"id": task_id})()
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        create_task_blueprint=create_task,
+    )
+
+    payload = await service.call(
+        "cron.add",
+        {
+            "name": "Isolated Lane",
+            "description": "Run the isolated lane on the next heartbeat.",
+            "enabled": True,
+            "schedule": {"kind": "every", "everyMs": 3_600_000},
+            "sessionTarget": "isolated",
+            "wakeMode": "next-heartbeat",
+            "payload": {
+                "kind": "agentTurn",
+                "message": "Run the isolated lane from cron.",
+                "model": "gpt-5.4-mini",
+            },
+        },
+    )
+
+    assert len(created_payloads) == 1
+    created = created_payloads[0]
+    assert created.objective_template == "Run the isolated lane from cron."
+    assert created.model == "gpt-5.4-mini"
+    assert created.cron_session_target == "isolated"
+    assert created.cron_wake_mode == "next-heartbeat"
+    assert created.cron_payload_kind == "agentTurn"
+    assert created.cron_delivery_mode is None
+    assert payload["sessionTarget"] == "isolated"
+    assert payload["wakeMode"] == "next-heartbeat"
+    assert payload["payload"] == {
+        "kind": "agentTurn",
+        "message": "Run the isolated lane from cron.",
+        "model": "gpt-5.4-mini",
+    }
+    assert payload["delivery"] == {"mode": "announce"}
+
+
+@pytest.mark.asyncio
+async def test_cron_add_preserves_explicit_none_delivery_for_isolated_agent_turn_job() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-add-isolated-none-service"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-cron-add-isolated-none.db")
+    await database.initialize()
+    created_payloads: list[TaskBlueprintCreate] = []
+
+    async def create_task(payload: TaskBlueprintCreate) -> object:
+        created_payloads.append(payload)
+        task_id = await database.create_task_blueprint(
+            name=payload.name,
+            summary=payload.summary,
+            project_id=payload.project_id,
+            instance_id=payload.instance_id,
+            cadence_minutes=payload.cadence_minutes,
+            enabled=payload.enabled,
+            payload={
+                "objective_template": payload.objective_template,
+                "conversation_target": _json_conversation_target(payload),
+                "run_until_complete": payload.run_until_complete,
+                "continuation_cooldown_minutes": payload.continuation_cooldown_minutes,
+                "completion_marker": payload.completion_marker,
+                "cwd": payload.cwd,
+                "model": payload.model,
+                "reasoning_effort": payload.reasoning_effort,
+                "collaboration_mode": payload.collaboration_mode,
+                "max_turns": payload.max_turns,
+                "use_builtin_agents": payload.use_builtin_agents,
+                "run_verification": payload.run_verification,
+                "auto_commit": payload.auto_commit,
+                "pause_on_approval": payload.pause_on_approval,
+                "allow_auto_reflexes": payload.allow_auto_reflexes,
+                "auto_recover": payload.auto_recover,
+                "auto_recover_limit": payload.auto_recover_limit,
+                "reflex_cooldown_seconds": payload.reflex_cooldown_seconds,
+                "allow_failover": payload.allow_failover,
+                "toolsets": payload.toolsets,
+                "cron_session_target": payload.cron_session_target,
+                "cron_wake_mode": payload.cron_wake_mode,
+                "cron_payload_kind": payload.cron_payload_kind,
+                "cron_payload_text": payload.cron_payload_text,
+                "cron_delivery_mode": payload.cron_delivery_mode,
+                "cron_delivery_channel": payload.cron_delivery_channel,
+                "cron_delivery_to": payload.cron_delivery_to,
+                "cron_delivery_account_id": payload.cron_delivery_account_id,
+                "cron_delivery_best_effort": payload.cron_delivery_best_effort,
+                "cron_delivery_failure_destination": payload.cron_delivery_failure_destination,
+            },
+        )
+        return type("CreatedTask", (), {"id": task_id})()
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        create_task_blueprint=create_task,
+    )
+
+    payload = await service.call(
+        "cron.add",
+        {
+            "name": "Isolated Lane No Delivery",
+            "enabled": True,
+            "schedule": {"kind": "every", "everyMs": 3_600_000},
+            "sessionTarget": "isolated",
+            "wakeMode": "next-heartbeat",
+            "payload": {
+                "kind": "agentTurn",
+                "message": "Run the isolated lane from cron without announce delivery.",
+            },
+            "delivery": {"mode": "none"},
+        },
+    )
+
+    assert len(created_payloads) == 1
+    assert created_payloads[0].cron_delivery_mode == "none"
+    assert payload["delivery"] == {"mode": "none"}
+
+
+@pytest.mark.asyncio
+async def test_cron_add_accepts_explicit_announce_delivery_for_isolated_agent_turn_job() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-add-isolated-announce-service"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-cron-add-isolated-announce.db")
+    await database.initialize()
+    created_payloads: list[TaskBlueprintCreate] = []
+
+    async def create_task(payload: TaskBlueprintCreate) -> object:
+        created_payloads.append(payload)
+        task_id = await database.create_task_blueprint(
+            name=payload.name,
+            summary=payload.summary,
+            project_id=payload.project_id,
+            instance_id=payload.instance_id,
+            cadence_minutes=payload.cadence_minutes,
+            enabled=payload.enabled,
+            payload={
+                "objective_template": payload.objective_template,
+                "conversation_target": _json_conversation_target(payload),
+                "run_until_complete": payload.run_until_complete,
+                "continuation_cooldown_minutes": payload.continuation_cooldown_minutes,
+                "completion_marker": payload.completion_marker,
+                "cwd": payload.cwd,
+                "model": payload.model,
+                "reasoning_effort": payload.reasoning_effort,
+                "collaboration_mode": payload.collaboration_mode,
+                "max_turns": payload.max_turns,
+                "use_builtin_agents": payload.use_builtin_agents,
+                "run_verification": payload.run_verification,
+                "auto_commit": payload.auto_commit,
+                "pause_on_approval": payload.pause_on_approval,
+                "allow_auto_reflexes": payload.allow_auto_reflexes,
+                "auto_recover": payload.auto_recover,
+                "auto_recover_limit": payload.auto_recover_limit,
+                "reflex_cooldown_seconds": payload.reflex_cooldown_seconds,
+                "allow_failover": payload.allow_failover,
+                "toolsets": payload.toolsets,
+                "cron_session_target": payload.cron_session_target,
+                "cron_wake_mode": payload.cron_wake_mode,
+                "cron_payload_kind": payload.cron_payload_kind,
+                "cron_payload_text": payload.cron_payload_text,
+                "cron_delivery_mode": payload.cron_delivery_mode,
+                "cron_delivery_channel": payload.cron_delivery_channel,
+                "cron_delivery_to": payload.cron_delivery_to,
+                "cron_delivery_account_id": payload.cron_delivery_account_id,
+            },
+        )
+        return type("CreatedTask", (), {"id": task_id})()
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        create_task_blueprint=create_task,
+    )
+
+    payload = await service.call(
+        "cron.add",
+        {
+            "name": "Isolated Lane Announce",
+            "enabled": True,
+            "schedule": {"kind": "every", "everyMs": 3_600_000},
+            "sessionTarget": "isolated",
+            "wakeMode": "next-heartbeat",
+            "payload": {
+                "kind": "agentTurn",
+                "message": "Run the isolated lane from cron with explicit announce delivery.",
+            },
+            "delivery": {
+                "mode": "announce",
+                "channel": " TeLeGrAm ",
+                "to": " 7200373102 ",
+                "accountId": " coordinator ",
+            },
+        },
+    )
+
+    assert len(created_payloads) == 1
+    assert created_payloads[0].cron_delivery_mode is None
+    assert created_payloads[0].cron_delivery_channel == "telegram"
+    assert created_payloads[0].cron_delivery_to == "7200373102"
+    assert created_payloads[0].cron_delivery_account_id == "coordinator"
+    assert created_payloads[0].conversation_target is not None
+    assert created_payloads[0].conversation_target.channel == "telegram"
+    assert created_payloads[0].conversation_target.account_id == "coordinator"
+    assert created_payloads[0].conversation_target.peer_kind == "channel"
+    assert created_payloads[0].conversation_target.peer_id == "7200373102"
+    assert payload["delivery"] == {
+        "mode": "announce",
+        "channel": "telegram",
+        "to": "7200373102",
+        "accountId": "coordinator",
+    }
+
+
+@pytest.mark.asyncio
+async def test_cron_add_preserves_announce_delivery_thread_id_for_isolated_agent_turn_job() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-add-isolated-thread-id-service"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-cron-add-isolated-thread-id.db")
+    await database.initialize()
+    created_payloads: list[TaskBlueprintCreate] = []
+
+    async def create_task(payload: TaskBlueprintCreate) -> object:
+        created_payloads.append(payload)
+        task_id = await database.create_task_blueprint(
+            name=payload.name,
+            summary=payload.summary,
+            project_id=payload.project_id,
+            instance_id=payload.instance_id,
+            cadence_minutes=payload.cadence_minutes,
+            enabled=payload.enabled,
+            payload={
+                "objective_template": payload.objective_template,
+                "conversation_target": _json_conversation_target(payload),
+                "run_until_complete": payload.run_until_complete,
+                "continuation_cooldown_minutes": payload.continuation_cooldown_minutes,
+                "completion_marker": payload.completion_marker,
+                "cwd": payload.cwd,
+                "model": payload.model,
+                "reasoning_effort": payload.reasoning_effort,
+                "collaboration_mode": payload.collaboration_mode,
+                "max_turns": payload.max_turns,
+                "use_builtin_agents": payload.use_builtin_agents,
+                "run_verification": payload.run_verification,
+                "auto_commit": payload.auto_commit,
+                "pause_on_approval": payload.pause_on_approval,
+                "allow_auto_reflexes": payload.allow_auto_reflexes,
+                "auto_recover": payload.auto_recover,
+                "auto_recover_limit": payload.auto_recover_limit,
+                "reflex_cooldown_seconds": payload.reflex_cooldown_seconds,
+                "allow_failover": payload.allow_failover,
+                "toolsets": payload.toolsets,
+                "cron_session_target": payload.cron_session_target,
+                "cron_wake_mode": payload.cron_wake_mode,
+                "cron_payload_kind": payload.cron_payload_kind,
+                "cron_payload_text": payload.cron_payload_text,
+                "cron_delivery_mode": payload.cron_delivery_mode,
+                "cron_delivery_channel": payload.cron_delivery_channel,
+                "cron_delivery_to": payload.cron_delivery_to,
+                "cron_delivery_account_id": payload.cron_delivery_account_id,
+                "cron_delivery_thread_id": payload.cron_delivery_thread_id,
+            },
+        )
+        return type("CreatedTask", (), {"id": task_id})()
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        create_task_blueprint=create_task,
+    )
+
+    payload = await service.call(
+        "cron.add",
+        {
+            "name": "Isolated Lane Thread Hint",
+            "enabled": True,
+            "schedule": {"kind": "every", "everyMs": 3_600_000},
+            "sessionTarget": "isolated",
+            "wakeMode": "next-heartbeat",
+            "payload": {
+                "kind": "agentTurn",
+                "message": "Run the isolated lane from cron with an announce thread hint.",
+            },
+            "delivery": {
+                "mode": "announce",
+                "channel": "telegram",
+                "to": "-100123:topic:42",
+                "threadId": " 77 ",
+            },
+        },
+    )
+
+    assert len(created_payloads) == 1
+    assert created_payloads[0].cron_delivery_thread_id == "77"
+    assert payload["delivery"] == {
+        "mode": "announce",
+        "channel": "telegram",
+        "to": "-100123:topic:42",
+        "threadId": "77",
+    }
+
+
+@pytest.mark.asyncio
+async def test_cron_add_preserves_numeric_announce_delivery_thread_id() -> None:
+    tmp_path = (
+        Path.cwd() / ".tmp-pytest-local" / "gateway-cron-add-isolated-thread-id-numeric-service"
+    )
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-cron-add-isolated-thread-id-numeric.db")
+    await database.initialize()
+    created_payloads: list[TaskBlueprintCreate] = []
+
+    async def create_task(payload: TaskBlueprintCreate) -> object:
+        created_payloads.append(payload)
+        task_id = await database.create_task_blueprint(
+            name=payload.name,
+            summary=payload.summary,
+            project_id=payload.project_id,
+            instance_id=payload.instance_id,
+            cadence_minutes=payload.cadence_minutes,
+            enabled=payload.enabled,
+            payload={
+                "objective_template": payload.objective_template,
+                "conversation_target": _json_conversation_target(payload),
+                "run_until_complete": payload.run_until_complete,
+                "continuation_cooldown_minutes": payload.continuation_cooldown_minutes,
+                "completion_marker": payload.completion_marker,
+                "cwd": payload.cwd,
+                "model": payload.model,
+                "reasoning_effort": payload.reasoning_effort,
+                "collaboration_mode": payload.collaboration_mode,
+                "max_turns": payload.max_turns,
+                "use_builtin_agents": payload.use_builtin_agents,
+                "run_verification": payload.run_verification,
+                "auto_commit": payload.auto_commit,
+                "pause_on_approval": payload.pause_on_approval,
+                "allow_auto_reflexes": payload.allow_auto_reflexes,
+                "auto_recover": payload.auto_recover,
+                "auto_recover_limit": payload.auto_recover_limit,
+                "reflex_cooldown_seconds": payload.reflex_cooldown_seconds,
+                "allow_failover": payload.allow_failover,
+                "toolsets": payload.toolsets,
+                "cron_session_target": payload.cron_session_target,
+                "cron_wake_mode": payload.cron_wake_mode,
+                "cron_payload_kind": payload.cron_payload_kind,
+                "cron_payload_text": payload.cron_payload_text,
+                "cron_delivery_mode": payload.cron_delivery_mode,
+                "cron_delivery_channel": payload.cron_delivery_channel,
+                "cron_delivery_to": payload.cron_delivery_to,
+                "cron_delivery_account_id": payload.cron_delivery_account_id,
+                "cron_delivery_thread_id": payload.cron_delivery_thread_id,
+            },
+        )
+        return type("CreatedTask", (), {"id": task_id})()
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        create_task_blueprint=create_task,
+    )
+
+    payload = await service.call(
+        "cron.add",
+        {
+            "name": "Isolated Lane Numeric Thread Hint",
+            "enabled": True,
+            "schedule": {"kind": "every", "everyMs": 3_600_000},
+            "sessionTarget": "isolated",
+            "wakeMode": "next-heartbeat",
+            "payload": {
+                "kind": "agentTurn",
+                "message": "Run the isolated lane from cron with a numeric announce thread hint.",
+            },
+            "delivery": {
+                "mode": "announce",
+                "channel": "telegram",
+                "to": "-100123:topic:42",
+                "threadId": 77,
+            },
+        },
+    )
+
+    assert len(created_payloads) == 1
+    assert created_payloads[0].cron_delivery_thread_id == 77
+    assert payload["delivery"] == {
+        "mode": "announce",
+        "channel": "telegram",
+        "to": "-100123:topic:42",
+        "threadId": 77,
+    }
+
+
+@pytest.mark.asyncio
+async def test_cron_add_accepts_webhook_delivery_for_main_system_event_job() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-add-webhook-service"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-cron-add-webhook.db")
+    await database.initialize()
+    created_payloads: list[TaskBlueprintCreate] = []
+
+    async def create_task(payload: TaskBlueprintCreate) -> object:
+        created_payloads.append(payload)
+        task_id = await database.create_task_blueprint(
+            name=payload.name,
+            summary=payload.summary,
+            project_id=payload.project_id,
+            instance_id=payload.instance_id,
+            cadence_minutes=payload.cadence_minutes,
+            enabled=payload.enabled,
+            payload={
+                "objective_template": payload.objective_template,
+                "conversation_target": _json_conversation_target(payload),
+                "run_until_complete": payload.run_until_complete,
+                "continuation_cooldown_minutes": payload.continuation_cooldown_minutes,
+                "completion_marker": payload.completion_marker,
+                "cwd": payload.cwd,
+                "model": payload.model,
+                "reasoning_effort": payload.reasoning_effort,
+                "collaboration_mode": payload.collaboration_mode,
+                "max_turns": payload.max_turns,
+                "use_builtin_agents": payload.use_builtin_agents,
+                "run_verification": payload.run_verification,
+                "auto_commit": payload.auto_commit,
+                "pause_on_approval": payload.pause_on_approval,
+                "allow_auto_reflexes": payload.allow_auto_reflexes,
+                "auto_recover": payload.auto_recover,
+                "auto_recover_limit": payload.auto_recover_limit,
+                "reflex_cooldown_seconds": payload.reflex_cooldown_seconds,
+                "allow_failover": payload.allow_failover,
+                "toolsets": payload.toolsets,
+                "cron_session_target": payload.cron_session_target,
+                "cron_wake_mode": payload.cron_wake_mode,
+                "cron_payload_kind": payload.cron_payload_kind,
+                "cron_payload_text": payload.cron_payload_text,
+                "cron_delivery_mode": payload.cron_delivery_mode,
+                "cron_delivery_channel": payload.cron_delivery_channel,
+                "cron_delivery_to": payload.cron_delivery_to,
+                "cron_delivery_account_id": payload.cron_delivery_account_id,
+                "cron_delivery_best_effort": payload.cron_delivery_best_effort,
+                "cron_delivery_failure_destination": payload.cron_delivery_failure_destination,
+            },
+        )
+        return type("CreatedTask", (), {"id": task_id})()
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        create_task_blueprint=create_task,
+    )
+
+    payload = await service.call(
+        "cron.add",
+        {
+            "name": "Webhook Wake",
+            "enabled": True,
+            "schedule": {"kind": "every", "everyMs": 3_600_000},
+            "sessionTarget": "main",
+            "wakeMode": "now",
+            "payload": {
+                "kind": "systemEvent",
+                "text": "Wake the main lane through webhook delivery.",
+            },
+            "delivery": {
+                "mode": " WeBhOoK ",
+                "to": " https://example.invalid/cron ",
+                "bestEffort": True,
+                "failureDestination": {
+                    "mode": "webhook",
+                    "to": "  https://example.invalid/failure  ",
+                },
+            },
+        },
+    )
+
+    assert len(created_payloads) == 1
+    assert created_payloads[0].cron_delivery_mode == "webhook"
+    assert created_payloads[0].cron_delivery_to == "https://example.invalid/cron"
+    assert created_payloads[0].cron_delivery_best_effort is True
+    assert created_payloads[0].cron_delivery_failure_destination == {
+        "mode": "webhook",
+        "to": "https://example.invalid/failure",
+    }
+    assert payload["delivery"] == {
+        "mode": "webhook",
+        "to": "https://example.invalid/cron",
+        "bestEffort": True,
+        "failureDestination": {
+            "mode": "webhook",
+            "to": "https://example.invalid/failure",
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_cron_add_accepts_legacy_notify_flag_for_webhook_fallback() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-add-notify-service"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-cron-add-notify.db")
+    await database.initialize()
+    created_payloads: list[TaskBlueprintCreate] = []
+
+    async def create_task(payload: TaskBlueprintCreate) -> object:
+        created_payloads.append(payload)
+        task_id = await database.create_task_blueprint(
+            name=payload.name,
+            summary=payload.summary,
+            project_id=payload.project_id,
+            instance_id=payload.instance_id,
+            cadence_minutes=payload.cadence_minutes,
+            enabled=payload.enabled,
+            payload={
+                "objective_template": payload.objective_template,
+                "conversation_target": _json_conversation_target(payload),
+                "run_until_complete": payload.run_until_complete,
+                "continuation_cooldown_minutes": payload.continuation_cooldown_minutes,
+                "completion_marker": payload.completion_marker,
+                "cwd": payload.cwd,
+                "model": payload.model,
+                "reasoning_effort": payload.reasoning_effort,
+                "collaboration_mode": payload.collaboration_mode,
+                "max_turns": payload.max_turns,
+                "use_builtin_agents": payload.use_builtin_agents,
+                "run_verification": payload.run_verification,
+                "auto_commit": payload.auto_commit,
+                "pause_on_approval": payload.pause_on_approval,
+                "allow_auto_reflexes": payload.allow_auto_reflexes,
+                "auto_recover": payload.auto_recover,
+                "auto_recover_limit": payload.auto_recover_limit,
+                "reflex_cooldown_seconds": payload.reflex_cooldown_seconds,
+                "allow_failover": payload.allow_failover,
+                "toolsets": payload.toolsets,
+                "cron_session_target": payload.cron_session_target,
+                "cron_wake_mode": payload.cron_wake_mode,
+                "cron_payload_kind": payload.cron_payload_kind,
+                "cron_payload_text": payload.cron_payload_text,
+                "cron_delivery_mode": payload.cron_delivery_mode,
+                "cron_delivery_channel": payload.cron_delivery_channel,
+                "cron_delivery_to": payload.cron_delivery_to,
+                "cron_delivery_account_id": payload.cron_delivery_account_id,
+                "cron_delivery_best_effort": payload.cron_delivery_best_effort,
+                "cron_delivery_failure_destination": payload.cron_delivery_failure_destination,
+                "cron_notify_enabled": payload.cron_notify_enabled,
+            },
+        )
+        return type("CreatedTask", (), {"id": task_id})()
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        create_task_blueprint=create_task,
+    )
+
+    payload = await service.call(
+        "cron.add",
+        {
+            "name": "Legacy Notify Webhook",
+            "enabled": True,
+            "notify": True,
+            "schedule": {"kind": "every", "everyMs": 3_600_000},
+            "sessionTarget": "main",
+            "wakeMode": "next-heartbeat",
+            "payload": {
+                "kind": "systemEvent",
+                "text": "Use the legacy cron webhook fallback.",
+            },
+        },
+    )
+
+    assert len(created_payloads) == 1
+    assert created_payloads[0].cron_notify_enabled is True
+    assert payload["notify"] is True
+    stored = await database.get_task_blueprint(1)
+    assert stored is not None
+    assert stored["cron_notify_enabled"] is True
+
+
+@pytest.mark.asyncio
+async def test_cron_add_normalizes_deliver_delivery_mode_to_announce() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-add-deliver-alias-service"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-cron-add-deliver-alias.db")
+    await database.initialize()
+    created_payloads: list[TaskBlueprintCreate] = []
+
+    async def create_task(payload: TaskBlueprintCreate) -> object:
+        created_payloads.append(payload)
+        task_id = await database.create_task_blueprint(
+            name=payload.name,
+            summary=payload.summary,
+            project_id=payload.project_id,
+            instance_id=payload.instance_id,
+            cadence_minutes=payload.cadence_minutes,
+            enabled=payload.enabled,
+            payload={
+                "objective_template": payload.objective_template,
+                "conversation_target": _json_conversation_target(payload),
+                "run_until_complete": payload.run_until_complete,
+                "continuation_cooldown_minutes": payload.continuation_cooldown_minutes,
+                "completion_marker": payload.completion_marker,
+                "cwd": payload.cwd,
+                "model": payload.model,
+                "reasoning_effort": payload.reasoning_effort,
+                "collaboration_mode": payload.collaboration_mode,
+                "max_turns": payload.max_turns,
+                "use_builtin_agents": payload.use_builtin_agents,
+                "run_verification": payload.run_verification,
+                "auto_commit": payload.auto_commit,
+                "pause_on_approval": payload.pause_on_approval,
+                "allow_auto_reflexes": payload.allow_auto_reflexes,
+                "auto_recover": payload.auto_recover,
+                "auto_recover_limit": payload.auto_recover_limit,
+                "reflex_cooldown_seconds": payload.reflex_cooldown_seconds,
+                "allow_failover": payload.allow_failover,
+                "toolsets": payload.toolsets,
+                "cron_session_target": payload.cron_session_target,
+                "cron_wake_mode": payload.cron_wake_mode,
+                "cron_payload_kind": payload.cron_payload_kind,
+                "cron_payload_text": payload.cron_payload_text,
+                "cron_delivery_mode": payload.cron_delivery_mode,
+                "cron_delivery_channel": payload.cron_delivery_channel,
+                "cron_delivery_to": payload.cron_delivery_to,
+                "cron_delivery_account_id": payload.cron_delivery_account_id,
+            },
+        )
+        return type("CreatedTask", (), {"id": task_id})()
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        create_task_blueprint=create_task,
+    )
+
+    payload = await service.call(
+        "cron.add",
+        {
+            "name": "Deliver Alias",
+            "enabled": True,
+            "schedule": {"kind": "every", "everyMs": 3_600_000},
+            "sessionTarget": "isolated",
+            "wakeMode": "next-heartbeat",
+            "payload": {
+                "kind": "agentTurn",
+                "message": "Run the isolated lane from cron with the deliver alias.",
+            },
+            "delivery": {
+                "mode": " DeLiVeR ",
+                "channel": "Telegram",
+                "to": "7200373102",
+            },
+        },
+    )
+
+    assert len(created_payloads) == 1
+    assert created_payloads[0].cron_delivery_mode is None
+    assert payload["delivery"] == {
+        "mode": "announce",
+        "channel": "telegram",
+        "to": "7200373102",
+    }
+
+
+@pytest.mark.asyncio
+async def test_cron_add_rejects_target_like_delivery_channel_ids() -> None:
+    async def create_task(payload: TaskBlueprintCreate) -> object:
+        raise AssertionError(f"cron.add should have failed before task creation: {payload}")
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        create_task_blueprint=create_task,
+    )
+
+    with pytest.raises(ValueError, match="delivery.channel"):
+        await service.call(
+            "cron.add",
+            {
+                "name": "Invalid Delivery Provider",
+                "enabled": True,
+                "schedule": {"kind": "every", "everyMs": 3_600_000},
+                "sessionTarget": "isolated",
+                "wakeMode": "next-heartbeat",
+                "payload": {
+                    "kind": "agentTurn",
+                    "message": "Reject target ids that get stuffed into delivery.channel.",
+                },
+                "delivery": {
+                    "mode": "announce",
+                    "channel": "C0AT2Q238MQ",
+                    "to": "C0AT2Q238MQ",
+                },
+            },
+        )
+
+
+@pytest.mark.asyncio
+async def test_cron_add_requires_delivery_channel_when_multiple_routes_are_enabled() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-announce-ambiguity-add-service"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-cron-announce-ambiguity-add.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Telegram Route",
+        kind="webhook",
+        target="https://example.invalid/telegram",
+        events=["mission.completed"],
+        conversation_target={"channel": "telegram", "account_id": "default"},
+        enabled=True,
+        secret_header_name=None,
+        secret_token=None,
+        vault_secret_id=None,
+    )
+    await database.create_notification_route(
+        name="Slack Route",
+        kind="webhook",
+        target="https://example.invalid/slack",
+        events=["mission.completed"],
+        conversation_target={"channel": "slack", "account_id": "default"},
+        enabled=True,
+        secret_header_name=None,
+        secret_token=None,
+        vault_secret_id=None,
+    )
+
+    async def create_task(payload: TaskBlueprintCreate) -> object:
+        raise AssertionError(f"cron.add should have failed before task creation: {payload}")
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        create_task_blueprint=create_task,
+    )
+
+    with pytest.raises(ValueError, match="delivery.channel is required"):
+        await service.call(
+            "cron.add",
+            {
+                "name": "Ambiguous Announce Add",
+                "enabled": True,
+                "schedule": {"kind": "every", "everyMs": 3_600_000},
+                "sessionTarget": "isolated",
+                "wakeMode": "next-heartbeat",
+                "payload": {
+                    "kind": "agentTurn",
+                    "message": "Require a delivery channel when multiple routes are enabled.",
+                },
+                "delivery": {"mode": "announce"},
+            },
+        )
+
+
+@pytest.mark.asyncio
+async def test_cron_update_requires_delivery_channel_when_multiple_routes_are_enabled() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-announce-ambiguity-update-service"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-cron-announce-ambiguity-update.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Telegram Route",
+        kind="webhook",
+        target="https://example.invalid/telegram",
+        events=["mission.completed"],
+        conversation_target={"channel": "telegram", "account_id": "default"},
+        enabled=True,
+        secret_header_name=None,
+        secret_token=None,
+        vault_secret_id=None,
+    )
+    await database.create_notification_route(
+        name="Slack Route",
+        kind="webhook",
+        target="https://example.invalid/slack",
+        events=["mission.completed"],
+        conversation_target={"channel": "slack", "account_id": "default"},
+        enabled=True,
+        secret_header_name=None,
+        secret_token=None,
+        vault_secret_id=None,
+    )
+    task_id = await database.create_task_blueprint(
+        name="Nightly Ship",
+        summary="Ship the next verified slice.",
+        project_id=None,
+        instance_id=None,
+        cadence_minutes=60,
+        enabled=True,
+        payload={
+            **_task_blueprint_payload("Run this on the isolated cron lane."),
+            "cron_session_target": "isolated",
+            "cron_wake_mode": "next-heartbeat",
+            "cron_payload_kind": "agentTurn",
+            "cron_delivery_mode": "none",
+        },
+    )
+    service = GatewayNodeMethodService(GatewayNodeRegistry(), database=database)
+
+    with pytest.raises(ValueError, match="patch.delivery.channel is required"):
+        await service.call(
+            "cron.update",
+            {
+                "id": f"task-blueprint:{task_id}",
+                "patch": {"delivery": {"mode": "announce"}},
+            },
+        )
+
+
+@pytest.mark.asyncio
+async def test_cron_add_and_update_support_valid_custom_session_targets() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-custom-session-service"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-cron-custom-session.db")
+    await database.initialize()
+
+    async def create_task(payload: TaskBlueprintCreate):
+        task_id = await database.create_task_blueprint(
+            name=payload.name,
+            summary=payload.summary,
+            project_id=payload.project_id,
+            instance_id=payload.instance_id,
+            cadence_minutes=payload.cadence_minutes,
+            enabled=payload.enabled,
+            payload={
+                "objective_template": payload.objective_template,
+                "conversation_target": _json_conversation_target(payload),
+                "run_until_complete": payload.run_until_complete,
+                "continuation_cooldown_minutes": payload.continuation_cooldown_minutes,
+                "completion_marker": payload.completion_marker,
+                "cwd": payload.cwd,
+                "model": payload.model,
+                "reasoning_effort": payload.reasoning_effort,
+                "collaboration_mode": payload.collaboration_mode,
+                "max_turns": payload.max_turns,
+                "use_builtin_agents": payload.use_builtin_agents,
+                "run_verification": payload.run_verification,
+                "auto_commit": payload.auto_commit,
+                "pause_on_approval": payload.pause_on_approval,
+                "allow_auto_reflexes": payload.allow_auto_reflexes,
+                "auto_recover": payload.auto_recover,
+                "auto_recover_limit": payload.auto_recover_limit,
+                "reflex_cooldown_seconds": payload.reflex_cooldown_seconds,
+                "allow_failover": payload.allow_failover,
+                "toolsets": payload.toolsets,
+                "schedule_kind": payload.schedule_kind,
+                "schedule_at": payload.schedule_at,
+                "schedule_anchor_ms": payload.schedule_anchor_ms,
+                "cron_session_target": payload.cron_session_target,
+                "cron_wake_mode": payload.cron_wake_mode,
+                "cron_payload_kind": payload.cron_payload_kind,
+                "cron_payload_text": payload.cron_payload_text,
+                "cron_delivery_mode": payload.cron_delivery_mode,
+            },
+        )
+        return type("CreatedTask", (), {"id": task_id})()
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        create_task_blueprint=create_task,
+    )
+
+    created = await service.call(
+        "cron.add",
+        {
+            "name": "Custom Session Job",
+            "schedule": {"kind": "every", "everyMs": 3_600_000},
+            "sessionTarget": "session:project-alpha:ops",
+            "wakeMode": "now",
+            "payload": {"kind": "agentTurn", "message": "Run on the saved cron session."},
+        },
+    )
+    updated = await service.call(
+        "cron.update",
+        {
+            "id": created["id"],
+            "patch": {"sessionTarget": "session:project-beta:ops"},
+        },
+    )
+
+    assert created["sessionTarget"] == "session:project-alpha:ops"
+    assert created["payload"] == {
+        "kind": "agentTurn",
+        "message": "Run on the saved cron session.",
+        "model": "gpt-5.4",
+    }
+    assert updated["sessionTarget"] == "session:project-beta:ops"
+
+
+@pytest.mark.asyncio
+async def test_cron_add_and_update_normalize_current_session_target_to_isolated() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-current-session-service"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-cron-current-session.db")
+    await database.initialize()
+
+    async def create_task(payload: TaskBlueprintCreate):
+        task_id = await database.create_task_blueprint(
+            name=payload.name,
+            summary=payload.summary,
+            project_id=payload.project_id,
+            instance_id=payload.instance_id,
+            cadence_minutes=payload.cadence_minutes,
+            enabled=payload.enabled,
+            payload={
+                "objective_template": payload.objective_template,
+                "conversation_target": _json_conversation_target(payload),
+                "run_until_complete": payload.run_until_complete,
+                "continuation_cooldown_minutes": payload.continuation_cooldown_minutes,
+                "completion_marker": payload.completion_marker,
+                "cwd": payload.cwd,
+                "model": payload.model,
+                "reasoning_effort": payload.reasoning_effort,
+                "collaboration_mode": payload.collaboration_mode,
+                "max_turns": payload.max_turns,
+                "use_builtin_agents": payload.use_builtin_agents,
+                "run_verification": payload.run_verification,
+                "auto_commit": payload.auto_commit,
+                "pause_on_approval": payload.pause_on_approval,
+                "allow_auto_reflexes": payload.allow_auto_reflexes,
+                "auto_recover": payload.auto_recover,
+                "auto_recover_limit": payload.auto_recover_limit,
+                "reflex_cooldown_seconds": payload.reflex_cooldown_seconds,
+                "allow_failover": payload.allow_failover,
+                "toolsets": payload.toolsets,
+                "schedule_kind": payload.schedule_kind,
+                "schedule_at": payload.schedule_at,
+                "schedule_anchor_ms": payload.schedule_anchor_ms,
+                "cron_session_target": payload.cron_session_target,
+                "cron_wake_mode": payload.cron_wake_mode,
+                "cron_payload_kind": payload.cron_payload_kind,
+                "cron_payload_text": payload.cron_payload_text,
+                "cron_delivery_mode": payload.cron_delivery_mode,
+            },
+        )
+        return type("CreatedTask", (), {"id": task_id})()
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        create_task_blueprint=create_task,
+    )
+
+    created = await service.call(
+        "cron.add",
+        {
+            "name": "Current Session Job",
+            "schedule": {"kind": "every", "everyMs": 3_600_000},
+            "sessionTarget": "current",
+            "wakeMode": "next-heartbeat",
+            "payload": {"kind": "agentTurn", "message": "Stay on the current cron lane."},
+        },
+    )
+    updated = await service.call(
+        "cron.update",
+        {
+            "id": created["id"],
+            "patch": {"sessionTarget": "current"},
+        },
+    )
+
+    assert created["sessionTarget"] == "isolated"
+    assert updated["sessionTarget"] == "isolated"
+
+
+@pytest.mark.asyncio
+async def test_cron_add_and_update_preserve_custom_session_target_casing() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-custom-session-case-service"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-cron-custom-session-case.db")
+    await database.initialize()
+
+    async def create_task(payload: TaskBlueprintCreate):
+        task_id = await database.create_task_blueprint(
+            name=payload.name,
+            summary=payload.summary,
+            project_id=payload.project_id,
+            instance_id=payload.instance_id,
+            cadence_minutes=payload.cadence_minutes,
+            enabled=payload.enabled,
+            payload={
+                "objective_template": payload.objective_template,
+                "conversation_target": _json_conversation_target(payload),
+                "run_until_complete": payload.run_until_complete,
+                "continuation_cooldown_minutes": payload.continuation_cooldown_minutes,
+                "completion_marker": payload.completion_marker,
+                "cwd": payload.cwd,
+                "model": payload.model,
+                "reasoning_effort": payload.reasoning_effort,
+                "collaboration_mode": payload.collaboration_mode,
+                "max_turns": payload.max_turns,
+                "use_builtin_agents": payload.use_builtin_agents,
+                "run_verification": payload.run_verification,
+                "auto_commit": payload.auto_commit,
+                "pause_on_approval": payload.pause_on_approval,
+                "allow_auto_reflexes": payload.allow_auto_reflexes,
+                "auto_recover": payload.auto_recover,
+                "auto_recover_limit": payload.auto_recover_limit,
+                "reflex_cooldown_seconds": payload.reflex_cooldown_seconds,
+                "allow_failover": payload.allow_failover,
+                "toolsets": payload.toolsets,
+                "schedule_kind": payload.schedule_kind,
+                "schedule_at": payload.schedule_at,
+                "schedule_anchor_ms": payload.schedule_anchor_ms,
+                "cron_session_target": payload.cron_session_target,
+                "cron_wake_mode": payload.cron_wake_mode,
+                "cron_payload_kind": payload.cron_payload_kind,
+                "cron_payload_text": payload.cron_payload_text,
+                "cron_delivery_mode": payload.cron_delivery_mode,
+            },
+        )
+        return type("CreatedTask", (), {"id": task_id})()
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        create_task_blueprint=create_task,
+    )
+
+    created = await service.call(
+        "cron.add",
+        {
+            "name": "Mixed Case Custom Session Job",
+            "schedule": {"kind": "every", "everyMs": 3_600_000},
+            "sessionTarget": "session:MySessionID",
+            "wakeMode": "now",
+            "payload": {"kind": "agentTurn", "message": "Run on the named cron lane."},
+        },
+    )
+    updated = await service.call(
+        "cron.update",
+        {
+            "id": created["id"],
+            "patch": {"sessionTarget": "session:ProjectBeta:Ops"},
+        },
+    )
+
+    assert created["sessionTarget"] == "session:MySessionID"
+    assert updated["sessionTarget"] == "session:ProjectBeta:Ops"
+
+
+@pytest.mark.asyncio
+async def test_cron_add_and_update_reject_unsafe_custom_session_targets() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-custom-session-reject-service"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-cron-custom-session-reject.db")
+    await database.initialize()
+
+    async def create_task(payload: TaskBlueprintCreate):
+        task_id = await database.create_task_blueprint(
+            name=payload.name,
+            summary=payload.summary,
+            project_id=payload.project_id,
+            instance_id=payload.instance_id,
+            cadence_minutes=payload.cadence_minutes,
+            enabled=payload.enabled,
+            payload={
+                "objective_template": payload.objective_template,
+                "conversation_target": _json_conversation_target(payload),
+                "run_until_complete": payload.run_until_complete,
+                "continuation_cooldown_minutes": payload.continuation_cooldown_minutes,
+                "completion_marker": payload.completion_marker,
+                "cwd": payload.cwd,
+                "model": payload.model,
+                "reasoning_effort": payload.reasoning_effort,
+                "collaboration_mode": payload.collaboration_mode,
+                "max_turns": payload.max_turns,
+                "use_builtin_agents": payload.use_builtin_agents,
+                "run_verification": payload.run_verification,
+                "auto_commit": payload.auto_commit,
+                "pause_on_approval": payload.pause_on_approval,
+                "allow_auto_reflexes": payload.allow_auto_reflexes,
+                "auto_recover": payload.auto_recover,
+                "auto_recover_limit": payload.auto_recover_limit,
+                "reflex_cooldown_seconds": payload.reflex_cooldown_seconds,
+                "allow_failover": payload.allow_failover,
+                "toolsets": payload.toolsets,
+                "schedule_kind": payload.schedule_kind,
+                "schedule_at": payload.schedule_at,
+                "schedule_anchor_ms": payload.schedule_anchor_ms,
+                "cron_session_target": payload.cron_session_target,
+                "cron_wake_mode": payload.cron_wake_mode,
+                "cron_payload_kind": payload.cron_payload_kind,
+                "cron_payload_text": payload.cron_payload_text,
+                "cron_delivery_mode": payload.cron_delivery_mode,
+            },
+        )
+        return type("CreatedTask", (), {"id": task_id})()
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        create_task_blueprint=create_task,
+    )
+
+    with pytest.raises(ValueError, match="invalid cron sessionTarget session id"):
+        await service.call(
+            "cron.add",
+            {
+                "name": "Unsafe Custom Session Job",
+                "schedule": {"kind": "every", "everyMs": 3_600_000},
+                "sessionTarget": "session:../../outside",
+                "wakeMode": "now",
+                "payload": {"kind": "agentTurn", "message": "Run on the saved cron session."},
+            },
+        )
+
+    created = await service.call(
+        "cron.add",
+        {
+            "name": "Safe Custom Session Job",
+            "schedule": {"kind": "every", "everyMs": 3_600_000},
+            "sessionTarget": "session:project-alpha:ops",
+            "wakeMode": "now",
+            "payload": {"kind": "agentTurn", "message": "Run on the saved cron session."},
+        },
+    )
+
+    with pytest.raises(ValueError, match="invalid cron sessionTarget session id"):
+        await service.call(
+            "cron.update",
+            {
+                "id": created["id"],
+                "patch": {"sessionTarget": "session:..\\\\outside"},
+            },
+        )
+
+
+@pytest.mark.asyncio
 async def test_cron_add_rejects_unsupported_schedule_kind() -> None:
     service = GatewayNodeMethodService(
         GatewayNodeRegistry(),
@@ -6457,13 +10490,16 @@ async def test_cron_add_rejects_unsupported_schedule_kind() -> None:
 
     with pytest.raises(
         ValueError,
-        match="invalid cron.add params: OpenZues currently supports only schedule.kind='every'",
+        match=(
+            "invalid cron.add params: "
+            "OpenZues currently supports only schedule.kind='every' or 'at'"
+        ),
     ):
         await service.call(
             "cron.add",
             {
                 "name": "One Shot",
-                "schedule": {"kind": "at", "at": "2026-04-18T12:00:00Z"},
+                "schedule": {"kind": "cron", "expr": "0 * * * *"},
                 "sessionTarget": "main",
                 "wakeMode": "now",
                 "payload": {"kind": "agentTurn", "message": "Do the thing."},
@@ -6510,9 +10546,7 @@ async def test_cron_update_patches_supported_every_agent_turn_fields() -> None:
     )
     updated_task = await database.get_task_blueprint(task_id)
     updated_record = next(
-        record
-        for record in await database.list_task_blueprint_records()
-        if record["id"] == task_id
+        record for record in await database.list_task_blueprint_records() if record["id"] == task_id
     )
 
     assert payload["id"] == f"task-blueprint:{task_id}"
@@ -6575,6 +10609,452 @@ async def test_cron_update_accepts_every_schedule_anchor_ms() -> None:
 
 
 @pytest.mark.asyncio
+async def test_cron_update_supports_one_shot_at_schedule() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-update-at-service"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-cron-update-at.db")
+    await database.initialize()
+    task_id = await database.create_task_blueprint(
+        name="Nightly Ship",
+        summary="Ship the next verified slice.",
+        project_id=None,
+        instance_id=None,
+        cadence_minutes=60,
+        enabled=True,
+        payload=_task_blueprint_payload("Ship the next verified slice."),
+    )
+    service = GatewayNodeMethodService(GatewayNodeRegistry(), database=database)
+
+    payload = await service.call(
+        "cron.update",
+        {
+            "id": f"task-blueprint:{task_id}",
+            "patch": {
+                "schedule": {"kind": "at", "at": "2026-04-18T12:00:00Z"},
+            },
+        },
+    )
+    updated_task = await database.get_task_blueprint(task_id)
+
+    assert payload["schedule"] == {"kind": "at", "at": "2026-04-18T12:00:00.000Z"}
+    assert updated_task is not None
+    assert updated_task["cadence_minutes"] is None
+    assert updated_task["schedule_kind"] == "at"
+    assert updated_task["schedule_at"] == "2026-04-18T12:00:00.000Z"
+
+
+@pytest.mark.asyncio
+async def test_cron_update_supports_main_system_event_next_heartbeat_job() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-update-system-event-service"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-cron-update-system-event.db")
+    await database.initialize()
+    task_id = await database.create_task_blueprint(
+        name="Nightly Ship",
+        summary="Ship the next verified slice.",
+        project_id=None,
+        instance_id=None,
+        cadence_minutes=60,
+        enabled=True,
+        payload=_task_blueprint_payload("Ship the next verified slice."),
+    )
+    service = GatewayNodeMethodService(GatewayNodeRegistry(), database=database)
+
+    payload = await service.call(
+        "cron.update",
+        {
+            "id": f"task-blueprint:{task_id}",
+            "patch": {
+                "wakeMode": "next-heartbeat",
+                "payload": {
+                    "kind": "systemEvent",
+                    "text": "Resume the main lane from cron.",
+                },
+            },
+        },
+    )
+    updated_task = await database.get_task_blueprint(task_id)
+
+    assert payload["wakeMode"] == "next-heartbeat"
+    assert payload["payload"] == {
+        "kind": "systemEvent",
+        "text": "Resume the main lane from cron.",
+    }
+    assert updated_task is not None
+    assert updated_task["objective_template"] == "Resume the main lane from cron."
+    assert updated_task["cron_session_target"] == "main"
+    assert updated_task["cron_wake_mode"] == "next-heartbeat"
+    assert updated_task["cron_payload_kind"] == "systemEvent"
+    assert updated_task["cron_payload_text"] == "Resume the main lane from cron."
+
+
+@pytest.mark.asyncio
+async def test_cron_update_rejects_agent_turn_payload_for_main_system_event_job() -> None:
+    tmp_path = (
+        Path.cwd() / ".tmp-pytest-local" / "gateway-cron-update-main-system-event-reject-service"
+    )
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-cron-update-main-system-event-reject.db")
+    await database.initialize()
+    task_id = await database.create_task_blueprint(
+        name="Nightly Ship",
+        summary="Ship the next verified slice.",
+        project_id=None,
+        instance_id=None,
+        cadence_minutes=60,
+        enabled=True,
+        payload={
+            **_task_blueprint_payload("Resume the main lane from cron."),
+            "cron_session_target": "main",
+            "cron_wake_mode": "next-heartbeat",
+            "cron_payload_kind": "systemEvent",
+            "cron_payload_text": "Resume the main lane from cron.",
+        },
+    )
+    service = GatewayNodeMethodService(GatewayNodeRegistry(), database=database)
+
+    with pytest.raises(ValueError):
+        await service.call(
+            "cron.update",
+            {
+                "id": f"task-blueprint:{task_id}",
+                "patch": {
+                    "payload": {
+                        "kind": "agentTurn",
+                        "message": "Run this on the isolated cron lane.",
+                    },
+                },
+            },
+        )
+
+
+@pytest.mark.asyncio
+async def test_cron_update_supports_isolated_agent_turn_next_heartbeat_job() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-update-isolated-service"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-cron-update-isolated.db")
+    await database.initialize()
+    task_id = await database.create_task_blueprint(
+        name="Nightly Ship",
+        summary="Ship the next verified slice.",
+        project_id=None,
+        instance_id=None,
+        cadence_minutes=60,
+        enabled=True,
+        payload=_task_blueprint_payload("Ship the next verified slice."),
+    )
+    service = GatewayNodeMethodService(GatewayNodeRegistry(), database=database)
+
+    payload = await service.call(
+        "cron.update",
+        {
+            "id": f"task-blueprint:{task_id}",
+            "patch": {
+                "sessionTarget": "isolated",
+                "wakeMode": "next-heartbeat",
+                "payload": {
+                    "kind": "agentTurn",
+                    "message": "Run this on the isolated cron lane.",
+                    "model": "gpt-5.4-mini",
+                },
+            },
+        },
+    )
+    updated_task = await database.get_task_blueprint(task_id)
+
+    assert payload["sessionTarget"] == "isolated"
+    assert payload["wakeMode"] == "next-heartbeat"
+    assert payload["payload"] == {
+        "kind": "agentTurn",
+        "message": "Run this on the isolated cron lane.",
+        "model": "gpt-5.4-mini",
+    }
+    assert updated_task is not None
+    assert updated_task["objective_template"] == "Run this on the isolated cron lane."
+    assert updated_task["model"] == "gpt-5.4-mini"
+    assert updated_task["cron_session_target"] == "isolated"
+    assert updated_task["cron_wake_mode"] == "next-heartbeat"
+    assert updated_task["cron_payload_kind"] == "agentTurn"
+    assert updated_task["cron_payload_text"] is None
+
+
+@pytest.mark.asyncio
+async def test_cron_update_can_clear_explicit_none_delivery_back_to_announce() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-update-delivery-announce-service"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-cron-update-delivery-announce.db")
+    await database.initialize()
+    task_id = await database.create_task_blueprint(
+        name="Nightly Ship",
+        summary="Ship the next verified slice.",
+        project_id=None,
+        instance_id=None,
+        cadence_minutes=60,
+        enabled=True,
+        payload={
+            **_task_blueprint_payload("Run this on the isolated cron lane."),
+            "cron_session_target": "isolated",
+            "cron_wake_mode": "next-heartbeat",
+            "cron_payload_kind": "agentTurn",
+            "cron_delivery_mode": "none",
+        },
+    )
+    service = GatewayNodeMethodService(GatewayNodeRegistry(), database=database)
+
+    payload = await service.call(
+        "cron.update",
+        {
+            "id": f"task-blueprint:{task_id}",
+            "patch": {
+                "delivery": {"mode": "announce"},
+            },
+        },
+    )
+    updated_task = await database.get_task_blueprint(task_id)
+
+    assert payload["delivery"] == {"mode": "announce"}
+    assert updated_task is not None
+    assert updated_task.get("cron_delivery_mode") is None
+
+
+@pytest.mark.asyncio
+async def test_cron_update_normalizes_announce_delivery_metadata() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-update-delivery-metadata-service"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-cron-update-delivery-metadata.db")
+    await database.initialize()
+    task_id = await database.create_task_blueprint(
+        name="Nightly Ship",
+        summary="Ship the next verified slice.",
+        project_id=None,
+        instance_id=None,
+        cadence_minutes=60,
+        enabled=True,
+        payload={
+            **_task_blueprint_payload("Run this on the isolated cron lane."),
+            "cron_session_target": "isolated",
+            "cron_wake_mode": "next-heartbeat",
+            "cron_payload_kind": "agentTurn",
+        },
+    )
+    service = GatewayNodeMethodService(GatewayNodeRegistry(), database=database)
+
+    payload = await service.call(
+        "cron.update",
+        {
+            "id": f"task-blueprint:{task_id}",
+            "patch": {
+                "delivery": {
+                    "mode": "announce",
+                    "channel": " TeLeGrAm ",
+                    "to": " 7200373102 ",
+                    "accountId": " coordinator ",
+                    "bestEffort": True,
+                    "failureDestination": {
+                        "mode": "announce",
+                        "channel": " Signal ",
+                        "to": " +15550001111 ",
+                        "accountId": " escalations ",
+                    },
+                },
+            },
+        },
+    )
+    updated_task = await database.get_task_blueprint(task_id)
+
+    assert payload["delivery"] == {
+        "mode": "announce",
+        "channel": "telegram",
+        "to": "7200373102",
+        "accountId": "coordinator",
+        "bestEffort": True,
+        "failureDestination": {
+            "mode": "announce",
+            "channel": "signal",
+            "to": "+15550001111",
+            "accountId": "escalations",
+        },
+    }
+    assert updated_task is not None
+    assert updated_task.get("cron_delivery_mode") is None
+    assert updated_task.get("cron_delivery_channel") == "telegram"
+    assert updated_task.get("cron_delivery_to") == "7200373102"
+    assert updated_task.get("cron_delivery_account_id") == "coordinator"
+    assert updated_task.get("cron_delivery_best_effort") is True
+    conversation_target = updated_task.get("conversation_target")
+    assert isinstance(conversation_target, dict)
+    assert conversation_target["channel"] == "telegram"
+    assert conversation_target["account_id"] == "coordinator"
+    assert conversation_target["peer_kind"] == "channel"
+    assert conversation_target["peer_id"] == "7200373102"
+    assert updated_task.get("cron_delivery_failure_destination") == {
+        "mode": "announce",
+        "channel": "signal",
+        "to": "+15550001111",
+        "accountId": "escalations",
+    }
+
+
+@pytest.mark.asyncio
+async def test_cron_update_keeps_main_system_event_jobs_valid_when_announce_delivery_is_patched() -> (
+    None
+):
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-update-main-announce-ignore"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-cron-update-main-announce-ignore.db")
+    await database.initialize()
+    task_id = await database.create_task_blueprint(
+        name="Main Lane Wake",
+        summary="Wake the main lane from cron.",
+        project_id=None,
+        instance_id=None,
+        cadence_minutes=60,
+        enabled=True,
+        payload={
+            **_task_blueprint_payload("Resume the main lane from cron."),
+            "cron_session_target": "main",
+            "cron_wake_mode": "next-heartbeat",
+            "cron_payload_kind": "systemEvent",
+            "cron_payload_text": "Resume the main lane from cron.",
+        },
+    )
+    service = GatewayNodeMethodService(GatewayNodeRegistry(), database=database)
+
+    payload = await service.call(
+        "cron.update",
+        {
+            "id": f"task-blueprint:{task_id}",
+            "patch": {
+                "delivery": {
+                    "mode": "announce",
+                    "channel": "telegram",
+                    "to": "19098680",
+                },
+            },
+        },
+    )
+    updated_task = await database.get_task_blueprint(task_id)
+
+    assert payload["delivery"] == {"mode": "none"}
+    assert updated_task is not None
+    assert updated_task.get("cron_delivery_mode") is None
+    assert updated_task.get("cron_delivery_channel") is None
+    assert updated_task.get("cron_delivery_to") is None
+    assert updated_task.get("conversation_target") is None
+
+
+@pytest.mark.asyncio
+async def test_cron_update_clears_failure_destination_fields_with_empty_strings() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-update-failure-destination-clear"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-cron-update-failure-destination-clear.db")
+    await database.initialize()
+    task_id = await database.create_task_blueprint(
+        name="Nightly Ship",
+        summary="Ship the next verified slice.",
+        project_id=None,
+        instance_id=None,
+        cadence_minutes=60,
+        enabled=True,
+        payload={
+            **_task_blueprint_payload("Run this on the isolated cron lane."),
+            "cron_session_target": "isolated",
+            "cron_wake_mode": "next-heartbeat",
+            "cron_payload_kind": "agentTurn",
+            "cron_delivery_mode": "announce",
+            "cron_delivery_channel": "telegram",
+            "cron_delivery_to": "7200373102",
+            "cron_delivery_failure_destination": {
+                "mode": "announce",
+                "channel": "signal",
+                "to": "+15550001111",
+                "accountId": "escalations",
+            },
+        },
+    )
+    service = GatewayNodeMethodService(GatewayNodeRegistry(), database=database)
+
+    payload = await service.call(
+        "cron.update",
+        {
+            "id": f"task-blueprint:{task_id}",
+            "patch": {
+                "delivery": {
+                    "failureDestination": {
+                        "channel": "   ",
+                        "accountId": "",
+                    },
+                },
+            },
+        },
+    )
+    updated_task = await database.get_task_blueprint(task_id)
+
+    assert payload["delivery"] == {
+        "mode": "announce",
+        "channel": "telegram",
+        "to": "7200373102",
+        "failureDestination": {
+            "mode": "announce",
+            "to": "+15550001111",
+        },
+    }
+    assert updated_task is not None
+    assert updated_task.get("cron_delivery_failure_destination") == {
+        "mode": "announce",
+        "to": "+15550001111",
+    }
+
+
+@pytest.mark.asyncio
+async def test_cron_update_rejects_system_event_payload_for_isolated_session_target() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-update-isolated-reject-service"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-cron-update-isolated-reject.db")
+    await database.initialize()
+    task_id = await database.create_task_blueprint(
+        name="Nightly Ship",
+        summary="Ship the next verified slice.",
+        project_id=None,
+        instance_id=None,
+        cadence_minutes=60,
+        enabled=True,
+        payload=_task_blueprint_payload("Ship the next verified slice."),
+    )
+    service = GatewayNodeMethodService(GatewayNodeRegistry(), database=database)
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            "invalid cron.update params: "
+            "patch.payload.kind='systemEvent' requires patch.sessionTarget='main'"
+        ),
+    ):
+        await service.call(
+            "cron.update",
+            {
+                "id": f"task-blueprint:{task_id}",
+                "patch": {
+                    "sessionTarget": "isolated",
+                    "payload": {
+                        "kind": "systemEvent",
+                        "text": "Resume the main lane from cron.",
+                    },
+                },
+            },
+        )
+
+
+@pytest.mark.asyncio
 async def test_cron_update_rejects_unsupported_schedule_kind() -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-update-reject-service"
     shutil.rmtree(tmp_path, ignore_errors=True)
@@ -6596,7 +11076,7 @@ async def test_cron_update_rejects_unsupported_schedule_kind() -> None:
         ValueError,
         match=(
             "invalid cron.update params: "
-            "OpenZues currently supports only patch.schedule.kind='every'"
+            "OpenZues currently supports only patch.schedule.kind='every' or 'at'"
         ),
     ):
         await service.call(
@@ -6618,6 +11098,9 @@ async def test_wake_requires_openclaw_shape_then_dispatches_or_queues_when_runti
 
     async def fake_dispatch_now(text: str) -> None:
         dispatched.append(text)
+        request = await database.claim_next_gateway_wake_request()
+        assert request is not None
+        await database.mark_gateway_wake_request_dispatched(int(request["id"]))
 
     service = GatewayNodeMethodService(
         GatewayNodeRegistry(),
@@ -6647,15 +11130,250 @@ async def test_wake_requires_openclaw_shape_then_dispatches_or_queues_when_runti
             "text": "  Check the queued parity nudge on the next heartbeat.  ",
         },
     )
+    events = await database.list_events()
     wake_requests = await database.list_gateway_wake_requests()
 
     assert now_payload == {"ok": True}
     assert queued_payload == {"ok": True}
     assert dispatched == ["Resume parity from the latest checkpoint."]
+    assert [event["method"] for event in events] == ["system-event", "system-event"]
+    assert [event["payload"] for event in events] == [
+        {"text": "Resume parity from the latest checkpoint.", "reason": "wake"},
+        {"text": "Check the queued parity nudge on the next heartbeat.", "reason": "wake"},
+    ]
+    assert len(wake_requests) == 2
+    assert wake_requests[0]["mode"] == "now"
+    assert wake_requests[0]["text"] == "Resume parity from the latest checkpoint."
+    assert wake_requests[0]["status"] == "dispatched"
+    assert wake_requests[1]["mode"] == "next-heartbeat"
+    assert wake_requests[1]["text"] == "Check the queued parity nudge on the next heartbeat."
+    assert wake_requests[1]["status"] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_wake_allows_opaque_extra_metadata_fields(tmp_path) -> None:
+    dispatched: list[str] = []
+    database = Database(tmp_path / "gateway-wake-extra.db")
+    await database.initialize()
+
+    async def fake_dispatch_now(text: str) -> None:
+        dispatched.append(text)
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        wake_service=GatewayWakeService(database, dispatch_now=fake_dispatch_now),
+    )
+
+    payload = await service.call(
+        "wake",
+        {
+            "mode": "now",
+            "text": "Resume parity from the latest checkpoint.",
+            "source": "heartbeat",
+            "requestId": "wake-meta-1",
+            "metadata": {"thread": "parity"},
+        },
+    )
+    events = await database.list_events()
+
+    assert payload == {"ok": True}
+    assert dispatched == ["Resume parity from the latest checkpoint."]
+    assert len(events) == 1
+    assert events[0]["method"] == "system-event"
+    assert events[0]["payload"] == {
+        "text": "Resume parity from the latest checkpoint.",
+        "reason": "wake",
+    }
+
+
+@pytest.mark.asyncio
+async def test_wake_preserves_explicit_reason_metadata(tmp_path) -> None:
+    database = Database(tmp_path / "gateway-wake-reason.db")
+    await database.initialize()
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        wake_service=GatewayWakeService(database),
+    )
+
+    payload = await service.call(
+        "wake",
+        {
+            "mode": "next-heartbeat",
+            "text": "Resume parity through the cron wake.",
+            "reason": "cron:job-1",
+            "sessionKey": "agent:main:thread:demo",
+        },
+    )
+    events = await database.list_events()
+    wake_requests = await database.list_gateway_wake_requests()
+
+    assert payload == {"ok": True}
+    assert [event["payload"] for event in events] == [
+        {
+            "text": "Resume parity through the cron wake.",
+            "reason": "cron:job-1",
+            "agentId": "main",
+            "sessionKey": "agent:main:thread:demo",
+        }
+    ]
     assert len(wake_requests) == 1
-    assert wake_requests[0]["mode"] == "next-heartbeat"
-    assert wake_requests[0]["text"] == "Check the queued parity nudge on the next heartbeat."
+    assert wake_requests[0]["reason"] == "cron:job-1"
+    assert wake_requests[0]["agent_id"] == "main"
+    assert wake_requests[0]["session_key"] == "agent:main:thread:demo"
     assert wake_requests[0]["status"] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_wake_upgrades_duplicate_pending_target_reason_by_priority(tmp_path) -> None:
+    database = Database(tmp_path / "gateway-wake-priority.db")
+    await database.initialize()
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        wake_service=GatewayWakeService(database),
+    )
+
+    first_payload = await service.call(
+        "wake",
+        {
+            "mode": "next-heartbeat",
+            "text": "Resume parity through the prioritized wake.",
+            "reason": "retry",
+            "sessionKey": "agent:main:thread:demo",
+        },
+    )
+    second_payload = await service.call(
+        "wake",
+        {
+            "mode": "next-heartbeat",
+            "text": "Resume parity through the prioritized wake.",
+            "reason": "exec-event",
+            "sessionKey": "agent:main:thread:demo",
+        },
+    )
+    events = await database.list_events()
+    wake_requests = await database.list_gateway_wake_requests()
+
+    assert first_payload == {"ok": True}
+    assert second_payload == {"ok": True}
+    assert [event["payload"] for event in events] == [
+        {
+            "text": "Resume parity through the prioritized wake.",
+            "reason": "retry",
+            "agentId": "main",
+            "sessionKey": "agent:main:thread:demo",
+        },
+        {
+            "text": "Resume parity through the prioritized wake.",
+            "reason": "exec-event",
+            "agentId": "main",
+            "sessionKey": "agent:main:thread:demo",
+        },
+    ]
+    assert len(wake_requests) == 1
+    assert wake_requests[0]["reason"] == "exec-event"
+    assert wake_requests[0]["agent_id"] == "main"
+    assert wake_requests[0]["session_key"] == "agent:main:thread:demo"
+    assert wake_requests[0]["status"] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_wake_replaces_same_target_pending_text_when_new_reason_wins(tmp_path) -> None:
+    database = Database(tmp_path / "gateway-wake-priority-text.db")
+    await database.initialize()
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        wake_service=GatewayWakeService(database),
+    )
+
+    first_payload = await service.call(
+        "wake",
+        {
+            "mode": "next-heartbeat",
+            "text": "Resume parity from checkpoint A.",
+            "reason": "retry",
+            "sessionKey": "agent:main:thread:demo",
+        },
+    )
+    second_payload = await service.call(
+        "wake",
+        {
+            "mode": "next-heartbeat",
+            "text": "Resume parity from checkpoint B.",
+            "reason": "exec-event",
+            "sessionKey": "agent:main:thread:demo",
+        },
+    )
+    events = await database.list_events()
+    wake_requests = await database.list_gateway_wake_requests()
+
+    assert first_payload == {"ok": True}
+    assert second_payload == {"ok": True}
+    assert [event["payload"] for event in events] == [
+        {
+            "text": "Resume parity from checkpoint A.",
+            "reason": "retry",
+            "agentId": "main",
+            "sessionKey": "agent:main:thread:demo",
+        },
+        {
+            "text": "Resume parity from checkpoint B.",
+            "reason": "exec-event",
+            "agentId": "main",
+            "sessionKey": "agent:main:thread:demo",
+        },
+    ]
+    assert len(wake_requests) == 1
+    assert wake_requests[0]["text"] == "Resume parity from checkpoint B."
+    assert wake_requests[0]["reason"] == "exec-event"
+    assert wake_requests[0]["agent_id"] == "main"
+    assert wake_requests[0]["session_key"] == "agent:main:thread:demo"
+    assert wake_requests[0]["status"] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_wake_now_stages_queue_entry_before_dispatch_callback(tmp_path) -> None:
+    database = Database(tmp_path / "gateway-wake-now-queue.db")
+    await database.initialize()
+    claimed_requests: list[dict[str, object]] = []
+
+    async def fake_dispatch_now(text: str) -> None:
+        del text
+        request = await database.claim_next_gateway_wake_request()
+        assert request is not None
+        claimed_requests.append(
+            {
+                "id": int(request["id"]),
+                "mode": str(request["mode"]),
+                "text": str(request["text"]),
+                "status": str(request["status"]),
+            }
+        )
+        await database.mark_gateway_wake_request_dispatched(int(request["id"]))
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        wake_service=GatewayWakeService(database, dispatch_now=fake_dispatch_now),
+    )
+
+    payload = await service.call(
+        "wake",
+        {"mode": "now", "text": "  Resume parity from the latest checkpoint.  "},
+    )
+    wake_requests = await database.list_gateway_wake_requests()
+
+    assert payload == {"ok": True}
+    assert claimed_requests == [
+        {
+            "id": wake_requests[0]["id"],
+            "mode": "now",
+            "text": "Resume parity from the latest checkpoint.",
+            "status": "claimed",
+        }
+    ]
+    assert len(wake_requests) == 1
+    assert wake_requests[0]["mode"] == "now"
+    assert wake_requests[0]["text"] == "Resume parity from the latest checkpoint."
+    assert wake_requests[0]["status"] == "dispatched"
 
 
 @pytest.mark.asyncio
@@ -6922,8 +11640,9 @@ async def test_doctor_memory_family_returns_explicit_unavailable_contract(
 
 
 @pytest.mark.asyncio
-async def test_agent_identity_get_returns_singleton_identity_and_rejects_malformed_session_keys(
-) -> None:
+async def test_agent_identity_get_returns_singleton_identity_and_rejects_malformed_session_keys() -> (
+    None
+):
     service = GatewayNodeMethodService(GatewayNodeRegistry())
 
     payload = await service.call("agent.identity.get", {"agentId": "main"})
@@ -7513,9 +12232,7 @@ async def test_sessions_list_supports_search_filter() -> None:
 
 @pytest.mark.asyncio
 async def test_sessions_list_supports_include_last_message_preview() -> None:
-    tmp_path = (
-        Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-list-last-message-service"
-    )
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-list-last-message-service"
     shutil.rmtree(tmp_path, ignore_errors=True)
     tmp_path.mkdir(parents=True, exist_ok=True)
     database = Database(tmp_path / "gateway-sessions-list-last-message.db")
@@ -7766,9 +12483,7 @@ async def test_sessions_resolve_supports_current_session_label_lookup() -> None:
 @pytest.mark.asyncio
 async def test_sessions_resolve_hides_current_session_label_when_global_is_excluded() -> None:
     tmp_path = (
-        Path.cwd()
-        / ".tmp-pytest-local"
-        / "gateway-sessions-resolve-label-excludes-global-service"
+        Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-resolve-label-excludes-global-service"
     )
     shutil.rmtree(tmp_path, ignore_errors=True)
     tmp_path.mkdir(parents=True, exist_ok=True)
@@ -7830,9 +12545,7 @@ async def test_sessions_resolve_supports_current_session_spawned_by_lookup() -> 
 @pytest.mark.asyncio
 async def test_sessions_resolve_supports_metadata_known_session_spawned_by_lookup() -> None:
     tmp_path = (
-        Path.cwd()
-        / ".tmp-pytest-local"
-        / "gateway-sessions-resolve-metadata-spawned-by-service"
+        Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-resolve-metadata-spawned-by-service"
     )
     shutil.rmtree(tmp_path, ignore_errors=True)
     tmp_path.mkdir(parents=True, exist_ok=True)
@@ -7867,9 +12580,7 @@ async def test_sessions_resolve_supports_metadata_known_session_spawned_by_looku
 @pytest.mark.asyncio
 async def test_sessions_resolve_supports_metadata_known_session_id_lookup() -> None:
     tmp_path = (
-        Path.cwd()
-        / ".tmp-pytest-local"
-        / "gateway-sessions-resolve-metadata-session-id-service"
+        Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-resolve-metadata-session-id-service"
     )
     shutil.rmtree(tmp_path, ignore_errors=True)
     tmp_path.mkdir(parents=True, exist_ok=True)
@@ -7959,9 +12670,7 @@ async def test_sessions_resolve_hides_global_session_id_when_global_is_excluded(
 @pytest.mark.asyncio
 async def test_sessions_resolve_supports_mission_backed_session_id_lookup() -> None:
     tmp_path = (
-        Path.cwd()
-        / ".tmp-pytest-local"
-        / "gateway-sessions-resolve-mission-session-id-service"
+        Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-resolve-mission-session-id-service"
     )
     shutil.rmtree(tmp_path, ignore_errors=True)
     tmp_path.mkdir(parents=True, exist_ok=True)
@@ -8009,9 +12718,7 @@ async def test_sessions_resolve_supports_mission_backed_session_id_lookup() -> N
 @pytest.mark.asyncio
 async def test_sessions_resolve_prefers_freshest_mission_for_duplicate_session_id() -> None:
     tmp_path = (
-        Path.cwd()
-        / ".tmp-pytest-local"
-        / "gateway-sessions-resolve-duplicate-session-id-service"
+        Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-resolve-duplicate-session-id-service"
     )
     shutil.rmtree(tmp_path, ignore_errors=True)
     tmp_path.mkdir(parents=True, exist_ok=True)
@@ -8087,9 +12794,7 @@ async def test_sessions_resolve_prefers_freshest_mission_for_duplicate_session_i
 @pytest.mark.asyncio
 async def test_sessions_resolve_supports_transcript_only_session_id_lookup() -> None:
     tmp_path = (
-        Path.cwd()
-        / ".tmp-pytest-local"
-        / "gateway-sessions-resolve-transcript-session-id-service"
+        Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-resolve-transcript-session-id-service"
     )
     shutil.rmtree(tmp_path, ignore_errors=True)
     tmp_path.mkdir(parents=True, exist_ok=True)
@@ -8118,9 +12823,7 @@ async def test_sessions_resolve_supports_transcript_only_session_id_lookup() -> 
 @pytest.mark.asyncio
 async def test_sessions_resolve_by_key_respects_spawned_by_filter() -> None:
     tmp_path = (
-        Path.cwd()
-        / ".tmp-pytest-local"
-        / "gateway-sessions-resolve-key-spawned-by-filter-service"
+        Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-resolve-key-spawned-by-filter-service"
     )
     shutil.rmtree(tmp_path, ignore_errors=True)
     tmp_path.mkdir(parents=True, exist_ok=True)
@@ -8181,6 +12884,8 @@ async def test_commands_list_returns_bounded_native_operator_inventory() -> None
             }
         ],
     }
+    assert any(command["name"] == "agents.list" for command in commands)
+    assert any(command["name"] == "channels.status" for command in commands)
     watch_command = next(command for command in commands if command["name"] == "watch")
     assert watch_command["acceptsArgs"] is True
     assert [argument["name"] for argument in watch_command["args"]] == [
@@ -8354,7 +13059,7 @@ async def test_config_open_file_returns_generic_error_when_opener_fails(tmp_path
         (
             "config.set",
             {
-                "raw": "{\"assistantName\":\"Parity Builder\"}",
+                "raw": '{"assistantName":"Parity Builder"}',
                 "baseHash": "sha256:abc123",
             },
             "config.set is unavailable until writable gateway config ownership is wired",
@@ -8362,7 +13067,7 @@ async def test_config_open_file_returns_generic_error_when_opener_fails(tmp_path
         (
             "config.patch",
             {
-                "raw": "{\"assistantName\":\"Parity Builder\"}",
+                "raw": '{"assistantName":"Parity Builder"}',
                 "baseHash": "sha256:def456",
                 "sessionKey": "agent:main:thread:demo",
                 "deliveryContext": {
@@ -8379,7 +13084,7 @@ async def test_config_open_file_returns_generic_error_when_opener_fails(tmp_path
         (
             "config.apply",
             {
-                "raw": "{\"assistantName\":\"Parity Builder\"}",
+                "raw": '{"assistantName":"Parity Builder"}',
                 "baseHash": "sha256:ghi789",
                 "sessionKey": "agent:main:thread:demo",
                 "deliveryContext": {
@@ -8532,10 +13237,8 @@ async def test_system_presence_surfaces_gateway_self_and_connected_entries(tmp_p
     assert isinstance(entries, list)
     assert len(entries) == 3
     assert all(isinstance(entry, dict) for entry in entries)
-    self_entry = next(
-        entry for entry in entries if entry.get("reason") == "self"
-    )
-    assert self_entry["deviceId"].startswith("gateway-")
+    self_entry = next(entry for entry in entries if entry.get("reason") == "self")
+    assert re.fullmatch(r"[0-9a-f]{64}", self_entry["deviceId"])
     assert self_entry["instanceId"] == self_entry["deviceId"]
     assert self_entry["mode"] == "backend"
     assert self_entry["roles"] == ["operator"]
@@ -8694,7 +13397,7 @@ Body
                 "always": True,
                 "disabled": False,
                 "blockedByAllowlist": False,
-                "eligible": False,
+                "eligible": True,
                 "requirements": {
                     "bins": ["missing-bin"],
                     "env": ["OPENZUES_SKILL_TOKEN"],
@@ -8702,8 +13405,8 @@ Body
                     "os": ["windows"],
                 },
                 "missing": {
-                    "bins": ["missing-bin"],
-                    "env": ["OPENZUES_SKILL_TOKEN"],
+                    "bins": [],
+                    "env": [],
                     "config": [],
                     "os": [],
                 },
@@ -8719,6 +13422,128 @@ Body
             }
         ],
     }
+
+
+@pytest.mark.asyncio
+async def test_skills_update_and_status_resolve_config_requirement_via_gateway_config(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    codex_home = tmp_path / ".codex"
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    monkeypatch.chdir(tmp_path)
+    platform = (
+        "windows"
+        if sys.platform.startswith("win")
+        else "macos"
+        if sys.platform == "darwin"
+        else "linux"
+    )
+    skill_path = codex_home / "skills" / "local-config-test" / "SKILL.md"
+    skill_path.parent.mkdir(parents=True, exist_ok=True)
+    skill_path.write_text(
+        f"""---
+name: local-config-test
+description: local skill config
+platforms:
+  - {platform}
+metadata:
+  skillKey: local-config
+  requires:
+    config:
+      - skills.entries.local-config.enabled
+---
+Body
+""",
+        encoding="utf-8",
+    )
+    service = GatewayNodeMethodService(GatewayNodeRegistry())
+
+    before = await service.call("skills.status", {})
+    updated = await service.call("skills.update", {"skillKey": "local-config", "enabled": True})
+    after = await service.call("skills.status", {})
+
+    assert updated == {
+        "ok": True,
+        "skillKey": "local-config",
+        "config": {
+            "enabled": True,
+        },
+    }
+    assert before["skills"] == [
+        {
+            "name": "local-config-test",
+            "description": "local skill config",
+            "source": "codex-home",
+            "bundled": True,
+            "filePath": str(skill_path),
+            "baseDir": str(skill_path.parent),
+            "skillKey": "local-config",
+            "primaryEnv": None,
+            "emoji": None,
+            "homepage": None,
+            "always": False,
+            "disabled": False,
+            "blockedByAllowlist": False,
+            "eligible": False,
+            "requirements": {
+                "bins": [],
+                "env": [],
+                "config": ["skills.entries.local-config.enabled"],
+                "os": [platform],
+            },
+            "missing": {
+                "bins": [],
+                "env": [],
+                "config": ["skills.entries.local-config.enabled"],
+                "os": [],
+            },
+            "configChecks": [
+                {
+                    "path": "skills.entries.local-config.enabled",
+                    "satisfied": False,
+                }
+            ],
+            "install": [],
+        }
+    ]
+    assert after["skills"] == [
+        {
+            "name": "local-config-test",
+            "description": "local skill config",
+            "source": "codex-home",
+            "bundled": True,
+            "filePath": str(skill_path),
+            "baseDir": str(skill_path.parent),
+            "skillKey": "local-config",
+            "primaryEnv": None,
+            "emoji": None,
+            "homepage": None,
+            "always": False,
+            "disabled": False,
+            "blockedByAllowlist": False,
+            "eligible": True,
+            "requirements": {
+                "bins": [],
+                "env": [],
+                "config": ["skills.entries.local-config.enabled"],
+                "os": [platform],
+            },
+            "missing": {
+                "bins": [],
+                "env": [],
+                "config": [],
+                "os": [],
+            },
+            "configChecks": [
+                {
+                    "path": "skills.entries.local-config.enabled",
+                    "satisfied": True,
+                }
+            ],
+            "install": [],
+        }
+    ]
 
 
 @pytest.mark.asyncio
@@ -9525,9 +14350,7 @@ async def test_node_pair_resolution_broadcasts_openclaw_resolved_event(
         pairing_service=pairing_service,
         hub=hub,
     )
-    requester = GatewayNodeMethodRequester(
-        caller_scopes=("operator.pairing", "operator.admin")
-    )
+    requester = GatewayNodeMethodRequester(caller_scopes=("operator.pairing", "operator.admin"))
 
     created = await service.call(
         "node.pair.request",
@@ -9577,9 +14400,7 @@ async def test_node_pair_approve_verify_and_rename_lifecycle(tmp_path) -> None:
         GatewayNodeRegistry(),
         pairing_service=pairing_service,
     )
-    requester = GatewayNodeMethodRequester(
-        caller_scopes=("operator.pairing", "operator.admin")
-    )
+    requester = GatewayNodeMethodRequester(caller_scopes=("operator.pairing", "operator.admin"))
 
     created = await service.call(
         "node.pair.request",
@@ -9730,9 +14551,7 @@ async def test_node_list_and_describe_include_persisted_approved_nodes(tmp_path)
         GatewayNodeRegistry(),
         pairing_service=pairing_service,
     )
-    requester = GatewayNodeMethodRequester(
-        caller_scopes=("operator.pairing", "operator.admin")
-    )
+    requester = GatewayNodeMethodRequester(caller_scopes=("operator.pairing", "operator.admin"))
 
     created = await service.call(
         "node.pair.request",
@@ -9923,6 +14742,7 @@ async def test_node_pending_enqueue_matches_openclaw_shape_and_rejects_default_p
             "type": "location.request",
             "priority": "high",
             "expiresInMs": 5_000,
+            "payload": {"reason": "gps"},
             "wake": True,
         },
     )
@@ -9931,6 +14751,7 @@ async def test_node_pending_enqueue_matches_openclaw_shape_and_rejects_default_p
     assert queued["revision"] == 1
     assert queued["queued"]["type"] == "location.request"
     assert queued["queued"]["priority"] == "high"
+    assert queued["queued"]["payload"] == {"reason": "gps"}
     assert queued["wakeTriggered"] is False
 
     with pytest.raises(ValueError, match="priority"):
@@ -9940,6 +14761,16 @@ async def test_node_pending_enqueue_matches_openclaw_shape_and_rejects_default_p
                 "nodeId": "node-1",
                 "type": "location.request",
                 "priority": "default",
+            },
+        )
+
+    with pytest.raises(ValueError, match="payload must be an object"):
+        await service.call(
+            "node.pending.enqueue",
+            {
+                "nodeId": "node-1",
+                "type": "location.request",
+                "payload": "gps",
             },
         )
 
@@ -10026,7 +14857,9 @@ async def test_known_node_methods_can_fail_as_explicitly_unavailable(
 @pytest.mark.asyncio
 async def test_tts_convert_runs_bounded_runtime_when_wired(tmp_path) -> None:
     synthesized_path = tmp_path / "speech.wav"
-    synthesized_path.write_bytes(b"RIFFtest-wave",)
+    synthesized_path.write_bytes(
+        b"RIFFtest-wave",
+    )
     observed: dict[str, object] = {}
 
     def fake_convert(
@@ -10376,11 +15209,9 @@ async def test_system_event_records_event_and_broadcasts_presence_snapshot(tmp_p
     )
     assert node_entry["host"] == "Builder Phone"
     self_entry = next(
-        entry
-        for entry in broadcast["payload"]["presence"]
-        if entry.get("reason") == "self"
+        entry for entry in broadcast["payload"]["presence"] if entry.get("reason") == "self"
     )
-    assert self_entry["deviceId"].startswith("gateway-")
+    assert re.fullmatch(r"[0-9a-f]{64}", self_entry["deviceId"])
 
 
 @pytest.mark.asyncio
@@ -10543,9 +15374,7 @@ async def test_secrets_resolve_returns_validated_unavailable_contract() -> None:
 
     with pytest.raises(
         GatewayNodeMethodError,
-        match=(
-            "secrets.resolve is unavailable until command-target secret resolution is wired"
-        ),
+        match=("secrets.resolve is unavailable until command-target secret resolution is wired"),
     ) as exc_info:
         await service.call(
             "secrets.resolve",
@@ -11034,6 +15863,81 @@ async def test_poll_allows_thread_id_before_delivery_placeholder() -> None:
 
 
 @pytest.mark.asyncio
+async def test_poll_allows_duration_hours_and_silent_before_delivery_placeholder() -> None:
+    service = GatewayNodeMethodService(GatewayNodeRegistry())
+
+    with pytest.raises(
+        GatewayNodeMethodError,
+        match="poll is unavailable until channel-target poll delivery is wired",
+    ) as exc_info:
+        await service.call(
+            "poll",
+            {
+                "to": "channel:C123",
+                "question": "Ship it?",
+                "options": ["Yes", "No"],
+                "durationHours": 24,
+                "silent": True,
+                "channel": "slack",
+                "accountId": "default",
+                "threadId": "1710000000.9999",
+                "idempotencyKey": "idem-poll-duration-hours",
+            },
+        )
+
+    assert exc_info.value.code == "UNAVAILABLE"
+    assert exc_info.value.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_poll_allows_is_anonymous_before_delivery_placeholder() -> None:
+    service = GatewayNodeMethodService(GatewayNodeRegistry())
+
+    with pytest.raises(
+        GatewayNodeMethodError,
+        match="poll is unavailable until channel-target poll delivery is wired",
+    ) as exc_info:
+        await service.call(
+            "poll",
+            {
+                "to": "channel:C123",
+                "question": "Ship it?",
+                "options": ["Yes", "No"],
+                "isAnonymous": False,
+                "channel": "slack",
+                "idempotencyKey": "idem-poll-anon",
+            },
+        )
+
+    assert exc_info.value.code == "UNAVAILABLE"
+    assert exc_info.value.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_poll_allows_large_duration_hours_before_delivery_placeholder() -> None:
+    service = GatewayNodeMethodService(GatewayNodeRegistry())
+
+    with pytest.raises(
+        GatewayNodeMethodError,
+        match="poll is unavailable until channel-target poll delivery is wired",
+    ) as exc_info:
+        await service.call(
+            "poll",
+            {
+                "to": "channel:C123",
+                "question": "Ship it?",
+                "options": ["Yes", "No"],
+                "durationHours": 100_000,
+                "channel": "slack",
+                "idempotencyKey": "idem-poll-duration-hours-large",
+            },
+        )
+
+    assert exc_info.value.code == "UNAVAILABLE"
+    assert exc_info.value.status_code == 503
+
+
+@pytest.mark.asyncio
 async def test_poll_rejects_invalid_whatsapp_target_shape() -> None:
     service = GatewayNodeMethodService(GatewayNodeRegistry())
 
@@ -11109,10 +16013,7 @@ async def test_poll_rejects_internal_webchat_channel() -> None:
 
     with pytest.raises(
         GatewayNodeMethodError,
-        match=(
-            "unsupported channel: webchat \\(internal-only\\)\\. Use `chat.send` for "
-            "WebChat UI messages or choose a deliverable channel\\."
-        ),
+        match="unsupported poll channel: webchat",
     ) as exc_info:
         await service.call(
             "poll",
@@ -11425,6 +16326,142 @@ async def test_node_invoke_attempts_saved_lane_wake_before_failing_not_connected
         "command": "system.run",
         "payload": {"status": "done"},
         "payloadJSON": '{"status":"done"}',
+    }
+
+
+@pytest.mark.asyncio
+async def test_node_invoke_waits_for_woken_node_to_reconnect_before_invoking() -> None:
+    registry = GatewayNodeRegistry()
+    registry.remember(
+        KnownNode(
+            node_id="node-1",
+            display_name="Wakeable Builder",
+            platform="windows",
+            client_id="node-1",
+            client_mode="desktop",
+            commands=("system.run",),
+            paired=True,
+            connected=False,
+        )
+    )
+    wake_calls: list[str] = []
+
+    async def fake_wake(node_id: str) -> bool:
+        wake_calls.append(node_id)
+        asyncio.get_running_loop().call_soon(
+            lambda: registry.register(
+                AutoReplyNodeConnection(registry, "conn-node-1"),
+                GatewayNodeConnect(
+                    client_id="node-1",
+                    device_id=node_id,
+                    client_mode="desktop",
+                    display_name="Wakeable Builder",
+                    platform="windows",
+                    commands=("system.run",),
+                ),
+            )
+        )
+        return True
+
+    service = GatewayNodeMethodService(registry, wake_node=fake_wake)
+
+    result = await service.call(
+        "node.invoke",
+        {
+            "nodeId": "node-1",
+            "command": "system.run",
+            "params": {"command": "whoami"},
+            "timeoutMs": 250,
+            "idempotencyKey": "idem-system-run",
+        },
+    )
+
+    assert wake_calls == ["node-1"]
+    assert result == {
+        "ok": True,
+        "nodeId": "node-1",
+        "command": "system.run",
+        "payload": {"status": "done"},
+        "payloadJSON": '{"status":"done"}',
+    }
+
+
+@pytest.mark.asyncio
+async def test_node_invoke_surfaces_foreground_queue_metadata_and_keeps_action_until_ack() -> None:
+    registry = GatewayNodeRegistry()
+    registry.register(
+        BackgroundUnavailableNodeConnection(registry, "conn-node-1"),
+        GatewayNodeConnect(
+            client_id="live-node-1",
+            device_id="node-1",
+            platform="ios",
+            device_family="iphone",
+            commands=("canvas.navigate",),
+        ),
+    )
+    requester = GatewayNodeMethodRequester(node_id="node-1")
+    service = GatewayNodeMethodService(registry)
+
+    with pytest.raises(
+        GatewayNodeMethodError,
+        match="node command queued until iOS returns to foreground",
+    ) as exc_info:
+        await service.call(
+            "node.invoke",
+            {
+                "nodeId": "node-1",
+                "command": "canvas.navigate",
+                "params": {"url": "http://example.com/"},
+                "idempotencyKey": "idem-queued",
+            },
+        )
+
+    pending = await service.call("node.pending.pull", {}, requester=requester, now_ms=556)
+    repeated_pending = await service.call("node.pending.pull", {}, requester=requester, now_ms=556)
+    queued_action_id = pending["actions"][0]["id"]
+    acked = await service.call(
+        "node.pending.ack",
+        {"ids": [queued_action_id]},
+        requester=requester,
+        now_ms=556,
+    )
+    empty_pending = await service.call("node.pending.pull", {}, requester=requester, now_ms=556)
+
+    assert exc_info.value.code == "UNAVAILABLE"
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.retryable is True
+    assert exc_info.value.details == {
+        "code": "QUEUED_UNTIL_FOREGROUND",
+        "queuedActionId": queued_action_id,
+        "nodeId": "node-1",
+        "command": "canvas.navigate",
+        "nodeError": {
+            "code": "NODE_BACKGROUND_UNAVAILABLE",
+            "message": (
+                "NODE_BACKGROUND_UNAVAILABLE: canvas/camera/screen commands require foreground"
+            ),
+        },
+    }
+    assert pending == {
+        "nodeId": "node-1",
+        "actions": [
+            {
+                "id": queued_action_id,
+                "command": "canvas.navigate",
+                "paramsJSON": '{"url": "http://example.com/"}',
+                "enqueuedAtMs": pending["actions"][0]["enqueuedAtMs"],
+            }
+        ],
+    }
+    assert repeated_pending == pending
+    assert acked == {
+        "nodeId": "node-1",
+        "ackedIds": [queued_action_id],
+        "remainingCount": 0,
+    }
+    assert empty_pending == {
+        "nodeId": "node-1",
+        "actions": [],
     }
 
 

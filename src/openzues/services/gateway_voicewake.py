@@ -5,8 +5,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-_DEFAULT_VOICE_WAKE_TRIGGERS = ("openclaw", "claude", "computer")
-_MAX_VOICE_WAKE_TRIGGER_COUNT = 32
+_DEFAULT_VOICE_WAKE_TRIGGERS = ("openclaw", "claude")
+_MAX_VOICE_WAKE_TRIGGERS = 32
 _MAX_VOICE_WAKE_TRIGGER_LENGTH = 64
 
 
@@ -30,7 +30,7 @@ def normalize_voicewake_triggers(value: object) -> list[str]:
         if not trimmed:
             continue
         cleaned.append(trimmed[:_MAX_VOICE_WAKE_TRIGGER_LENGTH])
-        if len(cleaned) >= _MAX_VOICE_WAKE_TRIGGER_COUNT:
+        if len(cleaned) >= _MAX_VOICE_WAKE_TRIGGERS:
             break
     return cleaned if cleaned else list(_DEFAULT_VOICE_WAKE_TRIGGERS)
 

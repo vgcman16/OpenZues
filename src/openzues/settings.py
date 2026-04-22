@@ -37,6 +37,8 @@ class Settings(BaseSettings):
             "danger-full-access" if sys.platform.startswith("win") else "workspace-write"
         )
     )
+    cron_webhook_url: str | None = None
+    cron_webhook_token: str | None = None
     attention_queue_enabled: bool = True
     attention_queue_poll_interval_seconds: int = 30
     websocket_ping_interval_seconds: int = 20

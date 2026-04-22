@@ -91,11 +91,23 @@ def _normalize_token(value: str | None) -> str:
     return str(value or "").strip().lower()
 
 
+def _canonicalize_account_id(value: str) -> str:
+    normalized = value.lower()
+    if _VALID_AGENT_ID_RE.fullmatch(value):
+        return normalized
+    sanitized = _INVALID_AGENT_ID_CHARS_RE.sub("-", normalized)
+    sanitized = _LEADING_DASH_RE.sub("", sanitized)
+    sanitized = _TRAILING_DASH_RE.sub("", sanitized)
+    return sanitized[:64]
+
+
 def _normalize_optional_account_id(value: str | None) -> str | None:
     trimmed = str(value or "").strip()
     if not trimmed:
         return None
-    normalized = normalize_agent_id(trimmed)
+    normalized = _canonicalize_account_id(trimmed)
+    if not normalized:
+        return None
     if normalized in _BLOCKED_OBJECT_KEYS:
         return None
     return normalized

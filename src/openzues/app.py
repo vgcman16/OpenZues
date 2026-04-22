@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import sys
+import threading
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from ipaddress import ip_address
@@ -14,7 +15,7 @@ from time import perf_counter
 from types import SimpleNamespace
 from typing import Any, Literal, cast
 
-from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -150,9 +151,11 @@ from openzues.services.followups import (
     operator_blocked_missions,
     operator_ready_handoff_missions,
 )
+from openzues.services.gateway_agents import GatewayAgentsService
 from openzues.services.gateway_bootstrap import GatewayBootstrapService
 from openzues.services.gateway_capability import GatewayCapabilityService
 from openzues.services.gateway_channels import GatewayChannelsService
+from openzues.services.gateway_commands import GatewayCommandsService
 from openzues.services.gateway_config import GatewayConfigService
 from openzues.services.gateway_health import GatewayHealthService
 from openzues.services.gateway_identity import GatewayIdentityService
@@ -1704,7 +1707,10 @@ def create_app(
         local_media_preview_roots=[],
         embed_sandbox="scripts",
         allow_external_embed_urls=False,
+        data_dir=active_settings.data_dir,
     )
+    active_gateway_agents_service = GatewayAgentsService(database=active_database)
+    active_gateway_commands_service = GatewayCommandsService()
 
     async def list_gateway_notification_route_views() -> list[NotificationRouteView]:
         return await active_ops_mesh_service.list_notification_route_views()
@@ -1751,6 +1757,8 @@ def create_app(
         active_vault_service,
         playbooks=active_playbook_service,
         launch_routing=active_launch_routing_service,
+        cron_webhook_url=active_settings.cron_webhook_url,
+        cron_webhook_token=active_settings.cron_webhook_token,
     )
     active_setup_service = SetupService(
         active_database,
@@ -1839,16 +1847,71 @@ def create_app(
         active_manager,
         active_hub,
     )
+    attention_queue_runtime_enabled = active_settings.attention_queue_enabled
+    immediate_wake_coalesce_seconds = 0.25
+    pending_immediate_wake_timer: threading.Timer | None = None
+    pending_immediate_wake_lock = threading.Lock()
+
+    async def dispatch_pending_immediate_wakes() -> None:
+        if not attention_queue_runtime_enabled:
+            return
+        dashboard_view = await build_dashboard()
+        await active_control_chat_service.dispatch_immediate_wakes(dashboard_view)
 
     async def dispatch_gateway_wake_now(text: str) -> None:
-        dashboard_view = await build_dashboard()
-        await active_control_chat_service.submit(text, dashboard_view)
+        nonlocal pending_immediate_wake_timer
+        del text
+        if not attention_queue_runtime_enabled:
+            return
+        with pending_immediate_wake_lock:
+            if pending_immediate_wake_timer is not None and pending_immediate_wake_timer.is_alive():
+                return
+
+            def run_pending_immediate_wakes() -> None:
+                nonlocal pending_immediate_wake_timer
+                try:
+                    asyncio.run(dispatch_pending_immediate_wakes())
+                except Exception:
+                    logger.exception("Immediate wake dispatch failed")
+                finally:
+                    with pending_immediate_wake_lock:
+                        pending_immediate_wake_timer = None
+
+            pending_immediate_wake_timer = threading.Timer(
+                immediate_wake_coalesce_seconds,
+                run_pending_immediate_wakes,
+            )
+            pending_immediate_wake_timer.daemon = True
+            pending_immediate_wake_timer.start()
+
+    async def set_gateway_heartbeats_enabled(enabled: bool) -> bool:
+        nonlocal attention_queue_runtime_enabled, pending_immediate_wake_timer
+        attention_queue_runtime_enabled = bool(enabled)
+        active_control_chat_service.clear_wake_retry_state()
+        if not attention_queue_runtime_enabled:
+            with pending_immediate_wake_lock:
+                if pending_immediate_wake_timer is not None:
+                    pending_immediate_wake_timer.cancel()
+                    pending_immediate_wake_timer = None
+            await active_control_chat_service.close_attention_queue()
+            return False
+        if fastapi_app.state.control_plane_role == "leader":
+            await active_control_chat_service.start_attention_queue(
+                build_dashboard,
+                enabled=True,
+                poll_interval_seconds=active_settings.attention_queue_poll_interval_seconds,
+            )
+        return True
 
     active_gateway_wake_service = gateway_wake_service or GatewayWakeService(
         active_database,
         dispatch_now=dispatch_gateway_wake_now,
     )
     active_control_chat_service.set_wake_service(active_gateway_wake_service)
+    active_ops_mesh_service.wake_service = active_gateway_wake_service
+    active_ops_mesh_service.session_delivery_service = (
+        active_control_chat_service.append_session_assistant_message
+    )
 
     async def submit_gateway_chat_message(
         *,
@@ -1917,8 +1980,16 @@ def create_app(
             active_gateway_node_service.registry,
             database=active_database,
             hub=active_hub,
+            agents_service=active_gateway_agents_service,
             pairing_service=active_gateway_node_pairing_service,
             channels_service=active_gateway_channels_service,
+            commands_service=active_gateway_commands_service,
+            list_integration_views=getattr(
+                active_ops_mesh_service,
+                "list_integration_views",
+                None,
+            ),
+            list_notification_route_views=active_ops_mesh_service.list_notification_route_views,
             config_service=active_gateway_config_service,
             health_service=active_gateway_health_service,
             gateway_identity_service=active_gateway_identity_service,
@@ -1928,6 +1999,11 @@ def create_app(
             chat_abort_service=abort_gateway_chat_run,
             create_task_blueprint=getattr(active_ops_mesh_service, "create_task_blueprint", None),
             run_task_blueprint_now=active_ops_mesh_service.run_task_blueprint_now,
+            dispatch_cron_system_event_task=getattr(
+                active_ops_mesh_service,
+                "dispatch_cron_system_event_task",
+                None,
+            ),
             delete_task_blueprint=active_ops_mesh_service.delete_task_blueprint,
             status_service=load_gateway_status,
             runtime_update_tick=active_runtime_update_service.tick,
@@ -1938,8 +2014,10 @@ def create_app(
             tts_runtime_service=active_gateway_tts_runtime_service,
             voicewake_service=active_gateway_voicewake_service,
             wake_service=active_gateway_wake_service,
+            set_heartbeats_enabled=set_gateway_heartbeats_enabled,
             sync=active_gateway_node_service.sync,
             wake_node=active_gateway_node_service.wake_node,
+            probe_secret=active_vault_service.probe_secret,
         )
     active_control_plane_lease = control_plane_lease or ControlPlaneLease(
         active_settings.data_dir / "control-plane.lock"
@@ -1985,7 +2063,7 @@ def create_app(
                 ops_mesh_started = True
                 await active_control_chat_service.start_attention_queue(
                     build_dashboard,
-                    enabled=active_settings.attention_queue_enabled,
+                    enabled=attention_queue_runtime_enabled,
                     poll_interval_seconds=active_settings.attention_queue_poll_interval_seconds,
                 )
                 attention_queue_started = True
@@ -2025,6 +2103,7 @@ def create_app(
     fastapi_app.state.manager = active_manager
     fastapi_app.state.mission_service = active_mission_service
     fastapi_app.state.control_chat_service = active_control_chat_service
+    fastapi_app.state.ops_mesh_service = active_ops_mesh_service
     fastapi_app.state.onboarding_service = active_onboarding_service
     fastapi_app.state.gateway_capability_service = active_gateway_capability_service
     fastapi_app.state.gateway_node_service = active_gateway_node_service
@@ -2080,7 +2159,7 @@ def create_app(
                 actions=[],
             )
         return DashboardAttentionQueueView(
-            enabled=active_settings.attention_queue_enabled,
+            enabled=attention_queue_runtime_enabled,
             headline="Attention queue is standing by",
             summary=(
                 "Recoveries and checkpoint hardeners will auto-launch when the lane is safe to "
@@ -2380,7 +2459,7 @@ def create_app(
             update={
                 "attention_queue": await active_control_chat_service.build_attention_queue_view(
                     dashboard_view,
-                    enabled=active_settings.attention_queue_enabled,
+                    enabled=attention_queue_runtime_enabled,
                 ),
                 "control_chat": await active_control_chat_service.build_view(dashboard_view),
             }
@@ -2406,6 +2485,8 @@ def create_app(
             dashboard_cache = await _build_dashboard_uncached()
             dashboard_cache_at = perf_counter()
             return dashboard_cache
+
+    active_control_chat_service.set_dashboard_loader(build_dashboard)
 
     def _status_project_views(project_rows: list[dict[str, Any]]) -> list[ProjectView]:
         projects: list[ProjectView] = []
@@ -3192,6 +3273,31 @@ def create_app(
     @fastapi_app.get("/api/gateway/capability", response_model=GatewayCapabilityView)
     async def get_gateway_capability() -> GatewayCapabilityView:
         return await build_gateway_capability()
+
+    @fastapi_app.get("/api/gateway/commands")
+    async def get_gateway_commands(
+        agent_id: str | None = Query(default=None, alias="agentId"),
+        include_args: bool = Query(default=True, alias="includeArgs"),
+        provider: str | None = None,
+        scope: Literal["both", "native", "text"] = "both",
+    ) -> dict[str, Any]:
+        try:
+            return active_gateway_commands_service.build_catalog(
+                agent_id=agent_id,
+                include_args=include_args,
+                provider=provider,
+                scope=scope,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @fastapi_app.get("/api/gateway/agents")
+    async def get_gateway_agents() -> dict[str, Any]:
+        return await active_gateway_agents_service.list_agents()
+
+    @fastapi_app.get("/api/gateway/channels")
+    async def get_gateway_channels() -> dict[str, Any]:
+        return await active_gateway_channels_service.build_snapshot()
 
     @fastapi_app.get("/api/gateway/nodes")
     async def get_gateway_nodes() -> dict[str, Any]:

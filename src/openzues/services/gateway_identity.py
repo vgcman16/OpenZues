@@ -3,8 +3,10 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -33,6 +35,37 @@ class GatewayIdentityService:
             return None
         if not isinstance(payload, dict):
             return None
+        modern_identity = self._load_openclaw_identity(payload)
+        if modern_identity is not None:
+            return modern_identity
+        return self._load_legacy_identity(payload)
+
+    def _load_openclaw_identity(self, payload: dict[str, Any]) -> GatewayIdentity | None:
+        private_key_pem = payload.get("privateKeyPem")
+        if not isinstance(private_key_pem, str) or not private_key_pem.strip():
+            return None
+        try:
+            private_key = serialization.load_pem_private_key(
+                private_key_pem.encode("utf-8"),
+                password=None,
+            )
+        except (TypeError, ValueError):
+            return None
+        if not isinstance(private_key, Ed25519PrivateKey):
+            return None
+        public_key_bytes = self._public_key_bytes(private_key)
+        public_key = self._public_key_string(public_key_bytes)
+        derived_device_id = self._identity_id(public_key_bytes)
+        stored_device_id = str(payload.get("deviceId") or "").strip()
+        if stored_device_id != derived_device_id:
+            self._write_identity_file(
+                private_key,
+                device_id=derived_device_id,
+                created_at_ms=payload.get("createdAtMs"),
+            )
+        return GatewayIdentity(id=derived_device_id, public_key=public_key)
+
+    def _load_legacy_identity(self, payload: dict[str, Any]) -> GatewayIdentity | None:
         private_key_value = payload.get("privateKey")
         if not isinstance(private_key_value, str) or not private_key_value.strip():
             return None
@@ -41,43 +74,74 @@ class GatewayIdentityService:
             private_key = Ed25519PrivateKey.from_private_bytes(private_key_bytes)
         except (ValueError, UnicodeEncodeError):
             return None
-        public_key = self._public_key_string(private_key)
-        identity_id = str(payload.get("id") or "").strip() or self._identity_id(public_key)
+        public_key_bytes = self._public_key_bytes(private_key)
+        public_key = self._public_key_string(public_key_bytes)
+        identity_id = (
+            str(payload.get("deviceId") or payload.get("id") or "").strip()
+            or self._identity_id(public_key_bytes)
+        )
         return GatewayIdentity(id=identity_id, public_key=public_key)
 
     def _create_identity(self) -> GatewayIdentity:
         private_key = Ed25519PrivateKey.generate()
-        private_key_bytes = private_key.private_bytes(
-            encoding=serialization.Encoding.Raw,
-            format=serialization.PrivateFormat.Raw,
-            encryption_algorithm=serialization.NoEncryption(),
-        )
-        public_key = self._public_key_string(private_key)
+        public_key_bytes = self._public_key_bytes(private_key)
+        public_key = self._public_key_string(public_key_bytes)
         identity = GatewayIdentity(
-            id=self._identity_id(public_key),
+            id=self._identity_id(public_key_bytes),
             public_key=public_key,
+        )
+        self._write_identity_file(
+            private_key,
+            device_id=identity.id,
+            created_at_ms=int(time.time() * 1000),
+        )
+        return identity
+
+    def _write_identity_file(
+        self,
+        private_key: Ed25519PrivateKey,
+        *,
+        device_id: str,
+        created_at_ms: object | None,
+    ) -> None:
+        private_key_pem = private_key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption(),
+        ).decode("utf-8")
+        public_key_pem = private_key.public_key().public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo,
+        ).decode("utf-8")
+        normalized_created_at_ms = (
+            int(created_at_ms)
+            if isinstance(created_at_ms, int | float) and int(created_at_ms) >= 0
+            else int(time.time() * 1000)
         )
         self._identity_path.parent.mkdir(parents=True, exist_ok=True)
         self._identity_path.write_text(
             json.dumps(
                 {
-                    "id": identity.id,
-                    "privateKey": base64.b64encode(private_key_bytes).decode("ascii"),
+                    "version": 1,
+                    "deviceId": device_id,
+                    "publicKeyPem": public_key_pem,
+                    "privateKeyPem": private_key_pem,
+                    "createdAtMs": normalized_created_at_ms,
                 },
                 indent=2,
             )
             + "\n",
             encoding="utf-8",
         )
-        return identity
 
-    def _public_key_string(self, private_key: Ed25519PrivateKey) -> str:
-        public_key_bytes = private_key.public_key().public_bytes(
+    def _public_key_bytes(self, private_key: Ed25519PrivateKey) -> bytes:
+        return private_key.public_key().public_bytes(
             encoding=serialization.Encoding.Raw,
             format=serialization.PublicFormat.Raw,
         )
-        return base64.b64encode(public_key_bytes).decode("ascii")
 
-    def _identity_id(self, public_key: str) -> str:
-        fingerprint = hashlib.sha256(public_key.encode("utf-8")).hexdigest()[:24]
-        return f"gateway-{fingerprint}"
+    def _public_key_string(self, public_key_bytes: bytes) -> str:
+        return base64.urlsafe_b64encode(public_key_bytes).decode("ascii").rstrip("=")
+
+    def _identity_id(self, public_key_bytes: bytes) -> str:
+        return hashlib.sha256(public_key_bytes).hexdigest()

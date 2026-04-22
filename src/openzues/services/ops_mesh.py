@@ -4,10 +4,11 @@ import asyncio
 import json
 import logging
 import re
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, cast
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
@@ -64,6 +65,7 @@ from openzues.schemas import (
 )
 from openzues.services.continuity import build_continuity_packet
 from openzues.services.ecc_catalog import build_ecc_workspace_lines
+from openzues.services.gateway_wake import GatewayWakeService
 from openzues.services.hermes_runtime_profile import (
     DEFAULT_HERMES_EXECUTOR,
     DEFAULT_HERMES_MEMORY_PROVIDER,
@@ -93,6 +95,10 @@ from openzues.services.missions import MissionService
 from openzues.services.playbooks import PlaybookService, summarize_playbook_result
 from openzues.services.reflexes import build_reflex_deck
 from openzues.services.scope_enforcer import build_scope_assessment
+from openzues.services.session_keys import (
+    build_launch_session_key,
+    resolve_thread_session_keys,
+)
 from openzues.services.skillbook import materialize_skillbook_pins
 from openzues.services.vault import VaultService, mask_secret
 
@@ -231,12 +237,227 @@ def _task_continuation_next_run_at(task: TaskBlueprintView) -> str | None:
 
 
 def _task_scheduled_next_run_at(task: TaskBlueprintView) -> str | None:
-    if task.cadence_minutes is None or not task.enabled:
+    if not task.enabled:
+        return None
+    if task.schedule_kind == "at":
+        scheduled_at = _parse_timestamp(task.schedule_at)
+        if scheduled_at is None:
+            return None
+        last = _parse_timestamp(task.last_launched_at)
+        status = str(task.last_status or "").strip().lower()
+        if last is not None and status in {"completed", "failed"} and scheduled_at <= last:
+            return None
+        return scheduled_at.isoformat()
+    if task.cadence_minutes is None:
         return None
     last = _parse_timestamp(task.last_launched_at)
     if last is None:
         return utcnow()
     return (last + timedelta(minutes=task.cadence_minutes)).isoformat()
+
+
+def _task_cron_session_target(task: TaskBlueprintView) -> str:
+    session_target = str(task.cron_session_target or "").strip()
+    lowered = session_target.lower()
+    if lowered == "current":
+        return "isolated"
+    if lowered in {"main", "isolated"}:
+        return lowered
+    if lowered.startswith("session:"):
+        suffix = session_target[len("session:") :]
+        segments = suffix.split(":")
+        if suffix and all(
+            segment
+            and re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", segment, re.IGNORECASE) is not None
+            for segment in segments
+        ):
+            return "session:" + ":".join(segments)
+    return "main"
+
+
+def _task_cron_session_key(task: TaskBlueprintView) -> str | None:
+    session_key = str(task.cron_session_key or "").strip()
+    return session_key or None
+
+
+def _task_cron_wake_mode(task: TaskBlueprintView) -> str:
+    wake_mode = str(task.cron_wake_mode or "").strip().lower()
+    if wake_mode in {"now", "next-heartbeat"}:
+        return wake_mode
+    return "now"
+
+
+def _task_cron_payload_kind(task: TaskBlueprintView) -> str:
+    payload_kind = str(task.cron_payload_kind or "").strip()
+    if payload_kind in {"agentTurn", "systemEvent"}:
+        return payload_kind
+    return "agentTurn"
+
+
+def _task_routes_through_gateway_wake(task: TaskBlueprintView) -> bool:
+    return (
+        _task_cron_session_target(task) == "main"
+        and _task_cron_payload_kind(task) == "systemEvent"
+    )
+
+
+def _task_cron_payload_text(task: TaskBlueprintView) -> str:
+    text = str(task.cron_payload_text or "").strip()
+    return text or str(task.objective_template or "").strip()
+
+
+def _task_cron_delivery_mode(task: TaskBlueprintView) -> str:
+    delivery_mode = str(task.cron_delivery_mode or "").strip().lower()
+    if delivery_mode in {"announce", "webhook"}:
+        return delivery_mode
+    return "none"
+
+
+def _task_cron_delivery_to(task: TaskBlueprintView) -> str | None:
+    target = str(task.cron_delivery_to or "").strip()
+    return target or None
+
+
+def _task_cron_delivery_account_id(task: TaskBlueprintView) -> str | None:
+    account_id = str(task.cron_delivery_account_id or "").strip()
+    return account_id or None
+
+
+def _task_cron_delivery_thread_id(
+    task: TaskBlueprintView,
+) -> str | int | None:
+    raw_thread_id = task.cron_delivery_thread_id
+    if isinstance(raw_thread_id, int) and not isinstance(raw_thread_id, bool):
+        return raw_thread_id
+    thread_id = str(raw_thread_id or "").strip()
+    return thread_id or None
+
+
+def _task_cron_delivery_channel(task: TaskBlueprintView) -> str | None:
+    channel = str(task.cron_delivery_channel or "").strip().lower()
+    return channel or None
+
+
+def _task_cron_notify_enabled(task: TaskBlueprintView) -> bool:
+    return bool(task.cron_notify_enabled)
+
+
+def _task_cron_failure_destination(task: TaskBlueprintView) -> dict[str, Any] | None:
+    value = task.cron_delivery_failure_destination
+    return dict(value) if isinstance(value, dict) else None
+
+
+def _build_explicit_announce_conversation_target(
+    *,
+    channel: str | None,
+    to: str | None,
+    account_id: str | None,
+) -> ConversationTargetView | None:
+    normalized_channel = str(channel or "").strip().lower()
+    if not normalized_channel or normalized_channel == "last":
+        return None
+    peer_id = str(to or "").strip() or None
+    normalized_account_id = str(account_id or "").strip() or None
+    return ConversationTargetView(
+        channel=normalized_channel,
+        account_id=normalized_account_id,
+        peer_kind="channel" if peer_id else None,
+        peer_id=peer_id,
+    )
+
+
+def _task_explicit_announce_conversation_target(
+    task: TaskBlueprintView,
+) -> ConversationTargetView | None:
+    if (
+        _task_cron_payload_kind(task) != "agentTurn"
+        or _task_cron_delivery_mode(task) == "webhook"
+    ):
+        return None
+    return _build_explicit_announce_conversation_target(
+        channel=_task_cron_delivery_channel(task),
+        to=_task_cron_delivery_to(task),
+        account_id=_task_cron_delivery_account_id(task),
+    )
+
+
+def _failure_destination_explicit_announce_target(
+    failure_destination: dict[str, Any] | None,
+) -> ConversationTargetView | None:
+    if not failure_destination:
+        return None
+    if str(failure_destination.get("mode") or "").strip().lower() != "announce":
+        return None
+    return _build_explicit_announce_conversation_target(
+        channel=(
+            str(failure_destination.get("channel") or "").strip().lower() or None
+        ),
+        to=str(failure_destination.get("to") or "").strip() or None,
+        account_id=str(failure_destination.get("accountId") or "").strip() or None,
+    )
+
+
+def _announce_delivery_session_key(
+    conversation_target: ConversationTargetView,
+    *,
+    thread_id: str | None = None,
+) -> str:
+    base_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=conversation_target,
+    )
+    return resolve_thread_session_keys(
+        base_session_key=base_session_key,
+        thread_id=thread_id,
+    ).session_key
+
+
+def _normalized_delivery_thread_id(
+    thread_id: str | int | None,
+) -> str | None:
+    if isinstance(thread_id, int) and not isinstance(thread_id, bool):
+        return str(thread_id)
+    normalized = str(thread_id or "").strip()
+    return normalized or None
+
+
+def _normalized_http_webhook_url(value: str | None) -> str | None:
+    normalized = str(value or "").strip()
+    if not normalized:
+        return None
+    parsed = urlparse(normalized)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return None
+    return normalized
+
+
+def _cron_delivery_summary(mission: dict[str, Any]) -> str | None:
+    summary = str(mission.get("last_checkpoint") or "").strip()
+    return summary or None
+
+
+def _cron_run_status(status: str) -> Literal["ok", "error"]:
+    return "ok" if status == "completed" else "error"
+
+
+def _cron_job_id(task_id: int) -> str:
+    return f"task-blueprint:{task_id}"
+
+
+def _cron_failure_message(task: TaskBlueprintView, mission: dict[str, Any]) -> str:
+    error = str(mission.get("last_error") or "").strip() or "unknown error"
+    return f'Cron job "{task.name}" failed: {error}'
+
+
+def _cron_failure_announce_message(
+    task: TaskBlueprintView,
+    mission: dict[str, Any],
+) -> str:
+    return f"\u26a0\ufe0f {_cron_failure_message(task, mission)}"
 
 
 def _next_run_at(task: TaskBlueprintView) -> str | None:
@@ -2437,11 +2658,15 @@ class OpsMeshService:
     missions: MissionService
     hub: BroadcastHub
     vault: VaultService
+    wake_service: GatewayWakeService | None = None
     playbooks: PlaybookService = field(default_factory=PlaybookService)
     launch_routing: LaunchRoutingService | None = None
+    cron_webhook_url: str | None = None
+    cron_webhook_token: str | None = None
     poll_interval_seconds: float = 20.0
     snapshot_interval_seconds: float = 1800.0
     parity_checkpoint_path: Path | None = None
+    session_delivery_service: Callable[[str, str], Awaitable[object]] | None = None
     _task: asyncio.Task[None] | None = field(init=False, default=None)
     _stop_event: asyncio.Event = field(init=False, default_factory=asyncio.Event)
     _notified_inbox_items: dict[str, str] = field(init=False, default_factory=dict)
@@ -3225,6 +3450,46 @@ class OpsMeshService:
         )
         return mission
 
+    async def dispatch_cron_system_event_task(
+        self,
+        task_id: int,
+        *,
+        trigger: str = "manual",
+    ) -> str:
+        task_row = await self.database.get_task_blueprint(task_id)
+        if task_row is None:
+            raise ValueError(f"Unknown task blueprint {task_id}")
+        task = _serialize_task(task_row)
+        if not _task_routes_through_gateway_wake(task):
+            raise ValueError(f"Task blueprint {task_id} does not route through gateway wake")
+        if self.wake_service is None:
+            raise RuntimeError("gateway wake service unavailable")
+
+        message = _task_cron_payload_text(task)
+        await self.wake_service.wake(
+            mode=cast(Literal["now", "next-heartbeat"], _task_cron_wake_mode(task)),
+            text=message,
+            reason=f"cron:{task.id}",
+        )
+        update_fields: dict[str, Any] = {
+            "last_launched_at": utcnow(),
+            "last_status": "completed",
+            "last_result_summary": message[:240],
+        }
+        if task.enabled and task.schedule_kind == "at":
+            update_fields["enabled"] = 0
+        await self.database.update_task_blueprint(task_id, **update_fields)
+        await self._publish_ops_event(
+            "task/launched",
+            {
+                "taskId": task_id,
+                "taskName": task.name,
+                "runId": f"wake:{task_id}",
+                "trigger": trigger,
+            },
+        )
+        return f"wake:{task_id}"
+
     async def handle_mission_event(self, event_type: str, event: dict[str, Any]) -> None:
         mission_id = event.get("missionId")
         if isinstance(mission_id, int):
@@ -3260,11 +3525,405 @@ class OpsMeshService:
                                 "marker": _task_completion_marker(task),
                             },
                         )
+                    elif (
+                        status == "completed"
+                        and task.schedule_kind == "at"
+                        and task.enabled
+                    ):
+                        scheduled_at = _parse_timestamp(task.schedule_at)
+                        last_run_at = _parse_timestamp(task.last_launched_at)
+                        if (
+                            scheduled_at is not None
+                            and last_run_at is not None
+                            and scheduled_at <= last_run_at
+                        ):
+                            await self.database.update_task_blueprint(
+                                task_id,
+                                enabled=0,
+                                last_status="completed",
+                                last_result_summary=summary[:240],
+                            )
+                    await self._deliver_cron_finished_delivery(
+                        event_type,
+                        mission,
+                        task,
+                    )
                 await self._maybe_append_parity_checkpoint_ledger(mission, task=task_row)
             elif mission is not None:
                 await self._maybe_append_parity_checkpoint_ledger(mission, task=None)
         await self._deliver_notifications(event_type, event)
         await self._publish_derived_task_inbox_notifications()
+
+    async def _send_ad_hoc_webhook_delivery(
+        self,
+        *,
+        route_name: str,
+        route_target: str,
+        event_type: str,
+        payload: dict[str, Any],
+        session_key: str | None,
+        conversation_target: dict[str, Any] | None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> None:
+        route_scope = {
+            "route_name": route_name,
+            "route_kind": "webhook",
+            "route_target": route_target,
+        }
+        delivery_id = await self.database.create_outbound_delivery(
+            route_id=None,
+            route_name=route_name,
+            route_kind="webhook",
+            route_target=route_target,
+            event_type=event_type,
+            session_key=session_key,
+            conversation_target=conversation_target,
+            route_scope=route_scope,
+            event_payload=payload,
+            message_summary=_summarize_outbound_event(event_type, payload),
+            test_delivery=False,
+            delivery_state="pending",
+            attempt_count=0,
+        )
+        attempt_started_at = utcnow()
+        await self.database.update_outbound_delivery(
+            delivery_id,
+            last_attempt_at=attempt_started_at,
+        )
+        try:
+            await asyncio.to_thread(
+                self._post_json_webhook,
+                route_target,
+                payload,
+                secret_header_name=secret_header_name,
+                secret_token=secret_token,
+            )
+        except Exception as exc:
+            error = str(exc)[:240]
+            attempt_count = 1
+            if _is_permanent_outbound_delivery_error(error):
+                attempt_count = max(attempt_count, OUTBOUND_DELIVERY_MAX_RETRIES)
+            await self.database.update_outbound_delivery(
+                delivery_id,
+                delivery_state="failed",
+                attempt_count=attempt_count,
+                last_attempt_at=attempt_started_at,
+                delivered_at=None,
+                last_error=error,
+            )
+            return
+        await self.database.update_outbound_delivery(
+            delivery_id,
+            delivery_state="delivered",
+            attempt_count=1,
+            last_attempt_at=attempt_started_at,
+            delivered_at=utcnow(),
+            last_error=None,
+        )
+
+    async def _send_ad_hoc_session_delivery(
+        self,
+        *,
+        route_name: str,
+        session_key: str,
+        event_type: str,
+        payload: dict[str, Any],
+        conversation_target: dict[str, Any] | None,
+        message: str,
+    ) -> None:
+        route_scope = {
+            "route_name": route_name,
+            "route_kind": "session",
+            "route_target": session_key,
+            "route_match": "sessionKey",
+        }
+        delivery_id = await self.database.create_outbound_delivery(
+            route_id=None,
+            route_name=route_name,
+            route_kind="session",
+            route_target=session_key,
+            event_type=event_type,
+            session_key=session_key,
+            conversation_target=conversation_target,
+            route_scope=route_scope,
+            event_payload=payload,
+            message_summary=_summarize_outbound_event(event_type, payload),
+            test_delivery=False,
+            delivery_state="pending",
+            attempt_count=0,
+        )
+        attempt_started_at = utcnow()
+        await self.database.update_outbound_delivery(
+            delivery_id,
+            last_attempt_at=attempt_started_at,
+        )
+        try:
+            assert self.session_delivery_service is not None
+            await self.session_delivery_service(session_key, message)
+        except Exception as exc:
+            await self.database.update_outbound_delivery(
+                delivery_id,
+                delivery_state="failed",
+                attempt_count=1,
+                last_attempt_at=attempt_started_at,
+                delivered_at=None,
+                last_error=str(exc)[:240],
+            )
+            return
+        await self.database.update_outbound_delivery(
+            delivery_id,
+            delivery_state="delivered",
+            attempt_count=1,
+            last_attempt_at=attempt_started_at,
+            delivered_at=utcnow(),
+            last_error=None,
+        )
+
+    async def _send_ad_hoc_announce_delivery(
+        self,
+        *,
+        route_name: str,
+        conversation_target: ConversationTargetView,
+        thread_id: str | int | None = None,
+        event_type: str,
+        payload: dict[str, Any],
+        message: str,
+    ) -> None:
+        serialized_target = conversation_target.model_dump(mode="json")
+        normalized_thread_id = _normalized_delivery_thread_id(thread_id)
+        announce_session_key = _announce_delivery_session_key(
+            conversation_target,
+            thread_id=normalized_thread_id,
+        )
+        route_target = (
+            str(serialized_target.get("summary") or "").strip() or announce_session_key
+        )
+        route_scope = {
+            "route_name": route_name,
+            "route_kind": "announce",
+            "route_target": route_target,
+            "route_match": "explicitTarget",
+        }
+        payload_with_target = dict(payload)
+        payload_with_target["sessionKey"] = announce_session_key
+        payload_with_target["conversationTarget"] = serialized_target
+        if thread_id is not None:
+            payload_with_target["threadId"] = thread_id
+        if normalized_thread_id is not None:
+            route_scope["thread_id"] = normalized_thread_id
+        delivery_id = await self.database.create_outbound_delivery(
+            route_id=None,
+            route_name=route_name,
+            route_kind="announce",
+            route_target=route_target,
+            event_type=event_type,
+            session_key=announce_session_key,
+            conversation_target=serialized_target,
+            route_scope=route_scope,
+            event_payload=payload_with_target,
+            message_summary=_summarize_outbound_event(event_type, payload),
+            test_delivery=False,
+            delivery_state="pending",
+            attempt_count=0,
+        )
+        attempt_started_at = utcnow()
+        await self.database.update_outbound_delivery(
+            delivery_id,
+            last_attempt_at=attempt_started_at,
+        )
+        try:
+            assert self.session_delivery_service is not None
+            await self.session_delivery_service(announce_session_key, message)
+        except Exception as exc:
+            await self.database.update_outbound_delivery(
+                delivery_id,
+                delivery_state="failed",
+                attempt_count=1,
+                last_attempt_at=attempt_started_at,
+                delivered_at=None,
+                last_error=str(exc)[:240],
+            )
+            return
+        await self.database.update_outbound_delivery(
+            delivery_id,
+            delivery_state="delivered",
+            attempt_count=1,
+            last_attempt_at=attempt_started_at,
+            delivered_at=utcnow(),
+            last_error=None,
+        )
+
+    async def _deliver_cron_finished_delivery(
+        self,
+        event_type: str,
+        mission: dict[str, Any],
+        task: TaskBlueprintView,
+    ) -> None:
+        mission_status = str(mission.get("status") or "").strip().lower()
+        conversation_target = _normalize_conversation_target(
+            mission.get("conversation_target") or task.conversation_target
+        )
+        session_key = str(mission.get("session_key") or "").strip() or None
+        task_id = int(task.id)
+
+        if event_type == "mission/completed" and mission_status == "completed":
+            summary = _cron_delivery_summary(mission)
+            if summary is None:
+                return
+            secret_header_name: str | None = None
+            secret_token: str | None = None
+            if _task_cron_delivery_mode(task) == "webhook":
+                webhook_target = _normalized_http_webhook_url(_task_cron_delivery_to(task))
+            elif _task_cron_notify_enabled(task):
+                webhook_target = _normalized_http_webhook_url(self.cron_webhook_url)
+                if self.cron_webhook_token:
+                    secret_header_name = "Authorization"
+                    secret_token = f"Bearer {self.cron_webhook_token}"
+            else:
+                return
+            if webhook_target is None:
+                return
+            payload: dict[str, Any] = {
+                "action": "finished",
+                "missionId": int(mission["id"]),
+                "taskId": task_id,
+                "jobId": _cron_job_id(task_id),
+                "jobName": task.name,
+                "status": _cron_run_status(str(mission.get("status") or "")),
+                "summary": summary,
+            }
+            await self._send_ad_hoc_webhook_delivery(
+                route_name=f"Cron webhook for {task.name}",
+                route_target=webhook_target,
+                event_type="cron/finished",
+                payload=payload,
+                session_key=session_key,
+                conversation_target=conversation_target,
+                secret_header_name=secret_header_name,
+                secret_token=secret_token,
+            )
+            return
+
+        if event_type == "mission/failed" and mission_status == "failed":
+            if bool(task.cron_delivery_best_effort):
+                return
+            failure_message = _cron_failure_message(task, mission)
+            announce_message = _cron_failure_announce_message(task, mission)
+            payload = {
+                "missionId": int(mission["id"]),
+                "taskId": task_id,
+                "jobId": _cron_job_id(task_id),
+                "jobName": task.name,
+                "message": failure_message,
+                "status": "error",
+                "error": str(mission.get("last_error") or "").strip() or None,
+            }
+            delivery_session_key = _task_cron_session_key(task) or session_key
+            failure_destination = _task_cron_failure_destination(task) or {}
+            failure_destination_mode = (
+                str(failure_destination.get("mode") or "").strip().lower()
+            )
+            failure_destination_channel = (
+                str(failure_destination.get("channel") or "").strip().lower() or None
+            )
+            failure_destination_target = _failure_destination_explicit_announce_target(
+                failure_destination
+            )
+            explicit_announce_target = _task_explicit_announce_conversation_target(
+                task
+            )
+            if failure_destination_mode != "webhook":
+                if (
+                    failure_destination_target is not None
+                    and self.session_delivery_service is not None
+                ):
+                    await self._send_ad_hoc_announce_delivery(
+                        route_name=(
+                            f"Announce failure destination for {task.name}"
+                        ),
+                        conversation_target=failure_destination_target,
+                        event_type="cron/failure",
+                        payload=payload,
+                        message=announce_message,
+                    )
+                    return
+                if (
+                    failure_destination_mode == "announce"
+                    and failure_destination_channel == "last"
+                    and delivery_session_key is not None
+                    and self.session_delivery_service is not None
+                ):
+                    session_payload = dict(payload)
+                    session_payload["sessionKey"] = delivery_session_key
+                    await self._send_ad_hoc_session_delivery(
+                        route_name=f"Session delivery for {task.name}",
+                        session_key=delivery_session_key,
+                        event_type="cron/failure",
+                        payload=session_payload,
+                        conversation_target=conversation_target,
+                        message=announce_message,
+                    )
+                    return
+                if (
+                    explicit_announce_target is not None
+                    and self.session_delivery_service is not None
+                ):
+                    await self._send_ad_hoc_announce_delivery(
+                        route_name=f"Announce delivery for {task.name}",
+                        conversation_target=explicit_announce_target,
+                        thread_id=_task_cron_delivery_thread_id(task),
+                        event_type="cron/failure",
+                        payload=payload,
+                        message=announce_message,
+                    )
+                    return
+                if (
+                    _task_cron_payload_kind(task) == "agentTurn"
+                    and _task_cron_delivery_mode(task) != "webhook"
+                    and _task_cron_delivery_channel(task) == "last"
+                    and delivery_session_key is not None
+                    and self.session_delivery_service is not None
+                ):
+                    session_payload = dict(payload)
+                    session_payload["sessionKey"] = delivery_session_key
+                    await self._send_ad_hoc_session_delivery(
+                        route_name=f"Session delivery for {task.name}",
+                        session_key=delivery_session_key,
+                        event_type="cron/failure",
+                        payload=session_payload,
+                        conversation_target=conversation_target,
+                        message=announce_message,
+                    )
+                    return
+                if (
+                    _task_cron_payload_kind(task) == "agentTurn"
+                    and _task_cron_delivery_mode(task) != "webhook"
+                ):
+                    notify_event = dict(payload)
+                    notify_event["sessionKey"] = delivery_session_key
+                    fallback_target = (
+                        failure_destination_target.model_dump(mode="json")
+                        if failure_destination_target is not None
+                        else conversation_target
+                    )
+                    if fallback_target is not None:
+                        notify_event["conversationTarget"] = fallback_target
+                    await self._deliver_notifications("cron/failure", notify_event)
+                return
+            webhook_target = _normalized_http_webhook_url(
+                str(failure_destination.get("to") or "").strip()
+            )
+            if webhook_target is None:
+                return
+            await self._send_ad_hoc_webhook_delivery(
+                route_name=f"Cron failure destination for {task.name}",
+                route_target=webhook_target,
+                event_type="cron/failure",
+                payload=payload,
+                session_key=session_key,
+                conversation_target=conversation_target,
+            )
 
     def _mission_targets_openclaw_parity(
         self,
@@ -3425,7 +4084,10 @@ class OpsMeshService:
             if active:
                 continue
             try:
-                await self.run_task_blueprint_now(task.id, trigger="schedule")
+                if _task_routes_through_gateway_wake(task):
+                    await self.dispatch_cron_system_event_task(task.id, trigger="schedule")
+                else:
+                    await self.run_task_blueprint_now(task.id, trigger="schedule")
             except Exception:
                 logger.exception("Scheduled task launch failed for %s", task.name)
 
@@ -3825,20 +4487,20 @@ class OpsMeshService:
         for item_id in stale_ids:
             self._notified_inbox_items.pop(item_id, None)
 
-    def _post_webhook(
+    def _post_json_webhook(
         self,
-        route: dict[str, Any],
-        event_type: str,
-        event: dict[str, Any],
-        secret_token: str | None,
+        target: str,
+        payload: dict[str, Any],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
     ) -> None:
-        body = json.dumps({"eventType": event_type, "payload": event}).encode("utf-8")
+        body = json.dumps(payload).encode("utf-8")
         headers = {"Content-Type": "application/json"}
-        secret_header_name = route.get("secret_header_name")
         if secret_header_name and secret_token:
             headers[str(secret_header_name)] = str(secret_token)
         request = Request(
-            str(route["target"]),
+            target,
             data=body,
             headers=headers,
             method="POST",
@@ -3851,6 +4513,24 @@ class OpsMeshService:
             raise RuntimeError(f"Webhook returned {exc.code}") from exc
         except URLError as exc:
             raise RuntimeError(f"Webhook failed: {exc.reason}") from exc
+
+    def _post_webhook(
+        self,
+        route: dict[str, Any],
+        event_type: str,
+        event: dict[str, Any],
+        secret_token: str | None,
+    ) -> None:
+        self._post_json_webhook(
+            str(route["target"]),
+            {"eventType": event_type, "payload": event},
+            secret_header_name=(
+                str(route.get("secret_header_name"))
+                if route.get("secret_header_name")
+                else None
+            ),
+            secret_token=secret_token,
+        )
 
     async def _publish_ops_event(self, event_type: str, payload: dict[str, Any]) -> None:
         event = {"type": event_type, **payload, "createdAt": utcnow()}

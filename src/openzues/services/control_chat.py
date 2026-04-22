@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
+import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -37,6 +39,7 @@ from openzues.services.run_pressure import has_checkpoint_pressure
 from openzues.services.skillbook import resolve_skill_profile
 
 logger = logging.getLogger(__name__)
+WAKE_RETRY_COOLDOWN_SECONDS = 1.0
 
 CONTINUE_PHRASES = (
     "continue",
@@ -1390,9 +1393,31 @@ class ControlChatService:
         self._wake_service = wake_service
         self._attention_task: asyncio.Task[None] | None = None
         self._attention_stop_event = asyncio.Event()
+        self._wake_retry_due_at: float | None = None
+        self._dashboard_loader: Callable[[], Awaitable[DashboardView]] | None = None
+        self._wake_retry_timer: threading.Timer | None = None
+        self._wake_retry_timer_lock = threading.Lock()
+        self._wake_retry_dashboard: DashboardView | None = None
+        self._wake_retry_modes: tuple[str, ...] | None = None
 
     def set_wake_service(self, wake_service: GatewayWakeService | None) -> None:
         self._wake_service = wake_service
+        self.clear_wake_retry_state()
+
+    def set_dashboard_loader(
+        self,
+        dashboard_loader: Callable[[], Awaitable[DashboardView]] | None,
+    ) -> None:
+        self._dashboard_loader = dashboard_loader
+
+    def clear_wake_retry_state(self) -> None:
+        self._wake_retry_due_at = None
+        with self._wake_retry_timer_lock:
+            if self._wake_retry_timer is not None:
+                self._wake_retry_timer.cancel()
+            self._wake_retry_timer = None
+            self._wake_retry_modes = None
+            self._wake_retry_dashboard = None
 
     async def start_attention_queue(
         self,
@@ -1421,6 +1446,7 @@ class ControlChatService:
             except asyncio.CancelledError:
                 pass
             self._attention_task = None
+        self.clear_wake_retry_state()
 
     async def build_view(
         self,
@@ -1637,6 +1663,17 @@ class ControlChatService:
             executed=executed,
         )
 
+    async def append_session_assistant_message(
+        self,
+        session_key: str,
+        content: str,
+    ) -> ControlChatMessageView:
+        return await self._append_message(
+            role="assistant",
+            content=content,
+            session_key=session_key,
+        )
+
     async def handle_server_request(self, instance_id: int, request: dict[str, Any]) -> None:
         payload = self._normalize_request_payload(request)
         decision = await self._build_approval_autopilot_decision(instance_id, payload)
@@ -1718,19 +1755,97 @@ class ControlChatService:
         return True
 
     async def _dispatch_next_wake(self, dashboard: DashboardView) -> bool:
+        return await self._dispatch_next_wake_modes(dashboard)
+
+    async def dispatch_immediate_wakes(self, dashboard: DashboardView) -> bool:
+        return await self._dispatch_next_wake_modes(dashboard, modes=("now",))
+
+    async def _dispatch_next_wake_modes(
+        self,
+        dashboard: DashboardView,
+        *,
+        modes: tuple[str, ...] | None = None,
+    ) -> bool:
         if self._wake_service is None:
             return False
-        wake_request = await self._wake_service.claim_next_queued()
-        if wake_request is None:
-            return False
-        request_id = int(wake_request["id"])
-        try:
-            await self.submit(str(wake_request.get("text") or ""), dashboard)
-        except Exception:
-            await self._wake_service.release(request_id)
-            raise
-        await self._wake_service.complete(request_id)
-        return True
+        if self._wake_retry_due_at is not None:
+            now = time.monotonic()
+            if now < self._wake_retry_due_at:
+                return False
+            self._wake_retry_due_at = None
+        dispatched_any = False
+        submitted_wakes: set[tuple[str | None, str]] = set()
+        while True:
+            wake_request = await self._wake_service.claim_next_queued(modes=modes)
+            if wake_request is None:
+                return dispatched_any
+            request_id = int(wake_request["id"])
+            wake_text = str(wake_request.get("text") or "")
+            wake_session_key = (
+                str(wake_request["session_key"])
+                if wake_request.get("session_key") is not None
+                else None
+            )
+            wake_identity = (wake_session_key, wake_text)
+            try:
+                if wake_identity not in submitted_wakes:
+                    await self.submit(wake_text, dashboard, session_key=wake_session_key)
+                    submitted_wakes.add(wake_identity)
+            except Exception:
+                self._wake_retry_due_at = time.monotonic() + WAKE_RETRY_COOLDOWN_SECONDS
+                self._schedule_wake_retry(dashboard, modes=modes)
+                await self._wake_service.release(request_id)
+                raise
+            await self._wake_service.complete(request_id)
+            dispatched_any = True
+
+    def _schedule_wake_retry(
+        self,
+        dashboard: DashboardView,
+        *,
+        modes: tuple[str, ...] | None,
+    ) -> None:
+        self._wake_retry_dashboard = dashboard
+        with self._wake_retry_timer_lock:
+            if self._wake_retry_timer is not None and self._wake_retry_timer.is_alive():
+                if self._wake_retry_modes is not None and modes is None:
+                    self._wake_retry_modes = None
+                return
+            self._wake_retry_modes = modes
+
+            def run_retry() -> None:
+                nonlocal modes
+                with self._wake_retry_timer_lock:
+                    scheduled_modes = self._wake_retry_modes
+                    self._wake_retry_timer = None
+                    self._wake_retry_modes = None
+                try:
+                    asyncio.run(self._run_scheduled_wake_retry(scheduled_modes))
+                except Exception:
+                    logger.exception("Wake retry dispatch failed")
+
+            self._wake_retry_timer = threading.Timer(
+                WAKE_RETRY_COOLDOWN_SECONDS,
+                run_retry,
+            )
+            self._wake_retry_timer.daemon = True
+            self._wake_retry_timer.start()
+
+    async def _run_scheduled_wake_retry(
+        self,
+        modes: tuple[str, ...] | None,
+    ) -> None:
+        dashboard = (
+            await self._dashboard_loader()
+            if self._dashboard_loader is not None
+            else self._wake_retry_dashboard
+        )
+        if dashboard is None:
+            return
+        if modes == ("now",):
+            await self.dispatch_immediate_wakes(dashboard)
+            return
+        await self._dispatch_next_wake_modes(dashboard, modes=modes)
 
     async def _sweep_safe_approvals(self, dashboard: DashboardView) -> bool:
         for instance in dashboard.instances:

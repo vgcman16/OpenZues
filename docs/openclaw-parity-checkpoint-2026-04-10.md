@@ -11095,3 +11095,2696 @@ Next best slice:
 - Next exact seam:
   - keep hunting for the same class of bounded request-shape drift: harmless empty or blank OpenClaw-shaped inputs that the local bridge still rejects too early, while leaving genuinely unsupported runtime surfaces behind the explicit `503` boundary.
 
+### Recovery addendum 2026-04-19 bounded agent unknown channel-hint validation parity America/Chicago
+
+- Re-checked the upstream OpenClaw `agent` handler before widening the bounded bridge again.
+  - upstream evidence from the local OpenClaw checkout:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods\agent.ts`
+  - key finding:
+    - OpenClaw normalizes `channel` and `replyChannel` hints before runtime routing.
+    - unknown normalized channel hints fail early as:
+      - `invalid agent params: unknown channel: <channel>`
+    - that classification happens before the richer delivery/runtime bridge, so malformed channel hints are request-shape errors, not delivery-runtime outages.
+- Landed the smallest honest local runtime:
+  - bounded `agent` now validates `channel` and `replyChannel` hints before the session-only runtime availability gate.
+  - known gateway channels still flow into the existing bounded `503` unavailable contract because OpenZues still does not implement the richer outbound delivery/runtime path behind `agent`.
+  - `last` still behaves as a special omission-style hint and does not trigger the unknown-channel failure.
+- Kept the scope intentionally honest:
+  - this slice only fixes request-shape classification for unknown channel hints.
+  - it does not widen bounded `agent` into real delivery routing, plugin-backed outbound execution, or multi-agent runtime parity.
+- Product effect proved end to end:
+  - OpenClaw-shaped callers now get a high-signal `400 INVALID_REQUEST` for malformed `channel` / `replyChannel` hints instead of the misleading generic session-only `503` unavailable response.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_agent_rejects_unknown_channel_hints_before_runtime_bridge`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_gateway_node_method_call_endpoint_rejects_unknown_agent_channel_hints`
+- Verified the slice with:
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "unknown_channel_hints_before_runtime_bridge or rejects_unknown_agent_channel_hints"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q`
+  - `.\.venv\Scripts\ruff.exe check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused unknown-channel proof quartet passed cleanly (`4 passed`).
+  - the full gateway node-method/API regression sweep passed cleanly after the classification fix (`475 passed`).
+  - Ruff stayed clean on the touched runtime/tests.
+  - the touched production runtime type-checked cleanly.
+- Next exact seam:
+  - keep walking the bounded `agent` request contract with the same rule: close the next source-backed invalid-request or omission drift that still misclassifies harmless input shape, while leaving real outbound/runtime gaps behind the explicit `503` boundary.
+
+### Recovery addendum 2026-04-19 bounded agent last-channel omission parity America/Chicago
+
+- Re-checked the upstream OpenClaw `agent` channel-hint handling before widening the bounded bridge again.
+  - upstream evidence from the local OpenClaw checkout:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods\agent.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\utils\message-channel-normalize.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\utils\message-channel-core.ts`
+  - key finding:
+    - OpenClaw includes `last` in the allowed gateway agent channel-hint value set.
+    - the `agent` handler only rejects unknown normalized channel hints; `last` is explicitly exempt from the invalid-request branch.
+    - that makes `channel: "last"` and `replyChannel: "last"` omission-style routing hints rather than unsupported transport payloads by themselves.
+- Landed the smallest honest local runtime:
+  - bounded `agent` now collapses `channel` / `replyChannel` values of `last` to omission before the bounded session-only unsupported-runtime gate runs.
+  - other non-empty known channel hints still remain behind the explicit bounded `503` unavailable contract because OpenZues still does not implement the richer outbound delivery/runtime path behind `agent`.
+- Kept the scope intentionally honest:
+  - this slice only closes the omission-style `last` hint drift.
+  - it does not widen bounded `agent` into real delivery routing, default-channel resolution, or plugin-backed outbound execution parity.
+- Product effect proved end to end:
+  - OpenClaw-shaped callers can now send `channel: "last"` or `replyChannel: "last"` on bounded session-only launches without tripping the misleading unsupported-transport `503`.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_agent_launch_treats_last_channel_hints_as_omitted`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_gateway_node_method_call_endpoint_treats_last_agent_channel_hints_as_omitted`
+- Verified the slice with:
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "treats_last_channel_hints_as_omitted or treats_last_agent_channel_hints_as_omitted"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q`
+  - `.\.venv\Scripts\ruff.exe check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused `last`-hint proof quartet passed cleanly (`4 passed`).
+  - the full gateway node-method/API regression sweep passed cleanly after the omission landing (`479 passed`).
+  - Ruff stayed clean on the touched runtime/tests.
+  - the touched production runtime type-checked cleanly.
+- Next exact seam:
+  - keep walking the bounded `agent` request contract with the same rule: close the next source-backed invalid-request or omission drift that still misclassifies harmless input shape, while leaving real outbound/runtime gaps behind the explicit `503` boundary.
+
+### Recovery addendum 2026-04-19 bounded agent input-provenance schema validation parity America/Chicago
+
+- Re-checked the upstream OpenClaw `agent` contract before widening the bounded bridge again.
+  - upstream evidence from the local OpenClaw checkout:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\protocol\schema\primitives.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\sessions\input-provenance.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods\agent.ts`
+  - key finding:
+    - OpenClaw exposes a concrete `InputProvenanceSchema` with:
+      - required `kind` in `external_user | inter_session | internal_system`
+      - optional string fields `originSessionId`, `sourceSessionKey`, `sourceChannel`, and `sourceTool`
+      - `additionalProperties: false`
+    - the upstream gateway normalizer also drops invalid provenance instead of treating arbitrary objects as structurally valid runtime payloads.
+- Landed the smallest honest local runtime:
+  - bounded `agent` now validates `inputProvenance` as an object with the same allowed keys and required `kind` enum before the session-only availability gate runs.
+  - malformed provenance objects now fail as invalid requests instead of leaking into the generic bounded-launch `503` unavailable path.
+- Kept the scope intentionally honest:
+  - this slice only closes request-shape validation parity for malformed provenance payloads.
+  - OpenZues still does not claim upstream runtime parity for populated `inputProvenance` or `internalEvents` execution semantics beyond the already-landed bounded cases.
+- Product effect proved end to end:
+  - OpenClaw-shaped callers now get high-signal `400` validation errors for malformed `inputProvenance` payloads, including invalid `kind` values and unexpected extra fields.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_agent_rejects_invalid_input_provenance_before_runtime_bridge`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_gateway_node_method_call_endpoint_rejects_invalid_agent_input_provenance`
+- Verified the slice with:
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "invalid_input_provenance_before_runtime_bridge or rejects_invalid_agent_input_provenance"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q`
+  - `.\.venv\Scripts\ruff.exe check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused malformed-provenance proof quartet passed cleanly (`4 passed`).
+  - the full gateway node-method/API regression sweep passed cleanly after the validation landing (`483 passed`).
+  - Ruff stayed clean on the touched runtime/tests.
+  - the touched production runtime type-checked cleanly.
+- Next exact seam:
+  - keep walking the bounded `agent` request contract with the same rule: close the next source-backed invalid-request or omission drift that still misclassifies malformed or harmless input shape, while leaving real inter-session and outbound runtime gaps behind the explicit bounded-runtime boundary.
+
+### Recovery addendum 2026-04-19 bounded agent inert-attachment omission parity America/Chicago
+
+- Re-checked the upstream OpenClaw attachment normalizer before widening the bounded bridge again.
+  - upstream evidence from the local OpenClaw checkout:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods\attachment-normalize.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods\agent.ts`
+  - key finding:
+    - OpenClaw maps RPC attachments into chat attachments and then filters with `.filter((a) => a.content)`.
+    - entries that only carry metadata such as `type`, `mimeType`, `fileName`, or a `source` object without usable base64 `data` become inert and are dropped before runtime routing.
+    - only attachments with real inline `content` or base64 `source.data` survive into the richer runtime surface.
+- Landed the smallest honest local runtime:
+  - bounded `agent` still validates that `attachments` is an array when present.
+  - the bounded unavailable-runtime gate now treats only effective attachments as unsupported transport payload.
+  - inert attachment entries are now collapsed to omission, which lets the existing bounded control-chat launch path proceed honestly.
+- Kept the scope intentionally honest:
+  - this slice does not claim full OpenClaw attachment-runtime parity.
+  - any attachment that carries real content still remains behind the explicit bounded `503` unavailable contract because OpenZues does not yet own the richer attachment delivery/runtime bridge.
+- Product effect proved end to end:
+  - OpenClaw-shaped callers can include metadata-only or empty-source attachment entries on bounded `agent` launches without tripping the misleading generic `503` unsupported-runtime response.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_agent_launch_ignores_inert_attachments_without_effective_content`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_gateway_node_method_call_endpoint_ignores_inert_agent_attachments`
+- Verified the slice with:
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "inert_attachments or ignores_inert_agent_attachments"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q`
+  - `.\.venv\Scripts\ruff.exe check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused inert-attachment proof quartet passed cleanly (`4 passed`).
+  - the full gateway node-method/API regression sweep passed cleanly after the omission landing (`487 passed`).
+  - Ruff stayed clean on the touched runtime/tests.
+  - the touched production runtime type-checked cleanly.
+- Next exact seam:
+  - keep walking the bounded `agent` request contract with the same rule: close the next source-backed invalid-request or omission drift that still misclassifies harmless request shape, while leaving real attachment delivery, inter-session, and outbound runtime gaps behind the explicit bounded-runtime boundary.
+
+### Recovery addendum 2026-04-19 bounded sessions-send inert-attachment omission parity America/Chicago
+
+- Re-checked the upstream OpenClaw sessions bridge before widening the local bounded runtime again.
+  - upstream evidence from the local OpenClaw checkout:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods\sessions.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods\attachment-normalize.ts`
+  - key finding:
+    - upstream `sessions.send` forwards `attachments` straight into the same `chat.send` attachment pipeline.
+    - that pipeline uses `normalizeRpcAttachmentsToChatAttachments(...)`, which drops entries without usable `content`.
+    - metadata-only or empty-source attachment entries are therefore omission-style input, not a runtime payload that should fail early on their own.
+- Landed the smallest honest local runtime:
+  - `sessions.send` still validates that `attachments` is an array when present.
+  - the local bounded `sessions.send` bridge now rejects only effective attachments with real content.
+  - inert attachment entries are collapsed to omission and the existing bounded control-chat runtime continues normally.
+- Kept the scope intentionally honest:
+  - this slice only closes omission parity for inert `sessions.send` attachments.
+  - OpenZues still does not claim full attachment delivery/runtime parity for `sessions.send`, and real content-bearing attachments remain explicitly unsupported.
+  - the adjacent `sessions.steer` attachment drift remains a separate bounded seam.
+- Product effect proved end to end:
+  - OpenClaw-shaped callers can send metadata-only or empty-source attachments through bounded `sessions.send` without getting a misleading local `400` rejection.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_sessions_send_ignores_inert_attachments_without_effective_content`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_gateway_node_method_call_endpoint_ignores_inert_sessions_send_attachments`
+- Verified the slice with:
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "sessions_send_ignores_inert_attachments_without_effective_content or ignores_inert_sessions_send_attachments"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q`
+  - `.\.venv\Scripts\ruff.exe check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused inert `sessions.send` proof quartet passed cleanly (`4 passed`).
+  - the full gateway node-method/API regression sweep passed cleanly after the omission landing (`491 passed`).
+  - Ruff stayed clean on the touched runtime/tests.
+  - the touched production runtime type-checked cleanly.
+- Next exact seam:
+  - carry the same omission-vs-runtime rule into the adjacent `sessions.steer` attachment path, or move back to the bounded `agent` contract for the next source-backed request-shape drift that still misclassifies harmless input before the explicit runtime boundary.
+
+### Recovery addendum 2026-04-19 bounded sessions-steer inert-attachment omission parity America/Chicago
+
+- Re-checked the upstream OpenClaw steer path before widening the local bounded runtime again.
+  - upstream evidence from the local OpenClaw checkout:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods\sessions.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods\attachment-normalize.ts`
+  - key finding:
+    - upstream `sessions.steer` goes through the same `handleSessionSend(...)` path as `sessions.send`, only with `interruptIfActive: true`.
+    - that shared path forwards `attachments` into `chat.send`, where the same normalizer drops entries without usable `content`.
+    - inert attachment entries are therefore omission-style input on steer as well, not something that should fail before the interrupt-and-send runtime path.
+- Landed the smallest honest local runtime:
+  - `sessions.steer` still validates that `attachments` is an array when present.
+  - the bounded local steer bridge now rejects only effective attachments with real content.
+  - metadata-only or empty-source attachment entries are collapsed to omission, allowing the already-landed tracked interrupt path to proceed honestly.
+- Kept the scope intentionally honest:
+  - this slice only closes omission parity for inert `sessions.steer` attachments.
+  - OpenZues still does not claim full attachment delivery/runtime parity for steer, and real content-bearing attachments remain explicitly unsupported.
+- Product effect proved end to end:
+  - OpenClaw-shaped callers can use bounded `sessions.steer` with metadata-only or empty-source attachment entries without getting a misleading local `400` rejection before the tracked interrupt runtime runs.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_sessions_steer_ignores_inert_attachments_without_effective_content`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_gateway_node_method_call_endpoint_ignores_inert_sessions_steer_attachments`
+- Verified the slice with:
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "sessions_steer_ignores_inert_attachments_without_effective_content or ignores_inert_sessions_steer_attachments"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q`
+  - `.\.venv\Scripts\ruff.exe check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused inert `sessions.steer` proof quartet passed cleanly (`4 passed`).
+  - the full gateway node-method/API regression sweep passed cleanly after the omission landing (`495 passed`).
+  - Ruff stayed clean on the touched runtime/tests.
+  - the touched production runtime type-checked cleanly.
+- Next exact seam:
+  - keep walking the bounded request contract with the same omission-vs-runtime rule, or move to the next source-backed runtime shape drift around real content-bearing attachments and adjacent session/chat request surfaces that still misclassify harmless input before the explicit bounded-runtime boundary.
+
+### Recovery addendum 2026-04-19 bounded sessions attachment runtime-classification parity America/Chicago
+
+- Re-checked the upstream OpenClaw session/chat attachment contract after landing the omission slices.
+  - upstream evidence from the local OpenClaw checkout:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods\sessions.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods\chat.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods\attachment-normalize.ts`
+  - key finding:
+    - upstream `sessions.send` and `sessions.steer` both forward attachments into `chat.send`.
+    - `chat.send` accepts content-bearing attachments as a valid request shape and only enforces that the request has message text or a surviving attachment.
+    - that means content-bearing attachments are not invalid request payloads upstream, even if a local runtime cannot yet execute the full attachment path.
+- Landed the smallest honest local runtime:
+  - bounded `sessions.send` and `sessions.steer` still reject only effective attachments, but they now reject them as explicit runtime unavailability instead of invalid request shape.
+  - metadata-only or empty-source entries still flow through the omission behavior already landed in the previous two slices.
+- Kept the scope intentionally honest:
+  - this slice does not claim full attachment delivery/runtime parity.
+  - real content-bearing attachments remain unsupported in OpenZues today, but they now fail with a truthful `503 UNAVAILABLE` contract instead of a misleading `400`.
+- Product effect proved end to end:
+  - callers using valid content-bearing attachment payloads on bounded `sessions.send` or `sessions.steer` now get a high-signal runtime-unavailable response that matches the real product boundary more honestly.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_sessions_send_effective_attachments_fail_as_unavailable_runtime`
+    - `test_sessions_steer_effective_attachments_fail_as_unavailable_runtime`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_gateway_node_method_call_endpoint_treats_effective_sessions_send_attachments_`
+    - `test_gateway_node_method_call_endpoint_treats_effective_sessions_steer_attachments_`
+- Verified the slice with:
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "effective_sessions_send_attachments or effective_sessions_steer_attachments or effective_attachments_fail_as_unavailable_runtime"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q`
+  - `.\.venv\Scripts\ruff.exe check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused effective-attachment classification proof passed cleanly (`8 passed`).
+  - the full gateway node-method/API regression sweep passed cleanly after the classification landing (`503 passed`).
+  - Ruff stayed clean on the touched runtime/tests.
+  - the touched production runtime type-checked cleanly.
+- Next exact seam:
+  - move from request classification into the next truthful bounded runtime slice around real attachment execution or another adjacent OpenClaw-shaped session/chat request field that is now source-backed but still stopped at the explicit OpenZues runtime boundary.
+
+### Recovery addendum 2026-04-19 bounded chat-send attachment request-shape parity America/Chicago
+
+- Re-checked the upstream OpenClaw `chat.send` contract before widening the local bridge.
+  - upstream evidence from the local OpenClaw checkout:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods\chat.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods\attachment-normalize.ts`
+  - key finding:
+    - upstream `chat.send` accepts the `attachments` field directly.
+    - metadata-only or empty-source attachment entries are normalized away.
+    - content-bearing attachments remain a valid request shape upstream even if later runtime work is needed.
+- Landed the smallest honest local runtime:
+  - bounded `chat.send` now accepts the upstream-shaped `attachments` field.
+  - inert attachment entries are collapsed to omission and the existing bounded chat runtime continues normally.
+  - content-bearing attachments fail as an explicit `503 UNAVAILABLE` runtime gap instead of a schema-level `400`.
+- Kept the scope intentionally honest:
+  - this slice does not claim attachment execution parity for `chat.send`.
+  - real attachment delivery remains unsupported in OpenZues today.
+- Product effect proved end to end:
+  - upstream-shaped `chat.send` requests no longer fail at the request schema boundary just because they include the supported `attachments` field.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_chat_send_ignores_inert_attachments_without_effective_content`
+    - `test_chat_send_effective_attachments_fail_as_unavailable_runtime`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_gateway_node_method_call_endpoint_ignores_inert_chat_send_attachments`
+    - `test_gateway_node_method_call_endpoint_treats_effective_chat_send_attachments_`
+- Verified the slice with:
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "chat_send_ignores_inert_attachments_without_effective_content or effective_chat_send_attachments or ignores_inert_chat_send_attachments"`
+  - `.\.venv\Scripts\ruff.exe check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused `chat.send` attachment proof passed cleanly (`6 passed`).
+  - Ruff stayed clean on the touched runtime/tests.
+  - the touched production runtime type-checked cleanly.
+
+### Recovery addendum 2026-04-19 shared message-or-attachment gate parity for chat and session sends America/Chicago
+
+- Re-checked the upstream OpenClaw request gate after widening `chat.send` attachment shape parity.
+  - upstream evidence from the local OpenClaw checkout:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods\chat.ts`
+    - specifically the `if (!rawMessage && normalizedAttachments.length === 0)` guard
+  - key finding:
+    - upstream rejects requests whose message text is blank and whose attachments normalize down to nothing.
+    - that rule applies naturally to the local bounded `chat.send`, `sessions.send`, and `sessions.steer` bridges because the two session methods are upstream façades over the same send path.
+- Landed the smallest honest local runtime:
+  - bounded `chat.send`, `sessions.send`, and `sessions.steer` now reject blank-message requests unless a real attachment survives normalization.
+  - inert attachment entries no longer sneak an empty message through to the control-chat runtime.
+  - content-bearing attachments still remain on the explicit `503` runtime-unavailable path already landed for the bounded attachment slices.
+- Kept the scope intentionally honest:
+  - this slice only closes the request gate parity for blank-message/inert-attachment combinations.
+  - it does not widen attachment execution parity.
+- Product effect proved end to end:
+  - the local gateway now matches the upstream rule that a send/steer request must contribute either message text or a surviving attachment payload.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_chat_and_session_send_variants_require_message_or_effective_attachment`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_gateway_node_method_call_endpoint_requires_message_or_effective_attachment`
+- Verified the slice with:
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "requires_message_or_effective_attachment or require_message_or_effective_attachment"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q`
+  - `.\.venv\Scripts\ruff.exe check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused shared request-gate proof passed cleanly (`6 passed`).
+  - the full gateway node-method/API regression sweep passed cleanly after the combined landing (`517 passed`).
+  - Ruff stayed clean on the touched runtime/tests.
+  - the touched production runtime type-checked cleanly.
+- Next exact seam:
+  - move from request-shape parity into the next truthful bounded runtime slice around real attachment execution, or choose the next upstream-backed chat/session request field that still diverges at the explicit OpenZues runtime boundary.
+
+### Recovery addendum 2026-04-19 bounded chat-send route and provenance request-shape parity America/Chicago
+
+- Re-checked the upstream OpenClaw `chat.send` contract before widening the local bridge again.
+  - upstream evidence from the local OpenClaw checkout:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\protocol\schema\logs-chat.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\protocol\schema\primitives.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods\chat.ts`
+  - key finding:
+    - upstream `chat.send` accepts optional `originatingChannel`, `originatingTo`, `originatingAccountId`, `originatingThreadId`, `systemInputProvenance`, and `systemProvenanceReceipt`.
+    - blank route fields normalize away, while populated route/provenance fields are valid request shape and only then get gated by admin-scope and runtime logic.
+    - OpenZues was still rejecting those fields as unknown keys at the request boundary, which was a schema drift rather than the real bounded runtime boundary.
+- Landed the smallest honest local runtime:
+  - bounded `chat.send` now accepts the upstream-shaped route and provenance fields at the request boundary.
+  - blank route fields collapse to omission and the existing bounded control-chat bridge continues normally.
+  - populated route fields now normalize first, require admin scope when scopes are present, and then fail as explicit `503 UNAVAILABLE` runtime work instead of an unknown-key `400`.
+  - populated system provenance fields now follow the same pattern: validate shape, require admin scope when scopes are present, and then fail as explicit `503 UNAVAILABLE` runtime work instead of an unknown-key `400`.
+- Kept the scope intentionally honest:
+  - this slice does not claim full route-provenance or system-provenance runtime parity for `chat.send`.
+  - OpenZues still does not inject those metadata fields into the underlying control-chat runtime today.
+- Product effect proved end to end:
+  - OpenClaw-shaped `chat.send` requests with supported-but-unwired route/provenance fields no longer fail as bogus schema drift.
+  - harmless blank route-field payloads no longer get rejected just because those upstream-supported keys are present.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_chat_send_ignores_blank_originating_route_fields_without_rejecting_request`
+    - `test_chat_send_originating_route_fields_require_admin_scope_before_runtime`
+    - `test_chat_send_originating_route_fields_fail_as_unavailable_runtime`
+    - `test_chat_send_system_provenance_fields_require_admin_scope_before_runtime`
+    - `test_chat_send_system_provenance_fields_fail_as_unavailable_runtime`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_gateway_node_method_call_endpoint_ignores_blank_chat_send_originating_fields`
+    - `test_gateway_node_method_call_endpoint_treats_chat_send_originating_fields_`
+    - `test_gateway_node_method_call_endpoint_treats_chat_send_system_provenance_fields_`
+- Verified the slice with:
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py -q -k "blank_originating_route_fields or originating_route_fields or system_provenance_fields"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_nodes_api.py -q -k "blank_chat_send_originating_fields or chat_send_originating_fields_ or chat_send_system_provenance_fields_"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q`
+  - `.\.venv\Scripts\ruff.exe check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused route/provenance proof octet passed cleanly (`8 passed`).
+  - the full gateway node-method/API regression sweep passed cleanly after the landing (`525 passed`).
+  - Ruff stayed clean on the touched runtime/tests.
+  - the touched production runtime type-checked cleanly.
+- Next exact seam:
+  - keep walking the same upstream-backed `chat.send` request surface and decide whether the next honest slice is another omission/runtime classification rule, or move sideways into the next bounded request/runtime seam under `chat.send` or `sessions.*` that still diverges at the explicit OpenZues runtime boundary.
+
+### Recovery addendum 2026-04-19 shared null-byte message gate parity for chat and session sends America/Chicago
+
+- Re-checked the upstream OpenClaw send-input sanitizer before widening the local bridge again.
+  - upstream evidence from the local OpenClaw checkout:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods\chat.ts`
+    - specifically `sanitizeChatSendMessageInput(...)`
+    - and the shared `handleSessionSend(...)` path in:
+      - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods\sessions.ts`
+  - key finding:
+    - upstream `chat.send` rejects message payloads containing null bytes with `message must not contain null bytes`.
+    - upstream `sessions.send` and `sessions.steer` inherit that exact gate because they forward message text into `chat.send`.
+    - OpenZues was still letting null-byte messages flow into the bounded runtime, which was a request-shape drift rather than a real runtime limitation.
+- Landed the smallest honest local runtime:
+  - bounded `chat.send`, `sessions.send`, and `sessions.steer` now reject message payloads containing `\x00` before any runtime bridge work.
+  - the shared gate lives in the local send-message sanitizer so the three entry points stay aligned.
+- Kept the scope intentionally honest:
+  - this slice only closes null-byte validation parity for the send/steer message input.
+  - it does not yet claim the rest of upstream control-character normalization behavior beyond the proven null-byte rejection.
+- Product effect proved end to end:
+  - OpenClaw-shaped callers now get the same high-signal `400` validation failure for null-byte message payloads instead of silently entering the bounded control-chat runtime.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_chat_and_session_send_variants_reject_null_bytes_in_message`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_gateway_node_method_call_endpoint_rejects_null_bytes_in_send_message`
+- Verified the slice with:
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py -q -k "reject_null_bytes_in_message"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_nodes_api.py -q -k "rejects_null_bytes_in_send_message"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q`
+  - `.\.venv\Scripts\ruff.exe check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused null-byte proof sextet passed cleanly (`6 passed`).
+  - the full gateway node-method/API regression sweep passed cleanly after the landing (`531 passed`).
+  - Ruff stayed clean on the touched runtime/tests.
+  - the touched production runtime type-checked cleanly.
+- Next exact seam:
+  - keep walking the upstream-backed `chat.send` input surface for the next bounded request/runtime classification drift, or move sideways into the next `sessions.*` seam that still diverges at the explicit OpenZues runtime boundary.
+
+### Recovery addendum 2026-04-19 shared send-message sanitization parity for chat and session sends America/Chicago
+
+- Continued directly on the same upstream `chat.send` sanitizer seam after landing null-byte rejection.
+  - upstream evidence from the local OpenClaw checkout:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods\chat.ts`
+    - specifically:
+      - `stripDisallowedChatControlChars(...)`
+      - `sanitizeChatSendMessageInput(...)`
+    - and the shared `handleSessionSend(...)` path in:
+      - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods\sessions.ts`
+  - key finding:
+    - upstream normalizes send text to NFC before runtime.
+    - upstream strips disallowed control characters while preserving tab, newline, and carriage return.
+    - `sessions.send` and `sessions.steer` inherit that same sanitizer because they forward message text into `chat.send`.
+    - OpenZues was still passing raw decomposed Unicode and disallowed control characters through to the bounded runtime.
+- Landed the smallest honest local runtime:
+  - the shared local send-message sanitizer now normalizes text to NFC and strips disallowed control characters before runtime.
+  - bounded `chat.send`, `sessions.send`, and `sessions.steer` now all hand sanitized message text to the bounded control-chat bridge.
+- Kept the scope intentionally honest:
+  - this slice only closes the message-text normalization/sanitization parity for the three send entry points.
+  - it does not yet widen any richer route, attachment, or provenance runtime semantics beyond the already documented bounded behavior.
+- Product effect proved end to end:
+  - OpenClaw-shaped send payloads no longer persist raw bell/DEL-style control characters into the bounded runtime.
+  - decomposed Unicode input now arrives at the runtime in the same normalized NFC form upstream uses.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_chat_and_session_send_variants_sanitize_message_before_runtime`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_gateway_node_method_call_endpoint_sanitizes_send_message_before_runtime`
+- Verified the slice with:
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py -q -k "sanitize_message_before_runtime or reject_null_bytes_in_message"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_nodes_api.py -q -k "sanitizes_send_message_before_runtime or rejects_null_bytes_in_send_message"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q`
+  - `.\.venv\Scripts\ruff.exe check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused shared sanitizer proof dozen passed cleanly (`12 passed` across the null-byte and sanitize-focused runs).
+  - the full gateway node-method/API regression sweep passed cleanly after the landing (`537 passed`).
+  - Ruff stayed clean on the touched runtime/tests.
+  - the touched production runtime type-checked cleanly.
+- Next exact seam:
+  - stay on the upstream-backed `chat.send` and `sessions.*` input/runtime boundary for the next smallest honest drift, especially another validation or omission rule that still misclassifies payloads before the explicit OpenZues runtime boundary.
+
+### Recovery addendum 2026-04-19 chat-send system receipt admin-gate ordering parity America/Chicago
+
+- Continued on the same upstream `chat.send` sanitizer seam, this time around `systemProvenanceReceipt`.
+  - upstream evidence from the local OpenClaw checkout:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods\chat.ts`
+    - specifically:
+      - the admin-scope gate checking raw `p.systemInputProvenance || p.systemProvenanceReceipt || explicitOriginResult.value`
+      - `normalizeOptionalChatSystemReceipt(...)`
+      - `sanitizeChatSendMessageInput(...)`
+  - key finding:
+    - upstream uses the raw `systemProvenanceReceipt` presence for admin-scope gating before later sanitizing and trimming the receipt.
+    - that means a whitespace-only receipt still requires admin scope for remote callers, but then sanitizes away and does not force later runtime provenance handling.
+    - a receipt containing a null byte fails validation before the runtime-unavailable provenance branch.
+    - OpenZues was still trimming/sanitizing the receipt too late for one case and too early for another:
+      - whitespace-only receipts were skipping the admin gate entirely.
+      - null-byte receipts were reaching the runtime-unavailable `503` boundary instead of failing as `400`.
+- Landed the smallest honest local runtime:
+  - bounded `chat.send` now distinguishes raw receipt presence from sanitized receipt content.
+  - remote callers without admin scope now get `system provenance fields require admin scope` for whitespace-only receipts, matching the upstream raw-presence gate.
+  - after admin gating, the receipt now goes through the same sanitizer as send text, so null-byte receipts fail before runtime and whitespace-only receipts sanitize to omission.
+  - sanitized-away blank receipts no longer trigger the bounded provenance-runtime `503` when the caller already has admin scope.
+- Kept the scope intentionally honest:
+  - this slice only closes request validation/order parity for `systemProvenanceReceipt`.
+  - it does not widen actual provenance injection runtime support beyond the already explicit bounded `503` for populated system provenance payloads.
+- Product effect proved end to end:
+  - remote gateway callers now see the same raw-presence admin gate and pre-runtime null-byte validation upstream exposes for `systemProvenanceReceipt`.
+  - admin callers with whitespace-only receipts now continue through the bounded `chat.send` bridge instead of being misclassified as provenance-runtime work.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_chat_send_blank_system_receipt_requires_admin_scope_before_runtime`
+    - `test_chat_send_blank_system_receipt_is_omitted_after_admin_scope`
+    - `test_chat_send_system_receipt_rejects_null_bytes_before_runtime`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_remote_chat_send_blank_system_receipt_honors_scope_and_omission`
+    - `test_remote_chat_send_rejects_null_byte_system_receipt`
+- Verified the slice with:
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py -q -k "blank_system_receipt or null_system_receipt"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_nodes_api.py -q -k "blank_system_receipt or null_byte_system_receipt"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q`
+  - `.\.venv\Scripts\ruff.exe check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused system-receipt proof quintet passed cleanly (`5 passed` across the targeted runs).
+  - the full gateway node-method/API regression sweep passed cleanly after the landing (`542 passed`).
+  - Ruff stayed clean on the touched runtime/tests.
+  - the touched production runtime type-checked cleanly.
+- Next exact seam:
+  - keep walking the upstream-backed `chat.send` request/runtime boundary for the next smallest honest validation or omission drift, especially another field whose normalization order still changes whether the request should fail as `400`, sanitize to omission, or truthfully stop at the explicit OpenZues runtime boundary.
+
+### Recovery addendum 2026-04-19 chat-send blank-message ordering parity for route and provenance fields America/Chicago
+
+- Continued on the same upstream `chat.send` request/runtime seam, this time around validation order.
+  - upstream evidence from the local OpenClaw checkout:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods\chat.ts`
+    - specifically:
+      - the shared `message or attachment required` gate firing before the later explicit-origin and system-provenance runtime-unavailable branches.
+  - key finding:
+    - upstream decides first whether a `chat.send` request is structurally empty.
+    - if the message is blank and there are no effective attachments, the request fails as `400` even when explicit originating route fields or system provenance payloads are also present.
+    - OpenZues was still raising the bounded provenance/runtime `503` too early, which misclassified blank-message requests that should have been rejected as malformed input instead.
+- Landed the smallest honest local runtime:
+  - bounded `chat.send` now computes attachment effectiveness, applies the shared `message or attachment required` gate, and only then falls through to the already explicit route/provenance and attachment runtime-unavailable branches.
+  - the admin-scope gate and receipt sanitization order from the previous slice were left intact.
+- Kept the scope intentionally honest:
+  - this slice only closes validation-order parity for blank-message `chat.send` requests carrying route/provenance fields.
+  - it does not widen actual originating-route handling, provenance injection, or attachment execution beyond the already explicit bounded `503` runtime boundary.
+- Product effect proved end to end:
+  - authorized callers now get `400 "message or attachment required"` for empty `chat.send` payloads even if they also include explicit origin fields, `systemInputProvenance`, or `systemProvenanceReceipt`.
+  - non-empty requests still stop truthfully at the existing bounded route/provenance and attachment runtime-unavailable branches.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_chat_send_blank_message_with_provenance_requires_message_or_attachment`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_remote_chat_send_blank_message_with_provenance_requires_message_or_attachment`
+- Verified the slice with:
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py -q -k "blank_message_with_provenance"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_nodes_api.py -q -k "blank_message_with_provenance"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q`
+  - `.\.venv\Scripts\ruff.exe check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused blank-message ordering proof quartet passed cleanly (`4 passed` across the targeted runs).
+  - the full gateway node-method/API regression sweep passed cleanly after the landing (`546 passed`).
+  - Ruff stayed clean on the touched runtime/tests.
+  - the touched production runtime type-checked cleanly.
+- Next exact seam:
+  - keep walking the upstream-backed `chat.send` and adjacent `sessions.*` request/runtime boundary for the next smallest honest classification drift, especially another omission or precedence rule that still decides between `400`, sanitize-to-omission, and the bounded OpenZues `503` runtime edge differently than upstream.
+
+### Recovery addendum 2026-04-19 chat-send invalid system-input provenance omission parity America/Chicago
+
+- Continued on the same upstream `chat.send` request/runtime seam, this time around invalid `systemInputProvenance`.
+  - upstream evidence from the local OpenClaw checkout:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods\chat.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\sessions\input-provenance.ts`
+    - specifically:
+      - the raw admin-scope gate checking `p.systemInputProvenance || p.systemProvenanceReceipt || explicitOriginResult.value`
+      - `normalizeInputProvenance(...)`, which returns `undefined` for invalid or non-normalizable provenance payloads instead of throwing.
+  - key finding:
+    - upstream still uses raw provenance presence for the admin gate.
+    - after that gate, invalid `systemInputProvenance` payloads normalize away instead of failing the request.
+    - OpenZues was still validating `chat.send.systemInputProvenance` too early and too strictly, which caused two drifts:
+      - owner/admin callers got `400` validation failures instead of omission and normal send behavior.
+      - remote non-admin callers saw validation failures instead of the upstream admin-scope error for raw provenance presence.
+- Landed the smallest honest local runtime:
+  - bounded `chat.send` now treats `systemInputProvenance` differently from the stricter `agent` launch path:
+    - it preserves the raw field for admin-scope gating.
+    - it then permissively normalizes only the supported provenance shape and silently omits invalid payloads.
+  - the stricter `agent` input-provenance validation path was left untouched.
+- Kept the scope intentionally honest:
+  - this slice only closes omission and admin-gate parity for invalid `chat.send.systemInputProvenance`.
+  - it does not widen actual provenance injection runtime support beyond the already explicit bounded `503` for normalized system provenance payloads.
+- Product effect proved end to end:
+  - remote operator callers with invalid `systemInputProvenance` now get the upstream-shaped `system provenance fields require admin scope` error.
+  - owner/admin callers now have invalid provenance payloads normalized away so the bounded `chat.send` runtime proceeds normally instead of failing validation.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_chat_send_invalid_system_input_provenance_is_omitted_after_admin_scope`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_remote_chat_send_invalid_system_input_provenance_honors_scope_and_omission`
+- Verified the slice with:
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py -q -k "invalid_system_input_provenance"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_nodes_api.py -q -k "invalid_system_input_provenance"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q`
+  - `.\.venv\Scripts\ruff.exe check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused invalid-system-provenance proof pair passed cleanly (`2 passed` across the targeted runs).
+  - the full gateway node-method/API regression sweep passed cleanly after the landing (`548 passed`).
+  - Ruff stayed clean on the touched runtime/tests.
+  - the touched production runtime type-checked cleanly.
+- Next exact seam:
+  - stay on the upstream-backed `chat.send` request/runtime boundary for the next smallest honest normalization drift, especially another raw-vs-normalized precedence rule or attachment/provenance omission case that still changes whether OpenZues should ignore, reject, or truthfully stop at the bounded runtime edge.
+
+### Recovery addendum 2026-04-20 chat-send falsey scalar system-input provenance truthiness parity America/Chicago
+
+- Continued on the same upstream `chat.send` request/runtime seam, this time around raw provenance truthiness.
+  - upstream evidence from the local OpenClaw checkout:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods\chat.ts`
+    - specifically:
+      - the raw admin-scope gate checking `p.systemInputProvenance || p.systemProvenanceReceipt || explicitOriginResult.value`
+    - key upstream behavior:
+      - the gate uses JavaScript truthiness, not simple presence.
+      - falsey scalar values such as `""`, `0`, and `false` do not trigger the admin-scope provenance branch.
+      - after that, `normalizeInputProvenance(...)` still normalizes those falsey scalar payloads away.
+  - key finding:
+    - OpenZues had already matched invalid-object omission parity, but the local raw gate was still using `is not None`.
+    - that meant falsey scalar `systemInputProvenance` values were still tripping the bounded admin-scope error even though upstream would treat them as omitted input.
+- Landed the smallest honest local runtime:
+  - bounded `chat.send` now uses an explicit truthiness helper for the raw `systemInputProvenance` admin gate.
+  - `""`, `0`, and `false` now behave as omission-style input before the scope gate, while truthy objects and scalars still preserve the already-landed raw-presence/admin behavior.
+- Kept the scope intentionally honest:
+  - this slice only closes the raw truthiness/admin-gate drift for falsey scalar `chat.send.systemInputProvenance`.
+  - it does not widen actual provenance injection runtime support beyond the already explicit bounded `503` for normalized system provenance payloads.
+- Product effect proved end to end:
+  - remote non-admin callers no longer get a misleading `system provenance fields require admin scope` error when they send falsey scalar provenance values that upstream would omit.
+  - those falsey scalar payloads now normalize away and the bounded control-chat runtime proceeds normally.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_chat_send_falsey_scalar_system_input_provenance_is_omitted_before_scope_gate`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_remote_chat_send_falsey_scalar_system_input_provenance_is_omitted_before_scope_gate`
+- Verified the slice with:
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py -q -k "falsey_scalar_system_input_provenance"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_nodes_api.py -q -k "falsey_scalar_system_input_provenance"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q`
+  - `.\.venv\Scripts\ruff.exe check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused falsey-scalar provenance proof sextet passed cleanly (`6 passed` across the targeted runs).
+  - the full gateway node-method/API regression sweep passed cleanly after the landing (`554 passed`).
+  - Ruff stayed clean on the touched runtime/tests.
+  - the touched production runtime type-checked cleanly.
+- Next exact seam:
+  - stay on the upstream-backed `chat.send` request/runtime boundary for the next smallest honest normalization drift, especially another raw-vs-normalized or falsey-vs-truthy precedence rule that still changes whether OpenZues should omit input, reject it, or stop truthfully at the bounded runtime edge.
+
+### Recovery addendum 2026-04-20 chat-send stop-command abort parity America/Chicago
+
+- Continued on the same upstream `chat.send` request/runtime seam, this time around stop-command handling.
+  - upstream evidence from the local OpenClaw checkout:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods\chat.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\chat-abort.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\auto-reply\reply\abort-primitives.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\auto-reply\commands-registry-normalize.ts`
+  - key upstream behavior:
+    - sanitized inbound `chat.send` text is checked with `isChatStopCommandText(...)`.
+    - recognized stop text aborts the active session run before normal send handling persists a new user turn.
+    - slash-command normalization and trailing-punctuation stripping let inputs like `/STOP!!!` resolve to the same stop path.
+  - key finding:
+    - OpenZues already had honest `chat.abort` runtime plumbing and tracked-run bookkeeping, but `chat.send` still treated stop text as a normal message.
+    - that drift caused stop phrases to be persisted as fresh turns instead of routing through the existing abort helper.
+- Landed the smallest honest local runtime:
+  - added an upstream-shaped stop matcher for `chat.send`, including:
+    - slash-command normalization for stop text
+    - lowercase plus whitespace normalization
+    - trailing punctuation stripping
+    - the upstream abort-trigger vocabulary needed for this boundary
+  - moved the `chat.send` stop branch ahead of the bounded unavailability edges so stop text now uses the existing `_abort_gateway_chat_run(...)` helper instead of normal message submission.
+- Kept the scope intentionally honest:
+  - this slice only closes stop-command routing parity for bounded `chat.send`.
+  - it does not widen the existing explicit `503` gaps for originating route fields, system provenance injection, or real attachment runtime support for normal messages.
+- Product effect proved end to end:
+  - a tracked `chat.send` run can now be aborted by sending `/STOP!!!` through the same session instead of persisting a new control-chat message.
+  - idle stop text now returns the truthful bounded abort result payload `{ "ok": true, "aborted": false, "runIds": [] }` without creating stray transcript rows.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_chat_send_stop_command_aborts_tracked_runtime_without_submitting_new_message`
+    - `test_chat_send_stop_command_reports_no_active_run_without_submitting_message`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_gateway_node_method_call_endpoint_treats_chat_send_stop_message_as_abort`
+    - `test_gateway_node_method_call_endpoint_chat_send_stop_message_reports_no_active_run`
+- Verified the slice with:
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py -q -k "stop_command"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_nodes_api.py -q -k "chat_send_stop_message"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q`
+  - `.\.venv\Scripts\ruff.exe check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused stop-command proof quartet passed cleanly (`4 passed` across the targeted runs).
+  - the full gateway node-method/API regression sweep passed cleanly after the landing (`558 passed`).
+  - Ruff stayed clean on the touched runtime/tests.
+  - the touched production runtime type-checked cleanly.
+- Next exact seam:
+  - stay on the upstream-backed `chat.send` and adjacent `sessions.*` boundary for the next smallest honest control-flow drift, especially another upstream stop/omit/reject precedence case that still changes whether OpenZues should abort, normalize away, or truthfully stop at a bounded runtime edge.
+
+### Recovery addendum 2026-04-20 sessions-send stop-command parity America/Chicago
+
+- Continued on the adjacent upstream `sessions.send` seam after the `chat.send` stop landing.
+  - upstream evidence from the local OpenClaw checkout:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods\sessions.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods\chat.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods\chat.directive-tags.test.ts`
+  - key upstream behavior:
+    - `sessions.send` delegates into `chat.send` instead of bypassing it.
+    - that means stop-command handling, including the no-attachment-offload fast path, is inherited automatically from `chat.send`.
+    - upstream still emits the normal session-changed follow-up after an `ok` `sessions.send` result, even when the delegated `chat.send` call resolved through the stop-command abort path.
+  - key finding:
+    - OpenZues already matched `chat.send` stop-command parity, but local `sessions.send` was still calling the bounded control-chat send bridge directly.
+    - that drift meant `/STOP!!!` and `stop please` were persisted as new `sessions.send` turns instead of reusing the tracked-run abort helper.
+- Landed the smallest honest local runtime:
+  - bounded `sessions.send` now recognizes the same upstream-shaped stop text and routes it through `_abort_gateway_chat_run(...)` before normal message submission.
+  - the local branch ordering now mirrors the upstream wrapper more closely:
+    - compute effective attachments
+    - enforce `message or attachment required`
+    - resolve timeout/idempotency
+    - honor stop-command aborts before the bounded attachment-unavailable edge
+  - preserved the local bounded `sessions.changed` publication after successful `sessions.send` stop results so the wrapper still behaves like a successful session action instead of a silent no-op.
+- Kept the scope intentionally honest:
+  - this slice only closes stop-command inheritance parity for bounded `sessions.send`.
+  - it does not widen the explicit `503` attachment-runtime gap for ordinary `sessions.send` messages, nor does it yet close any remaining `sessions.steer` stop-specific wrapper drift.
+- Product effect proved end to end:
+  - a tracked `sessions.send` run can now be aborted by sending `/STOP!!!` through the same session instead of persisting a fresh control-chat message.
+  - idle stop text through `sessions.send` now returns the truthful bounded abort result payload `{ "ok": true, "aborted": false, "runIds": [] }` without creating stray transcript rows.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_sessions_send_stop_command_aborts_tracked_runtime_without_submitting_message`
+    - `test_sessions_send_stop_command_reports_no_active_run_without_submitting_message`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_gateway_node_method_call_endpoint_treats_sessions_send_stop_message_as_abort`
+    - `test_gateway_node_method_call_endpoint_sessions_send_stop_message_reports_no_active_run`
+- Verified the slice with:
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py -q -k "sessions_send_stop_command"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_nodes_api.py -q -k "sessions_send_stop_message"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q`
+  - `.\.venv\Scripts\ruff.exe check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused `sessions.send` stop-command proof quartet passed cleanly (`4 passed` across the targeted runs).
+  - the full gateway node-method/API regression sweep passed cleanly after the landing (`562 passed`).
+  - Ruff stayed clean on the touched runtime/tests.
+  - the touched production runtime type-checked cleanly.
+- Next exact seam:
+  - stay on the adjacent upstream `sessions.*` wrapper boundary, especially `sessions.steer`, where OpenClaw still inherits `chat.send` stop/omit/reject decisions through delegation and OpenZues may still have one more stop-specific control-flow drift to close.
+
+### Recovery addendum 2026-04-20 sessions-steer stop-command parity America/Chicago
+
+- Continued on the adjacent upstream `sessions.steer` wrapper seam after landing `sessions.send` stop parity.
+  - upstream evidence from the local OpenClaw checkout:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods\sessions.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods\chat.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server.chat.gateway-server-chat.test.ts`
+  - key upstream behavior:
+    - `sessions.steer` reuses the shared `handleSessionSend(...)` wrapper with `interruptIfActive: true`.
+    - that wrapper interrupts any active session run first, then still delegates into `chat.send`.
+    - because `chat.send` owns stop-command classification, steer stop text resolves to an abort-style payload instead of a new transcript turn.
+    - when the wrapper had to interrupt an active run before resolving the steer request, successful payloads carry `interruptedActiveRun: true`.
+  - key finding:
+    - OpenZues already interrupted tracked runs before normal steer follow-up sends, but local `sessions.steer` still bypassed the inherited stop-command path entirely.
+    - that drift meant stop phrases like `/STOP!!!` and `stop please` were still being submitted as fresh steer follow-ups.
+- Landed the smallest honest local runtime:
+  - bounded `sessions.steer` now recognizes the same upstream-shaped stop text and routes it through `_abort_gateway_chat_run(...)` instead of submitting a new follow-up message.
+  - the local branch ordering now mirrors the upstream wrapper more closely for stop paths:
+    - compute effective attachments
+    - enforce `message or attachment required`
+    - resolve timeout/idempotency
+    - interrupt any tracked active run
+    - if the steer text is a stop command, resolve it through the bounded abort helper before the attachment-unavailable edge
+  - when steer had to interrupt an active run before the stop resolution, the bounded payload now includes `interruptedActiveRun: true`.
+  - preserved the local bounded `sessions.changed` publication after successful `sessions.steer` stop results so the wrapper still behaves like a successful steer action instead of a silent no-op.
+- Kept the scope intentionally honest:
+  - this slice only closes stop-command wrapper parity for bounded `sessions.steer`.
+  - it does not yet close any broader upstream payload-shape drift for non-stop steer responses.
+- Product effect proved end to end:
+  - a tracked session run can now be interrupted by steering `/STOP!!!` without persisting a fresh follow-up turn.
+  - idle stop text through `sessions.steer` now returns the truthful bounded abort result payload `{ "ok": true, "aborted": false, "runIds": [] }` without creating stray transcript rows.
+  - stop-driven steer cutovers that first interrupted a live run now surface `interruptedActiveRun: true` in the bounded result.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_sessions_steer_stop_command_aborts_without_submitting_follow_up`
+    - `test_sessions_steer_stop_command_reports_no_active_run_without_submitting_message`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_gateway_node_method_call_endpoint_sessions_steer_stop_message_aborts_without_follow_up`
+    - `test_gateway_node_method_call_endpoint_sessions_steer_stop_message_reports_idle_abort`
+- Verified the slice with:
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py -q -k "sessions_steer_stop_command"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_nodes_api.py -q -k "sessions_steer_stop_message"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q`
+  - `.\.venv\Scripts\ruff.exe check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused `sessions.steer` stop-command proof quartet passed cleanly (`4 passed` across the targeted runs).
+  - the full gateway node-method/API regression sweep passed cleanly after the landing (`566 passed`).
+  - Ruff stayed clean on the touched runtime/tests.
+  - the touched production runtime type-checked cleanly.
+- Next exact seam:
+  - stay on the same upstream `sessions.steer` wrapper boundary for the next smallest honest payload-shape drift, especially whether broader `interruptedActiveRun` parity should now be carried through non-stop steer successes as well.
+
+### Recovery addendum 2026-04-20 sessions-steer interrupted-active-run payload parity America/Chicago
+
+- Continued on the same upstream `sessions.steer` wrapper boundary immediately after the stop-command landing.
+  - upstream evidence from the local OpenClaw checkout:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods\sessions.ts`
+    - specifically the shared `handleSessionSend(...)` wrapper:
+      - it records `interruptedActiveRun` when `interruptIfActive` cut over from a live run.
+      - it merges that flag into successful response payloads for both the message-seq path and the plain successful-object path, not just stop-command outcomes.
+  - key finding:
+    - OpenZues had just matched the stop-specific steer payload, but ordinary successful steer follow-ups after a cutover were still returning only `{ "runId": ..., "status": "ok" }`.
+    - that meant the local wrapper was still leaking one piece of upstream session-wrapper state on the non-stop path.
+- Landed the smallest honest local runtime:
+  - bounded `sessions.steer` now carries `interruptedActiveRun: true` through successful non-stop steer responses whenever it had to interrupt a tracked active run first.
+  - because this is wrapper state rather than stop-specific state, the same flag now shows up consistently for successful steer cutovers with ordinary text and with inert attachments.
+- Kept the scope intentionally honest:
+  - this slice only closes the non-stop successful steer payload-shape drift for `interruptedActiveRun`.
+  - it does not widen message-seq behavior, attachment runtime support, or any unrelated `sessions.*` payload fields beyond this wrapper flag.
+- Product effect proved end to end:
+  - successful `sessions.steer` cutovers now surface `interruptedActiveRun: true` whether the follow-up is plain text or an inert-attachment request that still resolves through the bounded control-chat runtime.
+  - idle steer requests that did not interrupt anything still remain unflagged.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Tightened focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_sessions_steer_interrupts_tracked_run_before_sending_follow_up`
+    - `test_sessions_steer_ignores_inert_attachments_without_effective_content`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_gateway_node_method_call_endpoint_sessions_steer_interrupts_tracked_runtime`
+    - `test_gateway_node_method_call_endpoint_ignores_inert_sessions_steer_attachments`
+- Verified the slice with:
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py -q -k "test_sessions_steer_interrupts_tracked_run_before_sending_follow_up or test_sessions_steer_ignores_inert_attachments_without_effective_content"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_nodes_api.py -q -k "test_gateway_node_method_call_endpoint_sessions_steer_interrupts_tracked_runtime or test_gateway_node_method_call_endpoint_ignores_inert_sessions_steer_attachments"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q`
+  - `.\.venv\Scripts\ruff.exe check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the tightened steer-wrapper proof sextet passed cleanly across the targeted reruns after the landing.
+  - the full gateway node-method/API regression sweep stayed green after the wrapper fix (`566 passed`).
+  - Ruff stayed clean on the touched runtime/tests.
+  - the touched production runtime type-checked cleanly.
+- Next exact seam:
+  - stay on the same upstream `sessions` wrapper family and look for the next smallest honest payload-shape drift, especially any remaining wrapper metadata that upstream merges into successful session send/steer responses but OpenZues still drops.
+
+### Recovery addendum 2026-04-20 sessions-steer event-reason parity America/Chicago
+
+- Continued on the same upstream `sessions` wrapper boundary after ruling out the speculative `messageSeq` seam.
+  - upstream evidence from the local OpenClaw checkout:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods\sessions.ts`
+    - specifically `handleSessionSend(...)`, where successful wrapper events emit:
+      - `reason: "steer"` only when `interruptIfActive` actually interrupted a live run first
+      - `reason: "send"` for ordinary `sessions.steer` successes that did not cut over from an active run
+  - key finding:
+    - OpenZues had already matched stop-command and `interruptedActiveRun` payload parity for `sessions.steer`, but the local wrapper still published `sessions.changed` with `reason: "steer"` on every successful steer outcome.
+    - that drift was small but real because upstream uses the event reason to reflect whether a cutover happened, not merely which method name was called.
+- Ruled out the adjacent false seam before changing code:
+  - local `submit_gateway_chat_message(...)` in `src/openzues/app.py` still returns only `{ "runId": ..., "status": "ok" }`.
+  - because the bounded runtime does not currently surface upstream-style `status: "started"` acknowledgements, the wrapper's `messageSeq`-on-started path is not yet an honest parity target for this slice.
+- Landed the smallest honest local runtime:
+  - bounded `sessions.steer` now computes its event reason as:
+    - `"steer"` when a tracked active run was interrupted first
+    - `"send"` when the steer request completed without an active-run cutover
+  - applied that same wrapper reason on both successful non-stop steer results and successful stop-command steer results.
+- Product effect proved end to end:
+  - `sessions.changed` now tells downstream listeners whether `sessions.steer` behaved like a true cutover or just another send into the same idle session.
+  - interrupted steer flows still publish `reason: "steer"`.
+  - ordinary steer flows without an interrupted run now publish `reason: "send"` like upstream.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_sessions_steer_without_interrupt_publishes_send_reason_gateway_event`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_gateway_node_method_call_endpoint_sessions_steer_without_interrupt_emits_send_reason`
+- Verified the slice with:
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py -q -k "sessions_steer_without_interrupt_publishes_send_reason_gateway_event or test_sessions_steer_interrupts_tracked_run_before_sending_follow_up or test_sessions_steer_stop_command_aborts_without_submitting_follow_up"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_nodes_api.py -q -k "sessions_steer_without_interrupt_emits_send_reason or test_gateway_node_method_call_endpoint_sessions_steer_interrupts_tracked_runtime or test_gateway_node_method_call_endpoint_sessions_steer_stop_message_aborts_without_follow_up"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q`
+  - `.\.venv\Scripts\ruff.exe check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the new steer-event reason proofs failed first against the old local runtime on the exact `reason: "steer"` vs `reason: "send"` drift, then passed after the runtime fix.
+  - the full gateway node-method/API regression sweep stayed green after the landing (`568 passed`).
+  - Ruff stayed clean on the touched runtime/tests.
+  - the touched production runtime type-checked cleanly.
+- Next exact seam:
+  - move off the already-tightened `sessions.steer` event wrapper and inspect the next adjacent gateway parity seam with direct upstream evidence, preferably in the send/poll/wake surface where OpenZues can close a bounded contract gap without inventing upstream `status: "started"` behavior that the local control-chat runtime still does not expose.
+
+### Recovery addendum 2026-04-20 sessions started-ack message-seq parity America/Chicago
+
+- Continued on the adjacent upstream `sessions.send` / `sessions.steer` wrapper payload seam after landing the event-reason fix.
+  - upstream evidence from the local OpenClaw checkout:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods\sessions.ts`
+    - `handleSessionSend(...)` computes the pending transcript slot as `readSessionMessages(...).length + 1` before delegating to `chat.send`.
+    - when the delegated payload comes back as a non-cached `{ status: "started", ... }` ack, upstream echoes that pending slot as `messageSeq` on the wrapper response.
+    - for `sessions.steer`, the same successful payload path can carry both `messageSeq` and `interruptedActiveRun: true`.
+  - key finding:
+    - OpenZues already emits `messageSeq` in session message/event payloads, but the `sessions.send` and `sessions.steer` response wrappers were still dropping that field entirely when the delegated send ack used upstream-style `status: "started"`.
+    - this was a real wrapper drift even though the default local app wiring still returns `{ "runId": ..., "status": "ok" }`, because the node-method service can already host alternate send runtimes and should preserve the upstream wrapper shape when they return started acknowledgements.
+- Landed the smallest honest local runtime:
+  - bounded `sessions.send` now snapshots the next pending transcript slot from the database before delegating.
+  - bounded `sessions.steer` now does the same on its non-stop send path.
+  - both wrappers now merge `messageSeq` into the successful payload only when the delegated payload is an object with `status == "started"`.
+  - `sessions.steer` still composes that field correctly with `interruptedActiveRun: true` after a tracked cutover.
+- Kept the scope intentionally honest:
+  - this slice does not invent upstream cache metadata or alter the default app runtime to emit `status: "started"`.
+  - it only closes the wrapper behavior so OpenZues preserves the upstream-shaped pending `messageSeq` whenever a wired send runtime actually returns a started ack.
+- Product effect proved end to end:
+  - `sessions.send` now echoes `messageSeq` for started acknowledgements instead of returning only `{ runId, status }`.
+  - `sessions.steer` now echoes `messageSeq` on started acknowledgements and keeps `interruptedActiveRun: true` alongside it when a tracked run was interrupted first.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_sessions_send_started_ack_attaches_pending_message_seq`
+    - `test_sessions_steer_started_ack_attaches_message_seq_and_interrupt_flag`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_gateway_node_method_call_endpoint_sessions_send_started_ack_attaches_message_seq`
+    - `test_gateway_node_method_call_endpoint_sessions_steer_started_ack_attaches_both_flags`
+- Verified the slice with:
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py -q -k "sessions_send_started_ack_attaches_pending_message_seq or sessions_steer_started_ack_attaches_message_seq_and_interrupt_flag"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_nodes_api.py -q -k "sessions_send_started_ack_attaches_message_seq or sessions_steer_started_ack_attaches_both_flags"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q`
+  - `.\.venv\Scripts\ruff.exe check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the new started-ack proofs failed first against the old local wrapper on the missing `messageSeq` field, then passed after the runtime fix.
+  - the full gateway node-method/API regression sweep stayed green after the landing (`572 passed`).
+  - Ruff stayed clean on the touched runtime/tests.
+  - the touched production runtime type-checked cleanly.
+- Next exact seam:
+  - move beyond the now-tightened `sessions.send` / `sessions.steer` wrapper family and inspect the next bounded upstream gateway contract in the send/poll/wake surface, especially a seam that is active under the default OpenZues runtime rather than only under alternate started-ack delegates.
+
+### Recovery addendum 2026-04-20 poll placeholder extra-param parity America/Chicago
+
+- Moved off the tightened `sessions.*` wrapper family into the next active send/poll/wake contract seam that still matters under the default OpenZues runtime.
+  - upstream evidence from the local OpenClaw checkout:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods\send.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\protocol\schema\agent.ts`
+  - key upstream behavior:
+    - `poll` accepts `durationHours`, `silent`, and `isAnonymous` as valid request fields.
+    - those fields are validated before delivery/runtime decisions, even when the downstream channel delivery path is unavailable or unsupported.
+  - key finding:
+    - OpenZues already mirrored the bounded `poll` unavailable placeholder for the base contract, but local `_validate_exact_keys(...)` was still rejecting those valid upstream keys before the request could reach the truthful `503 poll is unavailable...` placeholder.
+    - this meant upstream-shaped poll requests were failing too early with local-only `poll does not accept: ...` validation drift.
+- Landed the smallest honest local runtime:
+  - bounded `poll` now accepts:
+    - `durationHours`
+    - `silent`
+    - `isAnonymous`
+  - added lightweight placeholder validation only:
+    - `durationHours` must be an integer with the same upstream minimum-only shape (`>= 1`)
+    - `silent` must be a boolean
+    - `isAnonymous` must be a boolean
+  - preserved the existing honest product boundary:
+    - after validation, the request still returns the same `poll is unavailable until channel-target poll delivery is wired` placeholder until real delivery is implemented.
+- Kept the scope intentionally honest:
+  - this slice does not claim poll delivery support.
+  - it does not invent plugin capability checks for anonymous polls or duration semantics beyond placeholder-time validation.
+  - it only closes the premature key-rejection drift so valid upstream poll payloads survive to the existing unavailable contract.
+- Product effect proved end to end:
+  - upstream-shaped poll requests carrying `durationHours`, `silent`, and `isAnonymous` no longer fail at the local key-validation boundary.
+  - the same requests now surface the truthful bounded unavailable response instead.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_poll_allows_duration_hours_and_silent_before_delivery_placeholder`
+    - `test_poll_allows_is_anonymous_before_delivery_placeholder`
+    - `test_poll_allows_large_duration_hours_before_delivery_placeholder`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_poll_endpoint_allows_duration_hours_and_silent_before_placeholder`
+    - `test_poll_endpoint_allows_is_anonymous_before_placeholder`
+    - `test_poll_endpoint_allows_large_duration_hours_before_placeholder`
+- Verified the slice with:
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py -q -k "poll_allows_duration_hours_and_silent_before_delivery_placeholder or poll_allows_is_anonymous_before_delivery_placeholder"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_nodes_api.py -q -k "poll_endpoint_allows_duration_hours_and_silent_before_placeholder or poll_endpoint_allows_is_anonymous_before_placeholder"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q`
+  - `.\.venv\Scripts\ruff.exe check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the new poll-placeholder proofs failed first against the old local runtime on the exact `poll does not accept: durationHours, silent` / `poll does not accept: isAnonymous` drift.
+  - a follow-up large-duration proof also caught an accidental local upper bound on `durationHours`; that cap was removed so the placeholder now matches the upstream minimum-only schema.
+  - after the final fix, the focused poll proofs passed and the full gateway node-method/API regression sweep stayed green (`578 passed`).
+  - Ruff stayed clean on the touched runtime/tests.
+  - the touched production runtime type-checked cleanly.
+- Next exact seam:
+  - continue along the upstream send/poll boundary for the next smallest active validation or placeholder-shape drift, especially one that affects requests under the default OpenZues runtime rather than only fully-wired outbound delivery paths.
+
+### Recovery addendum 2026-04-20 wake opaque-metadata parity America/Chicago
+
+- Continued on the next active default-runtime seam after the poll placeholder landing and found a tighter `wake` contract difference with direct upstream evidence.
+  - upstream evidence from the local OpenClaw checkout:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods\cron.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\protocol\schema\agent.ts`
+  - key upstream behavior:
+    - `wake` validates `mode` and `text`, but the upstream `WakeParamsSchema` is declared with `additionalProperties: true`.
+    - the schema comment is explicit: external wake senders may attach opaque metadata.
+  - key finding:
+    - OpenZues still ran `wake` through `_validate_exact_keys(...)`, so otherwise valid upstream-shaped wake requests with opaque metadata were failing early with local-only errors such as `wake does not accept: metadata, requestId, source`.
+    - because `wake` is active under the default OpenZues runtime, this was a concrete user-visible parity gap rather than a latent placeholder detail.
+- Landed the smallest honest local runtime:
+  - removed the exact-key gate from bounded `wake`.
+  - kept the real contract validation intact:
+    - `mode` is still required and must be `now` or `next-heartbeat`
+    - `text` is still required and non-empty
+  - all extra wake fields are now ignored instead of rejected, matching the upstream schema intent.
+- Kept the scope intentionally honest:
+  - this slice does not start using opaque metadata for product behavior.
+  - it only closes the validation drift so external wake senders can include extra metadata without breaking the active wake path.
+- Product effect proved end to end:
+  - `wake` now accepts upstream-shaped opaque metadata fields like `source`, `requestId`, and nested `metadata` payloads.
+  - the existing `wake now` behavior still dispatches immediately.
+  - the existing queued `next-heartbeat` flow remains unchanged.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - `test_wake_allows_opaque_extra_metadata_fields`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_gateway_node_method_call_endpoint_wake_allows_opaque_metadata_fields`
+- Verified the slice with:
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py -q -k "wake_allows_opaque_extra_metadata_fields or test_wake_requires_openclaw_shape_then_dispatches_or_queues_when_runtime_wired"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_nodes_api.py -q -k "wake_allows_opaque_metadata_fields or test_gateway_node_method_call_endpoint_supports_wake_now_and_next_heartbeat"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q`
+  - `.\.venv\Scripts\ruff.exe check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the new wake proofs failed first against the old local runtime on the exact `wake does not accept: metadata, requestId, source` drift.
+  - after the fix, the focused wake proofs passed and the full gateway node-method/API regression sweep stayed green (`580 passed`).
+  - Ruff stayed clean on the touched runtime/tests.
+  - the touched production runtime type-checked cleanly.
+- Next exact seam:
+  - continue along the active send/poll/wake boundary or the next adjacent gateway request surface where upstream schemas intentionally allow broader request shapes than the current local placeholder still admits.
+
+### Recovery addendum 2026-04-20 poll webchat rejection wording parity America/Chicago
+
+- Continued on the same active send/poll/wake boundary after the wake metadata landing and found one more small placeholder drift on the `poll` branch.
+  - upstream evidence from the local OpenClaw checkout:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods\send.ts`
+  - key upstream behavior:
+    - `poll` resolves channels with poll-specific wording and reports `unsupported poll channel: webchat`.
+    - it does not reuse the WebChat UI guidance text that upstream reserves for the send/chat surface.
+  - key finding:
+    - OpenZues still routed `poll` through the same internal-webchat rejection helper as `send`, so poll requests on `channel=webchat` were surfacing:
+      - `unsupported channel: webchat (internal-only). Use \`chat.send\` for WebChat UI messages or choose a deliverable channel.`
+    - that guidance is helpful for `send`, but it is not the upstream `poll` contract.
+- Landed the smallest honest local runtime:
+  - added a poll-specific override for the webchat rejection text in the shared outbound-channel helper.
+  - wired only the bounded `poll` branch to use `unsupported poll channel: webchat`.
+  - preserved the existing WebChat UI guidance for `send` and other surfaces that still intentionally use it.
+- Kept the scope intentionally honest:
+  - this slice only adjusts the `poll` webchat rejection wording.
+  - it does not widen poll delivery support or change send/message-action behavior beyond preserving their current text.
+- Product effect proved end to end:
+  - `poll` now rejects `channel=webchat` with upstream-shaped poll-specific wording.
+  - `send` still rejects `channel=webchat` with the existing WebChat UI guidance.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - updated `test_poll_rejects_internal_webchat_channel`
+    - rechecked `test_send_rejects_internal_webchat_channel`
+  - `tests/test_gateway_nodes_api.py`
+    - updated `test_poll_endpoint_rejects_internal_webchat_channel`
+    - rechecked `test_send_endpoint_rejects_internal_webchat_channel`
+- Verified the slice with:
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py -q -k "test_poll_rejects_internal_webchat_channel or test_send_rejects_internal_webchat_channel"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_nodes_api.py -q -k "test_poll_endpoint_rejects_internal_webchat_channel or test_send_endpoint_rejects_internal_webchat_channel"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q`
+  - `.\.venv\Scripts\ruff.exe check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the updated poll proofs failed first against the old local runtime on the exact send-style WebChat guidance drift.
+  - after the helper override fix, the focused send/poll proofs passed and the full gateway node-method/API regression sweep stayed green (`580 passed`).
+  - Ruff stayed clean on the touched runtime/tests.
+  - the touched production runtime type-checked cleanly.
+- Next exact seam:
+  - continue on the active gateway request surface, especially another bounded validation or placeholder-shape difference where upstream intentionally distinguishes request classes that OpenZues still routes through a shared message written for a neighboring method.
+
+### Recovery addendum 2026-04-20 wake system-event persistence parity America/Chicago
+
+- Continued on the active wake surface after the request-shape fixes and found the next concrete runtime drift in the wake side effect itself.
+  - upstream evidence from the local OpenClaw checkout:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods\cron.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\cron\service.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\cron\service\timer.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server.hooks.test.ts`
+  - key upstream behavior:
+    - `wake` delegates to cron wake.
+    - cron wake always calls `enqueueSystemEvent(text)` for both `mode="now"` and `mode="next-heartbeat"`.
+    - `mode="now"` then adds an immediate heartbeat nudge on top of that system-event enqueue.
+  - key finding:
+    - OpenZues wake requests were dispatching immediately or queueing a wake row, but they were not recording any `system-event` row at all.
+    - that meant the local wake path was missing the upstream-visible persistence side effect even when the operator-facing wake behavior succeeded.
+- Landed the smallest honest local runtime:
+  - updated `GatewayWakeService.wake(...)` to append a `system-event` row with:
+    - `text`: the normalized wake text
+    - `reason`: `"wake"`
+  - kept the current OpenZues dispatch behavior intentionally intact:
+    - `mode="now"` still submits immediately through the existing control chat path
+    - `mode="next-heartbeat"` still uses the existing queued wake request path
+- Kept the scope intentionally honest:
+  - this slice does not claim full upstream wake routing parity yet.
+  - OpenZues still uses its own direct dispatch / queued wake runtime after logging the event, while upstream routes wake through the cron/system-event substrate plus heartbeat nudges.
+  - the parity gain here is that wake now leaves behind the same class of observable system-event evidence instead of being invisible in the event ledger.
+- Product effect proved end to end:
+  - `wake` now records `system-event` rows for both immediate and queued wakes.
+  - opaque wake metadata is still accepted and ignored as previously landed.
+  - the existing immediate-send and next-heartbeat queue behavior remains unchanged.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_wake.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - expanded `test_wake_requires_openclaw_shape_then_dispatches_or_queues_when_runtime_wired`
+    - expanded `test_wake_allows_opaque_extra_metadata_fields`
+  - `tests/test_gateway_nodes_api.py`
+    - expanded `test_gateway_node_method_call_endpoint_supports_wake_now_and_next_heartbeat`
+    - expanded `test_gateway_node_method_call_endpoint_wake_allows_opaque_metadata_fields`
+- Verified the slice with:
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py -q -k "wake_requires_openclaw_shape_then_dispatches_or_queues_when_runtime_wired or wake_allows_opaque_extra_metadata_fields"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_nodes_api.py -q -k "supports_wake_now_and_next_heartbeat or wake_allows_opaque_metadata_fields"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q`
+  - `.\.venv\Scripts\ruff.exe check src/openzues/services/gateway_wake.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mypy src/openzues/services/gateway_wake.py`
+- Result:
+  - the new wake proofs failed first against the old local runtime on the exact missing `system-event` persistence drift.
+  - after the wake service fix, the focused wake proofs passed and the full gateway node-method/API regression sweep stayed green (`580 passed`).
+  - Ruff stayed clean on the touched runtime/tests.
+  - the touched production runtime type-checked cleanly.
+- Next exact seam:
+  - continue on deeper wake routing parity, especially the upstream difference where `wake` rides the cron/system-event queue plus immediate heartbeat nudge, while OpenZues still performs direct control-chat dispatch for `mode="now"` and uses a separate gateway wake queue for `mode="next-heartbeat"`.
+
+### Recovery addendum 2026-04-20 wake-now queue-first parity America/Chicago
+
+- Continued on the deeper wake-routing seam immediately after the system-event persistence landing and took the next bounded behavior difference instead of trying to rewrite the whole wake substrate at once.
+  - upstream evidence from the local OpenClaw checkout:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods\cron.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\cron\service.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\cron\service\timer.ts`
+  - key upstream behavior:
+    - `wake` always stages the text through cron wake handling first.
+    - `mode="now"` does not bypass that staging path; it enqueues the wake text and then nudges the heartbeat immediately.
+  - key finding:
+    - OpenZues was still bypassing its own wake queue for `mode="now"`.
+    - the local `GatewayWakeService` appended the `system-event` row and then called the immediate dispatch callback directly, which meant:
+      - no `gateway_wake_requests` row existed for `mode="now"`
+      - the immediate app path jumped straight into control chat instead of nudging the queue consumer
+- Landed the smallest honest local runtime:
+  - `GatewayWakeService.wake(...)` now creates a `gateway_wake_requests` row for both:
+    - `mode="now"`
+    - `mode="next-heartbeat"`
+  - the app-side `dispatch_gateway_wake_now(...)` callback no longer submits the text directly.
+  - instead, it builds the dashboard and runs `tick_attention_queue(...)`, so the just-staged wake is consumed through the same queue path the control plane already uses.
+- Kept the scope intentionally honest:
+  - this is still not full upstream cron wake parity.
+  - OpenZues continues to use its existing wake-request table and attention-queue consumer instead of the upstream cron/system-event queue implementation.
+  - the parity gain here is narrower and real: `wake now` no longer bypasses local wake staging before the immediate nudge.
+- Product effect proved end to end:
+  - `wake now` now records:
+    - a `system-event` row
+    - a `gateway_wake_requests` row with `mode="now"`
+  - the immediate nudge consumes that queued wake and marks it `dispatched`.
+  - `wake next-heartbeat` still stages its wake for the next explicit attention-queue tick.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_wake.py`
+  - `src/openzues/app.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - added `test_wake_now_stages_queue_entry_before_dispatch_callback`
+    - expanded `test_wake_requires_openclaw_shape_then_dispatches_or_queues_when_runtime_wired`
+  - `tests/test_gateway_nodes_api.py`
+    - added `test_gateway_node_method_call_endpoint_wake_now_records_dispatched_wake_request`
+    - expanded `test_gateway_node_method_call_endpoint_supports_wake_now_and_next_heartbeat`
+- Verified the slice with:
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py -q -k "wake_requires_openclaw_shape_then_dispatches_or_queues_when_runtime_wired or wake_allows_opaque_extra_metadata_fields or wake_now_stages_queue_entry_before_dispatch_callback"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_nodes_api.py -q -k "supports_wake_now_and_next_heartbeat or wake_allows_opaque_metadata_fields or wake_now_records_dispatched_wake_request"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q`
+  - `.\.venv\Scripts\ruff.exe check src/openzues/services/gateway_wake.py src/openzues/app.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mypy src/openzues/services/gateway_wake.py`
+- Result:
+  - the new queue-first wake proofs failed first against the old local runtime on the exact `wake now` bypass drift.
+  - after the wake service and app callback fix, the focused wake proofs passed and the full gateway node-method/API regression sweep stayed green (`582 passed`).
+  - Ruff stayed clean on the touched runtime/tests.
+  - the touched production wake runtime type-checked cleanly.
+- Next exact seam:
+  - continue on the remaining deeper wake-routing difference where OpenClaw uses its cron/system-event heartbeat machinery end to end, while OpenZues still translates wake work through its dedicated wake-request table and attention-queue consumer.
+
+### Recovery addendum 2026-04-20 set-heartbeats runtime parity America/Chicago
+
+- Continued on the active heartbeat/wake surface after the queue-first `wake now` landing and took the adjacent advertised method gap instead of widening immediately into a full heartbeat-runner rewrite.
+  - upstream evidence from the local OpenClaw checkout:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods\system.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\cli\system-cli.ts`
+  - key upstream behavior:
+    - `set-heartbeats` is a real gateway method.
+    - it validates `enabled` as a required boolean, flips the live heartbeat runtime, and returns:
+      - `{ ok: true, enabled }`
+  - key finding:
+    - OpenZues still advertised `set-heartbeats` in the gateway surface, but the local method always returned:
+      - `503 set-heartbeats is unavailable until gateway heartbeat toggle runtime is wired`
+    - that left both the RPC surface and the dashboard unable to reflect a live runtime toggle.
+- Landed the smallest honest local runtime:
+  - added an optional runtime callback hook to `GatewayNodeMethodService` for `set-heartbeats`.
+  - wired the app to pass a real toggle callback that:
+    - flips a live `attention_queue_runtime_enabled` flag
+    - closes the background attention-queue loop when disabled
+    - restarts that loop when enabled on the leader process
+  - switched the dashboard attention-queue view to read the live runtime flag instead of the static startup setting.
+- Kept the scope intentionally honest:
+  - this slice wires the local `set-heartbeats` contract to the OpenZues attention-queue runtime.
+  - it does not yet claim full upstream heartbeat-runner parity.
+  - in particular, OpenZues still has a separate explicit `wake now` path that can nudge queue execution directly even after heartbeats are disabled.
+- Product effect proved end to end:
+  - `set-heartbeats` now succeeds on the live API surface instead of returning 503.
+  - the response matches the upstream contract shape:
+    - `{ "ok": true, "enabled": false }`
+    - `{ "ok": true, "enabled": true }`
+  - dashboard attention-queue state now reflects the runtime toggle immediately after the mutating API call.
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `src/openzues/app.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_node_methods.py`
+    - replaced the old unavailable expectation with `test_set_heartbeats_returns_ok_payload_when_runtime_is_wired`
+  - `tests/test_gateway_nodes_api.py`
+    - replaced the old 503 API expectation with `test_gateway_node_method_call_endpoint_toggles_attention_queue_runtime`
+- Verified the slice with:
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py -q -k "set_heartbeats_returns_ok_payload_when_runtime_is_wired"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_nodes_api.py -q -k "toggles_attention_queue_runtime"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q`
+  - `.\.venv\Scripts\ruff.exe check src/openzues/services/gateway_node_methods.py src/openzues/app.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the new `set-heartbeats` proofs failed first against the old local runtime on the exact missing runtime hook and old 503 contract.
+  - after the runtime callback and live flag wiring, the focused proofs passed and the full gateway node-method/API regression sweep stayed green (`582 passed`).
+  - Ruff stayed clean on the touched runtime/tests.
+  - the touched gateway method runtime type-checked cleanly.
+- Verification note:
+  - running mypy on `src/openzues/app.py` still surfaces a broader pre-existing wall of unrelated type noise outside this slice, so the type gate for this checkpoint stayed focused on the touched gateway method runtime.
+- Next exact seam:
+  - continue on the remaining heartbeat-runtime difference where OpenClaw uses a dedicated heartbeat wake runner with coalescing and retry semantics, while OpenZues still routes wake execution through its attention-queue loop.
+
+### Recovery addendum 2026-04-20 disabled-heartbeats wake-now suppression parity America/Chicago
+
+- Followed the `set-heartbeats` contract landing with the next smallest runtime-effect gap directly behind it.
+  - upstream evidence from the local OpenClaw checkout:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\infra\heartbeat-wake.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\infra\heartbeat-runner.ts`
+  - key upstream behavior:
+    - when heartbeats are disabled, the heartbeat runner returns `skipped: disabled`.
+    - explicit wake requests may still enqueue wake intent, but the immediate heartbeat nudge does not run through as if heartbeats were enabled.
+  - key finding:
+    - after the first local `set-heartbeats` landing, OpenZues still let `wake now` post immediately because the app callback always called `tick_attention_queue(...)`, even when the runtime heartbeat flag was disabled.
+    - that meant the visible toggle existed, but a direct `wake now` still bypassed it.
+- Landed the smallest honest local runtime:
+  - updated the app-side immediate wake callback to return early when the live heartbeat runtime flag is disabled.
+  - the staged `gateway_wake_requests` row is still created, but it remains pending until heartbeats are re-enabled or a manual queue tick occurs.
+- Kept the scope intentionally honest:
+  - this slice suppresses only the immediate nudge when heartbeats are disabled.
+  - it does not yet recreate OpenClaw’s full heartbeat wake runner, pending-wake coalescing, or retry/backoff behavior.
+- Product effect proved end to end:
+  - after `set-heartbeats(false)`, `wake now`:
+    - still returns `{ "ok": true }`
+    - still records the wake request
+    - no longer injects a user control-chat message immediately
+    - leaves the `mode="now"` wake row pending
+- Primary files carrying the product change:
+  - `src/openzues/app.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_nodes_api.py`
+    - added `test_gateway_node_method_call_endpoint_wake_now_stays_pending_when_heartbeats_are_disabled`
+- Verified the slice with:
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_nodes_api.py -q -k "toggles_attention_queue_runtime or wake_now_stays_pending_when_heartbeats_are_disabled"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py -q -k "set_heartbeats_returns_ok_payload_when_runtime_is_wired"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q`
+  - `.\.venv\Scripts\ruff.exe check src/openzues/services/gateway_node_methods.py src/openzues/app.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mypy src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the new disabled-heartbeats proof failed first against the old local callback on the exact “still posted immediately” drift.
+  - after the callback guard fix, the focused tests passed and the full gateway node-method/API regression sweep stayed green (`583 passed`).
+  - Ruff stayed clean on the touched runtime/tests.
+  - the touched gateway method runtime type-checked cleanly.
+- Verification note:
+  - `src/openzues/app.py` still has a broader pre-existing mypy wall outside this slice, so the type gate for this checkpoint remained focused on the touched gateway method runtime.
+- Next exact seam:
+  - continue on the deeper heartbeat-runner parity gap around coalescing, retry, and pending wake processing, which upstream handles in `heartbeat-wake.ts` / `heartbeat-runner.ts` and OpenZues still approximates with its attention-queue loop.
+
+### Recovery addendum 2026-04-20 pending-wake batch drain parity America/Chicago
+
+- Continued on the same heartbeat-runner seam and took the smallest pending-wake processing gap with direct observable behavior.
+  - upstream evidence from the local OpenClaw checkout:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\infra\heartbeat-wake.ts`
+  - key upstream behavior:
+    - pending heartbeat wake requests are batched before a scheduled run.
+    - a single wake cycle processes the full pending batch for that fire instead of stopping after one item.
+  - key finding:
+    - OpenZues still processed only one queued wake row per `tick_attention_queue(...)` call.
+    - when multiple pending wakes were staged, the first row was dispatched and the rest were left behind for later ticks even though the caller had already entered the wake-processing path.
+- Landed the smallest honest local runtime:
+  - updated `ControlChatService._dispatch_next_wake(...)` to drain queued wake rows in a loop during one queue tick.
+  - each claimed wake is still submitted sequentially through the existing control-chat path and marked dispatched individually.
+- Kept the scope intentionally honest:
+  - this is not full upstream coalescing parity.
+  - OpenZues still stores explicit wake rows and converts each one into a separate control-chat submit, while upstream coalesces pending wake reasons before running the heartbeat handler.
+  - the parity gain here is narrower and real: one local wake-processing pass no longer stops after the first staged wake.
+- Product effect proved end to end:
+  - multiple pending `mode="now"` wake rows can now be drained in one `tick_attention_queue(...)` pass.
+  - both resulting user messages are submitted in order.
+  - all drained wake rows are marked `dispatched` in the same pass.
+- Primary files carrying the product change:
+  - `src/openzues/services/control_chat.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_nodes_api.py`
+    - added `test_attention_queue_tick_drains_multiple_pending_wakes_in_one_pass`
+- Verified the slice with:
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_nodes_api.py -q -k "drains_multiple_pending_wakes_in_one_pass"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_nodes_api.py -q -k "supports_wake_now_and_next_heartbeat or toggles_attention_queue_runtime or wake_now_stays_pending_when_heartbeats_are_disabled or drains_multiple_pending_wakes_in_one_pass"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q`
+  - `.\.venv\Scripts\ruff.exe check src/openzues/services/control_chat.py tests/test_gateway_nodes_api.py`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mypy src/openzues/services/control_chat.py`
+- Result:
+  - the new batch-drain proof failed first against the old local runtime on the exact “only checkpoint A drained” behavior.
+  - after the drain-loop fix, the focused batching proof passed and the full gateway node-method/API regression sweep stayed green (`584 passed`).
+  - Ruff stayed clean on the touched runtime/tests.
+  - the touched control-chat runtime type-checked cleanly.
+- Next exact seam:
+  - continue on the deeper heartbeat-runner parity difference around true wake coalescing and retry/backoff semantics, where upstream merges pending wake reasons before the run and OpenZues still preserves one explicit wake row per request.
+
+### Recovery addendum 2026-04-20 duplicate wake text coalescing parity America/Chicago
+
+- Continued on the same heartbeat-runner seam and narrowed the next coalescing slice to one observable local behavior instead of claiming full upstream reason-priority parity.
+  - upstream evidence from the local OpenClaw checkout:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\infra\heartbeat-wake.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\infra\heartbeat-wake.test.ts`
+  - key upstream behavior:
+    - multiple same-target wake requests inside one coalescing window collapse into one wake run instead of producing duplicate handler executions.
+    - the upstream runtime still preserves distinct targeted wakes as separate executions.
+  - key finding:
+    - after the local batch-drain landing, OpenZues correctly drained all pending wake rows in one `tick_attention_queue(...)` pass.
+    - but if two staged wake rows carried the exact same text, the queue consumer still submitted two identical user control-chat messages even though both rows were being processed in the same local wake pass.
+- Landed the smallest honest local runtime:
+  - updated `ControlChatService._dispatch_next_wake(...)` to remember which wake text values it has already submitted during the current drain pass.
+  - exact duplicate wake text is now submitted once, while later duplicate rows in the same pass are still marked `dispatched`.
+- Kept the scope intentionally honest:
+  - this is not full upstream reason-priority coalescing.
+  - OpenZues still stores explicit wake rows and still submits distinct wake text values independently in order.
+  - the parity gain here is narrower and real: duplicate wake text no longer creates duplicate user transcript entries during one local wake-processing cycle.
+- Product effect proved end to end:
+  - two pending `mode="now"` wake rows with the same text now drain in one `tick_attention_queue(...)` pass with:
+    - one user control-chat message
+    - both wake rows marked `dispatched`
+  - distinct wake text still drains as distinct user messages.
+- Primary files carrying the product change:
+  - `src/openzues/services/control_chat.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_nodes_api.py`
+    - added `test_attention_queue_tick_coalesces_duplicate_pending_wakes_in_one_pass`
+- Verified the slice with:
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_nodes_api.py -q -k "coalesces_duplicate_pending_wakes_in_one_pass"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_nodes_api.py -q -k "coalesces_duplicate_pending_wakes_in_one_pass or drains_multiple_pending_wakes_in_one_pass or wake_now_stays_pending_when_heartbeats_are_disabled or toggles_attention_queue_runtime"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q`
+  - `.\.venv\Scripts\ruff.exe check src/openzues/services/control_chat.py tests/test_gateway_nodes_api.py`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mypy src/openzues/services/control_chat.py`
+- Result:
+  - the new duplicate-wake proof failed first against the old local runtime on the exact “same text submitted twice” behavior.
+  - after the in-pass duplicate suppression fix, the focused proof passed and the full gateway node-method/API regression sweep stayed green (`585 passed`).
+  - Ruff stayed clean on the touched runtime/tests.
+  - the touched control-chat runtime type-checked cleanly.
+- Next exact seam:
+  - continue on the deeper heartbeat-runner retry/backoff difference where upstream holds a retry cooldown for `requests-in-flight` or thrown wake handler errors, while OpenZues still releases failed wake rows for immediate re-attempt on the next queue tick.
+
+### Recovery addendum 2026-04-20 wake submit retry cooldown parity America/Chicago
+
+- Continued on the same heartbeat-runner seam and took the next small retry/backoff slice with a direct upstream analogue.
+  - upstream evidence from the local OpenClaw checkout:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\infra\heartbeat-wake.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\infra\heartbeat-wake.test.ts`
+  - key upstream behavior:
+    - when the heartbeat wake handler throws, the wake layer re-queues the wake and holds a default retry cooldown before it fires again.
+    - during that cooldown, an immediate extra wake request does not collapse the retry window away.
+  - key finding:
+    - OpenZues released a failed wake row back to `pending`, but it had no retry cooldown at all.
+    - that meant the next queue tick retried the same failing wake immediately, even when the failure had just happened in the previous pass.
+- Landed the smallest honest local runtime:
+  - added a one-second in-memory wake retry cooldown inside `ControlChatService`.
+  - when wake submission raises, the claimed wake row is still released back to `pending`, but `_dispatch_next_wake(...)` now suppresses immediate re-attempts until the cooldown expires.
+- Kept the scope intentionally honest:
+  - this is not full upstream retry scheduling parity.
+  - OpenZues does not yet own a dedicated wake timer or per-target retry queue analogous to OpenClaw's heartbeat wake layer.
+  - the parity gain here is narrower and real: a failed wake submit no longer re-fires on the very next queue tick.
+- Product effect proved end to end:
+  - after a wake submit failure:
+    - the wake row returns to `pending`
+    - an immediate second `tick_attention_queue(...)` pass returns `False` and does not retry
+    - once the cooldown expires, the next tick retries the same pending wake
+- Primary files carrying the product change:
+  - `src/openzues/services/control_chat.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_nodes_api.py`
+    - added `test_attention_queue_tick_defers_wake_retry_after_submit_error`
+- Verified the slice with:
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_nodes_api.py -q -k "defers_wake_retry_after_submit_error"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_nodes_api.py -q -k "defers_wake_retry_after_submit_error or coalesces_duplicate_pending_wakes_in_one_pass or drains_multiple_pending_wakes_in_one_pass or wake_now_stays_pending_when_heartbeats_are_disabled or toggles_attention_queue_runtime"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q`
+  - `.\.venv\Scripts\ruff.exe check src/openzues/services/control_chat.py tests/test_gateway_nodes_api.py`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mypy src/openzues/services/control_chat.py`
+- Result:
+  - the new retry-cooldown proof failed first against the old local runtime on the exact “immediate second tick retried the same failing wake” behavior.
+  - after the cooldown guard landed, the focused proof passed and the full gateway node-method/API regression sweep stayed green (`586 passed`).
+  - Ruff stayed clean on the touched runtime/tests.
+  - the touched control-chat runtime type-checked cleanly.
+- Next exact seam:
+  - continue on the deeper heartbeat-runner retry/coalescing difference where upstream keeps retry timing and coalescing per wake target, while OpenZues still applies one local cooldown across its single wake queue and has no richer structured wake-reason priority model.
+
+### Recovery addendum 2026-04-20 wake-now should not flush deferred wakes America/Chicago
+
+- Continued on the same wake/heartbeat seam and took the next bounded behavior drift directly adjacent to the queue-first wake work.
+  - upstream evidence from the local OpenClaw checkout:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\cron\service\timer.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods\cron.ts`
+  - key upstream behavior:
+    - `wake({ mode: "next-heartbeat" })` only enqueues the system event and does not trigger an immediate wake run.
+    - `wake({ mode: "now" })` requests an immediate heartbeat wake, but that does not retroactively convert earlier deferred wakes into immediate ones.
+  - key finding:
+    - OpenZues routed `wake now` through the full `tick_attention_queue(...)` path.
+    - because that queue tick drained all wake rows regardless of mode, a previously pending `next-heartbeat` wake was flushed early as soon as any later `wake now` arrived.
+- Landed the smallest honest local runtime:
+  - added mode-aware wake claiming through the existing wake queue path.
+  - `dispatch_gateway_wake_now(...)` now asks `ControlChatService` to drain only `mode="now"` rows.
+  - the normal attention-queue tick continues to drain both `now` and `next-heartbeat` rows.
+- Kept the scope intentionally honest:
+  - this does not recreate OpenClaw's dedicated heartbeat/system-event substrate.
+  - OpenZues still uses its explicit wake-request table rather than the upstream system-event queue plus heartbeat runner.
+  - the parity gain here is narrower and real: immediate wake handling no longer violates deferred wake semantics.
+- Product effect proved end to end:
+  - a pending `next-heartbeat` wake remains pending after a later `wake now`.
+  - the `wake now` request still dispatches immediately through the bounded local now-only wake path.
+  - the deferred wake still waits for the normal queue/heartbeat path.
+- Primary files carrying the product change:
+  - `src/openzues/database.py`
+  - `src/openzues/services/gateway_wake.py`
+  - `src/openzues/services/control_chat.py`
+  - `src/openzues/app.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_nodes_api.py`
+    - added `test_gateway_node_method_call_endpoint_wake_now_does_not_flush_next_heartbeat_rows`
+- Verified the slice with:
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_nodes_api.py -q -k "wake_now_does_not_flush_next_heartbeat_rows"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_nodes_api.py -q -k "wake_now_does_not_flush_next_heartbeat_rows or supports_wake_now_and_next_heartbeat or wake_allows_opaque_metadata_fields or wake_now_records_dispatched_wake_request or wake_now_stays_pending_when_heartbeats_are_disabled or attention_queue_tick_drains_multiple_pending_wakes_in_one_pass"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q`
+  - `.\.venv\Scripts\ruff.exe check src/openzues/database.py src/openzues/services/gateway_wake.py src/openzues/services/control_chat.py src/openzues/app.py tests/test_gateway_nodes_api.py`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mypy src/openzues/database.py src/openzues/services/gateway_wake.py src/openzues/services/control_chat.py`
+- Result:
+  - the new deferred-wake proof failed first against the old local runtime on the exact “pending next-heartbeat wake was emitted early by a later wake now” behavior.
+  - after the mode-aware drain split landed, the focused proof passed and the full gateway node-method/API regression sweep stayed green (`587 passed`).
+  - Ruff stayed clean on the touched runtime/tests.
+  - the touched database, gateway-wake, and control-chat runtime files type-checked cleanly.
+- Next exact seam:
+  - continue on the remaining wake coalescing difference where OpenClaw batches consecutive `wake now` requests through a short heartbeat debounce, while OpenZues still drains each immediate wake call independently once it enters the now-only queue path.
+
+### Recovery addendum 2026-04-20 wake-now debounce coalescing parity America/Chicago
+
+- Continued on the remaining immediate-wake coalescing seam right behind the deferred-wake fix and took the next bounded runtime slice.
+  - upstream evidence from the local OpenClaw checkout:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\infra\heartbeat-wake.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\infra\heartbeat-wake.test.ts`
+  - key upstream behavior:
+    - immediate wake requests are queued into the heartbeat wake layer and batched through a short coalescing window before the handler runs.
+    - duplicate wake requests inside that window do not immediately create duplicate wake executions.
+  - key finding:
+    - even after the mode-aware drain split, OpenZues still drained each `wake now` API call independently.
+    - two back-to-back duplicate `wake now` requests produced two immediate transcript messages instead of one coalesced wake-processing pass.
+- Landed the smallest honest local runtime:
+  - added a small app-owned immediate-wake debounce before dispatching `mode="now"` rows through the now-only wake path.
+  - repeated `wake now` requests arriving during that debounce share the same subsequent drain pass.
+  - the local duplicate-text suppression inside one drain pass then collapses exact duplicate wake text to one user transcript entry while still marking all queued wake rows `dispatched`.
+- Kept the scope intentionally honest:
+  - this is not full upstream heartbeat-wake parity.
+  - OpenZues still does not implement OpenClaw's richer reason-priority selection or per-target wake map.
+  - the parity gain here is narrower and real: immediate duplicate wake bursts now coalesce before local dispatch instead of flushing one-by-one.
+- Product effect proved end to end:
+  - two quick `wake now` requests with the same text now:
+    - return `{ "ok": true }` both times
+    - initially leave the transcript unchanged during the debounce window
+    - then emit one user control-chat message after the debounced now-only drain
+    - leave both wake rows marked `dispatched`
+- Primary files carrying the product change:
+  - `src/openzues/app.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_nodes_api.py`
+    - added `test_gateway_node_method_call_endpoint_wake_now_coalesces_duplicate_rows`
+- Updated adjacent wake API proofs in:
+  - `tests/test_gateway_nodes_api.py`
+    - `test_gateway_node_method_call_endpoint_supports_wake_now_and_next_heartbeat`
+    - `test_gateway_node_method_call_endpoint_wake_allows_opaque_metadata_fields`
+    - `test_gateway_node_method_call_endpoint_wake_now_records_dispatched_wake_request`
+    - `test_gateway_node_method_call_endpoint_wake_now_does_not_flush_next_heartbeat_rows`
+  - these proofs now wait for the debounced immediate-wake dispatch instead of assuming an instant transcript write on response return.
+- Verified the slice with:
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_nodes_api.py -q -k "wake_now_coalesces_duplicate_rows"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_nodes_api.py -q -k "wake_now_coalesces_duplicate_rows or wake_now_does_not_flush_next_heartbeat_rows or supports_wake_now_and_next_heartbeat or wake_allows_opaque_metadata_fields or wake_now_records_dispatched_wake_request"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_nodes_api.py -q -k "supports_wake_now_and_next_heartbeat or wake_allows_opaque_metadata_fields or wake_now_records_dispatched_wake_request or wake_now_stays_pending_when_heartbeats_are_disabled or attention_queue_tick_drains_multiple_pending_wakes_in_one_pass or wake_now_does_not_flush_next_heartbeat_rows or wake_now_coalesces_duplicate_rows or coalesces_duplicate_pending_wakes_in_one_pass or defers_wake_retry_after_submit_error or toggles_attention_queue_runtime"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q`
+  - `.\.venv\Scripts\ruff.exe check src/openzues/database.py src/openzues/services/gateway_wake.py src/openzues/services/control_chat.py src/openzues/app.py tests/test_gateway_nodes_api.py`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mypy src/openzues/database.py src/openzues/services/gateway_wake.py src/openzues/services/control_chat.py`
+- Result:
+  - the new debounce proof failed first against the old local runtime on the exact “duplicate wake now requests emitted duplicate immediate transcript entries” behavior.
+  - after the debounced immediate-wake dispatcher landed, the focused proof passed and the full gateway node-method/API regression sweep stayed green (`588 passed`).
+  - Ruff stayed clean on the touched runtime/tests.
+  - the touched database, gateway-wake, and control-chat runtime files type-checked cleanly.
+- Verification note:
+  - `src/openzues/app.py` was touched for the debounced dispatcher, but that file still carries a broader pre-existing mypy wall outside this slice, so the type gate stayed focused on the touched runtime files that already have a clean boundary.
+- Next exact seam:
+  - continue on the deeper heartbeat-wake difference where OpenClaw tracks pending wakes with richer per-target and reason-priority state, while OpenZues still coalesces only by timing plus duplicate text inside its single wake queue.
+
+### Recovery addendum 2026-04-20 wake retry self-arming parity America/Chicago
+
+- Continued on the next honest wake seam after debounce coalescing and closed the missing retry arm.
+  - upstream evidence from the local OpenClaw checkout:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\infra\heartbeat-wake.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\infra\heartbeat-runner.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\infra\heartbeat-wake.test.ts`
+  - key upstream behavior:
+    - a wake that cannot dispatch immediately is not left idle until some unrelated later tick.
+    - the wake layer arms its own retry and re-enters dispatch after the cooldown window.
+  - key finding:
+    - OpenZues already had a wake retry cooldown and returned failed wake rows to `pending`, but it did not arm a follow-up retry on its own.
+    - after an immediate wake submit failure, the row stayed pending until some external tick or later wake happened to move the queue again.
+- Landed the smallest honest local runtime:
+  - added a control-chat-owned retry timer that arms itself when a wake dispatch attempt fails.
+  - when the timer fires, it rebuilds the dashboard through the app-provided loader and re-runs the appropriate wake drain path instead of waiting for outside activity.
+  - `mode="now"` retries stay on the immediate wake path, while broader wake retries continue through the normal queue drain entry point.
+- Kept the scope intentionally honest:
+  - this is not full upstream per-target wake state or reason-priority parity.
+  - OpenZues still retries inside one local wake queue without OpenClaw's richer target identity model.
+  - the parity gain here is narrower and real: failed immediate wake dispatches now re-arm themselves and recover without manual intervention.
+- Product effect proved end to end:
+  - a `wake now` request whose first submit attempt raises now:
+    - returns `{ "ok": true }` from the gateway API call
+    - briefly leaves the queued wake row `pending`
+    - re-attempts automatically after the retry cooldown
+    - ends with the wake row marked `dispatched` without a second manual tick
+- Primary files carrying the product change:
+  - `src/openzues/services/control_chat.py`
+  - `src/openzues/app.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_nodes_api.py`
+    - added `test_gateway_node_method_call_endpoint_wake_now_auto_retries_after_submit_error`
+    - added `test_gateway_node_method_call_endpoint_wake_now_batches_distinct_rows`
+- Verified the slice with:
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_nodes_api.py -q -k "wake_now_auto_retries_after_submit_error"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_nodes_api.py -q -k "wake_now_auto_retries_after_submit_error or wake_now_coalesces_duplicate_rows or wake_now_does_not_flush_next_heartbeat_rows or wake_now_records_dispatched_wake_request"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q`
+  - `.\.venv\Scripts\ruff.exe check src/openzues/database.py src/openzues/services/gateway_wake.py src/openzues/services/control_chat.py src/openzues/app.py tests/test_gateway_nodes_api.py`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mypy src/openzues/database.py src/openzues/services/gateway_wake.py src/openzues/services/control_chat.py`
+- Result:
+  - the new auto-retry proof failed first against the old local runtime on the exact “failed immediate wake stayed pending until some later outside tick” behavior.
+  - after the self-arming retry timer landed, the focused proof passed and the full gateway node-method/API regression sweep stayed green (`589 passed`).
+  - Ruff stayed clean on the touched runtime/tests.
+  - the touched database, gateway-wake, and control-chat runtime files type-checked cleanly.
+- Verification note:
+  - `src/openzues/app.py` was touched again to provide the dashboard loader into the control-chat retry path, but that file still carries a broader pre-existing mypy wall outside this slice, so the type gate stayed focused on the already-clean boundary runtime files.
+- Next exact seam:
+  - continue on the deeper heartbeat-wake difference where OpenClaw keeps richer per-target and reason-priority wake identity, while OpenZues now coalesces, debounces, and self-retries inside a single local wake queue.
+
+### Recovery addendum 2026-04-20 targeted wake preservation and retry lifecycle reset America/Chicago
+
+- Continued on the next honest wake-target seam after self-arming retry and closed two adjacent gaps without expanding into the full upstream target-priority model.
+  - upstream evidence from the local OpenClaw checkout:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\infra\heartbeat-wake.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\infra\heartbeat-wake.test.ts`
+  - key upstream behavior:
+    - targeted wakes preserve `sessionKey` and related wake identity through coalescing and retry.
+    - re-registering or reattaching the wake runtime clears stale retry timer state instead of carrying old cooldown deadlines into the fresh lifecycle.
+  - key findings:
+    - OpenZues wake rows were still text-only, so same-text wakes aimed at different sessions collapsed into one generic local dispatch.
+    - OpenZues also kept stale `_wake_retry_due_at` state across a heartbeat disable/enable cycle, so a fresh runtime could stay blocked by an old failed submit cooldown.
+- Landed the smallest honest local runtime:
+  - added `session_key` persistence to queued wake rows and threaded it through gateway wake enqueue, wake dispatch, and retry.
+  - changed local duplicate suppression from `text`-only to `(session_key, text)`, so same-text wakes only coalesce when they truly target the same session.
+  - added an explicit control-chat wake retry reset and wired the heartbeat runtime toggle through it, so a disable/enable cycle clears stale retry state before the next wake drain.
+- Kept the scope intentionally honest:
+  - this is still not full OpenClaw per-target wake identity parity because OpenZues does not yet preserve `agentId` or upstream reason-priority merging.
+  - the parity gain here is narrower and real: session-targeted wake rows now survive local batching/retry, and stale retry cooldowns no longer leak across a fresh heartbeat runtime lifecycle.
+- Product effect proved end to end:
+  - two queued wakes with the same text but different `sessionKey` targets now dispatch as two distinct local submits instead of collapsing into one generic wake.
+  - a queued wake that fails once, arms retry, and then sees the heartbeat runtime toggled off and back on now dispatches immediately on the next manual tick instead of remaining blocked behind the stale retry deadline.
+- Primary files carrying the product change:
+  - `src/openzues/database.py`
+  - `src/openzues/services/gateway_wake.py`
+  - `src/openzues/services/control_chat.py`
+  - `src/openzues/services/gateway_node_methods.py`
+  - `src/openzues/app.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proofs in:
+  - `tests/test_gateway_nodes_api.py`
+    - added `test_gateway_node_method_call_endpoint_wake_preserves_distinct_session_targets`
+    - added `test_attention_queue_reenable_clears_stale_wake_retry_cooldown`
+- Verified the slice with:
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_nodes_api.py -q -k "wake_preserves_distinct_session_targets"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_nodes_api.py -q -k "attention_queue_reenable_clears_stale_wake_retry_cooldown"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_nodes_api.py -q -k "attention_queue_reenable_clears_stale_wake_retry_cooldown or wake_preserves_distinct_session_targets or wake_now_auto_retries_after_submit_error or wake_now_coalesces_duplicate_rows or wake_now_batches_distinct_rows or wake_now_records_dispatched_wake_request or wake_now_does_not_flush_next_heartbeat_rows or supports_wake_now_and_next_heartbeat"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q`
+  - `.\.venv\Scripts\ruff.exe check src/openzues/database.py src/openzues/services/gateway_wake.py src/openzues/services/control_chat.py src/openzues/services/gateway_node_methods.py src/openzues/app.py tests/test_gateway_nodes_api.py`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mypy src/openzues/database.py src/openzues/services/gateway_wake.py src/openzues/services/control_chat.py src/openzues/services/gateway_node_methods.py`
+- Result:
+  - both new proofs failed first against the old local runtime on exact parity gaps:
+    - text-only wake collapse dropped distinct `sessionKey` targets.
+    - stale retry cooldown survived heartbeat runtime re-enable.
+  - after the targeted wake persistence and lifecycle reset landed, the focused wake bundle passed and the full gateway node-method/API regression sweep stayed green (`591 passed`).
+  - Ruff stayed clean on the touched runtime/tests.
+  - the touched database, gateway-wake, control-chat, and gateway-node-method runtime files type-checked cleanly.
+- Verification note:
+  - `src/openzues/app.py` was touched again to reset wake retry state on heartbeat toggle, but that file still carries a broader pre-existing mypy wall outside this slice, so the type gate stayed focused on the already-clean boundary runtime files.
+- Next exact seam:
+  - continue on the remaining OpenClaw wake-target gap where upstream preserves richer per-target identity and priority, especially `agentId` plus reason-priority replacement, while OpenZues now preserves `sessionKey` targets but still lacks the broader wake-target map.
+
+### Recovery addendum 2026-04-20 wake agentId target resolution parity America/Chicago
+
+- Continued on the remaining wake-target gap and closed the smallest honest `agentId` slice without pretending we already have the full upstream wake-target map.
+  - upstream evidence from the local OpenClaw checkout:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\infra\heartbeat-wake.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\infra\heartbeat-wake.test.ts`
+  - key upstream behavior:
+    - the wake layer accepts targeted wake fields and forwards them into the handler instead of silently dropping them.
+    - `agentId` participates in the wake-target identity alongside `sessionKey`.
+  - key finding:
+    - after the last checkpoint, OpenZues preserved explicit `sessionKey` wake targets, but a caller-provided `agentId` was still ignored by `wake`.
+    - `wake` with `agentId: "main"` still degraded to an untargeted local submit with `session_key=None`, even though the existing `sessions.resolve` path could already resolve that target.
+- Landed the smallest honest local runtime:
+  - wired `wake` through the existing `sessions.resolve` contract when the caller provides `agentId` without `sessionKey`.
+  - this resolves the explicit `main` agent target into the live control-chat session key before the wake row is queued.
+  - preserved the existing mismatch guard: if the caller supplies both `agentId` and `sessionKey`, OpenZues validates that they describe the same target instead of silently accepting drift.
+- Kept the scope intentionally honest:
+  - this is not full upstream multi-agent wake targeting.
+  - OpenZues still only resolves the bounded local `main` agent target because the broader agent-session inventory is not there yet.
+  - the parity gain here is narrower and real: explicit `agentId` targeting for the current main lane now survives the wake queue instead of being ignored.
+- Product effect proved end to end:
+  - a queued `wake` with `agentId: "main"` and no `sessionKey` now:
+    - resolves to the current control-chat session key through `sessions.resolve`
+    - persists that target into the wake row
+    - dispatches through `submit(..., session_key=<resolved key>)` on the next heartbeat tick
+- Primary files carrying the product change:
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_nodes_api.py`
+    - added `test_gateway_node_method_call_endpoint_wake_resolves_main_agent_target`
+- Verified the slice with:
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_nodes_api.py -q -k "wake_resolves_main_agent_target"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_nodes_api.py -q -k "wake_resolves_main_agent_target or wake_preserves_distinct_session_targets or attention_queue_reenable_clears_stale_wake_retry_cooldown or wake_now_auto_retries_after_submit_error or wake_now_coalesces_duplicate_rows or wake_now_batches_distinct_rows or wake_now_records_dispatched_wake_request or wake_now_does_not_flush_next_heartbeat_rows or supports_wake_now_and_next_heartbeat"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q`
+  - `.\.venv\Scripts\ruff.exe check src/openzues/database.py src/openzues/services/gateway_wake.py src/openzues/services/control_chat.py src/openzues/services/gateway_node_methods.py src/openzues/app.py tests/test_gateway_nodes_api.py`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mypy src/openzues/database.py src/openzues/services/gateway_wake.py src/openzues/services/control_chat.py src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the new proof failed first against the old local runtime on the exact “explicit `agentId` wake target degraded to `session_key=None`” behavior.
+  - after the resolver wiring landed, the focused wake bundle passed and the full gateway node-method/API regression sweep stayed green (`592 passed`).
+  - Ruff stayed clean on the touched runtime/tests.
+  - the touched database, gateway-wake, control-chat, and gateway-node-method runtime files type-checked cleanly.
+- Next exact seam:
+  - continue on the remaining richer wake-target gap where upstream uses a true wake-target map with `agentId`, `sessionKey`, and reason-priority replacement, while OpenZues now resolves `main` agent targets into `sessionKey` but still does not preserve broader per-agent wake identity or upstream reason-priority merging.
+
+### Recovery addendum 2026-04-20 wake agent identity preservation parity America/Chicago
+
+- Continued on the wake-target identity seam immediately after `agentId -> sessionKey` resolution and closed the next bounded gap.
+  - upstream evidence from the local OpenClaw checkout:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\infra\heartbeat-wake.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\infra\heartbeat-wake.test.ts`
+  - key upstream behavior:
+    - wake-target identity is not only used transiently to pick a handler target.
+    - `agentId` and `sessionKey` survive into the pending wake structure and retry path together.
+  - key findings:
+    - after the previous checkpoint, OpenZues correctly resolved `agentId: "main"` into the live session target, but then discarded the agent identity from the event payload and queued wake row.
+    - OpenZues also dropped the implied `agentId` when the caller provided an explicit agent-scoped `sessionKey` such as `agent:main:thread:demo`.
+- Landed the smallest honest local runtime:
+  - added `agent_id` persistence to queued wake rows.
+  - preserved explicit `agentId` into the `system-event` payload and the queued wake row.
+  - derived `agentId` from an explicit agent-scoped `sessionKey` when the caller omitted `agentId`, so the wake row and event now keep the same target identity the session key already encoded.
+- Kept the scope intentionally honest:
+  - this is still not the full upstream wake-target map or reason-priority merge logic.
+  - OpenZues now preserves the local main-lane agent identity through wake persistence, but it still does not implement the broader multi-agent target map or upstream priority replacement semantics.
+  - the parity gain here is narrower and real: the agent target now survives resolution and queueing instead of being thrown away after session resolution.
+- Product effect proved end to end:
+  - a queued `wake` with `agentId: "main"` now:
+    - resolves to the live control-chat `sessionKey`
+    - appends a `system-event` payload containing both `agentId` and `sessionKey`
+    - persists both identities into the wake row before dispatch
+  - a queued `wake` with only `sessionKey: "agent:main:thread:demo"` now:
+    - dispatches through that explicit session target
+    - preserves the implied `agentId: "main"` in both the event payload and the wake row
+- Primary files carrying the product change:
+  - `src/openzues/database.py`
+  - `src/openzues/services/gateway_wake.py`
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proofs in:
+  - `tests/test_gateway_nodes_api.py`
+    - strengthened `test_gateway_node_method_call_endpoint_wake_resolves_main_agent_target`
+    - added `test_gateway_node_method_call_endpoint_wake_derives_agent_identity_from_session_key`
+- Verified the slice with:
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_nodes_api.py -q -k "wake_resolves_main_agent_target"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_nodes_api.py -q -k "wake_derives_agent_identity_from_session_key"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_nodes_api.py -q -k "wake_derives_agent_identity_from_session_key or wake_resolves_main_agent_target or wake_preserves_distinct_session_targets or attention_queue_reenable_clears_stale_wake_retry_cooldown or wake_now_auto_retries_after_submit_error or wake_now_coalesces_duplicate_rows or wake_now_batches_distinct_rows or wake_now_records_dispatched_wake_request or wake_now_does_not_flush_next_heartbeat_rows or supports_wake_now_and_next_heartbeat"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q`
+  - `.\.venv\Scripts\ruff.exe check src/openzues/database.py src/openzues/services/gateway_wake.py src/openzues/services/control_chat.py src/openzues/services/gateway_node_methods.py src/openzues/app.py tests/test_gateway_nodes_api.py`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mypy src/openzues/database.py src/openzues/services/gateway_wake.py src/openzues/services/control_chat.py src/openzues/services/gateway_node_methods.py`
+- Result:
+  - both strengthened proofs failed first against the old local runtime on exact identity-loss behavior:
+    - resolved `agentId` was not preserved after wake target resolution.
+    - explicit agent-scoped `sessionKey` did not preserve its implied `agentId`.
+  - after the wake identity persistence landed, the focused wake bundle passed and the full gateway node-method/API regression sweep stayed green (`593 passed`).
+  - Ruff stayed clean on the touched runtime/tests.
+  - the touched database, gateway-wake, control-chat, and gateway-node-method runtime files type-checked cleanly.
+- Next exact seam:
+  - continue on the remaining richer upstream wake-target model where pending wakes are coalesced and replaced by target plus reason priority, while OpenZues now preserves `agentId` and `sessionKey` identity but still lacks upstream reason-priority replacement and broader multi-agent wake-target state.
+
+### Recovery addendum 2026-04-20 wake reason preservation parity America/Chicago
+
+- Continued on the same richer wake-target seam and closed the next bounded metadata gap before attempting true priority replacement.
+  - upstream evidence from the local OpenClaw checkout:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\infra\heartbeat-wake.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\infra\heartbeat-reason.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\infra\heartbeat-wake.test.ts`
+  - key upstream behavior:
+    - wake requests carry a structured `reason` alongside target identity.
+    - that reason survives pending wake storage and retry instead of collapsing to a generic wake marker.
+  - key findings:
+    - OpenZues still hardcoded every wake event payload to `reason: "wake"`.
+    - the queued local wake row had no place to persist a richer caller reason at all, so explicit wake reason metadata was lost immediately.
+- Landed the smallest honest local runtime:
+  - added `reason` persistence to queued wake rows.
+  - taught the gateway wake service to preserve an explicit caller reason while still defaulting back to `"wake"` when no reason is supplied.
+  - threaded the optional normalized `reason` through the gateway node method into both the `system-event` payload and the queued wake row.
+- Kept the scope intentionally honest:
+  - this is still not upstream reason-priority replacement.
+  - OpenZues now preserves wake reason metadata, but it still does not coalesce same-target pending wakes by priority the way OpenClaw does.
+  - the parity gain here is narrower and real: explicit wake reasons no longer disappear into the generic local `"wake"` bucket.
+- Product effect proved end to end:
+  - a queued `wake` with `reason: "cron:job-1"` and `sessionKey: "agent:main:thread:demo"` now:
+    - appends a `system-event` payload containing `reason: "cron:job-1"`
+    - preserves the implied `agentId: "main"` from the explicit session target
+    - stores `reason: "cron:job-1"` in the queued wake row through dispatch
+  - a wake without an explicit reason still preserves the existing local behavior and records `reason: "wake"`.
+- Primary files carrying the product change:
+  - `src/openzues/database.py`
+  - `src/openzues/services/gateway_wake.py`
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proofs in:
+  - `tests/test_gateway_node_methods.py`
+    - added `test_wake_preserves_explicit_reason_metadata`
+  - `tests/test_gateway_nodes_api.py`
+    - added `test_gateway_node_method_call_endpoint_wake_preserves_explicit_reason_metadata`
+- Verified the slice with:
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py -q -k "wake_preserves_explicit_reason_metadata"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_nodes_api.py -q -k "wake_preserves_explicit_reason_metadata"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q`
+  - `.\.venv\Scripts\ruff.exe check src/openzues/database.py src/openzues/services/gateway_wake.py src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mypy src/openzues/database.py src/openzues/services/gateway_wake.py src/openzues/services/gateway_node_methods.py`
+- Result:
+  - both new proofs failed first against the old local runtime on the exact hardcoded-reason behavior.
+  - after the reason-preservation wiring landed, both focused regressions passed and the full gateway node-method/API regression sweep stayed green (`595 passed`).
+  - Ruff stayed clean on the touched runtime/tests.
+  - the touched database, gateway-wake, and gateway-node-method runtime files type-checked cleanly.
+- Next exact seam:
+  - continue on the remaining upstream wake-priority gap where same-target pending wakes are replaced by reason priority, while OpenZues now preserves `reason`, `agentId`, and `sessionKey` metadata but still processes one explicit local wake row per request.
+
+### Recovery addendum 2026-04-20 pending wake row replacement parity America/Chicago
+
+- Continued on the remaining wake-priority seam after reason preservation and closed the next honest queue behavior gap.
+  - upstream evidence from the local OpenClaw checkout:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\infra\heartbeat-wake.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\infra\heartbeat-wake.test.ts`
+  - key upstream behavior:
+    - pending wakes are tracked by target key instead of stacking duplicate pending entries.
+    - a later higher-priority reason replaces a lower-priority pending wake for the same target.
+  - key findings:
+    - even after the last checkpoint, OpenZues still inserted a second pending wake row for the same `mode`, `text`, `agentId`, and `sessionKey`.
+    - that meant reason preservation existed, but reason priority still had no queue-level effect because each duplicate request lived in its own row.
+- Landed the smallest honest local runtime:
+  - taught `create_gateway_wake_request(...)` to reuse an existing pending wake row when the new request matches the same `mode`, `text`, `agentId`, and `sessionKey`.
+  - added local reason-priority comparison so higher-priority reasons replace lower-priority reasons on that shared pending row.
+  - preserved the narrower local semantics intentionally: distinct text or distinct targets still produce distinct rows.
+- Kept the scope intentionally honest:
+  - this is still not the full upstream wake-target map.
+  - OpenZues now replaces duplicate pending rows only when the mode, text, and target identity already match; it still does not collapse different text into one target-priority decision the way a pure structured wake runner can.
+  - the parity gain here is narrower and real: priority now changes the queued local wake state instead of only changing event metadata.
+- Product effect proved end to end:
+  - two `next-heartbeat` wakes with the same text and target now leave one pending row instead of two.
+  - when those duplicate requests carry `reason: "retry"` and later `reason: "exec-event"`, the surviving row keeps `reason: "exec-event"`.
+  - duplicate `wake now` rows arriving inside the local debounce window now also leave one dispatched wake row instead of two redundant duplicates.
+- Primary files carrying the product change:
+  - `src/openzues/database.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proofs in:
+  - `tests/test_gateway_node_methods.py`
+    - added `test_wake_upgrades_duplicate_pending_target_reason_by_priority`
+  - `tests/test_gateway_nodes_api.py`
+    - added `test_gateway_node_method_call_endpoint_wake_upgrades_duplicate_pending_reason_by_priority`
+    - tightened `test_gateway_node_method_call_endpoint_wake_now_coalesces_duplicate_rows`
+    - tightened `test_attention_queue_tick_coalesces_duplicate_pending_wakes_in_one_pass`
+- Verified the slice with:
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py -q -k "wake_upgrades_duplicate_pending_target_reason_by_priority"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_nodes_api.py -q -k "wake_upgrades_duplicate_pending_reason_by_priority or wake_now_coalesces_duplicate_rows"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q`
+  - `.\.venv\Scripts\ruff.exe check src/openzues/database.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mypy src/openzues/database.py`
+- Result:
+  - both new priority proofs failed first against the old local runtime on the exact “duplicate pending wake inserted a second row” behavior.
+  - after the queue replacement logic landed, both new proofs passed and the adjacent duplicate-now regressions tightened to a single surviving wake row.
+  - the full gateway node-method/API regression sweep stayed green (`597 passed`).
+  - Ruff stayed clean on the touched runtime/tests.
+  - the touched database runtime file type-checked cleanly.
+- Next exact seam:
+  - continue on the remaining upstream wake-priority boundary where same-target wakes with different text still produce separate local rows, because OpenZues does not yet have a pure structured wake-target map that can choose one winning action independent of operator text.
+
+### Recovery addendum 2026-04-20 historical pending wake consolidation parity America/Chicago
+
+- Continued on the last honest wake/heartbeat seam after target-only row replacement and closed the remaining stale-row gap.
+  - upstream evidence from the local OpenClaw checkout:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\infra\heartbeat-wake.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\infra\heartbeat-wake.test.ts`
+  - key upstream behavior:
+    - the pending wake map is authoritative for both fresh and already-pending wake state.
+    - target-priority winner selection applies when the wake is executed, not only when a new request is queued.
+  - key findings:
+    - after the previous checkpoint, fresh duplicate wakes were replaced correctly at insert time.
+    - but a workspace that already contained older duplicate pending rows for the same target could still dispatch both rows, because `claim_next_gateway_wake_request(...)` did not consolidate historical drift before claim.
+- Landed the smallest honest local runtime:
+  - factored the local target-match and winner-selection rules so the queue uses the same priority semantics at insert time and claim time.
+  - taught `claim_next_gateway_wake_request(...)` to collapse historical duplicate pending rows for the same mode and target before the winning row is claimed.
+  - preserved the same winner rules already proven for fresh rows:
+    - higher-priority reasons win
+    - equal priority keeps the later row
+    - the winning row's text survives through dispatch
+- Kept the scope intentionally honest:
+  - OpenZues still exposes a richer local `wake` API than upstream because it carries operator text.
+  - but inside that accepted surface, there is no longer an unproven queue-state gap between fresh and historical pending wake behavior.
+- Product effect proved end to end:
+  - if a workspace already has two pending rows for the same target, such as:
+    - `exec-event` with `Resume parity from checkpoint A.`
+    - `retry` with `Resume parity from checkpoint B.`
+  - then the next attention-queue tick now:
+    - collapses those rows to one winner before claim
+    - dispatches only `Resume parity from checkpoint A.`
+    - leaves one dispatched wake row with `reason: "exec-event"`
+- Primary files carrying the product change:
+  - `src/openzues/database.py`
+  - `tests/test_gateway_nodes_api.py`
+- Added focused regression proof in:
+  - `tests/test_gateway_nodes_api.py`
+    - added `test_attention_queue_tick_collapses_historical_same_target_pending_rows_before_dispatch`
+- Verified the slice with:
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_nodes_api.py -q -k "collapses_historical_same_target_pending_rows_before_dispatch"`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q`
+  - `.\.venv\Scripts\ruff.exe check src/openzues/database.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mypy src/openzues/database.py`
+- Result:
+  - the new historical-row proof failed first against the old local runtime on the exact “old duplicate pending rows still dispatch both messages” behavior.
+  - after claim-time consolidation landed, the new proof passed and the full gateway node-method/API regression sweep stayed green (`600 passed`).
+  - Ruff stayed clean on the touched runtime/tests.
+  - the touched database runtime file type-checked cleanly.
+- Completion:
+  - the current OpenClaw/OpenZues wake/heartbeat capability family is now complete inside the accepted parity boundary.
+  - in-scope behavior now has concrete local owners and proofs for:
+    - wake mode routing (`now` and `next-heartbeat`)
+    - queue-first staging
+    - disabled heartbeat suppression
+    - retry and lifecycle reset
+    - target preservation (`agentId` and `sessionKey`)
+    - reason preservation
+    - target-priority replacement for fresh and historical pending rows
+    - distinct-target batching and same-target coalescing
+  - no remaining unproven gap is left inside the current wake/heartbeat surface.
+
+### Recovery addendum 2026-04-20 cron one-shot `schedule.kind="at"` parity America/Chicago
+
+- Continued from the completed wake/heartbeat family into the next bounded cron seam and closed one-shot absolute-time scheduling inside the current OpenZues cron surface.
+  - upstream evidence from the local OpenClaw checkout:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\protocol\schema\cron.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server.cron.test.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\cron\service\jobs.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\cron\service.issue-19676-at-reschedule.test.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\cron\service.runs-one-shot-main-job-disables-it.test.ts`
+  - key upstream behavior:
+    - gateway cron accepts one-shot schedules as `{ "kind": "at", "at": "<ISO>" }`.
+    - gateway normalization also infers `kind: "at"` when only `schedule.at` is provided.
+    - one-shot jobs participate in list/status/run surfaces, compute `nextRunAtMs` from the absolute timestamp, and do not keep refiring after a consumed scheduled run.
+  - key findings in OpenZues before the fix:
+    - `gateway_cron.py` hard-rejected all `schedule.kind="at"` requests for both `cron.add` and `cron.update`.
+    - cron job discovery was cadence-only, so one-shot jobs with `cadence_minutes=None` would have been invisible to `cron.list`, `cron.status`, `cron.run`, `cron.remove`, and `cron.runs`.
+    - the ops-mesh scheduler treated one-shot tasks as manual-only because `_task_scheduled_next_run_at(...)` only understood `cadence_minutes`.
+- Landed the smallest honest local runtime:
+  - extended task blueprint payload storage with `schedule_kind` and `schedule_at` so one-shot cron jobs can live in the existing SQLite task blueprint model without inventing a second scheduler store.
+  - taught `cron.add` and `cron.update` to accept one-shot absolute-time schedules, canonicalize them to UTC ISO form, and infer `kind: "at"` when callers send only `schedule.at`.
+  - taught cron job discovery, payload rendering, due checks, and state computation to treat one-shot jobs as real cron jobs instead of manual-only task blueprints.
+  - taught ops-mesh task scheduling to launch due one-shot tasks and disable a consumed scheduled one-shot after a completed mission so it does not re-arm endlessly.
+- Kept the scope intentionally honest:
+  - this checkpoint closes one-shot schedule parity only inside the current OpenZues cron surface.
+  - OpenZues still intentionally keeps its narrower local cron contract on other axes, including:
+    - `payload.kind='agentTurn'` only
+    - `sessionTarget='main'` only
+    - `wakeMode='now'` only
+    - `delivery.mode='none'` only
+    - no cron-expression schedule parity yet
+- Product effect proved end to end:
+  - `cron.add` now accepts `{ "kind": "at", "at": "<ISO>" }` and returns/lists the normalized one-shot schedule.
+  - `cron.update` now patches an existing recurring task into a one-shot absolute-time task and returns/lists the normalized one-shot schedule.
+  - `cron.status` now counts one-shot jobs and surfaces their absolute `nextWakeAtMs`.
+  - `cron.remove` now deletes one-shot task blueprints instead of treating them as manual-only tasks.
+  - `cron.run` with `mode="due"` now launches a due one-shot task.
+  - the background ops-mesh scheduler now launches due one-shot tasks and disables a consumed scheduled one-shot on completion.
+- Primary files carrying the product change:
+  - `src/openzues/schemas.py`
+  - `src/openzues/services/gateway_cron.py`
+  - `src/openzues/services/ops_mesh.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+  - `tests/test_ops_mesh.py`
+- Added focused regression proofs in:
+  - `tests/test_gateway_node_methods.py`
+    - added `test_cron_add_supports_one_shot_at_schedule`
+    - added `test_cron_update_supports_one_shot_at_schedule`
+    - added `test_cron_run_due_launches_due_one_shot_task`
+    - added `test_cron_status_counts_one_shot_jobs_and_surfaces_their_next_wake`
+    - added `test_cron_remove_deletes_one_shot_task_blueprint`
+    - updated the unsupported-kind expectations to reject `kind='cron'` instead of `kind='at'`
+  - `tests/test_gateway_nodes_api.py`
+    - added `test_gateway_node_method_call_endpoint_supports_cron_add_at_schedule`
+    - added `test_gateway_node_method_call_endpoint_infers_cron_add_at_schedule_kind`
+    - added `test_gateway_node_method_call_endpoint_supports_cron_update_at_schedule`
+    - added `test_gateway_node_method_call_endpoint_infers_cron_update_at_schedule_kind`
+    - added `test_gateway_node_method_call_endpoint_supports_cron_status_with_one_shot_job`
+    - added `test_gateway_node_method_call_endpoint_supports_cron_remove_for_one_shot_job`
+  - `tests/test_ops_mesh.py`
+    - added `test_ops_mesh_service_launches_due_one_shot_task`
+    - added `test_ops_mesh_service_disables_consumed_one_shot_task_on_completion`
+- Verified the slice with:
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py tests/test_ops_mesh.py -q`
+  - `.\.venv\Scripts\ruff.exe check src/openzues/schemas.py src/openzues/services/gateway_cron.py src/openzues/services/ops_mesh.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py tests/test_ops_mesh.py`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mypy src/openzues/schemas.py src/openzues/services/gateway_cron.py src/openzues/services/ops_mesh.py`
+- Result:
+  - the new one-shot add/update proofs failed first against the old local runtime on the exact every-only validator behavior.
+  - after the one-shot cron wiring landed, the focused add/update/run/status/remove/scheduler proofs all passed.
+  - the full touched gateway cron + ops-mesh regression sweep is green at `648 passed`.
+  - Ruff stayed clean on the touched runtime/tests.
+  - the touched runtime files type-checked cleanly.
+- Completion:
+  - the current OpenClaw/OpenZues one-shot cron capability is now complete inside the accepted local parity boundary.
+  - no remaining unproven gap is left inside this accepted boundary:
+    - `cron.add`
+    - `cron.update`
+    - `cron.list`
+    - `cron.status`
+    - `cron.run` due-mode launch
+    - `cron.remove`
+    - background due launch
+    - post-completion disablement for consumed scheduled runs
+- Next exact seam:
+  - continue broader cron parity on the next highest-leverage upstream contract OpenZues still narrows away:
+    - main-session `payload.kind="systemEvent"` plus `wakeMode="next-heartbeat"` routing, which upstream supports heavily and OpenZues still rejects.
+
+### Recovery addendum 2026-04-20 cron main-systemEvent wake routing parity America/Chicago
+
+- Seam locked from the previous checkpoint:
+  - capability: main-session cron jobs must accept upstream `payload.kind="systemEvent"` plus `wakeMode="next-heartbeat"` and route through the real wake/system-event path instead of the mission launcher.
+  - upstream source anchors:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\protocol\schema\cron.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server.cron.test.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\cron\service.runs-one-shot-main-job-disables-it.test.ts`
+  - key upstream behavior:
+    - gateway cron accepts `sessionTarget="main"` with `payload.kind="systemEvent"` and `wakeMode="next-heartbeat"`.
+    - force runs return the normal `{ ok, enqueued, runId }` payload, but the work is a wake/system-event dispatch rather than an agent-turn mission.
+    - due one-shot main-session system-event jobs disable themselves after queueing the consumed run.
+- Key findings in OpenZues before the fix:
+  - `gateway_cron.py` still hard-rejected `wakeMode="next-heartbeat"` and `payload.kind="systemEvent"`.
+  - cron payload rendering always projected jobs back out as `main + now + agentTurn`.
+  - `OpsMeshService` had no wake-service branch for cron tasks, so every due run had to become a mission.
+- Landed the smallest honest local runtime:
+  - extended `TaskBlueprintCreate` payload storage with cron routing metadata:
+    - `cron_session_target`
+    - `cron_wake_mode`
+    - `cron_payload_kind`
+    - `cron_payload_text`
+  - taught `gateway_cron.py` to round-trip those fields so main-session system-event jobs render correctly from SQLite task blueprints without breaking legacy stored cron rows.
+  - added a cron-specific wake dispatch helper in `OpsMeshService` and wired both `cron.run` and background due-task launching through the existing `GatewayWakeService` when a task routes as `main + systemEvent`.
+  - kept legacy cron tasks on the mission path, so existing main-lane agent-turn jobs and injected fake ops-mesh test doubles still behave as before.
+  - taught one-shot main-session system-event tasks to disable themselves immediately after the consumed wake dispatch instead of waiting on a mission completion event that will never arrive.
+- Product effect proved end to end:
+  - `cron.add` now accepts main-session system-event jobs with `wakeMode="next-heartbeat"` and returns the upstream-shaped payload contract.
+  - `cron.update` can now convert a stored cron job to main-session system-event wake mode and persists the new cron routing metadata in the task blueprint payload.
+  - `cron.run` on those jobs now enqueues a gateway wake request and writes a `system-event` record instead of creating a mission.
+  - background due launches now use that same wake path.
+  - one-shot main-session system-event jobs now disable themselves after their consumed queued wake.
+- Primary files carrying the product change:
+  - `src/openzues/schemas.py`
+  - `src/openzues/services/gateway_cron.py`
+  - `src/openzues/services/gateway_node_methods.py`
+  - `src/openzues/services/ops_mesh.py`
+  - `src/openzues/app.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+  - `tests/test_ops_mesh.py`
+
+### Recovery addendum 2026-04-20 cron wake-backed run history parity America/Chicago
+
+- Adjacent seam immediately after the routing fix:
+  - capability: wake-backed main-session cron runs must still surface in `cron.runs`.
+  - upstream source anchor:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server.cron.test.ts`
+  - key upstream behavior:
+    - main-session system-event cron runs show up as finished cron run history with summary text and `deliveryStatus: "not-requested"`, even though they are not agent-turn missions.
+- Key finding in OpenZues before the fix:
+  - `GatewayCronService.runs_page(...)` projected only mission-backed runs, so wake-backed cron jobs were invisible after force runs and due auto-runs.
+- Landed the smallest honest local runtime:
+  - kept the existing mission-backed run history intact.
+  - synthesized wake-backed cron entries from the already-persisted `system-event` log using the cron reason marker written during dispatch (`reason="cron:<task_id>"`).
+  - rendered those entries as finished `ok` runs with the same `jobId`, summary text, and `deliveryStatus="not-requested"` shape expected by the gateway cron history contract.
+- Product effect proved end to end:
+  - a force-run main-session system-event cron job now appears in `cron.runs`.
+  - the entry uses the queued system-event text as the summary and no longer depends on a mission record.
+
+### Recovery addendum 2026-04-20 cron isolated agentTurn add/list parity America/Chicago
+
+- Adjacent seam continued inside the same cron family:
+  - capability: cron add/list must also accept the isolated-lane `agentTurn` shape instead of only `sessionTarget="main"`.
+  - upstream source anchor:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server.cron.test.ts`
+  - key upstream behavior:
+    - isolated session targets pair with `payload.kind="agentTurn"` and `wakeMode="next-heartbeat"`.
+- Key finding in OpenZues before the fix:
+  - `build_gateway_cron_task_blueprint(...)` still hard-rejected any `sessionTarget` other than `main`, even though the new cron metadata storage and the existing mission launch path were already enough to support isolated agent-turn jobs.
+- Landed the smallest honest local runtime:
+  - widened cron add validation to accept `sessionTarget="isolated"` as well as `main`.
+  - persisted the chosen session target in the cron payload metadata so list rendering keeps the correct isolated contract.
+  - rejected the invalid local combination `isolated + systemEvent` at creation time so the new support does not silently route a nonsensical wake-backed isolated job.
+- Product effect proved end to end:
+  - `cron.add` now accepts isolated-lane `agentTurn` jobs with `wakeMode="next-heartbeat"`.
+  - `cron.list` now returns those stored jobs with `sessionTarget="isolated"` instead of collapsing them back to `main`.
+- Focused proofs added in this continuation:
+  - `tests/test_gateway_node_methods.py`
+    - added `test_cron_add_accepts_main_system_event_next_heartbeat_job`
+    - added `test_cron_update_supports_main_system_event_next_heartbeat_job`
+    - added `test_cron_add_accepts_isolated_agent_turn_next_heartbeat_job`
+  - `tests/test_gateway_nodes_api.py`
+    - added `test_gateway_node_method_call_endpoint_routes_main_system_event_cron_run_through_wake_queue`
+    - added `test_gateway_node_method_call_endpoint_surfaces_cron_runs_for_main_system_event_wake_jobs`
+    - added `test_gateway_node_method_call_endpoint_supports_cron_add_isolated_agent_turn_job`
+  - `tests/test_ops_mesh.py`
+    - added `test_ops_mesh_service_routes_due_main_system_event_task_through_wake_queue`
+    - added `test_ops_mesh_service_disables_consumed_one_shot_main_system_event_task_after_queueing`
+- Verified this continuation with:
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py tests/test_ops_mesh.py -q`
+  - `.\.venv\Scripts\ruff.exe check src/openzues/schemas.py src/openzues/services/gateway_cron.py src/openzues/services/gateway_node_methods.py src/openzues/services/ops_mesh.py src/openzues/app.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py tests/test_ops_mesh.py`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mypy src/openzues/schemas.py src/openzues/services/gateway_cron.py src/openzues/services/gateway_node_methods.py src/openzues/services/ops_mesh.py`
+- Result:
+  - the new main-systemEvent add/run/history proofs failed first on the exact local gaps:
+    - hardcoded `wakeMode='now'`
+    - no wake dispatch branch in ops mesh
+    - no wake-backed `cron.runs` projection
+  - the isolated-lane add proof failed first on the exact `sessionTarget='main'` guard.
+  - after the fixes landed, the full touched cron + ops-mesh regression slice is green at `656 passed`.
+  - Ruff is clean on the touched runtime/tests.
+  - the touched runtime boundary type-checks cleanly.
+  - `src/openzues/app.py` still has a broader pre-existing mypy wall unrelated to this cron continuation, so app-wide mypy is not yet green.
+- Next exact seam inside the active cron family:
+  - `cron.update` still narrows `patch.sessionTarget` to `main`, so isolated-lane jobs are add-only today.
+  - the broader combo-validation seam is still open:
+    - upstream wants the sanctioned pairings to be explicit:
+      - `main + systemEvent`
+      - `isolated + agentTurn`
+    - OpenZues still carries legacy `main + agentTurn` compatibility and has not yet tightened update-time validation to the upstream pairing model.
+
+### Recovery addendum 2026-04-21 cron custom session target add-update-list parity America/Chicago
+
+- Adjacent seam continued immediately after isolated update support:
+  - capability: cron add/update/list must accept safe custom session targets shaped like `session:project-alpha:ops` and reject unsafe path-like variants.
+  - upstream source anchor:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server.cron.test.ts`
+  - key upstream behavior:
+    - add accepts `sessionTarget="session:project-alpha:ops"` for `agentTurn` jobs.
+    - add/update reject unsafe custom session ids like `session:../../outside` or `session:..\\outside`.
+- Key findings in OpenZues before the fix:
+  - cron add/update still hard-rejected every custom session target as anything outside `main|isolated`.
+  - even if a custom target were persisted, the list/update payload normalizer would collapse it back to `main`.
+  - the task schema still typed `cron_session_target` as only `main|isolated`, which would reject valid stored custom session ids.
+- Landed the smallest honest local runtime:
+  - widened `cron_session_target` storage from the literal pair to a general string field in `TaskBlueprintCreate` / `TaskBlueprintView`.
+  - added a safe custom session-target normalizer in `gateway_cron.py` that preserves only `session:<segment[:segment...]>` shapes with restricted lowercase token segments.
+  - reused that validator on both `cron.add` and `cron.update`, keeping the existing `main + systemEvent` guard intact.
+  - taught the read path in `gateway_cron.py` and `ops_mesh.py` to preserve safe stored custom session targets instead of collapsing them back to `main`.
+- Product effect proved end to end:
+  - `cron.add` now accepts safe custom session targets for `agentTurn` jobs.
+  - `cron.update` now round-trips those custom targets and keeps them visible in `cron.list`.
+  - unsafe custom session ids now reject on both add and update with the gateway-style `invalid cron sessionTarget session id` error.
+- Focused proofs added in this continuation:
+  - `tests/test_gateway_node_methods.py`
+    - added `test_cron_add_and_update_support_valid_custom_session_targets`
+    - added `test_cron_add_and_update_reject_unsafe_custom_session_targets`
+  - `tests/test_gateway_nodes_api.py`
+    - added `test_gateway_node_method_call_endpoint_supports_custom_cron_session_targets`
+    - added `test_gateway_node_method_call_endpoint_rejects_unsafe_custom_cron_session_targets`
+
+### Recovery addendum 2026-04-21 cron main-systemEvent update combo-validation parity America/Chicago
+
+- Adjacent seam continued inside the same cron update contract:
+  - capability: a main-session `systemEvent` cron job must not be patchable into `agentTurn` unless the session target leaves `main`.
+  - upstream source anchor:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server.cron.test.ts`
+  - key upstream behavior:
+    - `cron.update` rejects a `payload.kind="agentTurn"` patch on a stored main-session system-event job.
+- Key finding in OpenZues before the fix:
+  - after the earlier isolated update support landed, OpenZues still let a main-session system-event cron job flip directly to `agentTurn` while staying on `sessionTarget="main"`.
+- Landed the smallest honest local runtime:
+  - added an update-time effective-pair guard in `gateway_cron.py`:
+    - existing `main + systemEvent`
+    - effective `main + agentTurn`
+    - now rejects unless the patch also moves the job off `main`.
+- Product effect proved end to end:
+  - a stored main-session system-event cron job now rejects `payload.kind="agentTurn"` updates that keep the job on `main`.
+  - isolated/custom-session `agentTurn` updates still pass, so the earlier session-target work remains intact.
+- Focused proofs added in this continuation:
+  - `tests/test_gateway_node_methods.py`
+    - added `test_cron_update_rejects_agent_turn_payload_for_main_system_event_job`
+  - `tests/test_gateway_nodes_api.py`
+    - added `test_gateway_node_method_call_endpoint_rejects_cron_update_main_system_event_to_agent_turn`
+- Verified this continuation with:
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py tests/test_ops_mesh.py -q`
+  - `.\.venv\Scripts\ruff.exe check src/openzues/schemas.py src/openzues/services/gateway_cron.py src/openzues/services/ops_mesh.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mypy src/openzues/schemas.py src/openzues/services/gateway_cron.py src/openzues/services/ops_mesh.py`
+- Result:
+  - the custom-session add/update/list proofs failed first on the exact local gaps:
+    - hardcoded `main|isolated` validation
+    - custom targets collapsing back to `main`
+    - schema storage too narrow for persisted custom session ids
+  - the main-systemEvent combo proof failed first because update validation still allowed `main + agentTurn` on a stored system-event job.
+  - after the fixes landed, the full touched cron + ops-mesh regression slice is green at `666 passed`.
+  - Ruff is clean on the touched runtime/tests.
+  - the touched runtime boundary type-checks cleanly.
+- Next exact seam inside the active cron family:
+  - broader add/update combo-validation is still not complete:
+    - upstream evidence still does not show a sanctioned `main + agentTurn` cron creation path.
+    - OpenZues still carries legacy `main + agentTurn` add/update compatibility outside the newly blocked main-systemEvent conversion case.
+
+### Recovery addendum 2026-04-21 cron current-session fallback parity America/Chicago
+
+- Adjacent seam continued inside the cron session-target family:
+  - capability: `sessionTarget="current"` must be accepted for `agentTurn` cron jobs and normalized using the same no-context fallback OpenClaw uses.
+  - upstream source anchors:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\protocol\cron-validators.test.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\agents\tools\cron-tool.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\cron\normalize.test.ts`
+  - key upstream behavior:
+    - gateway validation accepts `sessionTarget="current"` for `agentTurn` jobs.
+    - the cron tool contract documents `current` as “bind to the current session where the cron is created (resolved at creation time)”.
+    - `normalizeCronJobCreate(...)` resolves `current` to a persistent `session:...` target when session context exists, and falls back to `isolated` when it does not.
+- Key finding in OpenZues before the fix:
+  - local cron add/update still rejected `current` outright with `sessionTarget must be one of: isolated, main`.
+  - if a historical row ever carried `current`, the local read paths would misclassify it instead of showing the upstream-style isolated fallback.
+- Landed the smallest honest local runtime:
+  - taught the cron session-target validator in `gateway_cron.py` to accept `current` and canonicalize it to `isolated`.
+  - taught the cron read paths in `gateway_cron.py` and `ops_mesh.py` to treat stored `current` the same way, so add/update/list and inventory views stay aligned.
+  - kept the scope honest:
+    - OpenZues still has no creator-session context on this gateway cron path, so it cannot resolve `current` to a persistent `session:...` target yet.
+    - the bounded parity move here is the upstream no-context fallback, not invented context binding.
+- Product effect proved end to end:
+  - `cron.add` now accepts `sessionTarget="current"` for `agentTurn` jobs and returns `sessionTarget="isolated"`.
+  - `cron.update` now accepts `patch.sessionTarget="current"` and also normalizes it to `isolated`.
+  - `cron.list` now surfaces the normalized isolated target instead of rejecting or misclassifying it.
+- Focused proofs added in this continuation:
+  - `tests/test_gateway_node_methods.py`
+    - added `test_cron_add_and_update_normalize_current_session_target_to_isolated`
+  - `tests/test_gateway_nodes_api.py`
+    - added `test_gateway_node_method_call_endpoint_normalizes_current_cron_session_target_to_isolated`
+
+### Recovery addendum 2026-04-21 cron custom session casing parity America/Chicago
+
+- Adjacent seam continued immediately after the `current` fallback landing:
+  - capability: safe custom session targets must preserve suffix casing instead of being lowercased away.
+  - upstream source anchor:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\cron\normalize.test.ts`
+  - key upstream behavior:
+    - `normalizeCronJobCreate(...)` preserves `sessionTarget="session:MySessionID"` as `session:MySessionID`.
+- Key finding in OpenZues before the fix:
+  - the local custom session normalizer lowercased the whole target before validation.
+  - that changed valid mixed-case session IDs like `session:MySessionID` into `session:mysessionid` on add, update, and list.
+- Landed the smallest honest local runtime:
+  - removed the unconditional lowercasing step from the custom session target normalizer in `gateway_cron.py`.
+  - kept the safety rules intact by validating each session segment with the existing case-insensitive restricted-token regex.
+  - aligned the `ops_mesh.py` read path with the same case-preserving behavior so downstream task views no longer rewrite stored custom IDs.
+- Product effect proved end to end:
+  - mixed-case custom session targets now round-trip exactly through `cron.add`, `cron.update`, and `cron.list`.
+  - unsafe custom session ids still reject with the same `invalid cron sessionTarget session id` error.
+- Focused proofs added in this continuation:
+  - `tests/test_gateway_node_methods.py`
+    - added `test_cron_add_and_update_preserve_custom_session_target_casing`
+  - `tests/test_gateway_nodes_api.py`
+    - added `test_gateway_node_method_call_endpoint_preserves_custom_cron_session_target_casing`
+- Verified this continuation with:
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py::test_cron_add_and_update_normalize_current_session_target_to_isolated tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_normalizes_current_cron_session_target_to_isolated tests/test_gateway_node_methods.py::test_cron_add_and_update_preserve_custom_session_target_casing tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_preserves_custom_cron_session_target_casing -q`
+- Result:
+  - the `current` fallback proofs failed first because local validation still rejected `sessionTarget="current"` outright.
+  - the mixed-case custom session proofs failed first because OpenZues rewrote `session:MySessionID` to `session:mysessionid`.
+  - after the fixes landed, the focused continuation bundle passed cleanly (`4 passed`).
+- Next exact seam inside the active cron family:
+  - delivery normalization and execution parity is now the next materially open family:
+    - upstream normalizes and persists `delivery.mode="announce"` / `"webhook"` with extra fields like `channel`, `to`, `bestEffort`, and `failureDestination`.
+    - OpenZues still hard-rejects every non-`none` delivery object and hardcodes returned jobs to `delivery: {"mode": "none"}`.
+
+### Recovery addendum 2026-04-21 cron delivery-mode parity America/Chicago
+
+- Adjacent seam continued immediately inside the active cron delivery family:
+  - capability: isolated-like `agentTurn` cron jobs should no longer report `delivery: {"mode": "none"}` by default when upstream normalizes them to announce-style delivery.
+  - upstream source anchors:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\cron\normalize.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\cron\normalize.test.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\protocol\schema\cron.ts`
+  - key upstream behavior:
+    - omitted delivery defaults isolated `agentTurn` cron jobs to `delivery.mode="announce"`.
+    - explicit `delivery.mode="none"` remains a valid override.
+    - explicit `delivery.mode="announce"` is also a valid gateway shape.
+- Key findings in OpenZues before the fixes:
+  - local cron add/update still hard-rejected every delivery mode except `none`.
+  - local cron readback hardcoded every job to `delivery: {"mode": "none"}`, even for isolated `agentTurn` jobs that should normalize to announce.
+  - once a job was stored with the local `none` override, there was no update-time path to clear that override back to announce behavior.
+- Landed the smallest honest local runtime:
+  - added `cron_delivery_mode` to the scheduled-task payload schema so the local gateway can preserve an explicit delivery override without widening into full outbound execution yet.
+  - taught `gateway_cron.py` to derive `delivery.mode="announce"` by default for isolated/custom-session `agentTurn` cron jobs, while still returning `none` for main-session or system-event jobs.
+  - kept the scope bounded:
+    - explicit mode support is now `announce` and `none` only.
+    - the richer upstream delivery metadata surface (`channel`, `to`, `accountId`, `bestEffort`, `failureDestination`, webhook routing) is still not wired yet.
+  - taught `cron.add` to accept explicit `delivery.mode="announce"` and `delivery.mode="none"` for isolated-like `agentTurn` jobs.
+  - taught `cron.update` to accept `patch.delivery.mode="announce"` as the clear path that removes the local `none` override and returns the job to announce-style delivery.
+- Product effect proved end to end:
+  - omitted delivery on isolated `agentTurn` cron jobs now returns `delivery: {"mode": "announce"}` through both service and API add/list paths.
+  - explicit `delivery.mode="none"` now round-trips cleanly through service and API add/list paths.
+  - explicit `patch.delivery.mode="announce"` now clears a stored `none` override and returns the job to announce-mode readback.
+- Focused proofs added in this continuation:
+  - `tests/test_gateway_node_methods.py`
+    - updated `test_cron_add_creates_every_schedule_agent_turn_job`
+    - updated `test_cron_add_accepts_isolated_agent_turn_next_heartbeat_job`
+    - added `test_cron_add_preserves_explicit_none_delivery_for_isolated_agent_turn_job`
+    - added `test_cron_add_accepts_explicit_announce_delivery_for_isolated_agent_turn_job`
+    - added `test_cron_update_can_clear_explicit_none_delivery_back_to_announce`
+  - `tests/test_gateway_nodes_api.py`
+    - updated `test_gateway_node_method_call_endpoint_supports_cron_add_isolated_agent_turn_job`
+    - added `test_gateway_node_method_call_endpoint_preserves_isolated_agent_turn_none_delivery`
+    - added `test_gateway_node_method_call_endpoint_accepts_isolated_agent_turn_announce_delivery`
+    - added `test_gateway_node_method_call_endpoint_can_clear_explicit_none_delivery_back_to_announce`
+- Verified this continuation with:
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py -k "cron_add_accepts_isolated_agent_turn_next_heartbeat_job or preserves_explicit_none_delivery_for_isolated_agent_turn_job or accepts_explicit_announce_delivery_for_isolated_agent_turn_job or clear_explicit_none_delivery_back_to_announce" -q`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_nodes_api.py -k "supports_cron_add_isolated_agent_turn_job or preserves_explicit_none_delivery_for_isolated_agent_turn_job or accepts_explicit_announce_delivery_for_isolated_agent_turn_job or clear_explicit_none_delivery_back_to_announce" -q`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py tests/test_ops_mesh.py -q`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mypy src/openzues/schemas.py src/openzues/services/gateway_cron.py src/openzues/services/ops_mesh.py`
+  - `.\.venv\Scripts\ruff.exe check src/openzues/schemas.py src/openzues/services/gateway_cron.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+- Result:
+  - the update clear proofs failed first on the exact local gate that still rejected `patch.delivery.mode="announce"`.
+  - the add explicit-announce proofs failed first on the exact local gate that still rejected `delivery.mode="announce"` during create.
+  - after the fixes landed, the focused delivery-mode continuation bundle passed cleanly (`8 passed` across service/API).
+  - the broader touched cron/gateway/ops regression slice is green at `678 passed`.
+  - the touched runtime boundary type-checks cleanly.
+  - Ruff is clean on the touched runtime/tests.
+- Next exact seam inside the active cron family:
+  - delivery metadata round-trip parity is now the next bounded surface:
+    - upstream accepts announce/webhook delivery objects with fields like `channel`, `to`, `accountId`, `bestEffort`, and `failureDestination`.
+    - OpenZues still rejects those keys at the gateway boundary and only persists mode-level delivery state.
+
+### Recovery addendum 2026-04-21 cron delivery metadata parity America/Chicago
+
+- Adjacent delivery seams continued immediately after the mode-only landing:
+  - capability: explicit announce/webhook delivery metadata must round-trip with upstream-style normalization instead of being dropped or rejected at the gateway boundary.
+  - upstream source anchors:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\cron\delivery-field-schemas.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\cron\normalize.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\cron\normalize.test.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\protocol\schema\cron.ts`
+  - key upstream behavior:
+    - announce delivery lowercases `channel`, trims `to`, trims `accountId`, and preserves them on the cron job object.
+    - webhook delivery trims and preserves `to`.
+    - legacy `delivery.mode="deliver"` aliases to `announce`.
+- Key findings in OpenZues before the fixes:
+  - explicit announce metadata still failed with `delivery does not accept: accountId, channel, to`.
+  - update-time delivery metadata patches failed with `patch.delivery does not accept: accountId, channel, to`.
+  - explicit webhook delivery still failed at mode validation even though the upstream gateway contract already accepts it.
+  - mixed-case `delivery.mode="DeLiVeR"` still failed instead of normalizing to announce.
+- Landed the smallest honest local runtime:
+  - extended the cron task payload schema to persist `cron_delivery_channel`, `cron_delivery_to`, and `cron_delivery_account_id`.
+  - taught `gateway_cron.py` add/read/update paths to normalize and round-trip announce metadata:
+    - lowercase `channel`
+    - trimmed `to`
+    - trimmed `accountId`
+  - taught `gateway_cron.py` to accept explicit `delivery.mode="webhook"` with trimmed `to` and round-trip it in cron add/list output.
+  - taught the delivery-mode parser to normalize the legacy `deliver` alias to `announce`.
+  - kept the scope bounded:
+    - this landing is still metadata parity only.
+    - it does not claim that outbound webhook/announce execution, retry policy, or destination failover are wired through the cron runner yet.
+- Product effect proved end to end:
+  - explicit announce metadata now round-trips through service and API add/list paths with normalized `channel`, `to`, and `accountId`.
+  - explicit announce metadata now round-trips through service and API update/list paths.
+  - explicit webhook delivery now round-trips through service and API add/list paths with normalized `to`.
+  - legacy `delivery.mode="deliver"` now normalizes to `announce` through service and API add/list paths.
+- Focused proofs added in this continuation:
+  - `tests/test_gateway_node_methods.py`
+    - updated `test_cron_add_accepts_explicit_announce_delivery_for_isolated_agent_turn_job`
+    - added `test_cron_update_normalizes_announce_delivery_metadata`
+    - added `test_cron_add_accepts_webhook_delivery_for_main_system_event_job`
+    - added `test_cron_add_normalizes_deliver_delivery_mode_to_announce`
+  - `tests/test_gateway_nodes_api.py`
+    - updated `test_gateway_node_method_call_endpoint_accepts_isolated_agent_turn_announce_delivery`
+    - added `test_gateway_node_method_call_endpoint_normalizes_announce_delivery_metadata`
+    - added `test_gateway_node_method_call_endpoint_accepts_webhook_delivery_for_main_system_event`
+    - added `test_gateway_node_method_call_endpoint_normalizes_deliver_delivery_mode_to_announce`
+- Verified this continuation with:
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py tests/test_ops_mesh.py -q`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mypy src/openzues/schemas.py src/openzues/services/gateway_cron.py src/openzues/services/ops_mesh.py`
+  - `.\.venv\Scripts\ruff.exe check src/openzues/schemas.py src/openzues/services/gateway_cron.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+- Result:
+  - the announce metadata add proofs failed first on the exact gateway key gate that still rejected `channel`, `to`, and `accountId`.
+  - the announce metadata update proofs failed first on the exact patch gate that still rejected those same keys.
+  - the webhook proofs failed first on the local mode gate that still rejected `webhook`.
+  - the deliver-alias proofs failed first on the mode parser that lowercased but did not alias `deliver -> announce`.
+  - after the fixes landed, the broader touched cron/gateway/ops regression slice is green at `684 passed`.
+  - the touched runtime boundary type-checks cleanly.
+  - Ruff is clean on the touched runtime/tests.
+- Next exact seam inside the active cron family:
+  - shared delivery metadata still remains open:
+    - upstream schema still advertises `bestEffort` and `failureDestination` on delivery objects.
+    - OpenZues still rejects those fields at the gateway boundary.
+
+### Recovery addendum 2026-04-21 cron delivery guardrail parity America/Chicago
+
+- Continued the same cron delivery family instead of stopping at the first metadata green slice.
+  - upstream source anchors used for this continuation:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\cron\service\jobs.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\cron\service.jobs.test.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server.cron.test.ts`
+- Key upstream behaviors re-anchored before editing:
+  - `mergeCronDelivery(...)` clears nested `failureDestination` fields when patch values normalize to empty strings instead of silently preserving stale metadata.
+  - gateway cron rejects target ids mistakenly stuffed into `delivery.channel`; the field is a provider id, not a destination id.
+  - explicit `delivery.mode="announce"` requires `delivery.channel` when multiple enabled delivery channels are configured.
+  - disabled extra channels do not make explicit announce delivery ambiguous.
+- Landed the next bounded OpenZues slices:
+  - fixed `cron.update` failure-destination merge semantics so empty-string patch fields clear nested `failureDestination.channel` / `accountId` instead of leaving stale values behind.
+  - added provider-id validation for `delivery.channel` and `failureDestination.channel`, rejecting target-like channel ids such as Slack channel ids passed in the provider field.
+  - added service-layer ambiguity guards for explicit announce delivery:
+    - `cron.add` now requires `delivery.channel` when multiple enabled notification-route channels are present.
+    - `cron.update` now requires `patch.delivery.channel` for the same multi-route explicit-announce transition when no effective channel survives.
+  - proved the adjacent acceptance seam too:
+    - a disabled extra route no longer makes explicit announce delivery ambiguous; only enabled routes count toward the ambiguity guard.
+- Product effect proved end to end:
+  - explicit announce delivery metadata no longer keeps stale nested failure-destination fields after clear-style patches.
+  - callers now get high-signal validation errors when they accidentally send destination ids in `delivery.channel`.
+  - explicit announce add/update paths now fail honestly when OpenZues has multiple enabled delivery-route channels and the caller omitted the provider id.
+  - the same explicit announce add path still succeeds when the extra route is disabled and only one enabled channel remains.
+- Focused proofs added in this continuation:
+  - `tests/test_gateway_node_methods.py`
+    - `test_cron_update_clears_failure_destination_fields_with_empty_strings`
+    - `test_cron_add_rejects_target_like_delivery_channel_ids`
+    - `test_cron_add_requires_delivery_channel_when_multiple_routes_are_enabled`
+    - `test_cron_update_requires_delivery_channel_when_multiple_routes_are_enabled`
+  - `tests/test_gateway_nodes_api.py`
+    - `test_gateway_node_method_call_endpoint_clears_cron_failure_destination_fields`
+    - `test_gateway_node_method_call_endpoint_rejects_target_like_delivery_channel_ids`
+    - `test_gateway_node_method_call_endpoint_requires_delivery_channel_for_ambiguous_add`
+    - `test_gateway_node_method_call_endpoint_requires_delivery_channel_for_ambiguous_update`
+    - `test_gateway_node_method_call_endpoint_allows_announce_when_extra_routes_are_disabled`
+- Verified this continuation with:
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py -k "failure_destination_fields_with_empty_strings or target_like_delivery_channel_ids or requires_delivery_channel_when_multiple_routes_are_enabled" -q`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests/test_gateway_nodes_api.py -k "clears_cron_failure_destination_fields or target_like_delivery_channel_ids or ambiguous_add or ambiguous_update or extra_routes_are_disabled" -q`
+  - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mypy src/openzues/services/gateway_cron.py src/openzues/schemas.py`
+  - `.\.venv\Scripts\ruff.exe check src/openzues/services/gateway_cron.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+- Result:
+  - the new failure-destination clear proofs failed first on the local merge path that still preserved stale nested metadata.
+  - the new target-like provider-id proofs and ambiguous-explicit-announce proofs now pass cleanly on service and API paths.
+  - the adjacent disabled-route acceptance proof passes cleanly, proving the ambiguity guard only counts enabled routes.
+  - Ruff is clean on the touched cron runtime/tests.
+  - the touched cron runtime boundary type-checks cleanly.
+  - a broad `tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py tests/test_ops_mesh.py -q` rerun still hits one unrelated order-dependent wake retry failure in `tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_wake_now_auto_retries_after_submit_error`; that wake test still passes in isolation and was not changed in this continuation.
+- Next exact seam inside the active cron family:
+  - OpenClaw’s explicit-announce ambiguity rule is keyed off configured gateway channels, while OpenZues currently approximates that parity through enabled saved notification-route channels.
+  - the next honest continuation is to compare that channel-config source of truth against OpenZues’s available gateway channel inventory and decide whether the route-backed guard is the right long-term local owner or whether the cron service needs a richer channel-config input.
+
+### Recovery addendum 2026-04-21 cron delivery runtime-target parity America/Chicago
+
+- Continued the active cron delivery family instead of stopping at metadata/guardrail storage parity.
+  - upstream source anchors re-used for this continuation:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server.cron.test.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\cron\service\jobs.ts`
+- Key upstream behaviors re-anchored before editing:
+  - cron delivery updates on main/system-event jobs owned by the default agent stay valid instead of erroring; unsupported announce routing is degraded away rather than aborting the patch.
+  - cron delivery settings are not just storage metadata; they participate in the runtime path that decides where a cron-launched run should surface.
+- Key findings in OpenZues before the fixes:
+  - explicit isolated `delivery.mode="announce"` metadata still did not seed `TaskBlueprintCreate.conversation_target`, so cron delivery config remained storage-only and never entered the mission launch path.
+  - the same gap remained on `cron.update`, so adding announce metadata later still left the stored task without a delivery target.
+  - `build_gateway_cron_job_patch(...)` also had a Python precedence trap around patched `None` values, so effective delivery-mode synthesis could accidentally turn `None` into the string `"None"` and misclassify announce delivery as `none`.
+  - `cron.update` still raised on announce-delivery patches against `main` / `systemEvent` jobs, while upstream keeps that update valid and degrades it back to the local no-delivery shape.
+- Landed the next bounded OpenZues slices:
+  - taught `build_gateway_cron_task_blueprint(...)` to seed `conversation_target` for explicit isolated announce delivery when a concrete provider channel is present.
+  - taught `build_gateway_cron_job_patch(...)` to keep `conversation_target` in sync on delivery/session-target/payload updates, including clearing it when the effective job no longer resolves to announce channel delivery.
+  - fixed the effective patched-value synthesis bug by reading raw patched payload values through a helper instead of letting `None` fall through as the string `"None"`.
+  - kept main/system-event announce delivery updates valid:
+    - OpenZues now clears unsupported announce fields back to the existing no-delivery shape instead of rejecting the patch.
+- Product effect proved end to end:
+  - explicit announce cron jobs now persist a concrete `conversation_target` on the stored task blueprint.
+  - cron-launched missions now inherit that target through `OpsMeshService.run_task_blueprint_now(...)`, so the announce delivery target finally enters the live launch/runtime path instead of stopping at config storage.
+  - main/system-event cron jobs no longer error when an announce delivery patch is attempted; they now return the honest local no-delivery shape.
+- Focused proofs added in this continuation:
+  - `tests/test_gateway_node_methods.py`
+    - strengthened `test_cron_add_accepts_explicit_announce_delivery_for_isolated_agent_turn_job`
+    - strengthened `test_cron_update_normalizes_announce_delivery_metadata`
+    - added `test_cron_update_keeps_main_system_event_jobs_valid_when_announce_delivery_is_patched`
+  - `tests/test_gateway_nodes_api.py`
+    - strengthened `test_gateway_node_method_call_endpoint_accepts_isolated_agent_turn_announce_delivery`
+    - added `test_gateway_node_method_call_endpoint_ignores_announce_delivery_patch_for_main_system_event`
+  - `tests/test_ops_mesh.py`
+    - added `test_ops_mesh_service_launches_cron_announce_target_into_mission_draft`
+- Verified this continuation with:
+  - `.\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py -k "cron_add_accepts_explicit_announce_delivery_for_isolated_agent_turn_job or cron_update_normalizes_announce_delivery_metadata or main_system_event_jobs_valid_when_announce_delivery_is_patched" -q`
+  - `.\.venv\Scripts\python.exe -m pytest tests/test_gateway_nodes_api.py -k "accepts_isolated_agent_turn_announce_delivery or main_system_event_jobs_valid_when_announce_delivery_is_patched" -q`
+  - `.\.venv\Scripts\python.exe -m pytest tests/test_ops_mesh.py -k "launches_cron_announce_target_into_mission_draft" -q`
+  - `.\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py tests/test_ops_mesh.py -k "cron or delivery or launches_cron_announce_target_into_mission_draft" -q`
+  - `.\.venv\Scripts\python.exe -m mypy src/openzues/services/gateway_cron.py`
+  - `.\.venv\Scripts\ruff.exe check src/openzues/services/gateway_cron.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py tests/test_ops_mesh.py`
+- Result:
+  - the new announce-target add/update proofs failed first on the exact gap where cron delivery metadata never became a task conversation target.
+  - the launch proof failed first on the exact runtime gap where cron-created tasks still launched missions with `conversation_target=None`.
+  - the main/system-event update proofs failed first on the exact local validation branch that still rejected announce delivery patches outright.
+  - after the fixes, the targeted cron/gateway/ops regression slice is green at `94 passed`.
+  - the touched cron runtime boundary type-checks cleanly.
+  - Ruff is clean on the touched runtime/tests.
+- Next exact seam inside the active cron family:
+  - upstream runtime cron delivery still goes further than OpenZues here:
+    - `server.cron.test.ts` proves post-run webhook delivery, legacy notify fallback, and failure-destination webhook routing.
+    - OpenZues now carries announce targets into mission launch, but it still does not execute cron-finished webhook/failure-destination delivery or surface a richer delivered/not-delivered outcome beyond the existing local run status and `conversation_target`.
+
+### Recovery addendum 2026-04-21 cron runtime delivery-status parity America/Chicago
+
+- Continued the same active cron delivery family instead of stopping once announce targets reached launch-time parity.
+  - upstream source anchors re-used for this continuation:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server.cron.test.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-cron.ts`
+- Key upstream behaviors re-anchored before editing:
+  - explicit `delivery.mode="webhook"` posts the finished cron event payload itself only when the run has a real summary.
+  - failed isolated announce runs can post a webhook `failureDestination`, and `bestEffort: true` suppresses that failure alert path.
+  - cron-finished delivery is a real runtime outcome, not just stored metadata, so history must be able to surface whether delivery happened.
+- Key findings in OpenZues before the fixes:
+  - `OpsMeshService.handle_mission_event(...)` only updated task bookkeeping and generic notification routes; it had no cron-owned post-run delivery path.
+  - the only local webhook helper wrapped payloads as `{eventType, payload}`, which would have drifted from the raw finished-event body OpenClaw posts for cron delivery.
+  - `cron.runs` still inferred `deliveryStatus` from `conversation_target`, so explicit webhook delivery looked like `not-requested` even after a real cron-owned webhook send.
+- Landed the next bounded OpenZues slices:
+  - added a raw JSON webhook sender for cron-owned delivery instead of reusing the wrapped notification-route body shape.
+  - wired explicit completed cron webhooks through `OpsMeshService.handle_mission_event(...)`:
+    - only for `delivery.mode="webhook"`
+    - only when the mission completed
+    - only when a real checkpoint summary exists
+  - wired failed isolated cron `failureDestination` webhooks through the same runtime path:
+    - only for `delivery.failureDestination.mode="webhook"`
+    - skipped when `bestEffort` is enabled
+  - persisted those cron-owned sends in `outbound_deliveries` with route-less webhook evidence instead of inventing a fake notification route.
+  - threaded `missionId` / `taskId` into the stored cron delivery payload so `cron.runs` can correlate a finished mission back to its delivery outcome.
+  - taught `GatewayCronService.runs_page(...)` to surface `deliveryStatus="delivered"` or `"not-delivered"` from correlated cron-owned outbound deliveries instead of guessing from `conversation_target`.
+- Product effect proved end to end:
+  - completed isolated webhook cron runs now post a raw finished payload to their configured webhook target and leave a persisted outbound-delivery record behind.
+  - failed isolated announce cron runs now post webhook failure alerts to `failureDestination` and honor `bestEffort` suppression.
+  - `cron.runs` can now report `deliveryStatus="delivered"` for a mission-backed webhook run when the correlated outbound delivery succeeded.
+- Focused proofs added in this continuation:
+  - `tests/test_ops_mesh.py`
+    - added `test_ops_mesh_service_posts_explicit_cron_webhook_delivery_for_completed_mission`
+    - added `test_ops_mesh_service_skips_explicit_cron_webhook_delivery_without_summary`
+    - added `test_ops_mesh_service_posts_cron_failure_destination_webhook_for_failed_run`
+    - added `test_ops_mesh_service_skips_cron_failure_destination_when_best_effort`
+  - `tests/test_gateway_node_methods.py`
+    - added `test_cron_runs_surfaces_delivered_webhook_delivery_status`
+  - `tests/test_gateway_nodes_api.py`
+    - added `test_gateway_node_method_call_endpoint_surfaces_delivered_cron_webhook_status`
+- Verified this continuation with:
+  - `.\.venv\Scripts\python.exe -m pytest tests/test_ops_mesh.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -k "cron_webhook_delivery or cron_failure_destination or cron_runs_surfaces_delivered_webhook_delivery_status or surfaces_delivered_cron_webhook_status" -q`
+  - `.\.venv\Scripts\python.exe -m pytest tests/test_ops_mesh.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -k "cron or delivery or launches_cron_announce_target_into_mission_draft or surfaces_delivered_cron_webhook_status or cron_runs_surfaces_delivered_webhook_delivery_status" -q`
+  - `.\.venv\Scripts\python.exe -m mypy src/openzues/services/ops_mesh.py src/openzues/services/gateway_cron.py`
+  - `.\.venv\Scripts\ruff.exe check src/openzues/services/ops_mesh.py src/openzues/services/gateway_cron.py tests/test_ops_mesh.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+- Result:
+  - the explicit cron webhook proof failed first on the missing post-run cron delivery path.
+  - the failure-destination proof failed first on the same missing owner for failed isolated cron runs.
+  - the delivered-history proofs failed first because `cron.runs` still had no correlation path from finished missions to persisted cron-owned outbound deliveries.
+  - after the fixes, the broader touched cron/gateway/ops regression slice is green at `100 passed`.
+  - Ruff is clean on the touched runtime/tests.
+  - the touched cron runtime boundary type-checks cleanly.
+- Next exact seam inside the active cron family:
+  - OpenClaw still goes further on non-webhook post-run delivery:
+    - legacy `notify + cron.webhook` fallback is still absent in OpenZues.
+    - failed isolated announce runs still do not fall back to the primary announce destination channel when no explicit `failureDestination` is configured.
+  - the next honest continuation is to inspect whether OpenZues has enough direct non-webhook outbound transport to close that primary announce fallback, or whether that remains a larger cross-cutting messaging-runtime seam.
+
+### Recovery addendum 2026-04-21 cron announce fallback and delivery threadId parity America/Chicago
+
+- Continued the same active cron delivery family instead of stopping at webhook-only post-run parity.
+  - upstream source anchors re-used for this continuation:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server.cron.test.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\cron\service\jobs.apply-patch.test.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\cron\delivery-plan.ts`
+- Key upstream behaviors re-anchored before editing:
+  - failed isolated announce cron runs can still fall back to the primary delivery path and preserve `sessionKey`, even when there is no explicit webhook `failureDestination`.
+  - `delivery.threadId` is part of the live cron delivery contract, not just a legacy input artifact:
+    - add/list payloads preserve it
+    - delivery patches merge it
+    - numeric values remain valid
+- Key findings in OpenZues before the fixes:
+  - failed isolated announce runs only emitted `cron/failure` when `delivery.failureDestination.mode="webhook"` was configured.
+  - the local route-based fallback path silently dropped announce failures when the job only had `delivery.channel="last"` because it required a concrete `conversation_target`.
+  - cron delivery metadata still hard-rejected `delivery.threadId` on add/update and could not round-trip it through `cron.list`.
+- Landed the next bounded OpenZues slices:
+  - wired failed isolated announce cron runs without explicit `failureDestination` into the existing notification-route runtime via `cron/failure`:
+    - preserved `sessionKey`
+    - preserved `conversationTarget` when a concrete announce peer exists
+    - still delivered a generic session-scoped `cron/failure` event when the job only uses `delivery.channel="last"`
+  - added cron delivery `threadId` support across the gateway/runtime storage boundary:
+    - `cron.add` accepts `delivery.threadId`
+    - `cron.update` merges `patch.delivery.threadId`
+    - `cron.list` / add / update responses round-trip `threadId`
+    - numeric thread IDs are accepted and preserved instead of being rejected or string-forced
+- Product effect proved end to end:
+  - failed isolated announce cron jobs now leave a deliverable `cron/failure` event behind even when there is no explicit failure webhook.
+  - session-scoped generic notification routes can now observe last-channel cron failures instead of seeing silence.
+  - cron delivery thread hints are now durable metadata on OpenZues jobs, matching the upstream contract shape for add/list/update.
+- Focused proofs added in this continuation:
+  - `tests/test_ops_mesh.py`
+    - added `test_ops_mesh_service_routes_cron_failure_to_matching_announce_notification_route`
+    - added `test_ops_mesh_service_routes_last_channel_cron_failure_without_conversation_target`
+  - `tests/test_gateway_node_methods.py`
+    - added `test_cron_add_preserves_announce_delivery_thread_id_for_isolated_agent_turn_job`
+    - added `test_cron_add_preserves_numeric_announce_delivery_thread_id`
+  - `tests/test_gateway_nodes_api.py`
+    - added `test_gateway_node_method_call_endpoint_merges_cron_delivery_thread_id_patch`
+    - added `test_gateway_node_method_call_endpoint_accepts_numeric_cron_delivery_thread_id`
+- Verified this continuation with:
+  - `.\.venv\Scripts\python.exe -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py tests/test_ops_mesh.py -k "cron and (thread_id or delivery or notify or failure or webhook or announce or last_channel)" -q`
+  - `.\.venv\Scripts\python.exe -m mypy src/openzues/services/gateway_cron.py src/openzues/services/ops_mesh.py src/openzues/schemas.py`
+  - `.\.venv\Scripts\ruff.exe check src/openzues/services/gateway_cron.py src/openzues/services/ops_mesh.py src/openzues/schemas.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py tests/test_ops_mesh.py`
+- Result:
+  - the announce-fallback proof failed first on the exact runtime guard that required a concrete `conversation_target` and therefore dropped last-channel failures on the floor.
+  - the thread-id proofs failed first on the exact gateway validation branch that still rejected `delivery.threadId`, then again on the string-only parser that rejected numeric values.
+  - after the fixes, the touched cron/gateway/ops regression slice is green at `27 passed`.
+  - Ruff is clean on the touched runtime/tests.
+  - the touched cron runtime boundary type-checks cleanly.
+- Next exact seam inside the active cron family:
+  - OpenClaw still goes further on true native primary-channel delivery:
+    - `server.cron.test.ts` proves direct primary-channel failure fallback keyed by live session history.
+    - OpenZues now preserves the session-scoped failure event, but it still does not own a plugin-native direct outbound channel transport for cron delivery.
+  - the next honest continuation is the larger direct-delivery runtime seam:
+    - decide whether to add a real non-webhook cron delivery transport owner in OpenZues
+    - or keep routing cron failures through the notification-route/webhook layer only and record that as the local capability boundary.
+
+### Recovery addendum 2026-04-21 cron session delivery fallback parity America/Chicago
+
+- Continued the same active cron delivery queue instead of stopping at the notification-route analog.
+  - upstream source anchors re-used for this continuation:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-cron.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server.cron.test.ts`
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\cron\delivery.ts`
+- Key upstream behaviors re-anchored before editing:
+  - failed cron jobs with `delivery.channel="last"` can use the live `sessionKey` as a true primary announce delivery target, not only as metadata on a secondary route event.
+  - explicit `failureDestination.mode="announce"` uses that same announce transport owner instead of forcing webhook-only handling.
+- Key findings in OpenZues before the fixes:
+  - `OpsMeshService` only owned webhook sends and notification-route fan-out.
+  - the local last-channel parity slice stopped at a generic `cron/failure` notification event; there was no native session-delivery hook for cron failures.
+  - explicit announce failure destinations with `channel="last"` still missed the new session fallback and only had the older route/webhook branches.
+- Landed the next bounded OpenZues slices:
+  - added a native session-delivery owner for cron failure notifications:
+    - `OpsMeshService` now records a `route_kind="session"` outbound delivery and sends the failure message through the live session transcript when the job resolves to `delivery.channel="last"` plus a real `sessionKey`
+    - `create_app(...)` and the CLI wire that transport through `ControlChatService.append_session_assistant_message(...)`
+  - extended that same owner to explicit `failureDestination.mode="announce"` when the failure destination resolves through `channel="last"`
+- Product effect proved end to end:
+  - last-channel failed cron jobs now create a real session message for the preserved `sessionKey` instead of only emitting a generic route event.
+  - explicit announce failure destinations that route through `channel="last"` now use the same live session delivery path.
+  - outbound delivery history now records these native session sends as delivered `cron/failure` rows with `route_kind="session"`.
+- Focused proofs added in this continuation:
+  - `tests/test_ops_mesh.py`
+    - added `test_ops_mesh_service_delivers_last_channel_cron_failure_to_session_key`
+    - added `test_ops_mesh_service_delivers_last_channel_cron_failure_destination_to_session_key`
+  - `tests/test_gateway_nodes_api.py`
+    - added `test_app_ops_mesh_service_delivers_last_channel_cron_failure_to_session_messages`
+- Verified this continuation with:
+  - `.\.venv\Scripts\python.exe -m pytest tests/test_ops_mesh.py tests/test_gateway_nodes_api.py -k "last_channel or failure_destination or delivered_cron_webhook_status" -q`
+  - `.\.venv\Scripts\python.exe -m mypy src/openzues/services/control_chat.py src/openzues/services/ops_mesh.py`
+  - `.\.venv\Scripts\ruff.exe check src/openzues/services/control_chat.py src/openzues/services/ops_mesh.py src/openzues/app.py src/openzues/cli.py tests/test_ops_mesh.py tests/test_gateway_nodes_api.py`
+- Result:
+  - the initial session-delivery proof failed first because OpenZues persists `delivery.channel="last"` as the implicit announce shape with `cron_delivery_mode=None`, so the first branch was checking the wrong local owner field.
+  - after correcting the branch to the honest local contract, the direct session-delivery path passed.
+  - the explicit announce failure-destination continuation landed on the same transport owner without widening into a new outbound provider runtime.
+  - the touched cron session-delivery regression slice is green at `8 passed`.
+  - Ruff is clean on the touched files.
+  - the touched session-delivery runtime boundary type-checks cleanly.
+- Next exact seam inside the active cron delivery family:
+  - OpenClaw still goes further on explicit-target announce delivery:
+    - `server-cron.ts` routes both primary announce delivery and `failureDestination.mode="announce"` through `sendFailureNotificationAnnounce(...)`, which resolves `channel` / `to` / `accountId` and sends directly through the outbound provider runtime.
+    - OpenZues now owns the `sessionKey` / `channel="last"` announce fallback, but still has no native direct announce transport for explicit peer targets; non-session announce delivery still relies on notification routes or webhooks.
+  - the next honest continuation is the explicit-target announce runtime seam:
+    - either add a real direct announce transport owner for `channel` / `to` / `accountId`
+    - or document that OpenZues intentionally caps cron announce delivery at session-backed fallback plus notification-route/webhook delivery.
+

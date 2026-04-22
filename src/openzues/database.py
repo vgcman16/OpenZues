@@ -19,10 +19,66 @@ THREAD_EVENT_COMPACT_PROMPT_LIMIT = 1024
 APPEND_EVENT_BUSY_TIMEOUT_SECONDS = 30.0
 APPEND_EVENT_LOCK_RETRY_ATTEMPTS = 5
 APPEND_EVENT_LOCK_RETRY_BASE_DELAY_SECONDS = 0.05
+_GATEWAY_WAKE_REASON_PRIORITY = {
+    "retry": 0,
+    "interval": 1,
+    "default": 2,
+    "action": 3,
+}
 
 
 def utcnow() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def _normalize_gateway_wake_reason(reason: str | None) -> str:
+    trimmed = str(reason or "").strip()
+    return trimmed or "wake"
+
+
+def _resolve_gateway_wake_reason_priority(reason: str | None) -> int:
+    normalized = _normalize_gateway_wake_reason(reason)
+    if normalized == "retry":
+        return _GATEWAY_WAKE_REASON_PRIORITY["retry"]
+    if normalized == "interval":
+        return _GATEWAY_WAKE_REASON_PRIORITY["interval"]
+    if normalized == "manual" or normalized == "exec-event" or normalized.startswith("hook:"):
+        return _GATEWAY_WAKE_REASON_PRIORITY["action"]
+    return _GATEWAY_WAKE_REASON_PRIORITY["default"]
+
+
+def _gateway_wake_target_matches(
+    row: aiosqlite.Row,
+    *,
+    agent_id: str | None,
+    session_key: str | None,
+) -> bool:
+    existing_agent_id = str(row["agent_id"]) if row["agent_id"] is not None else None
+    existing_session_key = str(row["session_key"]) if row["session_key"] is not None else None
+    return existing_agent_id == agent_id and existing_session_key == session_key
+
+
+def _select_gateway_wake_row_winner(
+    rows: Sequence[aiosqlite.Row],
+) -> tuple[str, str | None, int]:
+    winning_row = rows[0]
+    winning_text = str(winning_row["text"])
+    winning_reason = str(winning_row["reason"]) if winning_row["reason"] is not None else None
+    winning_priority = _resolve_gateway_wake_reason_priority(winning_reason)
+    winning_id = int(winning_row["id"])
+    for row in rows[1:]:
+        row_reason = str(row["reason"]) if row["reason"] is not None else None
+        row_priority = _resolve_gateway_wake_reason_priority(row_reason)
+        row_id = int(row["id"])
+        if row_priority > winning_priority or (
+            row_priority == winning_priority and row_id >= winning_id
+        ):
+            winning_row = row
+            winning_text = str(row["text"])
+            winning_reason = row_reason
+            winning_priority = row_priority
+            winning_id = row_id
+    return winning_text, winning_reason, winning_priority
 
 
 class Database:
@@ -160,6 +216,9 @@ class Database:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     mode TEXT NOT NULL,
                     text TEXT NOT NULL,
+                    reason TEXT,
+                    agent_id TEXT,
+                    session_key TEXT,
                     status TEXT NOT NULL DEFAULT 'pending',
                     created_at TEXT NOT NULL,
                     claimed_at TEXT,
@@ -541,6 +600,9 @@ class Database:
             await self._ensure_column(db, "notification_routes", "conversation_target_json", "TEXT")
             await self._ensure_column(db, "outbound_deliveries", "event_payload_json", "TEXT")
             await self._ensure_column(db, "integrations", "vault_secret_id", "INTEGER")
+            await self._ensure_column(db, "gateway_wake_requests", "reason", "TEXT")
+            await self._ensure_column(db, "gateway_wake_requests", "agent_id", "TEXT")
+            await self._ensure_column(db, "gateway_wake_requests", "session_key", "TEXT")
             await self._ensure_column(db, "control_chat_messages", "session_key", "TEXT")
             await self._ensure_column(db, "missions", "session_key", "TEXT")
             await self._ensure_column(db, "missions", "conversation_target_json", "TEXT")
@@ -2735,21 +2797,77 @@ class Database:
         *,
         mode: str,
         text: str,
+        reason: str | None = None,
+        agent_id: str | None = None,
+        session_key: str | None = None,
     ) -> int:
         now = utcnow()
+        normalized_reason = _normalize_gateway_wake_reason(reason)
         async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            existing_rows = await db.execute_fetchall(
+                """
+                SELECT *
+                FROM gateway_wake_requests
+                WHERE status = 'pending'
+                  AND mode = ?
+                ORDER BY id ASC
+                """,
+                (mode,),
+            )
+            matching_rows = [
+                row
+                for row in existing_rows
+                if _gateway_wake_target_matches(
+                    row,
+                    agent_id=agent_id,
+                    session_key=session_key,
+                )
+            ]
+            if matching_rows:
+                canonical_row = matching_rows[0]
+                canonical_id = int(canonical_row["id"])
+                winning_text, winning_reason, winning_priority = _select_gateway_wake_row_winner(
+                    matching_rows
+                )
+                next_priority = _resolve_gateway_wake_reason_priority(normalized_reason)
+                if next_priority >= winning_priority:
+                    winning_text = text
+                    winning_reason = normalized_reason
+                await db.execute(
+                    """
+                    UPDATE gateway_wake_requests
+                    SET text = ?,
+                        reason = ?,
+                        updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (winning_text, winning_reason, now, canonical_id),
+                )
+                duplicate_ids = [int(row["id"]) for row in matching_rows[1:]]
+                if duplicate_ids:
+                    placeholders = ", ".join("?" for _ in duplicate_ids)
+                    await db.execute(
+                        f"DELETE FROM gateway_wake_requests WHERE id IN ({placeholders})",
+                        tuple(duplicate_ids),
+                    )
+                await db.commit()
+                return canonical_id
             cursor = await db.execute(
                 """
                 INSERT INTO gateway_wake_requests (
                     mode,
                     text,
+                    reason,
+                    agent_id,
+                    session_key,
                     status,
                     created_at,
                     updated_at
                 )
-                VALUES (?, ?, 'pending', ?, ?)
+                VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)
                 """,
-                (mode, text, now, now),
+                (mode, text, normalized_reason, agent_id, session_key, now, now),
             )
             await db.commit()
             assert cursor.lastrowid is not None
@@ -2769,24 +2887,97 @@ class Database:
             )
             return [dict(row) for row in rows]
 
-    async def claim_next_gateway_wake_request(self) -> dict[str, Any] | None:
+    async def claim_next_gateway_wake_request(
+        self,
+        *,
+        modes: tuple[str, ...] | None = None,
+    ) -> dict[str, Any] | None:
         now = utcnow()
         async with aiosqlite.connect(self.path) as db:
             db.row_factory = aiosqlite.Row
             while True:
+                if modes:
+                    placeholders = ", ".join("?" for _ in modes)
+                    mode_clause = f" AND mode IN ({placeholders})"
+                    query_params: tuple[object, ...] = tuple(modes)
+                else:
+                    mode_clause = ""
+                    query_params = ()
                 row = await (
                     await db.execute(
-                        """
+                        f"""
                         SELECT *
                         FROM gateway_wake_requests
                         WHERE status = 'pending'
+                        {mode_clause}
                         ORDER BY id ASC
                         LIMIT 1
-                        """
+                        """,
+                        query_params,
                     )
                 ).fetchone()
                 if row is None:
                     return None
+                row_mode = str(row["mode"])
+                row_agent_id = str(row["agent_id"]) if row["agent_id"] is not None else None
+                row_session_key = (
+                    str(row["session_key"]) if row["session_key"] is not None else None
+                )
+                same_mode_rows = await db.execute_fetchall(
+                    """
+                    SELECT *
+                    FROM gateway_wake_requests
+                    WHERE status = 'pending'
+                      AND mode = ?
+                    ORDER BY id ASC
+                    """,
+                    (row_mode,),
+                )
+                matching_rows = [
+                    candidate
+                    for candidate in same_mode_rows
+                    if _gateway_wake_target_matches(
+                        candidate,
+                        agent_id=row_agent_id,
+                        session_key=row_session_key,
+                    )
+                ]
+                if len(matching_rows) > 1:
+                    canonical_row = matching_rows[0]
+                    canonical_id = int(canonical_row["id"])
+                    winning_text, winning_reason, _ = _select_gateway_wake_row_winner(
+                        matching_rows
+                    )
+                    await db.execute(
+                        """
+                        UPDATE gateway_wake_requests
+                        SET text = ?,
+                            reason = ?,
+                            updated_at = ?
+                        WHERE id = ?
+                        """,
+                        (winning_text, winning_reason, now, canonical_id),
+                    )
+                    duplicate_ids = [int(candidate["id"]) for candidate in matching_rows[1:]]
+                    placeholders = ", ".join("?" for _ in duplicate_ids)
+                    await db.execute(
+                        f"DELETE FROM gateway_wake_requests WHERE id IN ({placeholders})",
+                        tuple(duplicate_ids),
+                    )
+                    await db.commit()
+                    row = await (
+                        await db.execute(
+                            """
+                            SELECT *
+                            FROM gateway_wake_requests
+                            WHERE id = ?
+                            LIMIT 1
+                            """,
+                            (canonical_id,),
+                        )
+                    ).fetchone()
+                    if row is None:
+                        continue
                 request_id = int(row["id"])
                 cursor = await db.execute(
                     """

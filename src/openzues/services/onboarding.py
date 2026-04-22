@@ -94,34 +94,33 @@ class OnboardingService:
             )
         project_path = _normalize_path(payload.project_path)
         warnings: list[str] = []
-        await self.setup.save_wizard_session(
-            {
-                "mode": payload.setup_mode,
-                "flow": payload.setup_flow,
-                "use_mempalace": payload.use_mempalace,
-                "instance_mode": payload.instance_mode,
-                "instance_id": payload.instance_id,
-                "instance_name": payload.instance_name,
-                "project_path": project_path,
-                "project_label": payload.project_label,
-                "team_name": payload.team_name,
-                "operator_name": payload.operator_name,
-                "operator_email": payload.operator_email,
-                "bootstrap_roles": bootstrap_roles,
-                "bootstrap_scopes": bootstrap_scopes,
-                "task_name": payload.task_name,
-                "cadence_minutes": payload.cadence_minutes,
-                "model": payload.model,
-                "max_turns": payload.max_turns,
-                "objective_template": payload.objective_template,
-                "conversation_target": (
-                    payload.conversation_target.model_dump()
-                    if payload.conversation_target is not None
-                    else None
-                ),
-                "toolsets": payload.toolsets,
-            }
-        )
+        wizard_session_payload = {
+            "mode": payload.setup_mode,
+            "flow": payload.setup_flow,
+            "use_mempalace": payload.use_mempalace,
+            "instance_mode": payload.instance_mode,
+            "instance_id": payload.instance_id,
+            "instance_name": payload.instance_name,
+            "project_path": project_path,
+            "project_label": payload.project_label,
+            "team_name": payload.team_name,
+            "operator_name": payload.operator_name,
+            "operator_email": payload.operator_email,
+            "bootstrap_roles": bootstrap_roles,
+            "bootstrap_scopes": bootstrap_scopes,
+            "task_name": payload.task_name,
+            "cadence_minutes": payload.cadence_minutes,
+            "model": payload.model,
+            "max_turns": payload.max_turns,
+            "objective_template": payload.objective_template,
+            "conversation_target": (
+                payload.conversation_target.model_dump()
+                if payload.conversation_target is not None
+                else None
+            ),
+            "toolsets": payload.toolsets,
+        }
+        await self.setup.save_wizard_session(wizard_session_payload)
 
         instance = await self._resolve_bootstrap_instance(payload, cwd=project_path)
         project = await self._resolve_project(path=project_path, label=payload.project_label)
@@ -185,6 +184,32 @@ class OnboardingService:
             task_blueprint=task_blueprint,
             memory_task_blueprint=memory_task_blueprint,
         )
+        wizard_session_payload.update(
+            {
+                "instance_mode": payload.instance_mode,
+                "instance_id": instance.id if instance is not None else None,
+                "instance_name": instance.label if instance is not None else payload.instance_name,
+                "project_path": project_path,
+                "project_label": project.label,
+                "team_name": team.label,
+                "operator_name": operator.label,
+                "operator_email": payload.operator_email,
+                "bootstrap_roles": bootstrap_roles,
+                "bootstrap_scopes": bootstrap_scopes,
+                "task_name": payload.task_name,
+                "cadence_minutes": payload.cadence_minutes,
+                "model": payload.model,
+                "max_turns": payload.max_turns,
+                "objective_template": payload.objective_template,
+                "conversation_target": (
+                    payload.conversation_target.model_dump()
+                    if payload.conversation_target is not None
+                    else None
+                ),
+                "toolsets": payload.toolsets,
+            }
+        )
+        await self.setup.save_wizard_session(wizard_session_payload)
 
         if payload.setup_mode == "remote" and instance is None:
             warnings.append(

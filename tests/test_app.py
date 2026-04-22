@@ -2049,6 +2049,14 @@ def test_onboarding_bootstrap_creates_first_run_bundle_and_launch_draft(tmp_path
     setup = setup_response.json()
     assert setup["wizard_session"]["conversation_target"]["channel"] == "slack"
     assert setup["wizard_session"]["conversation_target"]["account_id"] == "workspace-bot"
+    assert setup["wizard_session"]["project_path"] == str(Path(tmp_path).resolve())
+    assert setup["wizard_session"]["project_label"] == "Bootstrap Workspace"
+    assert setup["wizard_session"]["instance_mode"] == "create_desktop"
+    assert setup["wizard_session"]["instance_name"] == "Bootstrap Lane"
+    assert setup["wizard_session"]["team_name"] == "Local Control"
+    assert setup["wizard_session"]["operator_name"] == "Remote Builder"
+    assert setup["wizard_session"]["task_name"] == "Autonomous Ship Loop"
+    assert setup["wizard_session"]["cadence_minutes"] == 180
     assert setup["wizard_session"]["bootstrap_roles"] == ["node", "operator"]
     assert setup["wizard_session"]["bootstrap_scopes"] == [
         "operator.approvals",
@@ -4095,7 +4103,12 @@ def test_setup_wizard_endpoint_updates_saved_mode_and_flow(tmp_path) -> None:
     with make_client(tmp_path) as client:
         update_response = client.put(
             "/api/setup/wizard",
-            json={"mode": "remote", "flow": "quickstart"},
+            json={
+                "mode": "remote",
+                "flow": "quickstart",
+                "project_path": "relative/onboarding-workspace",
+                "task_name": "Draft Loop",
+            },
         )
         setup_response = client.get("/api/setup")
 
@@ -4104,9 +4117,17 @@ def test_setup_wizard_endpoint_updates_saved_mode_and_flow(tmp_path) -> None:
     assert payload["mode"] == "remote"
     assert payload["flow"] == "advanced"
     assert payload["recommended_flow"] in {"quickstart", "advanced"}
+    assert payload["project_path"] == str(
+        (Path.cwd() / "relative/onboarding-workspace").resolve()
+    )
+    assert payload["task_name"] == "Draft Loop"
     setup = setup_response.json()
     assert setup["wizard_session"]["mode"] == "remote"
     assert setup["wizard_session"]["flow"] == "advanced"
+    assert setup["wizard_session"]["project_path"] == str(
+        (Path.cwd() / "relative/onboarding-workspace").resolve()
+    )
+    assert setup["wizard_session"]["task_name"] == "Draft Loop"
 
 
 def test_setup_wizard_endpoint_persists_mempalace_toggle(tmp_path) -> None:
@@ -4354,6 +4375,130 @@ def test_gateway_bootstrap_endpoint_updates_saved_launch_profile(tmp_path) -> No
 
     assert read_response.status_code == 200
     assert read_response.json()["task_blueprint"]["label"] == "Gateway Loop"
+
+
+def test_gateway_commands_endpoint_returns_owned_catalog_contract(tmp_path) -> None:
+    with make_client(tmp_path) as client:
+        response = client.get("/api/gateway/commands")
+        filtered_response = client.get(
+            "/api/gateway/commands",
+            params={"scope": "native", "includeArgs": False},
+        )
+        rejected_response = client.get(
+            "/api/gateway/commands",
+            params={"agentId": "other-agent"},
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["commands"]
+    assert any(command["name"] == "status" for command in payload["commands"])
+    assert any(command["name"] == "agents.list" for command in payload["commands"])
+    assert any(command["name"] == "channels.status" for command in payload["commands"])
+    assert any(command["name"] == "browser.open" for command in payload["commands"])
+
+    assert filtered_response.status_code == 200
+    filtered_payload = filtered_response.json()
+    assert filtered_payload["commands"]
+    assert all("args" not in command for command in filtered_payload["commands"])
+
+    assert rejected_response.status_code == 400
+    assert rejected_response.json() == {"detail": 'unknown agent id "other-agent"'}
+
+
+def test_gateway_agents_endpoint_returns_saved_workspace_inventory(tmp_path) -> None:
+    with make_client(tmp_path) as client:
+        bootstrap_response = client.post(
+            "/api/onboarding/bootstrap",
+            json={
+                "setup_mode": "local",
+                "setup_flow": "quickstart",
+                "instance_mode": "create_desktop",
+                "instance_name": "Bootstrap Lane",
+                "project_path": str(tmp_path),
+                "project_label": "Bootstrap Workspace",
+                "operator_name": "Remote Builder",
+                "issue_api_key": True,
+                "task_name": "Autonomous Ship Loop",
+                "objective_template": (
+                    "Inspect the repo, ship the next verified slice, and checkpoint it."
+                ),
+            },
+        )
+        response = client.get("/api/gateway/agents")
+
+    assert bootstrap_response.status_code == 200
+    assert response.status_code == 200
+    assert response.json() == {
+        "defaultId": "main",
+        "mainKey": "main",
+        "scope": "global",
+        "agents": [
+            {
+                "id": "main",
+                "name": "OpenZues",
+                "identity": {
+                    "name": "OpenZues",
+                    "avatar": "/static/favicon.svg",
+                    "avatarUrl": "/static/favicon.svg",
+                    "emoji": None,
+                },
+                "workspace": str(tmp_path),
+                "model": {"primary": "gpt-5.4"},
+            }
+        ],
+    }
+
+
+def test_gateway_channels_endpoint_returns_notification_route_inventory(tmp_path) -> None:
+    with make_client(tmp_path) as client:
+        route_response = client.post(
+            "/api/notification-routes",
+            json={
+                "name": "Deploy Room",
+                "kind": "webhook",
+                "target": "https://example.invalid/deploy-room",
+                "events": ["mission/completed"],
+                "conversation_target": {
+                    "channel": "slack",
+                    "account_id": "workspace-bot",
+                    "peer_kind": "channel",
+                    "peer_id": "deploy-room",
+                    "summary": "slack workspace-bot channel deploy-room",
+                },
+                "enabled": True,
+            },
+        )
+        response = client.get("/api/gateway/channels")
+
+    assert route_response.status_code == 200
+    assert response.status_code == 200
+    assert response.json()["routeCount"] == 1
+    assert response.json()["enabledCount"] == 1
+    assert response.json()["conversationTargetCount"] == 1
+    assert response.json()["channelOrder"] == ["discord", "slack", "telegram", "whatsapp"]
+    assert response.json()["channelLabels"]["slack"] == "Slack"
+    assert response.json()["channelDetailLabels"]["slack"] == "Slack"
+    assert response.json()["channelMeta"][1] == {
+        "id": "slack",
+        "label": "Slack",
+        "detailLabel": "Slack",
+    }
+    assert response.json()["channels"]["slack"] == {
+        "routeCount": 1,
+        "enabledRouteCount": 1,
+        "conversationTargetCount": 1,
+        "accountCount": 1,
+    }
+    assert response.json()["channelAccounts"]["slack"] == [
+        {
+            "accountId": "workspace-bot",
+            "routeCount": 1,
+            "enabledRouteCount": 1,
+            "conversationTargetCount": 1,
+        }
+    ]
+    assert response.json()["channelDefaultAccountId"]["slack"] == "workspace-bot"
 
 
 def test_gateway_bootstrap_endpoint_marks_connected_local_lane_ready_without_api_key(

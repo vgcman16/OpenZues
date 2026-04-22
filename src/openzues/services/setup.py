@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from openzues.database import Database, utcnow
@@ -47,6 +48,15 @@ def _footprint_resource(
         "label": str(resource["label"]),
         "created": bool(resource.get("created", False)),
     }
+
+
+def _normalize_path(value: str | None) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    return str(Path(text).expanduser().resolve(strict=False))
 
 
 DEFAULT_SETUP_OBJECTIVE_TEMPLATE = (
@@ -208,6 +218,7 @@ class SetupService:
             "remote_probe": remote_probe,
             "updated_at": updated_at,
         }
+        payload["project_path"] = _normalize_path(payload["project_path"])
         bootstrap_roles, bootstrap_scopes = normalize_device_bootstrap_profile(
             stored.get("bootstrap_roles")
             if "bootstrap_roles" in stored
@@ -242,6 +253,9 @@ class SetupService:
             flow = "advanced"
             merged["instance_mode"] = "existing"
         merged["flow"] = flow
+        merged["project_path"] = _normalize_path(
+            merged.get("project_path") if isinstance(merged.get("project_path"), str) else None
+        )
         bootstrap_roles, bootstrap_scopes = normalize_device_bootstrap_profile(
             merged.get("bootstrap_roles"),
             merged.get("bootstrap_scopes"),

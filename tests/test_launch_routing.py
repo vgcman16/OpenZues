@@ -38,6 +38,21 @@ def test_normalize_conversation_target_preserves_punctuated_peer_id() -> None:
     assert normalized.peer_id == "deploy.room+west"
 
 
+def test_normalize_conversation_target_reuses_openclaw_account_id_rules() -> None:
+    normalized = _normalize_conversation_target(
+        ConversationTargetView(
+            channel="Slack",
+            account_id="__Ops__",
+            peer_kind="channel",
+            peer_id="Deploy.Room+West",
+            summary="ignored",
+        )
+    )
+
+    assert normalized is not None
+    assert normalized.account_id == "__ops__"
+
+
 @pytest.mark.asyncio
 async def test_describe_preserves_reusable_thread_child_session_key(tmp_path: Path) -> None:
     database = Database(tmp_path / "launch-routing.db")

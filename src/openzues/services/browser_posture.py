@@ -59,6 +59,28 @@ def _pick_browser_runtime(
     return saved_launch_runtime, live_gateway_runtime
 
 
+def _runtime_subject(
+    *,
+    saved_launch_runtime: GatewayCapabilityBrowserRuntimeView | None,
+    live_gateway_runtime: GatewayCapabilityBrowserRuntimeView | None,
+    ready_only: bool = False,
+) -> tuple[str, bool]:
+    labels: list[str] = []
+    if saved_launch_runtime is not None and (
+        not ready_only or saved_launch_runtime.status == "ready"
+    ):
+        labels.append("saved launch browser runtime")
+    if live_gateway_runtime is not None and (
+        not ready_only or live_gateway_runtime.status == "ready"
+    ):
+        labels.append("live gateway browser runtime")
+    if len(labels) == 2:
+        return "saved launch and live gateway browser runtimes", True
+    if labels:
+        return labels[0], False
+    return "browser runtime", False
+
+
 def build_browser_posture(
     *,
     control_plane_url: str,
@@ -102,18 +124,27 @@ def build_browser_posture(
         recommended_action = known_runtime.recommended_action
 
     if local_tool.available and ready_runtime is not None:
+        ready_subject, ready_plural = _runtime_subject(
+            saved_launch_runtime=saved_launch_runtime,
+            live_gateway_runtime=live_gateway_runtime,
+            ready_only=True,
+        )
         status = "ready"
         headline = "Browser control is operator-ready"
         summary = (
-            "Local agent-browser is available and the saved or live lane is publishing "
-            "a ready browser runtime."
+            f"Local agent-browser is available and the {ready_subject} "
+            f"{'are' if ready_plural else 'is'} ready for browser-led verification."
         )
     elif local_tool.available and known_runtime is not None:
+        known_subject, known_plural = _runtime_subject(
+            saved_launch_runtime=saved_launch_runtime,
+            live_gateway_runtime=live_gateway_runtime,
+        )
         status = "warn"
         headline = "Browser runtime needs repair"
         summary = (
-            "Local agent-browser is available, but the saved launch browser runtime still "
-            "needs attention."
+            f"Local agent-browser is available, but the {known_subject} still "
+            f"{'need' if known_plural else 'needs'} attention."
         )
     elif local_tool.available:
         status = "info"
@@ -123,11 +154,16 @@ def build_browser_posture(
             "runtime yet."
         )
     elif ready_runtime is not None:
+        ready_subject, ready_plural = _runtime_subject(
+            saved_launch_runtime=saved_launch_runtime,
+            live_gateway_runtime=live_gateway_runtime,
+            ready_only=True,
+        )
         status = "warn"
         headline = "Browser runtime is staged, but local verification is missing"
         summary = (
-            "A lane is publishing a ready browser runtime, but local agent-browser tooling is "
-            "missing on this host."
+            f"The {ready_subject} {'are' if ready_plural else 'is'} ready, but local "
+            "agent-browser tooling is missing on this host."
         )
     else:
         status = "warn"

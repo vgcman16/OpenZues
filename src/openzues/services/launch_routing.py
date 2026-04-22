@@ -1,6 +1,4 @@
 from __future__ import annotations
-
-import re
 from pathlib import Path
 
 from openzues.database import Database, utcnow
@@ -25,10 +23,9 @@ from openzues.services.hermes_runtime_profile import (
 from openzues.services.manager import RuntimeManager
 from openzues.services.session_keys import (
     build_launch_session_key,
+    normalize_optional_account_id,
     resolve_thread_parent_session_key,
 )
-
-_ROUTE_ACCOUNT_ID_RE = re.compile(r"[^a-z0-9_-]+")
 
 
 def _normalize_route_text(value: str | None) -> str | None:
@@ -37,11 +34,7 @@ def _normalize_route_text(value: str | None) -> str | None:
 
 
 def _normalize_route_account_id(value: str | None) -> str | None:
-    text = _normalize_route_text(value)
-    if not text:
-        return None
-    normalized = _ROUTE_ACCOUNT_ID_RE.sub("-", text).strip("-_")
-    return normalized or None
+    return normalize_optional_account_id(value)
 
 
 def _normalize_conversation_target(

@@ -305,6 +305,85 @@ def test_gateway_doctor_prefers_live_gateway_view_when_available(tmp_path, monke
     assert payload["summary"] == "Live gateway summary"
 
 
+def test_agents_list_json_includes_saved_workspace_inventory(tmp_path, monkeypatch) -> None:
+    _bootstrap_cli_workspace(tmp_path, monkeypatch, task_name="CLI Agents Loop")
+
+    result = runner.invoke(app, ["agents", "list", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["defaultId"] == "main"
+    assert payload["mainKey"] == "main"
+    assert payload["scope"] == "global"
+    assert payload["agents"] == [
+        {
+            "id": "main",
+            "name": "OpenZues",
+            "identity": {
+                "name": "OpenZues",
+                "avatar": "/static/favicon.svg",
+                "avatarUrl": "/static/favicon.svg",
+                "emoji": None,
+            },
+            "workspace": str(tmp_path),
+            "model": {"primary": "gpt-5.4"},
+        }
+    ]
+
+
+def test_channels_status_json_includes_saved_notification_routes(tmp_path, monkeypatch) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch, task_name="CLI Channels Loop")
+
+    database = Database(data_dir / "openzues.db")
+    asyncio.run(database.initialize())
+    asyncio.run(
+        database.create_notification_route(
+            name="CLI Slack Route",
+            kind="webhook",
+            target="https://example.invalid/slack",
+            events=["mission/completed"],
+            conversation_target={
+                "channel": "slack",
+                "account_id": "workspace-bot",
+                "peer_kind": "channel",
+                "peer_id": "deploy-room",
+                "summary": "slack workspace-bot channel deploy-room",
+            },
+            enabled=True,
+            secret_header_name=None,
+            secret_token=None,
+            vault_secret_id=None,
+        )
+    )
+
+    result = runner.invoke(app, ["channels", "status", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["routeCount"] == 1
+    assert payload["enabledCount"] == 1
+    assert payload["conversationTargetCount"] == 1
+    assert payload["channelOrder"] == ["discord", "slack", "telegram", "whatsapp"]
+    assert payload["channelLabels"]["slack"] == "Slack"
+    assert payload["channelDetailLabels"]["slack"] == "Slack"
+    assert payload["channels"]["slack"] == {
+        "routeCount": 1,
+        "enabledRouteCount": 1,
+        "conversationTargetCount": 1,
+        "accountCount": 1,
+    }
+    assert payload["channelAccounts"]["slack"] == [
+        {
+            "accountId": "workspace-bot",
+            "routeCount": 1,
+            "enabledRouteCount": 1,
+            "conversationTargetCount": 1,
+        }
+    ]
+    assert payload["channelDefaultAccountId"]["slack"] == "workspace-bot"
+
+
 def test_control_plane_base_url_prefers_lease_metadata(tmp_path, monkeypatch) -> None:
     data_dir = tmp_path / "data"
     data_dir.mkdir(parents=True, exist_ok=True)

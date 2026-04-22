@@ -8,7 +8,32 @@ DEFAULT_LIMIT = 500
 DEFAULT_MAX_BYTES = 250_000
 MAX_LIMIT = 5_000
 MAX_BYTES = 1_000_000
-_TOKEN_FLAG_RE = re.compile(r"(?P<flag>--(?:hook-)?token)\s+(?P<secret>\S+)")
+_CLI_SECRET_RE = re.compile(
+    r'(?P<prefix>--(?:api[-_]?key|hook[-_]?token|token|secret|password|passwd)\s+)'
+    r'(?P<quote>["\']?)(?P<secret>[^\s"\']+)(?P=quote)',
+    re.IGNORECASE,
+)
+_JSON_SECRET_RE = re.compile(
+    r'(?P<prefix>"(?:apiKey|token|secret|password|passwd|accessToken|refreshToken)"\s*:\s*")'
+    r'(?P<secret>[^"]+)(?P<suffix>")',
+    re.IGNORECASE,
+)
+_ENV_SECRET_RE = re.compile(
+    r'(?P<prefix>\b[A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD)\b\s*[=:]\s*(?:["\']?))'
+    r'(?P<secret>[^\s"\'\\]+)',
+    re.IGNORECASE,
+)
+_BEARER_TOKEN_RE = re.compile(
+    r"(?P<prefix>\b(?:Authorization\s*[:=]\s*)?Bearer\s+)(?P<secret>[A-Za-z0-9._\-+=]+)",
+    re.IGNORECASE,
+)
+_COMMON_TOKEN_RE = re.compile(
+    r"\b(?:sk-[A-Za-z0-9_-]{8,}|ghp_[A-Za-z0-9]{20,}|"
+    r"github_pat_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}|"
+    r"xapp-[A-Za-z0-9-]{10,}|gsk_[A-Za-z0-9_-]{10,}|"
+    r"AIza[0-9A-Za-z\-_]{20,}|pplx-[A-Za-z0-9_-]{10,}|"
+    r"npm_[A-Za-z0-9]{10,})\b"
+)
 
 
 class GatewayLogsUnavailableError(RuntimeError):
@@ -139,15 +164,40 @@ def _clamp(value: int, *, minimum: int, maximum: int) -> int:
 
 
 def _redact_sensitive_tokens(text: str) -> str:
-    def replace(match: re.Match[str]) -> str:
-        flag = match.group("flag")
-        secret = match.group("secret")
-        return f"{flag} {_shorten_secret(secret)}"
+    redacted = _CLI_SECRET_RE.sub(_replace_cli_secret, text)
+    redacted = _JSON_SECRET_RE.sub(_replace_json_secret, redacted)
+    redacted = _ENV_SECRET_RE.sub(_replace_env_secret, redacted)
+    redacted = _BEARER_TOKEN_RE.sub(_replace_bearer_secret, redacted)
+    return _COMMON_TOKEN_RE.sub(lambda match: _shorten_secret(match.group(0)), redacted)
 
-    return _TOKEN_FLAG_RE.sub(replace, text)
+
+def _replace_cli_secret(match: re.Match[str]) -> str:
+    prefix = match.group("prefix")
+    quote = match.group("quote") or ""
+    secret = match.group("secret")
+    return f"{prefix}{quote}{_shorten_secret(secret)}{quote}"
+
+
+def _replace_json_secret(match: re.Match[str]) -> str:
+    prefix = match.group("prefix")
+    secret = match.group("secret")
+    suffix = match.group("suffix")
+    return f"{prefix}{_shorten_secret(secret)}{suffix}"
+
+
+def _replace_env_secret(match: re.Match[str]) -> str:
+    prefix = match.group("prefix")
+    secret = match.group("secret")
+    return f"{prefix}{_shorten_secret(secret)}"
+
+
+def _replace_bearer_secret(match: re.Match[str]) -> str:
+    prefix = match.group("prefix")
+    secret = match.group("secret")
+    return f"{prefix}{_shorten_secret(secret)}"
 
 
 def _shorten_secret(secret: str) -> str:
     if len(secret) <= 8:
         return "********"
-    return f"{secret[:6]}…{secret[-4:]}"
+    return f"{secret[:6]}...{secret[-4:]}"

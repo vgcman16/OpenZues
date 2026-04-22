@@ -1188,6 +1188,21 @@ class TaskBlueprintCreate(BaseModel):
     project_id: int | None = None
     cadence_minutes: int | None = Field(default=None, ge=1)
     schedule_anchor_ms: int | None = Field(default=None, ge=0)
+    schedule_kind: Literal["every", "at"] | None = None
+    schedule_at: str | None = None
+    cron_session_target: str | None = None
+    cron_session_key: str | None = None
+    cron_wake_mode: Literal["now", "next-heartbeat"] | None = None
+    cron_payload_kind: Literal["agentTurn", "systemEvent"] | None = None
+    cron_payload_text: str | None = None
+    cron_delivery_mode: Literal["none", "announce", "webhook"] | None = None
+    cron_delivery_channel: str | None = None
+    cron_delivery_to: str | None = None
+    cron_delivery_account_id: str | None = None
+    cron_delivery_thread_id: str | int | None = None
+    cron_delivery_best_effort: bool | None = None
+    cron_delivery_failure_destination: dict[str, Any] | None = None
+    cron_notify_enabled: bool | None = None
     run_until_complete: bool = False
     continuation_cooldown_minutes: int = Field(default=10, ge=1)
     completion_marker: str | None = None

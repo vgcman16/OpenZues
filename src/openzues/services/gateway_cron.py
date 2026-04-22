@@ -1,11 +1,19 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal, cast
+from urllib.parse import urlparse
 
 from openzues.database import Database
-from openzues.schemas import TaskBlueprintCreate
+from openzues.schemas import ConversationTargetView, TaskBlueprintCreate
+from openzues.services.session_keys import (
+    build_agent_main_session_key,
+    resolve_agent_id_from_session_key,
+    to_agent_request_session_key,
+    to_agent_store_session_key,
+)
 
 CronEnabledFilter = Literal["all", "enabled", "disabled"]
 CronSortBy = Literal["nextRunAtMs", "updatedAtMs", "name"]
@@ -15,6 +23,9 @@ CronRunsScope = Literal["job", "all"]
 CronRunStatus = Literal["ok", "error", "skipped"]
 CronRunStatusFilter = Literal["all", "ok", "error", "skipped"]
 CronDeliveryStatus = Literal["delivered", "not-delivered", "unknown", "not-requested"]
+_GATEWAY_CRON_AGENT_ID = "openzues"
+_CRON_CUSTOM_SESSION_SEGMENT_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$", re.IGNORECASE)
+_CRON_DELIVERY_CHANNEL_ID_RE = re.compile(r"^[a-z][a-z_-]{0,63}$")
 
 
 class GatewayCronService:
@@ -24,11 +35,13 @@ class GatewayCronService:
         *,
         create_task_blueprint: Callable[[TaskBlueprintCreate], Awaitable[object]] | None = None,
         run_task_blueprint_now: Callable[..., Awaitable[object]] | None = None,
+        dispatch_system_event_task: Callable[..., Awaitable[str]] | None = None,
         delete_task_blueprint: Callable[[int], Awaitable[None]] | None = None,
     ) -> None:
         self._database = database
         self._create_task_blueprint = create_task_blueprint
         self._run_task_blueprint_now = run_task_blueprint_now
+        self._dispatch_system_event_task = dispatch_system_event_task
         self._delete_task_blueprint = delete_task_blueprint
 
     @property
@@ -37,7 +50,10 @@ class GatewayCronService:
 
     @property
     def can_run_jobs(self) -> bool:
-        return self._run_task_blueprint_now is not None
+        return (
+            self._run_task_blueprint_now is not None
+            or self._dispatch_system_event_task is not None
+        )
 
     @property
     def can_remove_jobs(self) -> bool:
@@ -47,7 +63,7 @@ class GatewayCronService:
         jobs = [
             self._job_payload(task)
             for task in await self._database.list_task_blueprint_records()
-            if isinstance(task.get("cadence_minutes"), int)
+            if _is_gateway_cron_task(task)
         ]
         next_wake_candidates: list[int] = []
         for job in jobs:
@@ -76,7 +92,7 @@ class GatewayCronService:
         jobs = [
             self._job_payload(task)
             for task in await self._database.list_task_blueprint_records()
-            if isinstance(task.get("cadence_minutes"), int)
+            if _is_gateway_cron_task(task)
         ]
 
         normalized_query = str(query or "").strip().lower()
@@ -111,7 +127,9 @@ class GatewayCronService:
     async def add(self, job_create: dict[str, Any]) -> dict[str, Any]:
         if self._create_task_blueprint is None:
             raise RuntimeError("cron.add is unavailable until scheduled task creation is wired")
-        created = await self._create_task_blueprint(build_gateway_cron_task_blueprint(job_create))
+        created_task = build_gateway_cron_task_blueprint(job_create)
+        await self._validate_explicit_announce_channel_on_add(job_create, created_task)
+        created = await self._create_task_blueprint(created_task)
         task_blueprint_id = _task_blueprint_id_from_result(created)
         if task_blueprint_id is None:
             raise ValueError("scheduled task creation did not return a task id")
@@ -133,16 +151,28 @@ class GatewayCronService:
         job_id: str,
         mode: CronRunMode = "force",
     ) -> dict[str, Any]:
-        if self._run_task_blueprint_now is None:
+        if not self.can_run_jobs:
             raise RuntimeError("cron.run is unavailable until scheduled task launch is wired")
         task_blueprint_id = self._task_blueprint_id_from_job_id(job_id)
         task = await self._database.get_task_blueprint(task_blueprint_id)
-        if task is None or not isinstance(task.get("cadence_minutes"), int):
+        if task is None or not _is_gateway_cron_task(task):
             raise ValueError(f'unknown cron job "{_cron_job_id(task_blueprint_id)}"')
         if await self._task_has_active_mission(task_blueprint_id):
             return {"ok": True, "ran": False, "reason": "already-running"}
         if mode == "due" and not _task_is_due(task):
             return {"ok": True, "ran": False, "reason": "not-due"}
+        if _task_routes_through_system_event_wake(task):
+            if self._dispatch_system_event_task is None:
+                raise RuntimeError(
+                    "cron.run is unavailable until system-event wake dispatch is wired"
+                )
+            run_id = await self._dispatch_system_event_task(
+                task_blueprint_id,
+                trigger=f"gateway-cron:{mode}",
+            )
+            return {"ok": True, "enqueued": True, "runId": run_id}
+        if self._run_task_blueprint_now is None:
+            raise RuntimeError("cron.run is unavailable until scheduled task launch is wired")
         try:
             mission = await self._run_task_blueprint_now(
                 task_blueprint_id,
@@ -162,7 +192,7 @@ class GatewayCronService:
         if task_blueprint_id is None:
             return {"ok": True, "removed": False}
         task = await self._database.get_task_blueprint(task_blueprint_id)
-        if task is None or not isinstance(task.get("cadence_minutes"), int):
+        if task is None or not _is_gateway_cron_task(task):
             return {"ok": True, "removed": False}
         await self._delete_task_blueprint(task_blueprint_id)
         return {"ok": True, "removed": True}
@@ -170,10 +200,11 @@ class GatewayCronService:
     async def update(self, job_id: str, patch: dict[str, Any]) -> dict[str, Any]:
         task_blueprint_id = self._task_blueprint_id_from_job_id(job_id)
         task = await self._database.get_task_blueprint(task_blueprint_id)
-        if task is None or not isinstance(task.get("cadence_minutes"), int):
+        if task is None or not _is_gateway_cron_task(task):
             raise ValueError(f'unknown cron job "{_cron_job_id(task_blueprint_id)}"')
 
         row_updates, payload_updates = build_gateway_cron_job_patch(task, patch)
+        await self._validate_explicit_announce_channel_on_update(task, patch, payload_updates)
         if row_updates:
             await self._database.update_task_blueprint(task_blueprint_id, **row_updates)
         if payload_updates:
@@ -190,6 +221,67 @@ class GatewayCronService:
         if updated is None:
             raise ValueError(f'unknown cron job "{_cron_job_id(task_blueprint_id)}"')
         return self._job_payload(updated)
+
+    async def _enabled_notification_route_channels(self) -> tuple[str, ...]:
+        channels: set[str] = set()
+        for route in await self._database.list_notification_routes():
+            if not bool(route.get("enabled")):
+                continue
+            conversation_target = route.get("conversation_target")
+            if not isinstance(conversation_target, dict):
+                continue
+            channel = str(conversation_target.get("channel") or "").strip().lower()
+            if channel:
+                channels.add(channel)
+        return tuple(sorted(channels))
+
+    async def _validate_explicit_announce_channel_on_add(
+        self,
+        job_create: dict[str, Any],
+        created_task: TaskBlueprintCreate,
+    ) -> None:
+        delivery = job_create.get("delivery")
+        if not isinstance(delivery, dict):
+            return
+        raw_mode = str(delivery.get("mode") or "").strip().lower()
+        if raw_mode == "deliver":
+            raw_mode = "announce"
+        if raw_mode != "announce" or created_task.cron_delivery_channel is not None:
+            return
+        enabled_channels = await self._enabled_notification_route_channels()
+        if len(enabled_channels) > 1:
+            raise ValueError(
+                "invalid cron.add params: delivery.channel is required when multiple delivery "
+                "channels are enabled"
+            )
+
+    async def _validate_explicit_announce_channel_on_update(
+        self,
+        task: dict[str, Any],
+        patch: dict[str, Any],
+        payload_updates: dict[str, Any],
+    ) -> None:
+        delivery = patch.get("delivery")
+        if not isinstance(delivery, dict):
+            return
+        raw_mode = str(delivery.get("mode") or "").strip().lower()
+        if raw_mode == "deliver":
+            raw_mode = "announce"
+        if raw_mode != "announce":
+            return
+        effective_channel = (
+            payload_updates.get("cron_delivery_channel")
+            if "cron_delivery_channel" in payload_updates
+            else _task_payload_fields(task).get("cron_delivery_channel")
+        )
+        if str(effective_channel or "").strip():
+            return
+        enabled_channels = await self._enabled_notification_route_channels()
+        if len(enabled_channels) > 1:
+            raise ValueError(
+                "invalid cron.update params: patch.delivery.channel is required when multiple "
+                "delivery channels are enabled"
+            )
 
     async def runs_page(
         self,
@@ -208,7 +300,7 @@ class GatewayCronService:
         task_records = [
             task
             for task in await self._database.list_task_blueprint_records()
-            if isinstance(task.get("cadence_minutes"), int)
+            if _is_gateway_cron_task(task)
         ]
         tasks_by_id = {
             cast(int, task["id"]): task
@@ -222,6 +314,15 @@ class GatewayCronService:
             delivery_status=delivery_status,
         )
         normalized_query = str(query or "").strip().lower()
+        outbound_deliveries_by_mission_id: dict[int, dict[str, Any]] = {}
+        for delivery in await self._database.list_outbound_deliveries(limit=2000):
+            event_payload = delivery.get("event_payload")
+            if not isinstance(event_payload, dict):
+                continue
+            mission_id = _int_or_none(event_payload.get("missionId"))
+            if mission_id is None or mission_id in outbound_deliveries_by_mission_id:
+                continue
+            outbound_deliveries_by_mission_id[mission_id] = delivery
 
         entries = [
             entry
@@ -230,6 +331,7 @@ class GatewayCronService:
                 entry := self._mission_run_entry(
                     mission,
                     tasks_by_id=tasks_by_id,
+                    outbound_deliveries_by_mission_id=outbound_deliveries_by_mission_id,
                     include_job_name=scope == "all",
                 )
             )
@@ -242,6 +344,25 @@ class GatewayCronService:
                 query=normalized_query,
             )
         ]
+        entries.extend(
+            entry
+            for event in await self._database.list_events(limit=2000)
+            if (
+                entry := self._system_event_run_entry(
+                    event,
+                    tasks_by_id=tasks_by_id,
+                    include_job_name=scope == "all",
+                )
+            )
+            is not None
+            and (normalized_job_id is None or entry["jobId"] == normalized_job_id)
+            and _run_entry_matches_filters(
+                entry,
+                statuses=normalized_statuses,
+                delivery_statuses=normalized_delivery_statuses,
+                query=normalized_query,
+            )
+        )
         sorted_entries = sorted(
             entries,
             key=lambda entry: (
@@ -268,48 +389,43 @@ class GatewayCronService:
         }
 
     def _job_payload(self, task: dict[str, Any]) -> dict[str, Any]:
-        cadence_minutes = cast(int, task["cadence_minutes"])
-        payload_state = cast(dict[str, Any], task.get("payload") or {})
+        payload_state = _task_payload_fields(task)
         objective_template = str(payload_state.get("objective_template") or "").strip()
-        model = str(payload_state.get("model") or "").strip()
-        anchor_ms = payload_state.get("schedule_anchor_ms")
-        payload: dict[str, Any] = {
-            "kind": "agentTurn",
-            "message": objective_template,
-        }
-        if model:
-            payload["model"] = model
-        schedule: dict[str, Any] = {
-            "kind": "every",
-            "everyMs": cadence_minutes * 60_000,
-        }
-        if isinstance(anchor_ms, int) and not isinstance(anchor_ms, bool) and anchor_ms >= 0:
-            schedule["anchorMs"] = anchor_ms
-        return {
+        payload = _cron_payload_object(payload_state, objective_template=objective_template)
+        schedule = _cron_schedule_payload(task, payload_state=payload_state)
+        if schedule is None:
+            raise ValueError(f'unknown cron job "{_cron_job_id(cast(int, task["id"]))}"')
+        job_payload = {
             "id": _cron_job_id(cast(int, task["id"])),
-            "agentId": "openzues",
+            "agentId": _GATEWAY_CRON_AGENT_ID,
             "name": str(task.get("name") or "").strip(),
             "description": str(task.get("summary") or "").strip() or None,
             "enabled": bool(task.get("enabled")),
             "createdAtMs": _timestamp_ms(task.get("created_at")),
             "updatedAtMs": _timestamp_ms(task.get("updated_at")),
             "schedule": schedule,
-            "sessionTarget": "main",
-            "wakeMode": "now",
+            "sessionTarget": _cron_session_target(payload_state),
+            "wakeMode": _cron_wake_mode(payload_state),
             "payload": payload,
-            "delivery": {"mode": "none"},
+            "delivery": _cron_delivery_payload(payload_state),
             "state": self._state_payload(
                 task,
                 payload_state=payload_state,
-                cadence_minutes=cadence_minutes,
             ),
         }
+        session_key = _cron_session_key(payload_state)
+        if session_key is not None:
+            job_payload["sessionKey"] = session_key
+        if bool(payload_state.get("cron_notify_enabled")):
+            job_payload["notify"] = True
+        return job_payload
 
     def _mission_run_entry(
         self,
         mission: dict[str, Any],
         *,
         tasks_by_id: dict[int, dict[str, Any]],
+        outbound_deliveries_by_mission_id: dict[int, dict[str, Any]],
         include_job_name: bool,
     ) -> dict[str, Any] | None:
         task_blueprint_id = _int_or_none(mission.get("task_blueprint_id"))
@@ -332,11 +448,23 @@ class GatewayCronService:
             return None
 
         conversation_target = mission.get("conversation_target")
-        delivery_status: CronDeliveryStatus = (
-            "unknown"
-            if isinstance(conversation_target, dict) and bool(conversation_target)
-            else "not-requested"
+        outbound_delivery = outbound_deliveries_by_mission_id.get(int(mission["id"]))
+        delivery_state = (
+            str(outbound_delivery.get("delivery_state") or "").strip().lower()
+            if outbound_delivery is not None
+            else ""
         )
+        delivery_status: CronDeliveryStatus
+        if delivery_state == "delivered":
+            delivery_status = "delivered"
+        elif delivery_state == "failed":
+            delivery_status = "not-delivered"
+        else:
+            delivery_status = (
+                "unknown"
+                if isinstance(conversation_target, dict) and bool(conversation_target)
+                else "not-requested"
+            )
         entry: dict[str, Any] = {
             "ts": updated_at_ms,
             "jobId": _cron_job_id(task_blueprint_id),
@@ -363,6 +491,48 @@ class GatewayCronService:
         model = _text_or_none(mission.get("model"))
         if model is not None:
             entry["model"] = model
+        if include_job_name:
+            job_name = _text_or_none(task.get("name"))
+            if job_name is not None:
+                entry["jobName"] = job_name
+        return entry
+
+    def _system_event_run_entry(
+        self,
+        event: dict[str, Any],
+        *,
+        tasks_by_id: dict[int, dict[str, Any]],
+        include_job_name: bool,
+    ) -> dict[str, Any] | None:
+        if str(event.get("method") or "").strip() != "system-event":
+            return None
+        payload = event.get("payload")
+        if not isinstance(payload, dict):
+            return None
+        reason = _text_or_none(payload.get("reason"))
+        if reason is None or not reason.startswith("cron:"):
+            return None
+        task_blueprint_id = _int_or_none(reason.removeprefix("cron:"))
+        if task_blueprint_id is None:
+            return None
+        task = tasks_by_id.get(task_blueprint_id)
+        if task is None or not _task_routes_through_system_event_wake(task):
+            return None
+        created_at_ms = _timestamp_ms(event.get("created_at"))
+        if created_at_ms is None:
+            return None
+        summary = _text_or_none(payload.get("text"))
+        entry: dict[str, Any] = {
+            "ts": created_at_ms,
+            "jobId": _cron_job_id(task_blueprint_id),
+            "action": "finished",
+            "status": "ok",
+            "deliveryStatus": "not-requested",
+            "runAtMs": created_at_ms,
+            "durationMs": 0,
+        }
+        if summary is not None:
+            entry["summary"] = summary
         if include_job_name:
             job_name = _text_or_none(task.get("name"))
             if job_name is not None:
@@ -409,7 +579,6 @@ class GatewayCronService:
         task: dict[str, Any],
         *,
         payload_state: dict[str, Any],
-        cadence_minutes: int,
     ) -> dict[str, Any]:
         state: dict[str, Any] = {}
         last_run_at_ms = _timestamp_ms(payload_state.get("last_launched_at"))
@@ -429,7 +598,13 @@ class GatewayCronService:
                 state["lastError"] = last_error
 
         if bool(task.get("enabled")):
-            next_run_at_ms = _next_run_at_ms(payload_state.get("last_launched_at"), cadence_minutes)
+            next_run_at_ms = _next_run_at_ms(
+                last_launched_at=payload_state.get("last_launched_at"),
+                cadence_minutes=_int_or_none(task.get("cadence_minutes")),
+                schedule_kind=_text_or_none(payload_state.get("schedule_kind")),
+                schedule_at=payload_state.get("schedule_at"),
+                last_status=payload_state.get("last_status"),
+            )
             if next_run_at_ms is not None:
                 state["nextRunAtMs"] = next_run_at_ms
         return state
@@ -442,13 +617,15 @@ class GatewayCronService:
     def _matches_query(self, job: dict[str, Any], query: str) -> bool:
         if not query:
             return True
+        payload = cast(dict[str, Any], job.get("payload") or {})
         haystack = " ".join(
             part
             for part in (
                 str(job.get("name") or ""),
                 str(job.get("description") or ""),
                 str(job.get("agentId") or ""),
-                str((job.get("payload") or {}).get("message") or ""),
+                str(payload.get("message") or ""),
+                str(payload.get("text") or ""),
             )
             if part
         ).lower()
@@ -486,7 +663,22 @@ def _parse_timestamp(value: object) -> datetime | None:
     return parsed.astimezone(UTC)
 
 
-def _next_run_at_ms(last_launched_at: object, cadence_minutes: int) -> int | None:
+def _next_run_at_ms(
+    *,
+    last_launched_at: object,
+    cadence_minutes: int | None,
+    schedule_kind: str | None = None,
+    schedule_at: object | None = None,
+    last_status: object | None = None,
+) -> int | None:
+    if str(schedule_kind or "").strip().lower() == "at":
+        return _at_schedule_next_run_at_ms(
+            schedule_at=schedule_at,
+            last_launched_at=last_launched_at,
+            last_status=last_status,
+        )
+    if cadence_minutes is None:
+        return None
     last_run_at = _parse_timestamp(last_launched_at)
     if last_run_at is None:
         return None
@@ -496,6 +688,17 @@ def _next_run_at_ms(last_launched_at: object, cadence_minutes: int) -> int | Non
 def _task_is_due(task: dict[str, Any]) -> bool:
     if not bool(task.get("enabled")):
         return False
+    schedule = _cron_schedule_payload(task)
+    if schedule is None:
+        return False
+    if schedule["kind"] == "at":
+        next_run_at_ms = _at_schedule_next_run_at_ms(
+            schedule_at=schedule.get("at"),
+            last_launched_at=_task_payload_fields(task).get("last_launched_at"),
+            last_status=_task_payload_fields(task).get("last_status"),
+        )
+        current_ms = int(datetime.now(UTC).timestamp() * 1000)
+        return next_run_at_ms is not None and next_run_at_ms <= current_ms
     cadence_minutes = _int_or_none(task.get("cadence_minutes"))
     if cadence_minutes is None or cadence_minutes < 1:
         return False
@@ -556,16 +759,270 @@ def _task_blueprint_id_from_result(value: object) -> int | None:
     return _int_or_none(getattr(value, "id", None))
 
 
+def _task_payload_fields(task: dict[str, Any]) -> dict[str, Any]:
+    payload = task.get("payload")
+    if isinstance(payload, dict):
+        return cast(dict[str, Any], payload)
+    return task
+
+
+def _patched_payload_value(
+    payload_updates: dict[str, Any],
+    task: dict[str, Any],
+    field: str,
+) -> Any:
+    if field in payload_updates:
+        return payload_updates[field]
+    return _task_payload_fields(task).get(field)
+
+
+def _stored_cron_session_key(payload_state: dict[str, Any]) -> str | None:
+    session_key = str(payload_state.get("cron_session_key") or "").strip()
+    return session_key or None
+
+
+def _cron_session_key(payload_state: dict[str, Any]) -> str | None:
+    stored_session_key = _stored_cron_session_key(payload_state)
+    if stored_session_key is None:
+        return None
+    return to_agent_request_session_key(stored_session_key) or stored_session_key
+
+
+def _normalized_cron_session_key(
+    value: object,
+    *,
+    method: str,
+    label: str,
+) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f"invalid {method} params: {label} must be a string")
+    requested_session_key = value.strip()
+    if not requested_session_key:
+        return None
+    stored_session_key = to_agent_store_session_key(
+        agent_id=_GATEWAY_CRON_AGENT_ID,
+        request_key=requested_session_key,
+    )
+    if resolve_agent_id_from_session_key(stored_session_key) != _GATEWAY_CRON_AGENT_ID:
+        return build_agent_main_session_key(agent_id=_GATEWAY_CRON_AGENT_ID)
+    return stored_session_key
+
+
+def _cron_session_target(payload_state: dict[str, Any]) -> str:
+    session_target = str(payload_state.get("cron_session_target") or "").strip()
+    normalized = _normalize_custom_cron_session_target(session_target)
+    if normalized is not None:
+        return normalized
+    if session_target.lower() == "current":
+        return "isolated"
+    if session_target.lower() in {"main", "isolated"}:
+        return session_target.lower()
+    return "main"
+
+
+def _cron_wake_mode(payload_state: dict[str, Any]) -> str:
+    wake_mode = str(payload_state.get("cron_wake_mode") or "").strip().lower()
+    if wake_mode in {"now", "next-heartbeat"}:
+        return wake_mode
+    return "now"
+
+
+def _cron_payload_kind(payload_state: dict[str, Any]) -> str:
+    payload_kind = str(payload_state.get("cron_payload_kind") or "").strip()
+    if payload_kind in {"agentTurn", "systemEvent"}:
+        return payload_kind
+    return "agentTurn"
+
+
+def _cron_payload_object(
+    payload_state: dict[str, Any],
+    *,
+    objective_template: str,
+) -> dict[str, Any]:
+    payload_kind = _cron_payload_kind(payload_state)
+    if payload_kind == "systemEvent":
+        text = str(payload_state.get("cron_payload_text") or "").strip() or objective_template
+        return {
+            "kind": "systemEvent",
+            "text": text,
+        }
+    model = str(payload_state.get("model") or "").strip()
+    payload: dict[str, Any] = {
+        "kind": "agentTurn",
+        "message": objective_template,
+    }
+    if model:
+        payload["model"] = model
+    return payload
+
+
+def _cron_delivery_mode(payload_state: dict[str, Any]) -> str:
+    delivery_mode = str(payload_state.get("cron_delivery_mode") or "").strip().lower()
+    if delivery_mode in {"announce", "none", "webhook"}:
+        return delivery_mode
+    if (
+        _cron_payload_kind(payload_state) == "agentTurn"
+        and _cron_session_target(payload_state) != "main"
+    ):
+        return "announce"
+    return "none"
+
+
+def _cron_delivery_payload(payload_state: dict[str, Any]) -> dict[str, Any]:
+    payload: dict[str, Any] = {"mode": _cron_delivery_mode(payload_state)}
+    channel = str(payload_state.get("cron_delivery_channel") or "").strip().lower()
+    to = str(payload_state.get("cron_delivery_to") or "").strip()
+    account_id = str(payload_state.get("cron_delivery_account_id") or "").strip()
+    raw_thread_id = payload_state.get("cron_delivery_thread_id")
+    best_effort = payload_state.get("cron_delivery_best_effort")
+    failure_destination = payload_state.get("cron_delivery_failure_destination")
+    if channel:
+        payload["channel"] = channel
+    if to:
+        payload["to"] = to
+    if account_id:
+        payload["accountId"] = account_id
+    if isinstance(raw_thread_id, int) and not isinstance(raw_thread_id, bool):
+        payload["threadId"] = raw_thread_id
+    else:
+        thread_id = str(raw_thread_id or "").strip()
+        if thread_id:
+            payload["threadId"] = thread_id
+    if isinstance(best_effort, bool):
+        payload["bestEffort"] = best_effort
+    if isinstance(failure_destination, dict) and failure_destination:
+        payload["failureDestination"] = dict(failure_destination)
+    return payload
+
+
+def _task_routes_through_system_event_wake(task: dict[str, Any]) -> bool:
+    payload_state = _task_payload_fields(task)
+    return (
+        _cron_session_target(payload_state) == "main"
+        and _cron_payload_kind(payload_state) == "systemEvent"
+    )
+
+
+def _is_gateway_cron_task(task: dict[str, Any]) -> bool:
+    payload_state = _task_payload_fields(task)
+    schedule_kind = str(payload_state.get("schedule_kind") or "").strip().lower()
+    if schedule_kind == "at":
+        try:
+            return _canonical_cron_schedule_at(
+                payload_state.get("schedule_at"),
+                error_message="invalid stored cron schedule.at",
+            ) is not None
+        except ValueError:
+            return False
+    cadence_minutes = _int_or_none(task.get("cadence_minutes"))
+    return cadence_minutes is not None and cadence_minutes >= 1
+
+
+def _cron_schedule_payload(
+    task: dict[str, Any],
+    *,
+    payload_state: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    resolved_payload_state = payload_state or _task_payload_fields(task)
+    schedule_kind = str(resolved_payload_state.get("schedule_kind") or "").strip().lower()
+    if schedule_kind == "at":
+        schedule_at = _canonical_cron_schedule_at(
+            resolved_payload_state.get("schedule_at"),
+            error_message="invalid stored cron schedule.at",
+        )
+        if schedule_at is None:
+            return None
+        return {
+            "kind": "at",
+            "at": schedule_at,
+        }
+
+    cadence_minutes = _int_or_none(task.get("cadence_minutes"))
+    if cadence_minutes is None or cadence_minutes < 1:
+        return None
+    schedule: dict[str, Any] = {
+        "kind": "every",
+        "everyMs": cadence_minutes * 60_000,
+    }
+    anchor_ms = resolved_payload_state.get("schedule_anchor_ms")
+    if isinstance(anchor_ms, int) and not isinstance(anchor_ms, bool) and anchor_ms >= 0:
+        schedule["anchorMs"] = anchor_ms
+    return schedule
+
+
+def _at_schedule_next_run_at_ms(
+    *,
+    schedule_at: object,
+    last_launched_at: object,
+    last_status: object,
+) -> int | None:
+    normalized_at = _canonical_cron_schedule_at(
+        schedule_at,
+        error_message="invalid stored cron schedule.at",
+    )
+    if normalized_at is None:
+        return None
+    scheduled_at = _parse_timestamp(normalized_at)
+    if scheduled_at is None:
+        return None
+    last_run_at = _parse_timestamp(last_launched_at)
+    normalized_status = _normalized_status(last_status)
+    if (
+        last_run_at is not None
+        and normalized_status in {"ok", "error"}
+        and scheduled_at <= last_run_at
+    ):
+        return None
+    return int(scheduled_at.timestamp() * 1000)
+
+
+def _schedule_kind_from_object(
+    schedule: dict[str, Any],
+    *,
+    kind_label: str,
+    missing_error_message: str,
+    require_kind: bool,
+) -> str:
+    kind = (
+        _require_cron_add_string(schedule.get("kind"), label=kind_label)
+        if require_kind
+        else _optional_cron_add_string(schedule.get("kind"), label=kind_label)
+    )
+    if kind is None:
+        if schedule.get("at") is not None:
+            return "at"
+        if schedule.get("everyMs") is not None or schedule.get("anchorMs") is not None:
+            return "every"
+        raise ValueError(missing_error_message)
+    return kind
+
+
+def _canonical_cron_schedule_at(value: object, *, error_message: str) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError(error_message)
+    parsed = _parse_timestamp(value)
+    if parsed is None:
+        raise ValueError(error_message)
+    return parsed.astimezone(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
 def build_gateway_cron_task_blueprint(job_create: dict[str, Any]) -> TaskBlueprintCreate:
     name = _require_cron_add_string(job_create.get("name"), label="name")
     description = _optional_cron_add_string(job_create.get("description"), label="description")
     agent_id = _optional_cron_add_string(job_create.get("agentId"), label="agentId")
-    if agent_id is not None and agent_id != "openzues":
+    if agent_id is not None and agent_id != _GATEWAY_CRON_AGENT_ID:
         raise ValueError(
             "invalid cron.add params: OpenZues currently supports only agentId='openzues'"
         )
-    if job_create.get("sessionKey") is not None:
-        raise ValueError("invalid cron.add params: OpenZues does not support sessionKey routing")
+    cron_session_key = _normalized_cron_session_key(
+        job_create.get("sessionKey"),
+        method="cron.add",
+        label="sessionKey",
+    )
     if job_create.get("deleteAfterRun") not in {None, False}:
         raise ValueError(
             "invalid cron.add params: OpenZues currently supports only deleteAfterRun=false"
@@ -574,7 +1031,18 @@ def build_gateway_cron_task_blueprint(job_create: dict[str, Any]) -> TaskBluepri
         raise ValueError(
             "invalid cron.add params: OpenZues currently supports only failureAlert=false"
         )
+    notify = job_create.get("notify")
+    if notify is not None and not isinstance(notify, bool):
+        raise ValueError("invalid cron.add params: notify must be a boolean")
 
+    requested_delivery_mode: str | None = None
+    cron_delivery_mode: Literal["none", "announce", "webhook"] | None = None
+    cron_delivery_channel: str | None = None
+    cron_delivery_to: str | None = None
+    cron_delivery_account_id: str | None = None
+    cron_delivery_thread_id: str | int | None = None
+    cron_delivery_best_effort: bool | None = None
+    cron_delivery_failure_destination: dict[str, Any] | None = None
     delivery = job_create.get("delivery")
     if delivery is not None:
         if not isinstance(delivery, dict):
@@ -583,78 +1051,210 @@ def build_gateway_cron_task_blueprint(job_create: dict[str, Any]) -> TaskBluepri
             delivery,
             method="cron.add",
             label="delivery",
-            allowed_keys={"mode"},
+            allowed_keys={
+                "accountId",
+                "bestEffort",
+                "channel",
+                "failureDestination",
+                "mode",
+                "threadId",
+                "to",
+            },
         )
-        delivery_mode = _optional_cron_add_string(delivery.get("mode"), label="delivery.mode")
-        if delivery_mode != "none":
+        requested_delivery_mode = _optional_cron_add_string(
+            delivery.get("mode"),
+            label="delivery.mode",
+        )
+        if requested_delivery_mode is not None:
+            requested_delivery_mode = requested_delivery_mode.lower()
+            if requested_delivery_mode == "deliver":
+                requested_delivery_mode = "announce"
+        if requested_delivery_mode not in {None, "announce", "none", "webhook"}:
             raise ValueError(
-                "invalid cron.add params: OpenZues currently supports only delivery.mode='none'"
+                "invalid cron.add params: "
+                "OpenZues currently supports only delivery.mode='announce', 'none', or 'webhook'"
+            )
+        if requested_delivery_mode is None:
+            raise ValueError(
+                "invalid cron.add params: delivery.mode must be one of: announce, none, webhook"
+            )
+        cron_delivery_channel = _validated_cron_delivery_channel(
+            delivery.get("channel"),
+            method="cron.add",
+            label="delivery.channel",
+        )
+        cron_delivery_to = _optional_cron_add_string(
+            delivery.get("to"),
+            label="delivery.to",
+        )
+        cron_delivery_account_id = _optional_cron_add_string(
+            delivery.get("accountId"),
+            label="delivery.accountId",
+        )
+        cron_delivery_thread_id = _optional_cron_add_thread_value(
+            delivery.get("threadId"),
+            label="delivery.threadId",
+        )
+        if "bestEffort" in delivery:
+            best_effort = delivery.get("bestEffort")
+            if not isinstance(best_effort, bool):
+                raise ValueError("invalid cron.add params: delivery.bestEffort must be a boolean")
+            cron_delivery_best_effort = best_effort
+        if "failureDestination" in delivery:
+            cron_delivery_failure_destination = _normalized_cron_failure_destination(
+                delivery.get("failureDestination"),
+                method="cron.add",
+                label="delivery.failureDestination",
             )
 
     schedule = job_create.get("schedule")
     if not isinstance(schedule, dict):
         raise ValueError("invalid cron.add params: schedule must be an object")
-    schedule_kind = _require_cron_add_string(schedule.get("kind"), label="schedule.kind")
-    if schedule_kind != "every":
-        raise ValueError(
-            "invalid cron.add params: OpenZues currently supports only schedule.kind='every'"
-        )
-    _validate_gateway_cron_object_keys(
+    schedule_kind = _schedule_kind_from_object(
         schedule,
-        method="cron.add",
-        label="schedule",
-        allowed_keys={"kind", "everyMs", "anchorMs"},
+        kind_label="schedule.kind",
+        missing_error_message="invalid cron.add params: schedule.kind must be a non-empty string",
+        require_kind=False,
     )
-    every_ms = schedule.get("everyMs")
-    if isinstance(every_ms, bool) or not isinstance(every_ms, int):
-        raise ValueError(
-            "invalid cron.add params: schedule.everyMs must be a positive minute-aligned integer"
-        )
-    if every_ms < 60_000 or every_ms % 60_000 != 0:
-        raise ValueError(
-            "invalid cron.add params: schedule.everyMs must be a positive minute-aligned integer"
-        )
+    cadence_minutes: int | None = None
     anchor_ms: int | None = None
-    if "anchorMs" in schedule:
-        raw_anchor_ms = schedule.get("anchorMs")
-        if (
-            isinstance(raw_anchor_ms, bool)
-            or not isinstance(raw_anchor_ms, int)
-            or raw_anchor_ms < 0
-        ):
+    schedule_at: str | None = None
+    if schedule_kind == "every":
+        _validate_gateway_cron_object_keys(
+            schedule,
+            method="cron.add",
+            label="schedule",
+            allowed_keys={"kind", "everyMs", "anchorMs"},
+        )
+        every_ms = schedule.get("everyMs")
+        if isinstance(every_ms, bool) or not isinstance(every_ms, int):
             raise ValueError(
-                "invalid cron.add params: schedule.anchorMs must be a non-negative integer"
+                "invalid cron.add params: "
+                "schedule.everyMs must be a positive minute-aligned integer"
             )
-        anchor_ms = raw_anchor_ms
+        if every_ms < 60_000 or every_ms % 60_000 != 0:
+            raise ValueError(
+                "invalid cron.add params: "
+                "schedule.everyMs must be a positive minute-aligned integer"
+            )
+        cadence_minutes = every_ms // 60_000
+        if "anchorMs" in schedule:
+            raw_anchor_ms = schedule.get("anchorMs")
+            if (
+                isinstance(raw_anchor_ms, bool)
+                or not isinstance(raw_anchor_ms, int)
+                or raw_anchor_ms < 0
+            ):
+                raise ValueError(
+                    "invalid cron.add params: schedule.anchorMs must be a non-negative integer"
+                )
+            anchor_ms = raw_anchor_ms
+    elif schedule_kind == "at":
+        _validate_gateway_cron_object_keys(
+            schedule,
+            method="cron.add",
+            label="schedule",
+            allowed_keys={"kind", "at"},
+        )
+        schedule_at = _canonical_cron_schedule_at(
+            schedule.get("at"),
+            error_message="invalid cron.add params: schedule.at must be an ISO-8601 timestamp",
+        )
+        if schedule_at is None:
+            raise ValueError("invalid cron.add params: schedule.at must be an ISO-8601 timestamp")
+    else:
+        raise ValueError(
+            "invalid cron.add params: "
+            "OpenZues currently supports only schedule.kind='every' or 'at'"
+        )
 
-    session_target = _require_cron_add_string(
-        job_create.get("sessionTarget"),
+    session_target = _validated_cron_session_target(
+        _require_cron_add_string(
+            job_create.get("sessionTarget"),
+            label="sessionTarget",
+        ),
+        method="cron.add",
         label="sessionTarget",
     )
-    if session_target != "main":
-        raise ValueError(
-            "invalid cron.add params: OpenZues currently supports only sessionTarget='main'"
-        )
     wake_mode = _require_cron_add_string(job_create.get("wakeMode"), label="wakeMode")
-    if wake_mode != "now":
-        raise ValueError("invalid cron.add params: OpenZues currently supports only wakeMode='now'")
+    if wake_mode not in {"now", "next-heartbeat"}:
+        raise ValueError(
+            "invalid cron.add params: wakeMode must be one of: next-heartbeat, now"
+        )
 
     payload = job_create.get("payload")
     if not isinstance(payload, dict):
         raise ValueError("invalid cron.add params: payload must be an object")
     payload_kind = _require_cron_add_string(payload.get("kind"), label="payload.kind")
-    if payload_kind != "agentTurn":
-        raise ValueError(
-            "invalid cron.add params: OpenZues currently supports only payload.kind='agentTurn'"
+    objective_template: str
+    model: str | None = None
+    cron_payload_text: str | None = None
+    if payload_kind == "agentTurn":
+        if session_target == "main":
+            raise ValueError(
+                "invalid cron.add params: "
+                "payload.kind='agentTurn' requires sessionTarget to leave 'main'"
+            )
+        _validate_gateway_cron_object_keys(
+            payload,
+            method="cron.add",
+            label="payload",
+            allowed_keys={"kind", "message", "model"},
         )
-    _validate_gateway_cron_object_keys(
-        payload,
+        objective_template = _require_cron_add_string(
+            payload.get("message"),
+            label="payload.message",
+        )
+        model = _optional_cron_add_string(payload.get("model"), label="payload.model")
+    elif payload_kind == "systemEvent":
+        if session_target != "main":
+            raise ValueError(
+                "invalid cron.add params: payload.kind='systemEvent' requires sessionTarget='main'"
+            )
+        _validate_gateway_cron_object_keys(
+            payload,
+            method="cron.add",
+            label="payload",
+            allowed_keys={"kind", "text"},
+        )
+        objective_template = _require_cron_add_string(payload.get("text"), label="payload.text")
+        cron_payload_text = objective_template
+    else:
+        raise ValueError(
+            "invalid cron.add params: payload.kind must be one of: agentTurn, systemEvent"
+        )
+    if requested_delivery_mode == "announce":
+        if payload_kind != "agentTurn" or session_target == "main":
+            raise ValueError(
+                "invalid cron.add params: "
+                "delivery.mode='announce' requires payload.kind='agentTurn' "
+                "and sessionTarget to leave 'main'"
+            )
+        cron_delivery_mode = None
+    elif requested_delivery_mode == "webhook":
+        if cron_delivery_to is None:
+            raise ValueError(
+                "invalid cron.add params: "
+                "delivery.to must be a non-empty string when delivery.mode='webhook'"
+            )
+        cron_delivery_mode = "webhook"
+    elif requested_delivery_mode == "none":
+        cron_delivery_mode = "none"
+    _validate_cron_delivery_targets(
+        session_target=session_target,
+        delivery_mode=cron_delivery_mode or "none",
+        delivery_to=cron_delivery_to,
+        failure_destination=cron_delivery_failure_destination,
         method="cron.add",
-        label="payload",
-        allowed_keys={"kind", "message", "model"},
     )
-    message = _require_cron_add_string(payload.get("message"), label="payload.message")
-    model = _optional_cron_add_string(payload.get("model"), label="payload.model")
+    conversation_target = _cron_delivery_conversation_target(
+        session_target=session_target,
+        payload_kind=payload_kind,
+        delivery_mode=cron_delivery_mode or "announce",
+        delivery_channel=cron_delivery_channel,
+        delivery_to=cron_delivery_to,
+        delivery_account_id=cron_delivery_account_id,
+    )
 
     enabled = job_create.get("enabled")
     if enabled is None:
@@ -664,12 +1264,30 @@ def build_gateway_cron_task_blueprint(job_create: dict[str, Any]) -> TaskBluepri
     else:
         raise ValueError("invalid cron.add params: enabled must be a boolean")
 
+    resolved_schedule_kind = cast(Literal["every", "at"], schedule_kind)
+
     return TaskBlueprintCreate(
         name=name,
         summary=description,
-        objective_template=message,
-        cadence_minutes=every_ms // 60_000,
+        objective_template=objective_template,
+        conversation_target=conversation_target,
+        cadence_minutes=cadence_minutes,
         schedule_anchor_ms=anchor_ms,
+        schedule_kind=resolved_schedule_kind,
+        schedule_at=schedule_at,
+        cron_session_target=session_target,
+        cron_session_key=cron_session_key,
+        cron_wake_mode=cast(Literal["now", "next-heartbeat"], wake_mode),
+        cron_payload_kind=cast(Literal["agentTurn", "systemEvent"], payload_kind),
+        cron_payload_text=cron_payload_text,
+        cron_delivery_mode=cron_delivery_mode,
+        cron_delivery_channel=cron_delivery_channel,
+        cron_delivery_to=cron_delivery_to,
+        cron_delivery_account_id=cron_delivery_account_id,
+        cron_delivery_thread_id=cron_delivery_thread_id,
+        cron_delivery_best_effort=cron_delivery_best_effort,
+        cron_delivery_failure_destination=cron_delivery_failure_destination,
+        cron_notify_enabled=True if notify else None,
         model=model or "gpt-5.4",
         enabled=resolved_enabled,
     )
@@ -687,6 +1305,7 @@ def build_gateway_cron_job_patch(
             "name",
             "agentId",
             "sessionKey",
+            "notify",
             "description",
             "enabled",
             "deleteAfterRun",
@@ -701,6 +1320,7 @@ def build_gateway_cron_job_patch(
     )
     row_updates: dict[str, Any] = {}
     payload_updates: dict[str, Any] = {}
+    requested_delivery_mode: str | None = None
 
     if "name" in patch:
         row_updates["name"] = _require_cron_update_string(patch.get("name"), label="patch.name")
@@ -719,13 +1339,17 @@ def build_gateway_cron_job_patch(
 
     if "agentId" in patch:
         agent_id = _optional_cron_update_string(patch.get("agentId"), label="patch.agentId")
-        if agent_id is not None and agent_id != "openzues":
+        if agent_id is not None and agent_id != _GATEWAY_CRON_AGENT_ID:
             raise ValueError(
                 "invalid cron.update params: "
                 "OpenZues currently supports only patch.agentId='openzues'"
             )
-    if patch.get("sessionKey") is not None:
-        raise ValueError("invalid cron.update params: OpenZues does not support patch.sessionKey")
+    if "sessionKey" in patch:
+        payload_updates["cron_session_key"] = _normalized_cron_session_key(
+            patch.get("sessionKey"),
+            method="cron.update",
+            label="patch.sessionKey",
+        )
     if patch.get("deleteAfterRun") not in {None, False}:
         raise ValueError(
             "invalid cron.update params: "
@@ -735,6 +1359,11 @@ def build_gateway_cron_job_patch(
         raise ValueError(
             "invalid cron.update params: OpenZues currently supports only patch.failureAlert=false"
         )
+    if "notify" in patch:
+        notify = patch.get("notify")
+        if not isinstance(notify, bool):
+            raise ValueError("invalid cron.update params: patch.notify must be a boolean")
+        payload_updates["cron_notify_enabled"] = notify
     if "state" in patch:
         raise ValueError("invalid cron.update params: OpenZues does not support patch.state")
 
@@ -747,114 +1376,336 @@ def build_gateway_cron_job_patch(
                 delivery,
                 method="cron.update",
                 label="patch.delivery",
-                allowed_keys={"mode"},
+                allowed_keys={
+                    "accountId",
+                    "bestEffort",
+                    "channel",
+                    "failureDestination",
+                    "mode",
+                    "threadId",
+                    "to",
+                },
             )
-            delivery_mode = _optional_cron_update_string(
+            requested_delivery_mode = _optional_cron_update_string(
                 delivery.get("mode"),
                 label="patch.delivery.mode",
             )
-            if delivery_mode != "none":
+            if requested_delivery_mode is not None:
+                requested_delivery_mode = requested_delivery_mode.lower()
+                if requested_delivery_mode == "deliver":
+                    requested_delivery_mode = "announce"
+            if requested_delivery_mode not in {None, "announce", "none", "webhook"}:
                 raise ValueError(
                     "invalid cron.update params: "
-                    "OpenZues currently supports only patch.delivery.mode='none'"
+                    "OpenZues currently supports only "
+                    "patch.delivery.mode='announce', 'none', or 'webhook'"
+                )
+            if "channel" in delivery:
+                payload_updates["cron_delivery_channel"] = _validated_cron_delivery_channel(
+                    delivery.get("channel"),
+                    method="cron.update",
+                    label="patch.delivery.channel",
+                )
+            if "to" in delivery:
+                payload_updates["cron_delivery_to"] = _optional_cron_update_string(
+                    delivery.get("to"),
+                    label="patch.delivery.to",
+                )
+            if "accountId" in delivery:
+                payload_updates["cron_delivery_account_id"] = _optional_cron_update_string(
+                    delivery.get("accountId"),
+                    label="patch.delivery.accountId",
+                )
+            if "threadId" in delivery:
+                payload_updates["cron_delivery_thread_id"] = _optional_cron_update_thread_value(
+                    delivery.get("threadId"),
+                    label="patch.delivery.threadId",
+                )
+            if "bestEffort" in delivery:
+                best_effort = delivery.get("bestEffort")
+                if not isinstance(best_effort, bool):
+                    raise ValueError(
+                        "invalid cron.update params: patch.delivery.bestEffort must be a boolean"
+                    )
+                payload_updates["cron_delivery_best_effort"] = best_effort
+            if "failureDestination" in delivery:
+                payload_updates["cron_delivery_failure_destination"] = (
+                    _merged_cron_failure_destination_patch(
+                        _task_payload_fields(task).get("cron_delivery_failure_destination"),
+                        delivery.get("failureDestination"),
+                        label="patch.delivery.failureDestination",
+                    )
                 )
 
     if "schedule" in patch:
         schedule = patch.get("schedule")
         if not isinstance(schedule, dict):
             raise ValueError("invalid cron.update params: patch.schedule must be an object")
-        schedule_kind = _require_cron_update_string(
+        schedule_kind = _optional_cron_update_string(
             schedule.get("kind"),
             label="patch.schedule.kind",
         )
-        if schedule_kind != "every":
-            raise ValueError(
-                "invalid cron.update params: "
-                "OpenZues currently supports only patch.schedule.kind='every'"
+        if schedule_kind is None:
+            if schedule.get("at") is not None:
+                schedule_kind = "at"
+            elif schedule.get("everyMs") is not None or schedule.get("anchorMs") is not None:
+                schedule_kind = "every"
+            else:
+                raise ValueError(
+                    "invalid cron.update params: patch.schedule.kind must be a non-empty string"
+                )
+        if schedule_kind == "every":
+            _validate_gateway_cron_object_keys(
+                schedule,
+                method="cron.update",
+                label="patch.schedule",
+                allowed_keys={"kind", "everyMs", "anchorMs"},
             )
-        _validate_gateway_cron_object_keys(
-            schedule,
-            method="cron.update",
-            label="patch.schedule",
-            allowed_keys={"kind", "everyMs", "anchorMs"},
-        )
-        every_ms = schedule.get("everyMs")
-        if isinstance(every_ms, bool) or not isinstance(every_ms, int):
-            raise ValueError(
-                "invalid cron.update params: "
-                "patch.schedule.everyMs must be a positive minute-aligned integer"
-            )
-        if every_ms < 60_000 or every_ms % 60_000 != 0:
-            raise ValueError(
-                "invalid cron.update params: "
-                "patch.schedule.everyMs must be a positive minute-aligned integer"
-            )
-        row_updates["cadence_minutes"] = every_ms // 60_000
-        if "anchorMs" in schedule:
-            raw_anchor_ms = schedule.get("anchorMs")
-            if (
-                isinstance(raw_anchor_ms, bool)
-                or not isinstance(raw_anchor_ms, int)
-                or raw_anchor_ms < 0
-            ):
+            every_ms = schedule.get("everyMs")
+            if isinstance(every_ms, bool) or not isinstance(every_ms, int):
                 raise ValueError(
                     "invalid cron.update params: "
-                    "patch.schedule.anchorMs must be a non-negative integer"
+                    "patch.schedule.everyMs must be a positive minute-aligned integer"
                 )
-            payload_updates["schedule_anchor_ms"] = raw_anchor_ms
-
-    if "sessionTarget" in patch:
-        session_target = _require_cron_update_string(
-            patch.get("sessionTarget"),
-            label="patch.sessionTarget",
-        )
-        if session_target != "main":
+            if every_ms < 60_000 or every_ms % 60_000 != 0:
+                raise ValueError(
+                    "invalid cron.update params: "
+                    "patch.schedule.everyMs must be a positive minute-aligned integer"
+                )
+            row_updates["cadence_minutes"] = every_ms // 60_000
+            payload_updates["schedule_kind"] = "every"
+            payload_updates["schedule_at"] = None
+            if "anchorMs" in schedule:
+                raw_anchor_ms = schedule.get("anchorMs")
+                if (
+                    isinstance(raw_anchor_ms, bool)
+                    or not isinstance(raw_anchor_ms, int)
+                    or raw_anchor_ms < 0
+                ):
+                    raise ValueError(
+                        "invalid cron.update params: "
+                        "patch.schedule.anchorMs must be a non-negative integer"
+                    )
+                payload_updates["schedule_anchor_ms"] = raw_anchor_ms
+            else:
+                payload_updates["schedule_anchor_ms"] = None
+        elif schedule_kind == "at":
+            _validate_gateway_cron_object_keys(
+                schedule,
+                method="cron.update",
+                label="patch.schedule",
+                allowed_keys={"kind", "at"},
+            )
+            payload_updates["schedule_kind"] = "at"
+            payload_updates["schedule_at"] = _canonical_cron_schedule_at(
+                schedule.get("at"),
+                error_message=(
+                    "invalid cron.update params: "
+                    "patch.schedule.at must be an ISO-8601 timestamp"
+                ),
+            )
+            if payload_updates["schedule_at"] is None:
+                raise ValueError(
+                    "invalid cron.update params: patch.schedule.at must be an ISO-8601 timestamp"
+                )
+            payload_updates["schedule_anchor_ms"] = None
+            row_updates["cadence_minutes"] = None
+        else:
             raise ValueError(
                 "invalid cron.update params: "
-                "OpenZues currently supports only patch.sessionTarget='main'"
+                "OpenZues currently supports only patch.schedule.kind='every' or 'at'"
             )
+
+    if "sessionTarget" in patch:
+        session_target = _validated_cron_session_target(
+            _require_cron_update_string(
+                patch.get("sessionTarget"),
+                label="patch.sessionTarget",
+            ),
+            method="cron.update",
+            label="patch.sessionTarget",
+        )
+        payload_updates["cron_session_target"] = session_target
     if "wakeMode" in patch:
         wake_mode = _require_cron_update_string(patch.get("wakeMode"), label="patch.wakeMode")
-        if wake_mode != "now":
+        if wake_mode not in {"now", "next-heartbeat"}:
             raise ValueError(
-                "invalid cron.update params: OpenZues currently supports only patch.wakeMode='now'"
+                "invalid cron.update params: patch.wakeMode must be one of: next-heartbeat, now"
             )
+        payload_updates["cron_wake_mode"] = wake_mode
 
     if "payload" in patch:
         payload = patch.get("payload")
         if not isinstance(payload, dict):
             raise ValueError("invalid cron.update params: patch.payload must be an object")
-        if "kind" in payload:
-            payload_kind = _require_cron_update_string(
-                payload.get("kind"),
-                label="patch.payload.kind",
-            )
-            if payload_kind != "agentTurn":
-                raise ValueError(
-                    "invalid cron.update params: "
-                    "OpenZues currently supports only patch.payload.kind='agentTurn'"
-                )
-        _validate_gateway_cron_object_keys(
-            payload,
-            method="cron.update",
-            label="patch.payload",
-            allowed_keys={"kind", "message", "model"},
+        payload_updates.setdefault(
+            "cron_session_target",
+            _cron_session_target(_task_payload_fields(task)),
         )
-        if "message" in payload:
-            payload_updates["objective_template"] = _require_cron_update_string(
-                payload.get("message"),
-                label="patch.payload.message",
+        next_payload_kind = (
+            _require_cron_update_string(payload.get("kind"), label="patch.payload.kind")
+            if "kind" in payload
+            else _cron_payload_kind(_task_payload_fields(task))
+        )
+        if next_payload_kind == "agentTurn":
+            _validate_gateway_cron_object_keys(
+                payload,
+                method="cron.update",
+                label="patch.payload",
+                allowed_keys={"kind", "message", "model"},
             )
-        if "model" in payload:
-            payload_updates["model"] = _require_cron_update_string(
-                payload.get("model"),
-                label="patch.payload.model",
+            if "message" in payload:
+                payload_updates["objective_template"] = _require_cron_update_string(
+                    payload.get("message"),
+                    label="patch.payload.message",
+                )
+            if "model" in payload:
+                payload_updates["model"] = _require_cron_update_string(
+                    payload.get("model"),
+                    label="patch.payload.model",
+                )
+            payload_updates["cron_payload_kind"] = "agentTurn"
+            payload_updates["cron_payload_text"] = None
+        elif next_payload_kind == "systemEvent":
+            _validate_gateway_cron_object_keys(
+                payload,
+                method="cron.update",
+                label="patch.payload",
+                allowed_keys={"kind", "text"},
+            )
+            if "text" in payload:
+                payload_updates["objective_template"] = _require_cron_update_string(
+                    payload.get("text"),
+                    label="patch.payload.text",
+                )
+            payload_updates["cron_payload_kind"] = "systemEvent"
+            payload_updates["cron_payload_text"] = (
+                payload_updates.get("objective_template")
+                or _require_cron_update_string(
+                    task.get("objective_template"),
+                    label="existing payload.text",
+                )
+            )
+        else:
+            raise ValueError(
+                "invalid cron.update params: "
+                "patch.payload.kind must be one of: agentTurn, systemEvent"
             )
 
     if "payload" in patch and not payload_updates:
         _require_cron_update_string(
             task.get("objective_template"),
             label="existing payload.message",
+        )
+
+    effective_session_target = str(
+        _patched_payload_value(payload_updates, task, "cron_session_target")
+        or _cron_session_target(_task_payload_fields(task))
+    ).strip()
+    effective_payload_kind = str(
+        _patched_payload_value(payload_updates, task, "cron_payload_kind")
+        or _cron_payload_kind(_task_payload_fields(task))
+    ).strip()
+    existing_session_target = _cron_session_target(_task_payload_fields(task))
+    existing_payload_kind = _cron_payload_kind(_task_payload_fields(task))
+    if effective_payload_kind == "systemEvent" and effective_session_target != "main":
+        raise ValueError(
+            "invalid cron.update params: "
+            "patch.payload.kind='systemEvent' requires patch.sessionTarget='main'"
+        )
+    if (
+        existing_session_target == "main"
+        and existing_payload_kind == "systemEvent"
+        and effective_session_target == "main"
+        and effective_payload_kind == "agentTurn"
+    ):
+        raise ValueError(
+            "invalid cron.update params: "
+            "patch.payload.kind='agentTurn' requires patch.sessionTarget to leave 'main'"
+        )
+    if requested_delivery_mode == "announce":
+        if effective_payload_kind != "agentTurn" or effective_session_target == "main":
+            if effective_payload_kind == "systemEvent" and effective_session_target == "main":
+                payload_updates["cron_delivery_mode"] = None
+                payload_updates["cron_delivery_channel"] = None
+                payload_updates["cron_delivery_to"] = None
+                payload_updates["cron_delivery_account_id"] = None
+                payload_updates["cron_delivery_best_effort"] = None
+                payload_updates["cron_delivery_failure_destination"] = None
+            else:
+                raise ValueError(
+                    "invalid cron.update params: "
+                    "patch.delivery.mode='announce' requires patch.payload.kind='agentTurn' "
+                    "and sessionTarget to leave 'main'"
+                )
+        else:
+            payload_updates["cron_delivery_mode"] = None
+    elif requested_delivery_mode == "webhook":
+        effective_delivery_to = str(
+            payload_updates.get("cron_delivery_to")
+            if "cron_delivery_to" in payload_updates
+            else _task_payload_fields(task).get("cron_delivery_to")
+            or ""
+        ).strip()
+        if not effective_delivery_to:
+            raise ValueError(
+                "invalid cron.update params: "
+                "patch.delivery.to must be a non-empty string when patch.delivery.mode='webhook'"
+            )
+        payload_updates["cron_delivery_mode"] = "webhook"
+    elif requested_delivery_mode == "none":
+        payload_updates["cron_delivery_mode"] = "none"
+    effective_delivery_mode = str(
+        _patched_payload_value(payload_updates, task, "cron_delivery_mode") or ""
+    ).strip().lower()
+    if effective_delivery_mode not in {"announce", "none", "webhook"}:
+        effective_delivery_mode = _cron_delivery_mode(_task_payload_fields(task))
+    effective_delivery_to_value: str | None = (
+        str(_patched_payload_value(payload_updates, task, "cron_delivery_to") or "").strip()
+        or None
+    )
+    effective_failure_destination = cast(
+        dict[str, Any] | None,
+        _patched_payload_value(payload_updates, task, "cron_delivery_failure_destination"),
+    )
+    _validate_cron_delivery_targets(
+        session_target=effective_session_target,
+        delivery_mode=effective_delivery_mode,
+        delivery_to=effective_delivery_to_value,
+        failure_destination=effective_failure_destination,
+        method="cron.update",
+    )
+    if {"delivery", "payload", "sessionTarget"} & set(patch):
+        effective_delivery_channel = (
+            str(
+                payload_updates.get("cron_delivery_channel")
+                if "cron_delivery_channel" in payload_updates
+                else _task_payload_fields(task).get("cron_delivery_channel")
+                or ""
+            ).strip()
+            or None
+        )
+        effective_delivery_account_id = (
+            str(
+                payload_updates.get("cron_delivery_account_id")
+                if "cron_delivery_account_id" in payload_updates
+                else _task_payload_fields(task).get("cron_delivery_account_id")
+                or ""
+            ).strip()
+            or None
+        )
+        conversation_target = _cron_delivery_conversation_target(
+            session_target=effective_session_target,
+            payload_kind=effective_payload_kind,
+            delivery_mode=effective_delivery_mode,
+            delivery_channel=effective_delivery_channel,
+            delivery_to=effective_delivery_to_value,
+            delivery_account_id=effective_delivery_account_id,
+        )
+        payload_updates["conversation_target"] = (
+            conversation_target.model_dump(mode="json")
+            if conversation_target is not None
+            else None
         )
 
     return row_updates, payload_updates
@@ -896,6 +1747,111 @@ def _optional_cron_update_string(value: object, *, label: str) -> str | None:
     return trimmed or None
 
 
+def _optional_cron_add_thread_value(value: object, *, label: str) -> str | int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        raise ValueError(f"invalid cron.add params: {label} must be a string or integer")
+    if isinstance(value, int):
+        return value
+    if not isinstance(value, str):
+        raise ValueError(f"invalid cron.add params: {label} must be a string or integer")
+    trimmed = value.strip()
+    return trimmed or None
+
+
+def _optional_cron_update_thread_value(value: object, *, label: str) -> str | int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        raise ValueError(f"invalid cron.update params: {label} must be a string or integer")
+    if isinstance(value, int):
+        return value
+    if not isinstance(value, str):
+        raise ValueError(f"invalid cron.update params: {label} must be a string or integer")
+    trimmed = value.strip()
+    return trimmed or None
+
+
+def _validated_cron_delivery_channel(
+    value: object,
+    *,
+    method: str,
+    label: str,
+) -> str | None:
+    channel = (
+        _optional_cron_add_string(value, label=label)
+        if method == "cron.add"
+        else _optional_cron_update_string(value, label=label)
+    )
+    if channel is None:
+        return None
+    normalized = channel.lower()
+    if normalized == "last":
+        return normalized
+    if _CRON_DELIVERY_CHANNEL_ID_RE.fullmatch(normalized) is None:
+        raise ValueError(
+            f"invalid {method} params: {label} must be a provider id, not a target id"
+        )
+    return normalized
+
+
+def _cron_delivery_conversation_target(
+    *,
+    session_target: str,
+    payload_kind: str,
+    delivery_mode: str,
+    delivery_channel: str | None,
+    delivery_to: str | None,
+    delivery_account_id: str | None,
+) -> ConversationTargetView | None:
+    if payload_kind != "agentTurn" or session_target == "main" or delivery_mode != "announce":
+        return None
+    channel = str(delivery_channel or "").strip().lower() or None
+    if channel in {None, "last"}:
+        return None
+    assert channel is not None
+    account_id = str(delivery_account_id or "").strip() or None
+    peer_id = str(delivery_to or "").strip() or None
+    return ConversationTargetView(
+        channel=channel,
+        account_id=account_id,
+        peer_kind="channel" if peer_id else None,
+        peer_id=peer_id,
+    )
+
+
+def _normalize_custom_cron_session_target(value: str | None) -> str | None:
+    raw = str(value or "").strip()
+    if not raw.lower().startswith("session:"):
+        return None
+    suffix = raw[len("session:") :]
+    if not suffix:
+        return None
+    segments = suffix.split(":")
+    if not segments or any(
+        not segment or _CRON_CUSTOM_SESSION_SEGMENT_RE.fullmatch(segment) is None
+        for segment in segments
+    ):
+        return None
+    return "session:" + ":".join(segments)
+
+
+def _validated_cron_session_target(value: str, *, method: str, label: str) -> str:
+    normalized = str(value).strip()
+    lowered = normalized.lower()
+    if lowered == "current":
+        return "isolated"
+    if lowered in {"main", "isolated"}:
+        return lowered
+    custom_target = _normalize_custom_cron_session_target(normalized)
+    if custom_target is not None:
+        return custom_target
+    if lowered.startswith("session:"):
+        raise ValueError("invalid cron sessionTarget session id")
+    raise ValueError(f"invalid {method} params: {label} must be one of: current, isolated, main")
+
+
 def _validate_gateway_cron_object_keys(
     payload: dict[str, Any],
     *,
@@ -907,6 +1863,164 @@ def _validate_gateway_cron_object_keys(
     if unexpected:
         joined = ", ".join(unexpected)
         raise ValueError(f"invalid {method} params: {label} does not accept: {joined}")
+
+
+def _normalized_http_webhook_url(value: str | None) -> str | None:
+    normalized = str(value or "").strip()
+    if not normalized:
+        return None
+    parsed = urlparse(normalized)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return None
+    return normalized
+
+
+def _normalized_cron_failure_destination(
+    value: object,
+    *,
+    method: str,
+    label: str,
+) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ValueError(f"invalid {method} params: {label} must be an object")
+    _validate_gateway_cron_object_keys(
+        value,
+        method=method,
+        label=label,
+        allowed_keys={"accountId", "channel", "mode", "to"},
+    )
+    normalized: dict[str, Any] = {}
+    if "channel" in value:
+        channel = _validated_cron_delivery_channel(
+            value.get("channel"),
+            method=method,
+            label=f"{label}.channel",
+        )
+        if channel is not None:
+            normalized["channel"] = channel
+    if "to" in value:
+        to = (
+            _optional_cron_add_string(value.get("to"), label=f"{label}.to")
+            if method == "cron.add"
+            else _optional_cron_update_string(value.get("to"), label=f"{label}.to")
+        )
+        if to is not None:
+            normalized["to"] = to
+    if "accountId" in value:
+        account_id = (
+            _optional_cron_add_string(value.get("accountId"), label=f"{label}.accountId")
+            if method == "cron.add"
+            else _optional_cron_update_string(value.get("accountId"), label=f"{label}.accountId")
+        )
+        if account_id is not None:
+            normalized["accountId"] = account_id
+    if "mode" in value:
+        mode = (
+            _optional_cron_add_string(value.get("mode"), label=f"{label}.mode")
+            if method == "cron.add"
+            else _optional_cron_update_string(value.get("mode"), label=f"{label}.mode")
+        )
+        if mode is not None:
+            lowered = mode.lower()
+            if lowered == "deliver":
+                lowered = "announce"
+            if lowered not in {"announce", "webhook"}:
+                raise ValueError(
+                    f"invalid {method} params: {label}.mode must be one of: announce, webhook"
+                )
+            normalized["mode"] = lowered
+    return normalized
+
+
+def _merged_cron_failure_destination_patch(
+    existing: object,
+    patch: object,
+    *,
+    label: str,
+) -> dict[str, Any]:
+    if not isinstance(patch, dict):
+        raise ValueError(f"invalid cron.update params: {label} must be an object")
+    _validate_gateway_cron_object_keys(
+        patch,
+        method="cron.update",
+        label=label,
+        allowed_keys={"accountId", "channel", "mode", "to"},
+    )
+    merged: dict[str, Any] = dict(existing) if isinstance(existing, dict) else {}
+    if "channel" in patch:
+        channel = _validated_cron_delivery_channel(
+            patch.get("channel"),
+            method="cron.update",
+            label=f"{label}.channel",
+        )
+        if channel is None:
+            merged.pop("channel", None)
+        else:
+            merged["channel"] = channel
+    if "to" in patch:
+        to = _optional_cron_update_string(patch.get("to"), label=f"{label}.to")
+        if to is None:
+            merged.pop("to", None)
+        else:
+            merged["to"] = to
+    if "accountId" in patch:
+        account_id = _optional_cron_update_string(
+            patch.get("accountId"),
+            label=f"{label}.accountId",
+        )
+        if account_id is None:
+            merged.pop("accountId", None)
+        else:
+            merged["accountId"] = account_id
+    if "mode" in patch:
+        mode = _optional_cron_update_string(patch.get("mode"), label=f"{label}.mode")
+        if mode is None:
+            merged.pop("mode", None)
+        else:
+            lowered = mode.lower()
+            if lowered == "deliver":
+                lowered = "announce"
+            if lowered not in {"announce", "webhook"}:
+                raise ValueError(
+                    f"invalid cron.update params: {label}.mode must be one of: announce, webhook"
+                )
+            merged["mode"] = lowered
+    return merged
+
+
+def _validate_cron_delivery_targets(
+    *,
+    session_target: str,
+    delivery_mode: str,
+    delivery_to: str | None,
+    failure_destination: dict[str, Any] | None,
+    method: str,
+    update_label_prefix: str = "patch.",
+) -> None:
+    if delivery_mode == "webhook":
+        target = _normalized_http_webhook_url(delivery_to)
+        if target is None:
+            prefix = update_label_prefix if method == "cron.update" else ""
+            raise ValueError(
+                f"invalid {method} params: {prefix}delivery.to must be a valid http(s) URL "
+                "when "
+                f"{prefix}delivery.mode='webhook'"
+            )
+    if not failure_destination:
+        return
+    if session_target == "main" and delivery_mode != "webhook":
+        raise ValueError(
+            'cron delivery.failureDestination is only supported for sessionTarget="isolated" '
+            'unless delivery.mode="webhook"'
+        )
+    if failure_destination.get("mode") == "webhook":
+        target = _normalized_http_webhook_url(str(failure_destination.get("to") or "").strip())
+        if target is None:
+            raise ValueError(
+                "cron failure destination webhook requires delivery.failureDestination.to "
+                "to be a valid http(s) URL"
+            )
+        failure_destination["to"] = target
 
 
 def _maybe_task_blueprint_id_from_job_id(job_id: str) -> int | None:

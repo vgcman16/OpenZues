@@ -238,7 +238,9 @@ def test_agent_id_helpers_normalize_and_validate_values() -> None:
     assert normalize_agent_id("Worker_1") == "worker_1"
     assert normalize_agent_id(" Worker 1 / prod ") == "worker-1-prod"
     assert normalize_account_id(" Ops West ") == "ops-west"
+    assert normalize_account_id(" !!! ") == "default"
     assert normalize_account_id(None) == "default"
+    assert normalize_optional_account_id(" !!! ") is None
     assert normalize_optional_account_id(" constructor ") is None
     assert sanitize_agent_id(" Worker 1 / prod ") == "worker-1-prod"
     assert is_valid_agent_id("Worker_1")

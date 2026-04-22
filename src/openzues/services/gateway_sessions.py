@@ -323,6 +323,14 @@ class GatewaySessionsService:
             "model": session_payload["model"],
             "space": session_payload["space"],
         }
+        compaction_checkpoint_count = _int_or_none(
+            session_payload.get("compactionCheckpointCount")
+        )
+        if compaction_checkpoint_count is not None:
+            payload["compactionCheckpointCount"] = compaction_checkpoint_count
+        latest_compaction_checkpoint = session_payload.get("latestCompactionCheckpoint")
+        if isinstance(latest_compaction_checkpoint, dict):
+            payload["latestCompactionCheckpoint"] = latest_compaction_checkpoint
         if message_id is not None:
             payload["messageId"] = message_id
         if message_seq is not None:
@@ -365,6 +373,14 @@ class GatewaySessionsService:
             "model": session_payload["model"],
             "space": session_payload["space"],
         }
+        compaction_checkpoint_count = _int_or_none(
+            session_payload.get("compactionCheckpointCount")
+        )
+        if compaction_checkpoint_count is not None:
+            payload["compactionCheckpointCount"] = compaction_checkpoint_count
+        latest_compaction_checkpoint = session_payload.get("latestCompactionCheckpoint")
+        if isinstance(latest_compaction_checkpoint, dict):
+            payload["latestCompactionCheckpoint"] = latest_compaction_checkpoint
         if message_id is not None:
             payload["messageId"] = message_id
         if message_seq is not None:

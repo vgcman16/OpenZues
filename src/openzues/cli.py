@@ -51,6 +51,9 @@ from openzues.services.device_bootstrap_profile import default_device_bootstrap_
 from openzues.services.environment import EnvironmentService
 from openzues.services.followups import operator_blocked_missions
 from openzues.services.gateway_bootstrap import GatewayBootstrapService
+from openzues.services.gateway_agents import GatewayAgentsService
+from openzues.services.gateway_channels import GatewayChannelsService
+from openzues.services.gateway_commands import GatewayCommandsService
 from openzues.services.gateway_capability import GatewayCapabilityService
 from openzues.services.github import GitHubService
 from openzues.services.hermes_platform import HermesPlatformService
@@ -93,6 +96,8 @@ gateway_app = typer.Typer(help="Inspect and stamp the saved gateway bootstrap pr
 browser_app = typer.Typer(help="Inspect and run the browser verification/runtime surface.")
 hermes_app = typer.Typer(help="Inspect and tune Hermes runtime posture.")
 routes_app = typer.Typer(help="Inspect and test notification routes.")
+agents_app = typer.Typer(help="Inspect configured agent inventory.")
+channels_app = typer.Typer(help="Inspect notification route channels.")
 hermes_profile_app = typer.Typer(
     help="Inspect or update the saved Hermes runtime profile.",
     invoke_without_command=True,
@@ -110,6 +115,8 @@ app.add_typer(gateway_app, name="gateway")
 app.add_typer(browser_app, name="browser")
 app.add_typer(hermes_app, name="hermes")
 app.add_typer(routes_app, name="routes")
+app.add_typer(agents_app, name="agents")
+app.add_typer(channels_app, name="channels")
 hermes_app.add_typer(hermes_profile_app, name="profile")
 app.add_typer(update_app, name="update")
 app.add_typer(setup_app, name="setup")
@@ -286,6 +293,9 @@ class CliServices:
     access: AccessService
     onboarding: OnboardingService
     gateway_capability: GatewayCapabilityService
+    gateway_agents: GatewayAgentsService
+    gateway_channels: GatewayChannelsService
+    gateway_commands: GatewayCommandsService
     ops_mesh: OpsMeshService
     recall: RecallService
     hermes_platform: HermesPlatformService
@@ -318,6 +328,8 @@ async def _build_services(app_settings: Settings) -> CliServices:
         launch_routing=launch_routing,
     )
     gateway_bootstrap = GatewayBootstrapService(database, manager, access, launch_routing)
+    gateway_agents = GatewayAgentsService(database=database)
+    gateway_commands = GatewayCommandsService()
     setup = SetupService(database, manager, access, gateway_bootstrap, ops_mesh)
     onboarding = OnboardingService(
         database,
@@ -344,12 +356,16 @@ async def _build_services(app_settings: Settings) -> CliServices:
         gateway_bootstrap,
         environment,
     )
+    gateway_channels = GatewayChannelsService(
+        list_notification_route_views=ops_mesh.list_notification_route_views,
+    )
     control_chat = ControlChatService(
         database,
         mission_service,
         manager,
         hub,
     )
+    ops_mesh.session_delivery_service = control_chat.append_session_assistant_message
     recall = RecallService(mission_service, database)
     runtime_updates = RuntimeUpdateService(
         database,
@@ -383,6 +399,9 @@ async def _build_services(app_settings: Settings) -> CliServices:
         access=access,
         onboarding=onboarding,
         gateway_capability=gateway_capability,
+        gateway_agents=gateway_agents,
+        gateway_channels=gateway_channels,
+        gateway_commands=gateway_commands,
         ops_mesh=ops_mesh,
         recall=recall,
         hermes_platform=hermes_platform,
@@ -433,6 +452,156 @@ def _emit_payload(payload: object, *, json_output: bool) -> None:
             typer.echo(f"api_key: {api_key}")
         return
     typer.echo(str(payload))
+
+
+def _emit_agents_inventory(payload: dict[str, object], *, json_output: bool) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+
+    agents = payload.get("agents")
+    if not isinstance(agents, list):
+        _emit_payload(payload, json_output=False)
+        return
+
+    default_id = str(payload.get("defaultId") or "").strip()
+    main_key = str(payload.get("mainKey") or "").strip()
+    scope = str(payload.get("scope") or "").strip()
+    typer.echo("Agents:")
+    summary_bits: list[str] = []
+    if default_id:
+        summary_bits.append(f"default: {default_id}")
+    if main_key:
+        summary_bits.append(f"main key: {main_key}")
+    if scope:
+        summary_bits.append(f"scope: {scope}")
+    if summary_bits:
+        typer.echo("  " + " | ".join(summary_bits))
+
+    for agent in agents:
+        if not isinstance(agent, dict):
+            continue
+        agent_id = str(agent.get("id") or "").strip()
+        if not agent_id:
+            continue
+        label = str(agent.get("name") or "").strip()
+        heading = f"- {agent_id}"
+        if label and label != agent_id:
+            heading += f" ({label})"
+        if agent_id == default_id:
+            heading += " [default]"
+        typer.echo(heading)
+
+        workspace = str(agent.get("workspace") or "").strip()
+        if workspace:
+            typer.echo("  workspace: " + workspace)
+
+        identity = agent.get("identity")
+        if isinstance(identity, dict):
+            identity_name = str(identity.get("name") or "").strip()
+            avatar_url = str(identity.get("avatarUrl") or identity.get("avatar") or "").strip()
+            identity_bits = [bit for bit in (identity_name, avatar_url) if bit]
+            if identity_bits:
+                typer.echo("  identity: " + " | ".join(identity_bits))
+
+        model = agent.get("model")
+        if isinstance(model, dict):
+            primary_model = str(model.get("primary") or "").strip()
+            if primary_model:
+                typer.echo("  model: " + primary_model)
+
+
+def _emit_channel_inventory(payload: dict[str, object], *, json_output: bool) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+
+    channel_order = payload.get("channelOrder")
+    if not isinstance(channel_order, list):
+        _emit_payload(payload, json_output=False)
+        return
+
+    channel_labels = payload.get("channelLabels")
+    channel_detail_labels = payload.get("channelDetailLabels")
+    channel_accounts = payload.get("channelAccounts")
+    channel_default_account_id = payload.get("channelDefaultAccountId")
+    channels = payload.get("channels")
+    if not isinstance(channel_labels, dict):
+        channel_labels = {}
+    if not isinstance(channel_detail_labels, dict):
+        channel_detail_labels = {}
+    if not isinstance(channel_accounts, dict):
+        channel_accounts = {}
+    if not isinstance(channel_default_account_id, dict):
+        channel_default_account_id = {}
+    if not isinstance(channels, dict):
+        channels = {}
+
+    typer.echo("Channels:")
+    route_count = payload.get("routeCount")
+    enabled_count = payload.get("enabledCount")
+    conversation_target_count = payload.get("conversationTargetCount")
+    summary_bits: list[str] = []
+    if isinstance(route_count, int):
+        summary_bits.append(f"routes: {route_count}")
+    if isinstance(enabled_count, int):
+        summary_bits.append(f"enabled: {enabled_count}")
+    if isinstance(conversation_target_count, int):
+        summary_bits.append(f"targets: {conversation_target_count}")
+    if summary_bits:
+        typer.echo("  " + " | ".join(summary_bits))
+
+    for channel_id_value in channel_order:
+        channel_id = str(channel_id_value or "").strip()
+        if not channel_id:
+            continue
+        label = str(channel_labels.get(channel_id) or channel_id).strip() or channel_id
+        detail_label = str(channel_detail_labels.get(channel_id) or label).strip() or label
+        heading = f"- {detail_label}"
+        if channel_id != detail_label:
+            heading += f" ({channel_id})"
+        typer.echo(heading)
+
+        summary = channels.get(channel_id)
+        if isinstance(summary, dict):
+            stats: list[str] = []
+            for key, label_name in (
+                ("routeCount", "routes"),
+                ("enabledRouteCount", "enabled"),
+                ("conversationTargetCount", "targets"),
+                ("accountCount", "accounts"),
+            ):
+                value = summary.get(key)
+                if isinstance(value, int):
+                    stats.append(f"{value} {label_name}")
+            if stats:
+                typer.echo("  " + ", ".join(stats))
+
+        default_account_id = str(channel_default_account_id.get(channel_id) or "").strip()
+        if default_account_id:
+            typer.echo("  default account: " + default_account_id)
+
+        accounts = channel_accounts.get(channel_id)
+        if isinstance(accounts, list):
+            for account in accounts[:3]:
+                if not isinstance(account, dict):
+                    continue
+                account_id = str(account.get("accountId") or "").strip()
+                if not account_id:
+                    continue
+                bits: list[str] = []
+                for key, label_name in (
+                    ("routeCount", "routes"),
+                    ("enabledRouteCount", "enabled"),
+                    ("conversationTargetCount", "targets"),
+                ):
+                    value = account.get(key)
+                    if isinstance(value, int):
+                        bits.append(f"{value} {label_name}")
+                line = f"  - {account_id}"
+                if bits:
+                    line += ": " + ", ".join(bits)
+                typer.echo(line)
 
 
 def _emit_gateway_bootstrap(payload: dict[str, object], *, json_output: bool) -> None:
@@ -3390,6 +3559,32 @@ def browser_errors(
 
     payload = _browser_stream_payload(label="error", session=session, output=output)
     _emit_browser_stream(payload, json_output=json_output)
+
+
+@agents_app.command("list")
+def agents_list(
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit the configured agent inventory as JSON.",
+    ),
+) -> None:
+    payload = _run(_run_with_services(lambda services: services.gateway_agents.list_agents()))
+    _emit_agents_inventory(payload, json_output=json_output)
+
+
+@channels_app.command("status")
+def channels_status(
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit the notification route channel inventory as JSON.",
+    ),
+) -> None:
+    payload = _run(
+        _run_with_services(lambda services: services.gateway_channels.build_snapshot())
+    )
+    _emit_channel_inventory(payload, json_output=json_output)
 
 
 @app.command("launch")

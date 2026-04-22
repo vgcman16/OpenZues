@@ -97,6 +97,8 @@ def _effective_tool_specs(toolsets: Iterable[str] | None) -> tuple[HermesToolset
 
 def _effective_profile(specs: Iterable[HermesToolsetSpec]) -> str:
     resolved_specs = tuple(specs)
+    if not resolved_specs:
+        return "minimal"
     if any("messaging" in _default_profiles(spec) for spec in resolved_specs):
         return "messaging"
     return "coding"

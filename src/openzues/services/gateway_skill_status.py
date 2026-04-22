@@ -91,6 +91,74 @@ def _platform_matches_current(value: str) -> bool:
     return normalized in _PLATFORM_ALIASES[_current_platform()]
 
 
+def _build_config_checks(
+    required: list[str],
+    *,
+    skill_config_service: GatewaySkillConfigService,
+    config_payload: dict[str, Any],
+) -> list[dict[str, Any]]:
+    return [
+        {
+            "path": path,
+            "satisfied": skill_config_service.is_config_path_truthy(
+                path,
+                payload=config_payload,
+            ),
+        }
+        for path in required
+    ]
+
+
+def _is_configured_secret(value: object) -> bool:
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, dict):
+        return bool(value)
+    return False
+
+
+def _configured_environment_names(
+    config_entry: dict[str, Any] | None,
+    *,
+    primary_env: str | None,
+) -> set[str]:
+    if not isinstance(config_entry, dict):
+        return set()
+    configured: set[str] = set()
+    entry_env = config_entry.get("env")
+    if isinstance(entry_env, dict):
+        for raw_name, raw_value in entry_env.items():
+            normalized_name = str(raw_name or "").strip()
+            if not normalized_name:
+                continue
+            if isinstance(raw_value, str):
+                if raw_value.strip():
+                    configured.add(normalized_name)
+                continue
+            if raw_value:
+                configured.add(normalized_name)
+    if primary_env and _is_configured_secret(config_entry.get("apiKey")):
+        configured.add(primary_env)
+    return configured
+
+
+def _missing_environment_variables(
+    required: list[str],
+    *,
+    config_entry: dict[str, Any] | None,
+    primary_env: str | None,
+) -> list[str]:
+    configured_names = _configured_environment_names(
+        config_entry,
+        primary_env=primary_env,
+    )
+    return [
+        env_name
+        for env_name in required
+        if not os.getenv(env_name) and env_name not in configured_names
+    ]
+
+
 class GatewaySkillStatusService:
     def __init__(
         self,
@@ -109,12 +177,14 @@ class GatewaySkillStatusService:
     def build_report(self, *, agent_id: str | None = None) -> dict[str, Any]:
         del agent_id
         skill_entries = self._skill_config_service.load_entries()
+        config_payload = self._skill_config_service.load_payload()
         skills = [
             self._build_skill_payload(
                 skill_path,
                 source=source,
                 bundled=bundled,
                 skill_entries=skill_entries,
+                config_payload=config_payload,
             )
             for skill_path, source, bundled in self._iter_skill_paths()
         ]
@@ -132,6 +202,7 @@ class GatewaySkillStatusService:
         source: str,
         bundled: bool,
         skill_entries: dict[str, dict[str, Any]],
+        config_payload: dict[str, Any],
     ) -> dict[str, Any]:
         frontmatter = _frontmatter_payload(skill_path)
         metadata = frontmatter.get("metadata")
@@ -163,12 +234,25 @@ class GatewaySkillStatusService:
                 *_string_list(metadata.get("os")),
             ]
         )
+        always = bool(metadata.get("always") is True)
+        primary_env = str(metadata.get("primaryEnv") or "").strip() or (
+            required_env[0] if required_env else None
+        )
 
         missing_bins = [bin_name for bin_name in required_bins if shutil.which(bin_name) is None]
         if any_bins and not any(shutil.which(bin_name) is not None for bin_name in any_bins):
             missing_bins.extend(bin_name for bin_name in any_bins if bin_name not in missing_bins)
-        missing_env = [env_name for env_name in required_env if not os.getenv(env_name)]
-        config_checks = [{"path": path, "satisfied": False} for path in required_config]
+        missing_env = _missing_environment_variables(
+            required_env,
+            config_entry=config_entry,
+            primary_env=primary_env,
+        )
+        config_checks = _build_config_checks(
+            required_config,
+            skill_config_service=self._skill_config_service,
+            config_payload=config_payload,
+        )
+        missing_config = [check["path"] for check in config_checks if not check["satisfied"]]
         missing_os = (
             list(required_os)
             if required_os and not any(_platform_matches_current(value) for value in required_os)
@@ -177,9 +261,12 @@ class GatewaySkillStatusService:
         disabled = bool(metadata.get("disabled") is True or metadata.get("enabled") is False)
         if isinstance(config_entry, dict) and isinstance(config_entry.get("enabled"), bool):
             disabled = not bool(config_entry["enabled"])
-        eligible = not disabled and not (
-            missing_bins or missing_env or required_config or missing_os
-        )
+        if always:
+            missing_bins = []
+            missing_env = []
+            missing_config = []
+            missing_os = []
+        eligible = not disabled and (always or not (missing_bins or missing_env or missing_config or missing_os))
 
         return {
             "name": name,
@@ -189,15 +276,10 @@ class GatewaySkillStatusService:
             "filePath": str(skill_path),
             "baseDir": str(skill_path.parent),
             "skillKey": skill_key,
-            "primaryEnv": (
-                str(metadata.get("primaryEnv") or "").strip()
-                or required_env[0]
-                if required_env
-                else None
-            ),
+            "primaryEnv": primary_env,
             "emoji": str(metadata.get("emoji") or "").strip() or None,
             "homepage": str(metadata.get("homepage") or "").strip() or None,
-            "always": bool(metadata.get("always") is True),
+            "always": always,
             "disabled": disabled,
             "blockedByAllowlist": False,
             "eligible": eligible,
@@ -210,7 +292,7 @@ class GatewaySkillStatusService:
             "missing": {
                 "bins": _ordered_unique(missing_bins),
                 "env": _ordered_unique(missing_env),
-                "config": _ordered_unique(required_config),
+                "config": _ordered_unique(missing_config),
                 "os": _ordered_unique(missing_os),
             },
             "configChecks": config_checks,

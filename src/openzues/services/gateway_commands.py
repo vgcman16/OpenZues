@@ -120,6 +120,20 @@ _COMMAND_SPECS: tuple[GatewayCommandSpec, ...] = (
         args=(_bool_arg("json", "Emit the operator status summary as JSON."),),
     ),
     GatewayCommandSpec(
+        name="agents.list",
+        description="List configured agents and workspace posture.",
+        category="operator",
+        accepts_args=True,
+        args=(_bool_arg("json", "Emit the configured agent inventory as JSON."),),
+    ),
+    GatewayCommandSpec(
+        name="channels.status",
+        description="Inspect the notification route channel inventory.",
+        category="operator",
+        accepts_args=True,
+        args=(_bool_arg("json", "Emit the notification route inventory as JSON."),),
+    ),
+    GatewayCommandSpec(
         name="watch",
         description="Watch the live parity lane and keep the next bounded move moving.",
         category="operator",
