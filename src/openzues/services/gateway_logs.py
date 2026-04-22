@@ -8,6 +8,27 @@ DEFAULT_LIMIT = 500
 DEFAULT_MAX_BYTES = 250_000
 MAX_LIMIT = 5_000
 MAX_BYTES = 1_000_000
+_PREFERRED_LOG_PATTERNS: tuple[tuple[int, re.Pattern[str]], ...] = (
+    (0, re.compile(r"^openzues-\d{4}-\d{2}-\d{2}\.log$", re.IGNORECASE)),
+    (
+        1,
+        re.compile(r"^openzues(?:-[A-Za-z0-9_-]+)*\.out\.log$", re.IGNORECASE),
+    ),
+    (
+        2,
+        re.compile(r"^server(?:-[A-Za-z0-9_-]+)*\.out\.log$", re.IGNORECASE),
+    ),
+    (
+        3,
+        re.compile(r"^openzues(?:-[A-Za-z0-9_-]+)*\.err\.log$", re.IGNORECASE),
+    ),
+    (
+        4,
+        re.compile(r"^server(?:-[A-Za-z0-9_-]+)*\.err\.log$", re.IGNORECASE),
+    ),
+    (5, re.compile(r"^openzues(?:-[A-Za-z0-9_-]+)*\.log$", re.IGNORECASE)),
+    (6, re.compile(r"^server(?:-[A-Za-z0-9_-]+)*\.log$", re.IGNORECASE)),
+)
 _CLI_SECRET_RE = re.compile(
     r'(?P<prefix>--(?:api[-_]?key|hook[-_]?token|token|secret|password|passwd)\s+)'
     r'(?P<quote>["\']?)(?P<secret>[^\s"\']+)(?P=quote)',
@@ -83,12 +104,27 @@ class GatewayLogsService:
 
     def _resolve_latest_log_file(self) -> Path:
         try:
-            candidates = [path for path in self._logs_root.rglob("*.log") if path.is_file()]
+            candidates: list[tuple[Path, int]] = []
+            for path in self._logs_root.rglob("*.log"):
+                try:
+                    if not path.is_file():
+                        continue
+                    candidates.append((path, path.stat().st_mtime_ns))
+                except OSError:
+                    continue
         except OSError as exc:
             raise GatewayLogsUnavailableError(f"log read failed: {exc}") from exc
         if not candidates:
             raise GatewayLogsUnavailableError("log read failed: no workspace log files available")
-        return max(candidates, key=lambda path: path.stat().st_mtime_ns)
+        return min(
+            candidates,
+            key=lambda item: (
+                _log_candidate_priority(item[0]),
+                -item[1],
+                item[0].name.lower(),
+                str(item[0]).lower(),
+            ),
+        )[0]
 
     def _read_log_slice(
         self,
@@ -161,6 +197,14 @@ class GatewayLogsService:
 
 def _clamp(value: int, *, minimum: int, maximum: int) -> int:
     return min(max(value, minimum), maximum)
+
+
+def _log_candidate_priority(path: Path) -> int:
+    name = path.name
+    for priority, pattern in _PREFERRED_LOG_PATTERNS:
+        if pattern.fullmatch(name):
+            return priority
+    return len(_PREFERRED_LOG_PATTERNS)
 
 
 def _redact_sensitive_tokens(text: str) -> str:

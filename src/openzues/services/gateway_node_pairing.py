@@ -69,33 +69,74 @@ class GatewayNodePairingService:
         ui_version: str | None,
         device_family: str | None,
         model_identifier: str | None,
-        caps: list[str],
-        commands: list[str],
+        caps: list[str] | None,
+        commands: list[str] | None,
         remote_ip: str | None,
         silent: bool | None,
         now_ms: int,
     ) -> dict[str, object]:
         existing = await self.database.list_gateway_node_pairing_requests()
-        existing_request = next((row for row in existing if row["node_id"] == node_id), None)
+        existing_row = next((row for row in existing if row["node_id"] == node_id), None)
+        existing_request = (
+            _request_from_row(existing_row) if existing_row is not None else None
+        )
         persisted_silent: bool | None
         if existing_request is None:
             persisted_silent = True if silent is True else None
+            resolved_display_name = display_name
+            resolved_platform = platform
+            resolved_version = version
+            resolved_core_version = core_version
+            resolved_ui_version = ui_version
+            resolved_device_family = device_family
+            resolved_model_identifier = model_identifier
+            resolved_caps = list(caps or [])
+            resolved_commands = list(commands or [])
+            resolved_remote_ip = remote_ip
         else:
-            persisted_silent = bool(existing_request["silent"]) and bool(silent)
+            persisted_silent = bool(existing_request.silent) and bool(silent)
+            resolved_display_name = (
+                display_name if display_name is not None else existing_request.display_name
+            )
+            resolved_platform = platform if platform is not None else existing_request.platform
+            resolved_version = version if version is not None else existing_request.version
+            resolved_core_version = (
+                core_version if core_version is not None else existing_request.core_version
+            )
+            resolved_ui_version = (
+                ui_version if ui_version is not None else existing_request.ui_version
+            )
+            resolved_device_family = (
+                device_family
+                if device_family is not None
+                else existing_request.device_family
+            )
+            resolved_model_identifier = (
+                model_identifier
+                if model_identifier is not None
+                else existing_request.model_identifier
+            )
+            resolved_caps = list(caps) if caps is not None else list(existing_request.caps)
+            resolved_commands = (
+                list(commands) if commands is not None else list(existing_request.commands)
+            )
+            resolved_remote_ip = (
+                remote_ip if remote_ip is not None else existing_request.remote_ip
+            )
 
         row, created = await self.database.upsert_gateway_node_pairing_request(
             request_id=str(uuid4()),
             node_id=node_id,
-            display_name=display_name,
-            platform=platform,
-            version=version,
-            core_version=core_version,
-            ui_version=ui_version,
-            device_family=device_family,
-            model_identifier=model_identifier,
-            caps=caps,
-            commands=commands,
-            remote_ip=remote_ip,
+            display_name=resolved_display_name,
+            platform=resolved_platform,
+            version=resolved_version,
+            core_version=resolved_core_version,
+            ui_version=resolved_ui_version,
+            device_family=resolved_device_family,
+            model_identifier=resolved_model_identifier,
+            caps=resolved_caps,
+            commands=resolved_commands,
+            remote_ip=resolved_remote_ip,
             silent=persisted_silent,
             requested_at_ms=now_ms,
         )

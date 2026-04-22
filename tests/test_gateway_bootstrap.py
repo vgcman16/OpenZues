@@ -464,6 +464,103 @@ async def test_get_view_marks_connected_local_bootstrap_ready_without_remote_api
 
 
 @pytest.mark.asyncio
+async def test_get_view_marks_local_bootstrap_staged_when_saved_operator_is_disabled(
+    tmp_path: Path,
+) -> None:
+    workspace_dir = tmp_path / "workspace"
+    connected_instance = SimpleNamespace(
+        id=41,
+        name="Local Lane",
+        transport="desktop",
+        cwd=str(workspace_dir.resolve()),
+        connected=True,
+        error=None,
+    )
+    service, _, _manager = await _build_service(
+        tmp_path,
+        manager=FakeManager(list_views_result=[connected_instance]),
+        save_bootstrap=False,
+    )
+
+    project_id = await service.database.create_project(
+        path=str(workspace_dir.resolve()),
+        label="Local Workspace",
+    )
+    task_id = await service.database.create_task_blueprint(
+        name="Local Loop",
+        summary="Keep the local workspace moving.",
+        project_id=project_id,
+        instance_id=connected_instance.id,
+        cadence_minutes=60,
+        enabled=True,
+        payload={
+            "objective_template": "Ship the next verified local slice.",
+            "conversation_target": None,
+            "instance_id": connected_instance.id,
+            "project_id": project_id,
+            "cadence_minutes": 60,
+            "run_until_complete": False,
+            "continuation_cooldown_minutes": 10,
+            "completion_marker": None,
+            "cwd": str(workspace_dir.resolve()),
+            "model": "gpt-5.4",
+            "reasoning_effort": None,
+            "collaboration_mode": None,
+            "max_turns": 4,
+            "use_builtin_agents": True,
+            "run_verification": True,
+            "auto_commit": False,
+            "pause_on_approval": True,
+            "allow_auto_reflexes": True,
+            "auto_recover": True,
+            "auto_recover_limit": 2,
+            "reflex_cooldown_seconds": 900,
+            "allow_failover": True,
+            "toolsets": ["hermes-cli"],
+            "enabled": True,
+        },
+    )
+    await service.database.update_operator(1, enabled=False)
+    bootstrap_roles, bootstrap_scopes = default_device_bootstrap_profile()
+    await service.database.upsert_gateway_bootstrap(
+        setup_mode="local",
+        setup_flow="quickstart",
+        route_binding_mode="saved_lane",
+        preferred_instance_id=connected_instance.id,
+        preferred_project_id=project_id,
+        team_id=1,
+        operator_id=1,
+        task_blueprint_id=task_id,
+        last_route_instance_id=None,
+        last_route_resolved_at=None,
+        default_cwd=str(workspace_dir.resolve()),
+        bootstrap_roles=bootstrap_roles,
+        bootstrap_scopes=bootstrap_scopes,
+        model="gpt-5.4",
+        max_turns=4,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        toolsets=["hermes-cli"],
+    )
+
+    view = await service.get_view()
+
+    assert view.status == "staged"
+    assert view.headline == "Gateway bootstrap is staged"
+    assert view.operator is not None
+    assert "local-only" in view.operator.detail
+    assert "disabled" in view.operator.detail
+    assert "The saved default operator is disabled." in view.warnings
+
+
+@pytest.mark.asyncio
 async def test_get_view_surfaces_live_plugin_published_gateway_methods_in_runtime_inventory(
     tmp_path: Path,
 ) -> None:
@@ -1017,6 +1114,466 @@ async def test_get_view_surfaces_saved_workspace_integration(tmp_path: Path) -> 
     assert view.integration.detail == (
         "openclaw · https://gateway.example.test · token · secret ready"
     )
+
+
+@pytest.mark.asyncio
+async def test_get_view_keeps_first_enabled_ingress_record_order(tmp_path: Path) -> None:
+    workspace_dir = tmp_path / "workspace"
+    connected_instance = SimpleNamespace(
+        id=41,
+        name="Remote Lane",
+        transport="desktop",
+        cwd=str(workspace_dir.resolve()),
+        connected=True,
+        error=None,
+    )
+    service, _, _manager = await _build_service(
+        tmp_path,
+        manager=FakeManager(list_views_result=[connected_instance]),
+        save_bootstrap=False,
+    )
+
+    project_id = await service.database.create_project(
+        path=str(workspace_dir.resolve()),
+        label="Remote Workspace",
+    )
+    task_id = await service.database.create_task_blueprint(
+        name="Remote Loop",
+        summary="Keep the remote workspace moving.",
+        project_id=project_id,
+        instance_id=connected_instance.id,
+        cadence_minutes=60,
+        enabled=True,
+        payload={
+            "objective_template": "Ship the next verified remote slice.",
+            "conversation_target": None,
+            "instance_id": connected_instance.id,
+            "project_id": project_id,
+            "cadence_minutes": 60,
+            "run_until_complete": False,
+            "continuation_cooldown_minutes": 10,
+            "completion_marker": None,
+            "cwd": str(workspace_dir.resolve()),
+            "model": "gpt-5.4",
+            "reasoning_effort": None,
+            "collaboration_mode": None,
+            "max_turns": 4,
+            "use_builtin_agents": True,
+            "run_verification": True,
+            "auto_commit": False,
+            "pause_on_approval": True,
+            "allow_auto_reflexes": True,
+            "auto_recover": True,
+            "auto_recover_limit": 2,
+            "reflex_cooldown_seconds": 900,
+            "allow_failover": True,
+            "toolsets": ["hermes-cli"],
+            "enabled": True,
+        },
+    )
+    await service.database.create_integration(
+        name="Zulu Gateway",
+        kind="openclaw",
+        project_id=project_id,
+        base_url="https://zulu.example.test",
+        auth_scheme="token",
+        vault_secret_id=12,
+        secret_label="ZULU_GATEWAY_TOKEN",
+        secret_value=None,
+        notes="First ingress",
+        enabled=True,
+    )
+    await service.database.create_integration(
+        name="Alpha Gateway",
+        kind="openclaw",
+        project_id=project_id,
+        base_url="https://alpha.example.test",
+        auth_scheme="token",
+        vault_secret_id=13,
+        secret_label="ALPHA_GATEWAY_TOKEN",
+        secret_value=None,
+        notes="Second ingress",
+        enabled=True,
+    )
+    bootstrap_roles, bootstrap_scopes = default_device_bootstrap_profile()
+    await service.database.upsert_gateway_bootstrap(
+        setup_mode="remote",
+        setup_flow="advanced",
+        route_binding_mode="workspace_affinity",
+        preferred_instance_id=connected_instance.id,
+        preferred_project_id=project_id,
+        team_id=1,
+        operator_id=1,
+        task_blueprint_id=task_id,
+        last_route_instance_id=None,
+        last_route_resolved_at=None,
+        default_cwd=str(workspace_dir.resolve()),
+        bootstrap_roles=bootstrap_roles,
+        bootstrap_scopes=bootstrap_scopes,
+        model="gpt-5.4",
+        max_turns=4,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        toolsets=["hermes-cli"],
+    )
+
+    view = await service.get_view()
+
+    assert view.integration is not None
+    assert view.integration.label == "Zulu Gateway"
+    assert view.integration.detail == (
+        "openclaw · https://zulu.example.test · token · secret ready"
+    )
+    assert (
+        "Multiple integrations are attached to the saved workspace; "
+        "showing the first enabled ingress record."
+    ) in view.warnings
+
+
+@pytest.mark.asyncio
+async def test_get_view_prefers_first_auth_ready_ingress_record(tmp_path: Path) -> None:
+    workspace_dir = tmp_path / "workspace"
+    connected_instance = SimpleNamespace(
+        id=41,
+        name="Remote Lane",
+        transport="desktop",
+        cwd=str(workspace_dir.resolve()),
+        connected=True,
+        error=None,
+    )
+    service, _, _manager = await _build_service(
+        tmp_path,
+        manager=FakeManager(list_views_result=[connected_instance]),
+        save_bootstrap=False,
+    )
+
+    project_id = await service.database.create_project(
+        path=str(workspace_dir.resolve()),
+        label="Remote Workspace",
+    )
+    task_id = await service.database.create_task_blueprint(
+        name="Remote Loop",
+        summary="Keep the remote workspace moving.",
+        project_id=project_id,
+        instance_id=connected_instance.id,
+        cadence_minutes=60,
+        enabled=True,
+        payload={
+            "objective_template": "Ship the next verified remote slice.",
+            "conversation_target": None,
+            "instance_id": connected_instance.id,
+            "project_id": project_id,
+            "cadence_minutes": 60,
+            "run_until_complete": False,
+            "continuation_cooldown_minutes": 10,
+            "completion_marker": None,
+            "cwd": str(workspace_dir.resolve()),
+            "model": "gpt-5.4",
+            "reasoning_effort": None,
+            "collaboration_mode": None,
+            "max_turns": 4,
+            "use_builtin_agents": True,
+            "run_verification": True,
+            "auto_commit": False,
+            "pause_on_approval": True,
+            "allow_auto_reflexes": True,
+            "auto_recover": True,
+            "auto_recover_limit": 2,
+            "reflex_cooldown_seconds": 900,
+            "allow_failover": True,
+            "toolsets": ["hermes-cli"],
+            "enabled": True,
+        },
+    )
+    await service.database.create_integration(
+        name="Missing Secret Gateway",
+        kind="openclaw",
+        project_id=project_id,
+        base_url="https://missing.example.test",
+        auth_scheme="token",
+        vault_secret_id=None,
+        secret_label="MISSING_GATEWAY_TOKEN",
+        secret_value=None,
+        notes="First ingress without a usable secret",
+        enabled=True,
+    )
+    await service.database.create_integration(
+        name="Ready Gateway",
+        kind="openclaw",
+        project_id=project_id,
+        base_url="https://ready.example.test",
+        auth_scheme="token",
+        vault_secret_id=13,
+        secret_label="READY_GATEWAY_TOKEN",
+        secret_value=None,
+        notes="Second ingress with credentials wired",
+        enabled=True,
+    )
+    bootstrap_roles, bootstrap_scopes = default_device_bootstrap_profile()
+    await service.database.upsert_gateway_bootstrap(
+        setup_mode="remote",
+        setup_flow="advanced",
+        route_binding_mode="workspace_affinity",
+        preferred_instance_id=connected_instance.id,
+        preferred_project_id=project_id,
+        team_id=1,
+        operator_id=1,
+        task_blueprint_id=task_id,
+        last_route_instance_id=None,
+        last_route_resolved_at=None,
+        default_cwd=str(workspace_dir.resolve()),
+        bootstrap_roles=bootstrap_roles,
+        bootstrap_scopes=bootstrap_scopes,
+        model="gpt-5.4",
+        max_turns=4,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        toolsets=["hermes-cli"],
+    )
+
+    view = await service.get_view()
+
+    assert view.integration is not None
+    assert view.integration.label == "Ready Gateway"
+    assert view.integration.detail == (
+        "openclaw · https://ready.example.test · token · secret ready"
+    )
+    assert (
+        "Multiple integrations are attached to the saved workspace; "
+        "showing the first auth-ready ingress record."
+    ) in view.warnings
+
+
+@pytest.mark.asyncio
+async def test_get_view_does_not_claim_secret_ready_for_label_only_integration(
+    tmp_path: Path,
+) -> None:
+    workspace_dir = tmp_path / "workspace"
+    connected_instance = SimpleNamespace(
+        id=41,
+        name="Remote Lane",
+        transport="desktop",
+        cwd=str(workspace_dir.resolve()),
+        connected=True,
+        error=None,
+    )
+    service, _, _manager = await _build_service(
+        tmp_path,
+        manager=FakeManager(list_views_result=[connected_instance]),
+        save_bootstrap=False,
+    )
+
+    project_id = await service.database.create_project(
+        path=str(workspace_dir.resolve()),
+        label="Remote Workspace",
+    )
+    task_id = await service.database.create_task_blueprint(
+        name="Remote Loop",
+        summary="Keep the remote workspace moving.",
+        project_id=project_id,
+        instance_id=connected_instance.id,
+        cadence_minutes=60,
+        enabled=True,
+        payload={
+            "objective_template": "Ship the next verified remote slice.",
+            "conversation_target": None,
+            "instance_id": connected_instance.id,
+            "project_id": project_id,
+            "cadence_minutes": 60,
+            "run_until_complete": False,
+            "continuation_cooldown_minutes": 10,
+            "completion_marker": None,
+            "cwd": str(workspace_dir.resolve()),
+            "model": "gpt-5.4",
+            "reasoning_effort": None,
+            "collaboration_mode": None,
+            "max_turns": 4,
+            "use_builtin_agents": True,
+            "run_verification": True,
+            "auto_commit": False,
+            "pause_on_approval": True,
+            "allow_auto_reflexes": True,
+            "auto_recover": True,
+            "auto_recover_limit": 2,
+            "reflex_cooldown_seconds": 900,
+            "allow_failover": True,
+            "toolsets": ["hermes-cli"],
+            "enabled": True,
+        },
+    )
+    await service.database.create_integration(
+        name="Label Only Gateway",
+        kind="openclaw",
+        project_id=project_id,
+        base_url="https://label-only.example.test",
+        auth_scheme="token",
+        vault_secret_id=None,
+        secret_label="LABEL_ONLY_GATEWAY_TOKEN",
+        secret_value=None,
+        notes="Ingress with a label but no usable secret",
+        enabled=True,
+    )
+    bootstrap_roles, bootstrap_scopes = default_device_bootstrap_profile()
+    await service.database.upsert_gateway_bootstrap(
+        setup_mode="remote",
+        setup_flow="advanced",
+        route_binding_mode="workspace_affinity",
+        preferred_instance_id=connected_instance.id,
+        preferred_project_id=project_id,
+        team_id=1,
+        operator_id=1,
+        task_blueprint_id=task_id,
+        last_route_instance_id=None,
+        last_route_resolved_at=None,
+        default_cwd=str(workspace_dir.resolve()),
+        bootstrap_roles=bootstrap_roles,
+        bootstrap_scopes=bootstrap_scopes,
+        model="gpt-5.4",
+        max_turns=4,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        toolsets=["hermes-cli"],
+    )
+
+    view = await service.get_view()
+
+    assert view.integration is not None
+    assert view.integration.label == "Label Only Gateway"
+    assert view.integration.detail == (
+        "openclaw · https://label-only.example.test · token"
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_view_marks_remote_bootstrap_staged_when_saved_operator_is_disabled(
+    tmp_path: Path,
+) -> None:
+    workspace_dir = tmp_path / "workspace"
+    connected_instance = SimpleNamespace(
+        id=41,
+        name="Remote Lane",
+        transport="desktop",
+        cwd=str(workspace_dir.resolve()),
+        connected=True,
+        error=None,
+    )
+    service, _, _manager = await _build_service(
+        tmp_path,
+        manager=FakeManager(list_views_result=[connected_instance]),
+        save_bootstrap=False,
+    )
+
+    project_id = await service.database.create_project(
+        path=str(workspace_dir.resolve()),
+        label="Remote Workspace",
+    )
+    task_id = await service.database.create_task_blueprint(
+        name="Remote Loop",
+        summary="Keep the remote workspace moving.",
+        project_id=project_id,
+        instance_id=connected_instance.id,
+        cadence_minutes=60,
+        enabled=True,
+        payload={
+            "objective_template": "Ship the next verified remote slice.",
+            "conversation_target": None,
+            "instance_id": connected_instance.id,
+            "project_id": project_id,
+            "cadence_minutes": 60,
+            "run_until_complete": False,
+            "continuation_cooldown_minutes": 10,
+            "completion_marker": None,
+            "cwd": str(workspace_dir.resolve()),
+            "model": "gpt-5.4",
+            "reasoning_effort": None,
+            "collaboration_mode": None,
+            "max_turns": 4,
+            "use_builtin_agents": True,
+            "run_verification": True,
+            "auto_commit": False,
+            "pause_on_approval": True,
+            "allow_auto_reflexes": True,
+            "auto_recover": True,
+            "auto_recover_limit": 2,
+            "reflex_cooldown_seconds": 900,
+            "allow_failover": True,
+            "toolsets": ["hermes-cli"],
+            "enabled": True,
+        },
+    )
+    await service.database.create_integration(
+        name="Remote Gateway",
+        kind="openclaw",
+        project_id=project_id,
+        base_url="https://remote.example.test",
+        auth_scheme="token",
+        vault_secret_id=12,
+        secret_label="REMOTE_GATEWAY_TOKEN",
+        secret_value=None,
+        notes="Remote ingress",
+        enabled=True,
+    )
+    await service.access.issue_api_key(1)
+    await service.database.update_operator(1, enabled=False)
+    bootstrap_roles, bootstrap_scopes = default_device_bootstrap_profile()
+    await service.database.upsert_gateway_bootstrap(
+        setup_mode="remote",
+        setup_flow="advanced",
+        route_binding_mode="workspace_affinity",
+        preferred_instance_id=connected_instance.id,
+        preferred_project_id=project_id,
+        team_id=1,
+        operator_id=1,
+        task_blueprint_id=task_id,
+        last_route_instance_id=None,
+        last_route_resolved_at=None,
+        default_cwd=str(workspace_dir.resolve()),
+        bootstrap_roles=bootstrap_roles,
+        bootstrap_scopes=bootstrap_scopes,
+        model="gpt-5.4",
+        max_turns=4,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        toolsets=["hermes-cli"],
+    )
+
+    view = await service.get_view()
+
+    assert view.status == "staged"
+    assert view.headline == "Remote gateway bootstrap is staged"
+    assert view.operator is not None
+    assert "remote key ready" in view.operator.detail
+    assert "disabled" in view.operator.detail
+    assert "The saved default operator is disabled." in view.warnings
+    assert not any("active API key" in warning for warning in view.warnings)
 
 
 @pytest.mark.asyncio

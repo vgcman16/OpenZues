@@ -236,11 +236,15 @@ class SetupService:
         payload: SetupWizardSessionUpdate | dict[str, Any],
     ) -> SetupWizardSessionView:
         current = await self._load_wizard_session_payload()
-        update_payload = (
-            payload.model_dump(exclude_none=True)
-            if isinstance(payload, SetupWizardSessionUpdate)
-            else {key: value for key, value in payload.items() if value is not None}
-        )
+        if isinstance(payload, SetupWizardSessionUpdate):
+            update_payload = {
+                key: getattr(payload, key)
+                for key in payload.model_fields_set
+            }
+        else:
+            update_payload = {key: value for key, value in payload.items() if value is not None}
+        if not update_payload:
+            return await self.get_wizard_session()
         merged = {**current, **update_payload, "updated_at": utcnow()}
         mode = str(merged.get("mode") or "local")
         if mode not in {"local", "remote"}:
@@ -264,6 +268,9 @@ class SetupService:
         merged["bootstrap_scopes"] = bootstrap_scopes
         await self.database.upsert_setup_wizard_session(merged)
         return await self.get_wizard_session()
+
+    async def load_wizard_session_payload(self) -> dict[str, Any]:
+        return await self._load_wizard_session_payload()
 
     async def inspect(self) -> SetupStatusView:
         gateway = await self.gateway_bootstrap.get_view()

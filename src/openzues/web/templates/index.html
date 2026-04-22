@@ -15,15 +15,15 @@
 
       <header class="masthead">
         <div class="brand-block">
-          <p class="eyebrow">Codex Mission Control</p>
+          <p class="eyebrow">Zeus Control Surface</p>
           <div class="brand-row">
             <div class="brand-mark">OZ</div>
             <div class="brand-copy">
               <h1>OpenZues</h1>
               <p class="lede">
-                Local-first control for Codex: always-on build loops, approval-aware autonomy,
-                checkpoint memory, project context, and direct desktop connectivity without
-                fighting the Windows alias layer.
+                OpenZues is the local-first shell for Zeus: a chat-led operator that can read the
+                repo, steer the swarm, keep parity pressure alive, and hold onto checkpoints
+                without breaking the Windows desktop flow.
               </p>
             </div>
           </div>
@@ -37,12 +37,138 @@
       </header>
 
       <main class="workspace">
-        <section class="horizon">
+        <section class="zeus-stage">
+          <div class="zeus-stage__copy">
+            <div>
+              <p class="eyebrow">Operator Intelligence</p>
+              <h2>Talk to Zeus, inspect the repo, and run the swarm from one command surface.</h2>
+            </div>
+            <p class="zeus-stage__lede">
+              OpenZues keeps the working thread, live code context, and mission rail in the same
+              window so operators can move from prompt to proof without hopping across tools.
+            </p>
+            <div class="zeus-stage__actions">
+              <a class="zeus-stage__link" href="#control-chat-form">Open the command thread</a>
+              <a class="zeus-stage__link is-ghost" href="#mission-form">Launch a swarm run</a>
+            </div>
+            <div class="zeus-stage__signals">
+              <article class="zeus-stage__signal">
+                <span>Live</span>
+                <strong>Thread-first control</strong>
+                <p>Start in chat, keep the transcript hot, and let Zeus narrate what it is doing while it works.</p>
+              </article>
+              <article class="zeus-stage__signal">
+                <span>Code</span>
+                <strong>Workspace-grade layout</strong>
+                <p>Code, missions, and diagnostics stay in one frame so the interface reads like a real tool, not a landing page.</p>
+              </article>
+              <article class="zeus-stage__signal">
+                <span>Swarm</span>
+                <strong>Directed multi-role execution</strong>
+                <p>Conductor, builders, auditors, and testers feel staged, reviewable, and easy to steer.</p>
+              </article>
+              <article class="zeus-stage__signal">
+                <span>Parity</span>
+                <strong>Memory and monitoring in view</strong>
+                <p>Checkpoint recall, parity pressure, and automation health stay visible without taking over the whole surface.</p>
+              </article>
+            </div>
+          </div>
+
+          <figure class="zeus-stage__visual">
+            <img
+              src="{{ url_for('static', path='images/zeus-hero.png') }}?v={{ asset_version }}"
+              alt="Concept portrait of Zeus as a calm digital operator inside a command environment"
+            />
+            <figcaption class="zeus-stage__caption">
+              Zeus stays calm and readable, with the interface doing the heavy lifting instead of the artwork pretending to be the product.
+            </figcaption>
+          </figure>
+        </section>
+
+        <section class="zeus-gallery" id="zeus-gallery">
+          <article class="zeus-gallery__panel">
+            <div class="zeus-gallery__meta">
+              <div>
+                <p class="eyebrow">Command Surface</p>
+                <h3>Chat, code, and mission control share one working frame.</h3>
+              </div>
+              <p class="panel-lede">
+                Zeus works best when the thread leads, the code stays nearby, and the mission rail
+                remains visible without forcing operators to bounce between separate screens.
+              </p>
+              <ul class="zeus-gallery__list">
+                <li>Left rail for projects, automations, and live workspaces.</li>
+                <li>Central editor area for code, configs, and generated artifacts.</li>
+                <li>Right rail for mission health, retries, telemetry, and next actions.</li>
+                <li>Bottom composer for direct Zeus chat instead of detached modal prompts.</li>
+              </ul>
+            </div>
+            <figure class="zeus-gallery__frame">
+              <img
+                src="{{ url_for('static', path='images/zeus-interface.png') }}?v={{ asset_version }}"
+                alt="Zeus interface concept combining editor, automation explorer, mission inspector, and chat"
+                loading="lazy"
+              />
+            </figure>
+          </article>
+
+          <article class="zeus-gallery__panel">
+            <div class="zeus-gallery__meta">
+              <div>
+                <p class="eyebrow">Operational Loops</p>
+                <h3>Swarm, memory, and parity stay visible while the work is running.</h3>
+              </div>
+              <p class="panel-lede">
+                Zeus stays reliable when conductor-led execution, durable memory, and parity
+                feedback all show up as live operating signals instead of hidden admin pages.
+              </p>
+              <ul class="zeus-gallery__list">
+                <li>Swarm constitution should be visible as directed lanes, not hidden config.</li>
+                <li>Memory should feel like a living archive, not a raw log bucket.</li>
+                <li>Parity and automation should read like live signal operations, not settings pages.</li>
+                <li>Warnings should surface as focused intervention points instead of generic alerts.</li>
+              </ul>
+            </div>
+            <figure class="zeus-gallery__frame">
+              <img
+                src="{{ url_for('static', path='images/zeus-capabilities.png') }}?v={{ asset_version }}"
+                alt="Zeus feature concept board showing swarm orchestration, memory, and parity monitoring"
+                loading="lazy"
+              />
+            </figure>
+          </article>
+        </section>
+
+        <section class="zeus-ribbon">
+          <article class="zeus-ribbon__item">
+            <p class="eyebrow">Thread</p>
+            <h3>Stay inside the work</h3>
+            <p>The command lane should feel like the main place to think, steer, and verify.</p>
+          </article>
+          <article class="zeus-ribbon__item">
+            <p class="eyebrow">Workflow</p>
+            <h3>Prompt to proof</h3>
+            <p>The route from request to code edit to verification should stay readable in one glance.</p>
+          </article>
+          <article class="zeus-ribbon__item">
+            <p class="eyebrow">Swarm</p>
+            <h3>Directed multi-role delivery</h3>
+            <p>Conductor, engineers, testers, and auditors should feel coordinated and staged, not scattered.</p>
+          </article>
+          <article class="zeus-ribbon__item">
+            <p class="eyebrow">Monitoring</p>
+            <h3>Always-on pressure</h3>
+            <p>Parity loops, browser runs, and checkpoint wakeups should feel ambient and reliable.</p>
+          </article>
+        </section>
+
+        <section class="horizon" id="horizon-panel">
           <div class="horizon-copy">
             <p class="eyebrow">Active Horizon</p>
             <h2 id="brief-headline">Establishing live mission context...</h2>
             <p id="brief-summary" class="panel-lede">
-              Zues is syncing lane state, approvals, and handoff posture so the live field settles
+              Zeus is syncing lane state, approvals, and handoff posture so the live field settles
               before you act.
             </p>
             <div id="brief-actions" class="brief-actions"></div>
@@ -86,12 +212,89 @@
           </div>
         </section>
 
-        <div class="workspace-grid chat-grid">
+        <section class="workspace-shell" id="workspace-surface">
+          <div class="workspace-shell__bar">
+            <div class="workspace-shell__tabs" aria-label="Workspace views">
+              <span class="workspace-shell__tab is-active">zeus.thread</span>
+              <span class="workspace-shell__tab">openzues/app.py</span>
+              <span class="workspace-shell__tab">parity.checkpoint</span>
+            </div>
+            <div class="workspace-shell__utilities">
+              <span class="workspace-shell__utility">Local-first</span>
+              <span class="workspace-shell__utility">Windows desktop</span>
+              <span class="workspace-shell__utility">Parity active</span>
+            </div>
+          </div>
+
+          <div class="workspace-grid chat-grid">
+            <aside class="workspace-nav">
+              <div class="workspace-nav__panel">
+                <div class="workspace-nav__group">
+                  <p class="workspace-nav__label">Workspace</p>
+                  <a class="workspace-nav__item is-active" href="#control-chat-form">
+                    <span>ZT</span>
+                    <div>
+                      <strong>Zeus Thread</strong>
+                      <small>Prompt, checkpoint, proof</small>
+                    </div>
+                  </a>
+                  <a class="workspace-nav__item" href="#mission-form">
+                    <span>MR</span>
+                    <div>
+                      <strong>Mission Rail</strong>
+                      <small>Launch and runtime posture</small>
+                    </div>
+                  </a>
+                  <a class="workspace-nav__item" href="#horizon-panel">
+                    <span>HZ</span>
+                    <div>
+                      <strong>Horizon</strong>
+                      <small>Lane field and radar</small>
+                    </div>
+                  </a>
+                </div>
+
+                <div class="workspace-nav__group">
+                  <p class="workspace-nav__label">Operations</p>
+                  <a class="workspace-nav__item" href="#backstage-shell">
+                    <span>MF</span>
+                    <div>
+                      <strong>Mission Fleet</strong>
+                      <small>Runs, decks, and backlog</small>
+                    </div>
+                  </a>
+                  <a class="workspace-nav__item" href="#ops-shell">
+                    <span>OM</span>
+                    <div>
+                      <strong>Ops Mesh</strong>
+                      <small>Schedules, routes, skillbooks</small>
+                    </div>
+                  </a>
+                  <a class="workspace-nav__item" href="#activity-shell">
+                    <span>AL</span>
+                    <div>
+                      <strong>Activity Ledger</strong>
+                      <small>Events and checkpoints</small>
+                    </div>
+                  </a>
+                </div>
+
+                <div class="workspace-nav__status">
+                  <p class="workspace-nav__label">Posture</p>
+                  <strong>Chat, code, swarm, and health in one frame</strong>
+                  <p>
+                    Use the thread for direction, the rail for launches, and crack open the deeper
+                    decks only when you need the dense view.
+                  </p>
+                </div>
+              </div>
+            </aside>
+
           <section class="primary-column">
             <section class="deck-section transcript-shell">
               <div class="section-header transcript-header">
                 <div>
-                  <p class="eyebrow">Ops Transcript</p>
+                  <p class="eyebrow">Zeus Thread</p>
                   <h2 id="chat-headline">Preparing transcript surface...</h2>
                 </div>
                 <p id="chat-summary" class="panel-lede">
@@ -102,7 +305,7 @@
                <div id="chat-presence" class="transcript-presence"></div>
                <div id="ops-chat" class="ops-chat"></div>
                <form id="control-chat-form" class="chat-composer">
-                 <label class="sr-only" for="control-chat-input">Chat with Zues</label>
+                 <label class="sr-only" for="control-chat-input">Chat with Zeus</label>
                  <div class="chat-composer-row">
                    <textarea
                      id="control-chat-input"
@@ -111,7 +314,7 @@
                      placeholder="Describe the next thing you want built, fixed, or verified"
                      required
                    ></textarea>
-                   <button type="submit">Send to Zues</button>
+                   <button type="submit">Send to Zeus</button>
                  </div>
                  <p id="control-chat-hint" class="chat-composer-hint">
                    Chat can decide when to wait, resume, recover, harden, or launch without making
@@ -968,7 +1171,12 @@
                       </label>
                     </div>
 
-                    <button type="submit">Bootstrap Workspace</button>
+                    <div class="chat-actions">
+                      <button id="onboarding-wizard-trigger" type="button" class="ghost">
+                        Guide Missing Fields
+                      </button>
+                      <button type="submit">Bootstrap Workspace</button>
+                    </div>
                   </form>
 
                   <div id="onboarding-result" class="stack"></div>
@@ -1106,7 +1314,7 @@
                   <h2>Launch the next autonomous run</h2>
                 </div>
                 <p class="panel-lede">
-                  Launch beside the transcript so the main surface stays focused on what Zues is
+                  Launch beside the transcript so the main surface stays focused on what Zeus is
                   seeing and doing.
                 </p>
               </div>
@@ -1245,7 +1453,7 @@
                   <h3>Load a proven mission shape</h3>
                   <p class="panel-lede">
                     Start with a shipping loop, rescue pass, codebase map, or UX polish run, then let
-                    OpenZues keep Codex moving until it hits a checkpoint or needs judgment.
+                    OpenZues keeps Codex moving until it hits a checkpoint or needs judgment.
                   </p>
                 </div>
                 <div id="mission-presets" class="preset-strip"></div>
@@ -1337,7 +1545,7 @@
                     <section class="stack">
                       <div class="cortex-subhead">
                         <p class="eyebrow">Learning Promotions</p>
-                        <h3>What Zues is now promoting into saved defaults</h3>
+                        <h3>What Zeus is now promoting into saved defaults</h3>
                       </div>
                       <div id="hermes-doctor-promotions" class="stack library-list"></div>
                     </section>
@@ -1371,6 +1579,7 @@
             </details>
           </aside>
         </div>
+        </section>
       </main>
     </div>
 

@@ -25,9 +25,9 @@ from openzues.services.gateway_method_policy import (
     list_known_gateway_methods,
     normalize_plugin_gateway_method_scope,
     resolve_gateway_method_scope,
+    resolve_gateway_method_scope_with_plugin_scope,
     resolve_least_privilege_operator_scopes_for_method,
     resolve_required_operator_scope_for_method,
-    resolve_gateway_method_scope_with_plugin_scope,
 )
 
 _OPENCLAW_MAIN_ROOT = Path(__file__).resolve().parents[2] / "openclaw-main"
@@ -121,9 +121,9 @@ def test_gateway_method_policy_mirrors_openclaw_operator_scope_groups() -> None:
     } == {
         APPROVALS_GATEWAY_METHOD_SCOPE: 9,
         PAIRING_GATEWAY_METHOD_SCOPE: 12,
-        READ_GATEWAY_METHOD_SCOPE: 47,
+        READ_GATEWAY_METHOD_SCOPE: 48,
         WRITE_GATEWAY_METHOD_SCOPE: 28,
-        ADMIN_GATEWAY_METHOD_SCOPE: 24,
+        ADMIN_GATEWAY_METHOD_SCOPE: 25,
         TALK_SECRETS_GATEWAY_METHOD_SCOPE: 0,
     }
     assert resolve_gateway_method_scope("status") == READ_GATEWAY_METHOD_SCOPE
@@ -251,6 +251,7 @@ def test_gateway_method_policy_covers_openclaw_channels_handlers() -> None:
     )
 
     assert channel_methods == {
+        "channels.start",
         "channels.logout",
         "channels.status",
     }
@@ -263,7 +264,10 @@ def test_gateway_method_policy_covers_openclaw_channels_handlers() -> None:
         method
         for method in channel_methods
         if resolve_gateway_method_scope(method) == ADMIN_GATEWAY_METHOD_SCOPE
-    } == {"channels.logout"}
+    } == {
+        "channels.logout",
+        "channels.start",
+    }
 
 
 def test_gateway_method_policy_covers_openclaw_chat_handlers() -> None:
@@ -406,7 +410,7 @@ def test_normalize_plugin_gateway_method_scope_matches_openclaw_reserved_admin_p
     assert reserved_coerced.coerced_to_reserved_admin is True
 
 
-def test_resolve_gateway_method_scope_with_plugin_scope_honors_plugin_methods_and_reserved_prefixes() -> None:
+def test_plugin_scope_resolution_honors_methods_and_reserved_prefixes() -> None:
     assert (
         resolve_gateway_method_scope_with_plugin_scope(
             "browser.request",
@@ -426,22 +430,42 @@ def test_resolve_gateway_method_scope_with_plugin_scope_honors_plugin_methods_an
 
 def test_gateway_authorization_helpers_match_openclaw_operator_scope_behavior() -> None:
     assert resolve_required_operator_scope_for_method("status") == READ_GATEWAY_METHOD_SCOPE
-    assert resolve_required_operator_scope_for_method("browser.request", WRITE_GATEWAY_METHOD_SCOPE) == (
+    assert resolve_required_operator_scope_for_method(
+        "browser.request",
+        WRITE_GATEWAY_METHOD_SCOPE,
+    ) == (
         WRITE_GATEWAY_METHOD_SCOPE
     )
-    assert resolve_required_operator_scope_for_method("wizard.custom", READ_GATEWAY_METHOD_SCOPE) == (
+    assert resolve_required_operator_scope_for_method(
+        "wizard.custom",
+        READ_GATEWAY_METHOD_SCOPE,
+    ) == (
         ADMIN_GATEWAY_METHOD_SCOPE
     )
 
-    assert resolve_least_privilege_operator_scopes_for_method("status") == [READ_GATEWAY_METHOD_SCOPE]
+    assert resolve_least_privilege_operator_scopes_for_method("status") == [
+        READ_GATEWAY_METHOD_SCOPE
+    ]
     assert resolve_least_privilege_operator_scopes_for_method("node.pending.drain") == []
-    assert resolve_least_privilege_operator_scopes_for_method("browser.request", WRITE_GATEWAY_METHOD_SCOPE) == [
+    assert resolve_least_privilege_operator_scopes_for_method(
+        "browser.request",
+        WRITE_GATEWAY_METHOD_SCOPE,
+    ) == [
         WRITE_GATEWAY_METHOD_SCOPE
     ]
 
-    assert authorize_operator_scopes_for_method("health", [READ_GATEWAY_METHOD_SCOPE]).allowed is True
-    assert authorize_operator_scopes_for_method("health", [WRITE_GATEWAY_METHOD_SCOPE]).allowed is True
-    assert authorize_operator_scopes_for_method("config.patch", [ADMIN_GATEWAY_METHOD_SCOPE]).allowed is True
+    assert (
+        authorize_operator_scopes_for_method("health", [READ_GATEWAY_METHOD_SCOPE]).allowed
+        is True
+    )
+    assert (
+        authorize_operator_scopes_for_method("health", [WRITE_GATEWAY_METHOD_SCOPE]).allowed
+        is True
+    )
+    assert (
+        authorize_operator_scopes_for_method("config.patch", [ADMIN_GATEWAY_METHOD_SCOPE]).allowed
+        is True
+    )
 
     write_auth = authorize_operator_scopes_for_method("send", [READ_GATEWAY_METHOD_SCOPE])
     assert write_auth.allowed is False
@@ -469,7 +493,10 @@ def test_gateway_authorization_helpers_match_openclaw_operator_scope_behavior() 
     assert reserved_plugin_auth.allowed is False
     assert reserved_plugin_auth.missing_scope == ADMIN_GATEWAY_METHOD_SCOPE
 
-    unknown_auth = authorize_operator_scopes_for_method("unknown.method", [READ_GATEWAY_METHOD_SCOPE])
+    unknown_auth = authorize_operator_scopes_for_method(
+        "unknown.method",
+        [READ_GATEWAY_METHOD_SCOPE],
+    )
     assert unknown_auth.allowed is False
     assert unknown_auth.missing_scope == ADMIN_GATEWAY_METHOD_SCOPE
 
@@ -528,14 +555,18 @@ def test_gateway_method_policy_covers_openclaw_node_and_voice_handlers() -> None
     }
 
     assert {
-        method for method in extracted_methods if resolve_gateway_method_scope(method) == READ_GATEWAY_METHOD_SCOPE
+        method
+        for method in extracted_methods
+        if resolve_gateway_method_scope(method) == READ_GATEWAY_METHOD_SCOPE
     } == {
         "node.describe",
         "node.list",
         "voicewake.get",
     }
     assert {
-        method for method in extracted_methods if resolve_gateway_method_scope(method) == WRITE_GATEWAY_METHOD_SCOPE
+        method
+        for method in extracted_methods
+        if resolve_gateway_method_scope(method) == WRITE_GATEWAY_METHOD_SCOPE
     } == {
         "node.invoke",
         "node.pending.enqueue",
@@ -585,14 +616,18 @@ def test_gateway_method_policy_covers_openclaw_talk_and_tts_handlers() -> None:
     }
 
     assert {
-        method for method in extracted_methods if resolve_gateway_method_scope(method) == READ_GATEWAY_METHOD_SCOPE
+        method
+        for method in extracted_methods
+        if resolve_gateway_method_scope(method) == READ_GATEWAY_METHOD_SCOPE
     } == {
         "talk.config",
         "tts.providers",
         "tts.status",
     }
     assert {
-        method for method in extracted_methods if resolve_gateway_method_scope(method) == WRITE_GATEWAY_METHOD_SCOPE
+        method
+        for method in extracted_methods
+        if resolve_gateway_method_scope(method) == WRITE_GATEWAY_METHOD_SCOPE
     } == {
         "talk.mode",
         "talk.speak",

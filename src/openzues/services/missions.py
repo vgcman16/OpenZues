@@ -3869,21 +3869,23 @@ class MissionService:
         )[0]
 
     async def _reuse_thread_from_session_key(self, payload: MissionCreate) -> MissionCreate:
-        if payload.thread_id or not payload.session_key:
+        session_key = payload.session_key
+        if payload.thread_id or not session_key:
             return payload
-        original_session_key = payload.session_key
+        original_session_key = session_key
         canonical_session_key = canonicalize_session_key(original_session_key)
-        if canonical_session_key is not None and canonical_session_key != payload.session_key:
+        if canonical_session_key is not None and canonical_session_key != session_key:
             payload = payload.model_copy(update={"session_key": canonical_session_key})
-        reused_session_key = payload.session_key
+            session_key = canonical_session_key
+        reused_session_key = session_key
         latest = await self.database.get_latest_mission_by_session_key(
-            payload.session_key,
+            session_key,
             instance_id=payload.instance_id,
             require_thread=True,
         )
         if latest is None:
             latest_thread_child = await self._select_reusable_thread_child_mission(
-                payload.session_key,
+                session_key,
                 instance_id=payload.instance_id,
             )
             if latest_thread_child is not None:
@@ -3896,7 +3898,7 @@ class MissionService:
         if latest is None:
             parent_session_key = resolve_thread_parent_session_key(original_session_key)
             canonical_parent_session_key = canonicalize_session_key(parent_session_key)
-            if canonical_parent_session_key and canonical_parent_session_key != payload.session_key:
+            if canonical_parent_session_key and canonical_parent_session_key != session_key:
                 latest = await self.database.get_latest_mission_by_session_key(
                     canonical_parent_session_key,
                     instance_id=payload.instance_id,

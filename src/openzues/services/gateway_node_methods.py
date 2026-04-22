@@ -88,7 +88,7 @@ from openzues.services.session_keys import (
 )
 
 _NODE_PENDING_WORK_TYPES = {"status.request", "location.request"}
-_NODE_PENDING_WORK_PRIORITIES = {"normal", "high"}
+_NODE_PENDING_WORK_PRIORITIES = {"default", "normal", "high"}
 _CANVAS_CAPABILITY_PATH_PREFIX = "/__openclaw__/cap"
 _CANVAS_CAPABILITY_TTL_MS = 10 * 60_000
 _SESSION_LABEL_MAX_LENGTH = 512
@@ -181,6 +181,7 @@ class GatewayNodeMethodService:
         skill_config_service: GatewaySkillConfigService | None = None,
         skill_install_service: GatewaySkillInstallService | None = None,
         skill_status_service: GatewaySkillStatusService | None = None,
+        send_channel_message_service: Callable[..., Awaitable[dict[str, object]]] | None = None,
         chat_send_service: Callable[..., Awaitable[dict[str, object]]] | None = None,
         chat_abort_service: Callable[..., Awaitable[dict[str, object]]] | None = None,
         sleep: Callable[[float], Awaitable[None]] | None = None,
@@ -256,6 +257,7 @@ class GatewayNodeMethodService:
         self._skill_status_service = skill_status_service or GatewaySkillStatusService(
             skill_config_service=self._skill_config_service
         )
+        self._send_channel_message_service = send_channel_message_service
         self._chat_send_service = chat_send_service
         self._chat_abort_service = chat_abort_service
         self._gateway_chat_run_ids_by_session_key: dict[str, str] = {}
@@ -1660,6 +1662,7 @@ class GatewayNodeMethodService:
                 ),
             )
             to = _require_string(payload.get("to"), label="to")
+            trimmed_to = to.strip()
             message = (
                 _require_string(payload.get("message"), label="message")
                 if "message" in payload and payload.get("message") is not None
@@ -1688,22 +1691,46 @@ class GatewayNodeMethodService:
                 reject_webchat_as_internal_only=True,
             )
             _validate_gateway_outbound_target(resolved_channel, to)
-            if "accountId" in payload and payload.get("accountId") is not None:
-                _require_string(payload.get("accountId"), label="accountId")
-            if "agentId" in payload and payload.get("agentId") is not None:
-                _require_string(payload.get("agentId"), label="agentId")
-            if "threadId" in payload and payload.get("threadId") is not None:
-                _require_string(payload.get("threadId"), label="threadId")
-            if "sessionKey" in payload and payload.get("sessionKey") is not None:
-                _require_string(payload.get("sessionKey"), label="sessionKey")
-            _require_non_empty_string(
+            account_id = _optional_normalized_string(payload.get("accountId"), label="accountId")
+            agent_id = _optional_normalized_string(payload.get("agentId"), label="agentId")
+            explicit_thread_id = _optional_normalized_string(
+                payload.get("threadId"),
+                label="threadId",
+            )
+            source_session_key = _optional_normalized_string(
+                payload.get("sessionKey"),
+                label="sessionKey",
+            )
+            idempotency_key = _require_non_empty_string(
                 payload.get("idempotencyKey"),
                 label="idempotencyKey",
             )
-            raise GatewayNodeMethodError(
-                code="UNAVAILABLE",
-                message="send is unavailable until channel-target outbound delivery is wired",
-                status_code=503,
+            if media_url.strip() or media_urls:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message=(
+                        "send media is unavailable until channel-target media delivery is wired"
+                    ),
+                    status_code=503,
+                )
+            if self._send_channel_message_service is None:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message="send is unavailable until channel-target outbound delivery is wired",
+                    status_code=503,
+                )
+            effective_thread_id = explicit_thread_id
+            if effective_thread_id is None and source_session_key is not None:
+                effective_thread_id = parse_thread_session_suffix(source_session_key).thread_id
+            return await self._send_channel_message_service(
+                channel=resolved_channel,
+                to=trimmed_to,
+                message=message,
+                account_id=account_id,
+                agent_id=agent_id,
+                thread_id=effective_thread_id,
+                session_key=source_session_key,
+                idempotency_key=idempotency_key,
             )
 
         if resolved_method == "poll":
@@ -3921,8 +3948,16 @@ class GatewayNodeMethodService:
                     payload.get("modelIdentifier"),
                     label="modelIdentifier",
                 ),
-                caps=_optional_string_list(payload.get("caps"), label="caps"),
-                commands=_optional_string_list(payload.get("commands"), label="commands"),
+                caps=(
+                    _optional_string_list(payload.get("caps"), label="caps")
+                    if "caps" in payload
+                    else None
+                ),
+                commands=(
+                    _optional_string_list(payload.get("commands"), label="commands")
+                    if "commands" in payload
+                    else None
+                ),
                 remote_ip=_optional_non_empty_string(payload.get("remoteIp"), label="remoteIp"),
                 silent=_optional_bool(payload.get("silent"), label="silent"),
                 now_ms=_timestamp_ms(now_ms),
@@ -4957,9 +4992,14 @@ class GatewayNodeMethodService:
         requester: GatewayNodeMethodRequester,
     ) -> str:
         node_id = str(requester.node_id or "").strip()
-        if not node_id or self.registry.get(node_id) is None:
-            raise ValueError(f"{method} requires a connected device identity")
-        return node_id
+        if node_id:
+            if self.registry.get(node_id) is None:
+                raise ValueError(f"{method} requires a connected device identity")
+            return node_id
+        client_id = str(requester.client_id or "").strip()
+        if client_id and self.registry.get(client_id) is not None:
+            return client_id
+        raise ValueError(f"{method} requires a connected device identity")
 
     def _remember_gateway_chat_run(
         self,
@@ -7120,6 +7160,8 @@ def _merge_known_node_payload(
     persisted: dict[str, Any],
     observed: dict[str, Any],
 ) -> dict[str, Any]:
+    observed_caps = observed.get("caps")
+    observed_commands = observed.get("commands")
     return {
         "nodeId": observed["nodeId"],
         "displayName": observed.get("displayName") or persisted.get("displayName"),
@@ -7133,8 +7175,12 @@ def _merge_known_node_payload(
         "deviceFamily": observed.get("deviceFamily") or persisted.get("deviceFamily"),
         "modelIdentifier": observed.get("modelIdentifier") or persisted.get("modelIdentifier"),
         "pathEnv": observed.get("pathEnv"),
-        "caps": observed.get("caps") or persisted.get("caps") or [],
-        "commands": observed.get("commands") or persisted.get("commands") or [],
+        "caps": observed_caps if observed_caps is not None else persisted.get("caps") or [],
+        "commands": (
+            observed_commands
+            if observed_commands is not None
+            else persisted.get("commands") or []
+        ),
         "permissions": (
             observed.get("permissions")
             if observed.get("permissions") is not None

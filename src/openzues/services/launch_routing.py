@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 from pathlib import Path
 
 from openzues.database import Database, utcnow
@@ -10,6 +11,7 @@ from openzues.schemas import (
     LaunchRouteBindingMode,
     LaunchRouteConversationReuseView,
     LaunchRouteMatch,
+    LaunchRoutePolicy,
     LaunchRouteStatus,
     LaunchRouteView,
     TaskBlueprintView,
@@ -238,7 +240,9 @@ class LaunchRoutingService:
             operator_id=operator_id,
             conversation_target=conversation_target,
         )
-        last_route_policy = "main" if session_key == main_session_key else "session"
+        last_route_policy: LaunchRoutePolicy = (
+            "main" if session_key == main_session_key else "session"
+        )
 
         warnings: list[str] = []
         matched_by: LaunchRouteMatch = "unavailable"

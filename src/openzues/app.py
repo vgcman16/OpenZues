@@ -86,7 +86,9 @@ from openzues.schemas import (
     OnboardingBootstrapResultView,
     OperatorCreate,
     OperatorCredentialView,
+    OperatorView,
     OutboundDeliveryReplayBatchView,
+    OutboundDeliveryView,
     PlaybookCreate,
     PlaybookRun,
     PlaybookRunResult,
@@ -1611,8 +1613,11 @@ def build_operator_status_payload(
             "total_count": len(dashboard.instances),
         },
         "browser_posture": (
-            dashboard.browser_posture.model_dump(mode="json")
-            if getattr(dashboard, "browser_posture", None) is not None
+            browser_posture.model_dump(mode="json")
+            if isinstance(
+                browser_posture := getattr(dashboard, "browser_posture", None),
+                BrowserPostureView,
+            )
             else None
         ),
         "gateway_capability": dashboard.gateway_capability.model_dump(mode="json"),
@@ -1963,7 +1968,7 @@ def create_app(
         return (await active_hermes_platform_service.get_update_view()).model_dump(mode="json")
 
     async def load_setup_wizard_session() -> dict[str, object]:
-        return (await active_setup_service.get_wizard_session()).model_dump(mode="json")
+        return dict(await active_setup_service.load_wizard_session_payload())
 
     async def save_setup_wizard_session(patch: dict[str, object]) -> dict[str, object]:
         return (
@@ -1995,6 +2000,7 @@ def create_app(
             gateway_identity_service=active_gateway_identity_service,
             logs_service=active_gateway_logs_service,
             models_service=GatewayModelsService(list_instance_views=active_manager.list_views),
+            send_channel_message_service=active_ops_mesh_service.send_direct_channel_message,
             chat_send_service=submit_gateway_chat_message,
             chat_abort_service=abort_gateway_chat_run,
             create_task_blueprint=getattr(active_ops_mesh_service, "create_task_blueprint", None),
@@ -2331,25 +2337,47 @@ def create_app(
             gateway_capability,
             runtime_preferences,
             gateway_bootstrap,
-        ) = await asyncio.gather(
-            active_database.list_projects(),
-            active_database.list_playbooks(),
-            active_ops_mesh_service.list_task_blueprint_views(),
-            active_ops_mesh_service.list_vault_secret_views(),
-            active_ops_mesh_service.list_integration_views(),
-            active_ops_mesh_service.list_notification_route_views(),
-            active_ops_mesh_service.list_outbound_delivery_views(),
-            active_ops_mesh_service.list_skill_pin_views(),
-            active_ops_mesh_service.list_lane_snapshot_views(),
-            active_access_service.list_team_views(),
-            active_access_service.list_operator_views(),
-            active_remote_ops_service.list_remote_request_views(),
-            build_dashboard_events(),
-            active_manager.list_views(),
-            active_mission_service.list_views(),
-            build_gateway_capability(),
-            load_saved_runtime_preferences(active_database),
-            active_gateway_bootstrap_service.get_view(),
+        ) = cast(
+            tuple[
+                list[dict[str, Any]],
+                list[dict[str, Any]],
+                list[TaskBlueprintView],
+                list[VaultSecretView],
+                list[IntegrationView],
+                list[NotificationRouteView],
+                list[OutboundDeliveryView],
+                list[SkillPinView],
+                list[LaneSnapshotView],
+                list[TeamView],
+                list[OperatorView],
+                list[RemoteRequestView],
+                list[EventView],
+                list[InstanceView],
+                list[MissionView],
+                GatewayCapabilityView,
+                tuple[str, str],
+                GatewayBootstrapView,
+            ],
+            await asyncio.gather(
+                active_database.list_projects(),
+                active_database.list_playbooks(),
+                active_ops_mesh_service.list_task_blueprint_views(),
+                active_ops_mesh_service.list_vault_secret_views(),
+                active_ops_mesh_service.list_integration_views(),
+                active_ops_mesh_service.list_notification_route_views(),
+                active_ops_mesh_service.list_outbound_delivery_views(),
+                active_ops_mesh_service.list_skill_pin_views(),
+                active_ops_mesh_service.list_lane_snapshot_views(),
+                active_access_service.list_team_views(),
+                active_access_service.list_operator_views(),
+                active_remote_ops_service.list_remote_request_views(),
+                build_dashboard_events(),
+                active_manager.list_views(),
+                active_mission_service.list_views(),
+                build_gateway_capability(),
+                load_saved_runtime_preferences(active_database),
+                active_gateway_bootstrap_service.get_view(),
+            ),
         )
         instances = await active_manager.list_views()
         projects = [
@@ -3233,6 +3261,55 @@ def create_app(
         try:
             return await active_onboarding_service.bootstrap(payload)
         except (KeyError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @fastapi_app.post("/api/onboarding/wizard/start")
+    async def start_onboarding_wizard(
+        request: Request,
+        payload: SetupWizardSessionUpdate,
+    ) -> dict[str, Any]:
+        await require_management_access(request, "team.manage")
+        try:
+            await active_setup_service.save_wizard_session(payload)
+            return await active_gateway_wizard_service.start(
+                mode=payload.mode,
+                workspace=payload.project_path,
+            )
+        except (KeyError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @fastapi_app.post("/api/onboarding/wizard/next")
+    async def advance_onboarding_wizard(
+        request: Request,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        await require_management_access(request, "team.manage")
+        session_id = str(payload.get("sessionId") or "").strip()
+        answer = payload.get("answer")
+        if not session_id:
+            raise HTTPException(status_code=400, detail="sessionId is required")
+        if not isinstance(answer, dict):
+            raise HTTPException(status_code=400, detail="answer is required")
+        try:
+            return await active_gateway_wizard_service.next(
+                session_id=session_id,
+                answer=answer,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @fastapi_app.post("/api/onboarding/wizard/cancel")
+    async def cancel_onboarding_wizard(
+        request: Request,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        await require_management_access(request, "team.manage")
+        session_id = str(payload.get("sessionId") or "").strip()
+        if not session_id:
+            raise HTTPException(status_code=400, detail="sessionId is required")
+        try:
+            return await active_gateway_wizard_service.cancel(session_id=session_id)
+        except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @fastapi_app.get("/api/setup")

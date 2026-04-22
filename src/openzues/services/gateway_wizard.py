@@ -27,12 +27,14 @@ def _require_non_empty_text(value: object, *, label: str) -> str:
 class _PendingWizardStep:
     field: str
     payload: dict[str, object]
+    optional: bool = False
 
 
 @dataclass(slots=True)
 class _GatewayWizardSession:
     base: dict[str, object]
     patch: dict[str, object] = field(default_factory=dict)
+    completed_optional_fields: set[str] = field(default_factory=set)
     status: str = "running"
     error: str | None = None
     pending_step: _PendingWizardStep | None = None
@@ -50,6 +52,8 @@ def _text_step(
     message: str,
     placeholder: str | None = None,
     initial_value: object = None,
+    required: bool = True,
+    input_type: str | None = None,
 ) -> _PendingWizardStep:
     step_id = str(uuid4())
     payload: dict[str, object] = {
@@ -61,10 +65,14 @@ def _text_step(
     }
     if placeholder is not None:
         payload["placeholder"] = placeholder
+    if not required:
+        payload["required"] = False
+    if input_type is not None:
+        payload["inputType"] = input_type
     initial_text = _string_or_none(initial_value)
     if initial_text is not None:
         payload["initialvalue"] = initial_text
-    return _PendingWizardStep(field=field, payload=payload)
+    return _PendingWizardStep(field=field, payload=payload, optional=not required)
 
 
 def _select_step(
@@ -139,11 +147,16 @@ class GatewayWizardService:
             if pending is None or str(pending.payload.get("id") or "") != step_id:
                 raise ValueError("wizard: no pending step")
             session.pending_step = None
-            session.patch[pending.field] = _coerce_answer_value(
-                pending.field,
-                answer.get("value"),
-            )
-            _apply_dependent_defaults(session, pending.field)
+            if pending.optional and _string_or_none(answer.get("value")) is None:
+                session.patch.pop(pending.field, None)
+                session.completed_optional_fields.add(pending.field)
+            else:
+                session.completed_optional_fields.discard(pending.field)
+                session.patch[pending.field] = _coerce_answer_value(
+                    pending.field,
+                    answer.get("value"),
+                )
+                _apply_dependent_defaults(session, pending.field)
         result = await self._advance(session_id, session)
         if result.get("done") is True:
             self._sessions.pop(session_id, None)
@@ -224,6 +237,27 @@ def _build_next_step(session: _GatewayWizardSession) -> _PendingWizardStep | Non
             initial_value="local",
         )
 
+    flow = _normalized_flow_value(session.merged_value("flow"))
+    if mode == "local" and flow is None:
+        return _select_step(
+            field="flow",
+            title="Setup Flow",
+            message="Choose how deeply to stage the local bootstrap posture.",
+            options=[
+                {
+                    "value": "quickstart",
+                    "label": "QuickStart",
+                    "hint": "Reuse the current control plane and tune the rest later.",
+                },
+                {
+                    "value": "advanced",
+                    "label": "Advanced",
+                    "hint": "Stage the full local control plane posture before bootstrap.",
+                },
+            ],
+            initial_value="quickstart",
+        )
+
     project_path = _string_or_none(session.merged_value("project_path"))
     if project_path is None:
         return _text_step(
@@ -233,14 +267,42 @@ def _build_next_step(session: _GatewayWizardSession) -> _PendingWizardStep | Non
             placeholder="C:/workspace",
         )
 
-    if mode == "local":
-        operator_name = _string_or_none(session.merged_value("operator_name"))
-        if operator_name is None:
+    operator_name = _string_or_none(session.merged_value("operator_name"))
+    if operator_name is None:
+        return _text_step(
+            field="operator_name",
+            title="Operator Name",
+            message=(
+                "Name the operator who should receive the remote ingress API key."
+                if mode == "remote"
+                else "Name the operator who should receive the local bootstrap access."
+            ),
+            placeholder="Remote Builder" if mode == "remote" else "Operator",
+        )
+
+    if mode == "remote":
+        operator_email = _string_or_none(session.merged_value("operator_email"))
+        if (
+            operator_email is None
+            and "operator_email" not in session.completed_optional_fields
+        ):
             return _text_step(
-                field="operator_name",
-                title="Operator Name",
-                message="Name the operator who should receive the local bootstrap access.",
-                placeholder="Operator",
+                field="operator_email",
+                title="Operator Email",
+                message="Optionally add an email for the remote API key handoff.",
+                placeholder="builder@example.com",
+                required=False,
+                input_type="email",
+            )
+
+        team_name = _string_or_none(session.merged_value("team_name"))
+        if team_name is None and "team_name" not in session.completed_optional_fields:
+            return _text_step(
+                field="team_name",
+                title="Operator Team",
+                message="Optionally group the remote operator under a team label.",
+                placeholder="Platform Ops",
+                required=False,
             )
 
     task_name = _string_or_none(session.merged_value("task_name"))
@@ -260,6 +322,11 @@ def _coerce_answer_value(field: str, value: object) -> str:
         if normalized is None:
             raise ValueError("mode must be local or remote")
         return normalized
+    if field == "flow":
+        normalized = _normalized_flow_value(value)
+        if normalized is None:
+            raise ValueError("flow must be quickstart or advanced")
+        return normalized
     if field == "project_path":
         return _require_non_empty_text(value, label="workspace")
     if field == "operator_name":
@@ -275,6 +342,16 @@ def _normalized_mode_value(value: object) -> str | None:
         return None
     lowered = text.lower()
     if lowered in {"local", "remote"}:
+        return lowered
+    return None
+
+
+def _normalized_flow_value(value: object) -> str | None:
+    text = _string_or_none(value)
+    if text is None:
+        return None
+    lowered = text.lower()
+    if lowered in {"quickstart", "advanced"}:
         return lowered
     return None
 

@@ -4,7 +4,7 @@ from typing import Any
 from uuid import uuid4
 
 from openzues.database import Database
-from openzues.services.session_keys import canonicalize_session_key
+from openzues.services.session_keys import canonicalize_session_key, parse_thread_session_suffix
 
 _MAX_COMPACTION_CHECKPOINTS = 25
 _CHECKPOINT_SUMMARY_LIMIT = 240
@@ -55,6 +55,7 @@ class GatewaySessionCompactionService:
         if not archived_rows:
             return {"ok": True, "key": canonical_key, "compacted": False, "kept": total_lines}
 
+        resolved_session_id = await self._resolve_compaction_session_id(canonical_key)
         first_kept_id = _row_id_or_none(kept_rows[0]) if kept_rows else None
         last_archived_id = _row_id_or_none(archived_rows[-1])
         if last_archived_id is None:
@@ -63,17 +64,17 @@ class GatewaySessionCompactionService:
         checkpoint = {
             "checkpointId": checkpoint_id,
             "sessionKey": canonical_key,
-            "sessionId": canonical_key,
+            "sessionId": resolved_session_id,
             "createdAt": now_ms,
             "reason": "manual",
             "summary": _checkpoint_summary(archived_rows),
             "firstKeptEntryId": str(first_kept_id) if first_kept_id is not None else None,
             "preCompaction": {
-                "sessionId": canonical_key,
+                "sessionId": resolved_session_id,
                 "entryId": str(last_archived_id) if last_archived_id is not None else None,
             },
             "postCompaction": {
-                "sessionId": canonical_key,
+                "sessionId": resolved_session_id,
                 "entryId": str(first_kept_id) if first_kept_id is not None else None,
             },
         }
@@ -115,6 +116,7 @@ class GatewaySessionCompactionService:
         if not archived_rows:
             return {"ok": True, "key": session_key, "compacted": False, "kept": total_lines}
 
+        resolved_session_id = await self._resolve_compaction_session_id(session_key)
         checkpoint_id = str(uuid4())
         summary_text = _checkpoint_summary(archived_rows) or _SUMMARY_COMPACTION_FALLBACK
         summary_content = _compaction_summary_message(summary_text)
@@ -145,17 +147,17 @@ class GatewaySessionCompactionService:
         checkpoint = {
             "checkpointId": checkpoint_id,
             "sessionKey": session_key,
-            "sessionId": session_key,
+            "sessionId": resolved_session_id,
             "createdAt": now_ms,
             "reason": "summary",
             "summary": summary_text,
             "firstKeptEntryId": str(summary_message_id),
             "preCompaction": {
-                "sessionId": session_key,
+                "sessionId": resolved_session_id,
                 "entryId": str(last_archived_id),
             },
             "postCompaction": {
-                "sessionId": session_key,
+                "sessionId": resolved_session_id,
                 "entryId": str(summary_message_id),
             },
         }
@@ -281,6 +283,17 @@ class GatewaySessionCompactionService:
         if checkpoint is None:
             raise ValueError(f"checkpoint not found: {checkpoint_id}")
         return {"ok": True, "key": canonical_key, "checkpoint": checkpoint}
+
+    async def _resolve_compaction_session_id(self, session_key: str) -> str:
+        mission = await self._database.get_latest_mission_by_session_key(
+            session_key,
+            require_thread=False,
+        )
+        mission_thread_id = _optional_string(mission.get("thread_id") if mission else None)
+        if mission_thread_id:
+            return mission_thread_id
+        parsed_session_key = parse_thread_session_suffix(session_key)
+        return _optional_string(parsed_session_key.thread_id) or session_key
 
 
 def _canonical_session_key(session_key: str) -> str:

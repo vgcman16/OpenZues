@@ -9,6 +9,7 @@ from openzues.services.session_keys import (
     build_launch_session_key,
     canonicalize_session_key,
     parse_thread_session_suffix,
+    to_agent_request_session_key,
 )
 
 _CONTROL_CHAT_PATH = "/api/control-chat"
@@ -27,6 +28,16 @@ class _CurrentControlChatSession:
     current_session_id: str | None
     current_mission: dict[str, Any] | None
     model: str
+
+
+@dataclass(frozen=True, slots=True)
+class _SessionIdMatchCandidate:
+    session: _CurrentControlChatSession
+    updated_at_ms: int | None
+    normalized_session_key: str
+    normalized_request_key: str
+    is_canonical_session_key: bool
+    is_structural: bool
 
 
 class GatewaySessionsService:
@@ -52,67 +63,63 @@ class GatewaySessionsService:
             raise ValueError(f'unknown agent id "{agent_id}"')
         sessions: list[dict[str, Any]] = []
         session = await self._current_control_chat_session()
-        current_session_canonical = canonicalize_session_key(session.current_session_key)
-        current_session_payload = await self._snapshot_session_payload(
-            session=session,
-            include_derived_titles=include_derived_titles,
-            include_last_message=include_last_message,
-            now_ms=now_ms,
-        )
-        if self._session_matches_visibility(
-            session,
-            include_global=include_global,
-            include_unknown=include_unknown,
-        ) and self._session_matches_agent(
-            session.current_session_key,
-            agent_id=agent_id,
-        ) and await self._session_matches_filters(
-            session.current_session_key,
-            label=label,
-            spawned_by=spawned_by,
-        ):
-            sessions.append(current_session_payload)
+        seen_session_keys: set[str] = set()
 
-        seen_session_keys = {
-            current_session_canonical
-            if current_session_canonical is not None
-            else session.current_session_key.lower()
-        }
-        metadata_rows = await self._database.list_gateway_session_metadata_rows()
-        for row in metadata_rows:
-            session_key = _string_or_none(row.get("session_key"))
-            if session_key is None:
-                continue
-            canonical_key = canonicalize_session_key(session_key) or session_key.lower()
+        async def append_snapshot_session(
+            candidate_session_key: str | None,
+            *,
+            known_session: _CurrentControlChatSession | None = None,
+        ) -> None:
+            raw_session_key = _string_or_none(candidate_session_key)
+            if raw_session_key is None:
+                return
+            canonical_key = canonicalize_session_key(raw_session_key) or raw_session_key.lower()
             if canonical_key in seen_session_keys:
-                continue
-            known_session = await self._session_for_key(session_key, default_session=session)
+                return
+            seen_session_keys.add(canonical_key)
+            resolved_session = known_session or await self._session_for_key(
+                raw_session_key,
+                default_session=session,
+            )
             if not self._session_matches_visibility(
-                known_session,
+                resolved_session,
                 include_global=include_global,
                 include_unknown=include_unknown,
             ):
-                continue
+                return
             if not self._session_matches_agent(
-                known_session.current_session_key,
+                resolved_session.current_session_key,
                 agent_id=agent_id,
             ):
-                continue
+                return
             if not await self._session_matches_filters(
-                known_session.current_session_key,
+                resolved_session.current_session_key,
                 label=label,
                 spawned_by=spawned_by,
             ):
-                continue
+                return
             sessions.append(
                 await self._snapshot_session_payload(
-                    session=known_session,
+                    session=resolved_session,
                     include_derived_titles=include_derived_titles,
                     include_last_message=include_last_message,
                     now_ms=now_ms,
                 )
             )
-            seen_session_keys.add(canonical_key)
+
+        await append_snapshot_session(session.current_session_key, known_session=session)
+
+        metadata_rows = await self._database.list_gateway_session_metadata_rows()
+        for row in metadata_rows:
+            await append_snapshot_session(_string_or_none(row.get("session_key")))
+
+        missions = await self._database.list_missions()
+        for mission in reversed(missions):
+            await append_snapshot_session(_string_or_none(mission.get("session_key")))
+
+        transcript_session_keys = await self._database.list_control_chat_session_keys()
+        for transcript_session_key in transcript_session_keys:
+            await append_snapshot_session(transcript_session_key)
 
         if active_minutes is not None:
             cutoff = now_ms - active_minutes * 60_000
@@ -139,6 +146,8 @@ class GatewaySessionsService:
                     )
                 )
             ]
+
+        sessions.sort(key=_snapshot_sort_key)
 
         if limit is not None:
             sessions = sessions[:limit]
@@ -740,41 +749,119 @@ class GatewaySessionsService:
         *,
         default_session: _CurrentControlChatSession,
     ) -> _CurrentControlChatSession | None:
-        if session_id == default_session.current_session_id:
-            return default_session
+        matches = await self._session_id_match_candidates(
+            session_id,
+            default_session=default_session,
+        )
+        if not matches:
+            return None
 
-        metadata_rows = await self._database.list_gateway_session_metadata_rows()
+        canonical_matches = _collapse_session_id_alias_matches(matches)
+        if len(canonical_matches) == 1:
+            return canonical_matches[0].session
+
+        structural_matches = [match for match in canonical_matches if match.is_structural]
+        selected_structural_match = _select_unique_freshest_session_id_match(structural_matches)
+        if selected_structural_match is not None:
+            return selected_structural_match.session
+        if len(structural_matches) > 1:
+            return None
+
+        selected_canonical_match = _select_unique_freshest_session_id_match(canonical_matches)
+        if selected_canonical_match is not None:
+            return selected_canonical_match.session
+        return None
+
+    async def _session_id_match_candidates(
+        self,
+        session_id: str,
+        *,
+        default_session: _CurrentControlChatSession,
+    ) -> list[_SessionIdMatchCandidate]:
+        normalized_session_id = _normalize_lookup_token(session_id)
+        if normalized_session_id is None:
+            return []
+
         seen_session_keys: set[str] = set()
-        for row in metadata_rows:
-            session_key = _string_or_none(row.get("session_key"))
-            if session_key is None or session_key in seen_session_keys:
-                continue
-            seen_session_keys.add(session_key)
-            known_session = await self._session_for_key(
-                session_key,
+        matches: list[_SessionIdMatchCandidate] = []
+
+        async def append_candidate(
+            session_key: str | None,
+            *,
+            known_session: _CurrentControlChatSession | None = None,
+        ) -> None:
+            raw_session_key = _string_or_none(session_key)
+            if raw_session_key is None or raw_session_key in seen_session_keys:
+                return
+            seen_session_keys.add(raw_session_key)
+            resolved_session = known_session or await self._session_for_key(
+                raw_session_key,
                 default_session=default_session,
             )
-            if known_session.current_session_id == session_id:
-                return known_session
+            if (
+                _normalize_lookup_token(resolved_session.current_session_id)
+                != normalized_session_id
+            ):
+                return
+            matches.append(
+                _build_session_id_match_candidate(
+                    session=resolved_session,
+                    updated_at_ms=await self._session_updated_at_ms_or_none(
+                        session=resolved_session
+                    ),
+                    normalized_session_id=normalized_session_id,
+                )
+            )
+
+        await append_candidate(
+            default_session.current_session_key,
+            known_session=default_session,
+        )
+
+        metadata_rows = await self._database.list_gateway_session_metadata_rows()
+        for row in metadata_rows:
+            await append_candidate(_string_or_none(row.get("session_key")))
 
         missions = await self._database.list_missions()
-        for mission in reversed(missions):
-            if _string_or_none(mission.get("thread_id")) != session_id:
-                continue
-            session_key = _string_or_none(mission.get("session_key"))
-            if session_key is None or session_key in seen_session_keys:
-                continue
-            return await self._session_for_key(session_key, default_session=default_session)
+        for mission in missions:
+            await append_candidate(_string_or_none(mission.get("session_key")))
 
         transcript_session_keys = await self._database.list_control_chat_session_keys()
-        for session_key in transcript_session_keys:
-            if session_key in seen_session_keys:
-                continue
-            parsed = parse_thread_session_suffix(session_key)
-            if _string_or_none(parsed.thread_id) != session_id:
-                continue
-            return await self._session_for_key(session_key, default_session=default_session)
-        return None
+        for transcript_session_key in transcript_session_keys:
+            await append_candidate(transcript_session_key)
+
+        return matches
+
+    async def _session_updated_at_ms_or_none(
+        self,
+        *,
+        session: _CurrentControlChatSession,
+    ) -> int | None:
+        mission_updated_at_ms = _iso8601_to_timestamp_ms(
+            session.current_mission.get("updated_at")
+            if session.current_mission is not None
+            else None
+        )
+        metadata_row = await self._database.get_gateway_session_metadata(
+            session.current_session_key
+        )
+        metadata_updated_at_ms = _iso8601_to_timestamp_ms(
+            metadata_row.get("updated_at") if metadata_row is not None else None
+        )
+        if mission_updated_at_ms is not None and metadata_updated_at_ms is not None:
+            return max(mission_updated_at_ms, metadata_updated_at_ms)
+        if mission_updated_at_ms is not None:
+            return mission_updated_at_ms
+        if metadata_updated_at_ms is not None:
+            return metadata_updated_at_ms
+
+        latest_messages = await self._database.list_control_chat_messages(
+            limit=1,
+            session_key=session.current_session_key,
+        )
+        if not latest_messages:
+            return None
+        return _iso8601_to_timestamp_ms(latest_messages[-1].get("created_at"))
 
     async def _metadata_lookup_session_key(
         self,
@@ -937,6 +1024,14 @@ def _bool_or_none(value: object) -> bool | None:
     return None
 
 
+def _snapshot_sort_key(session_payload: dict[str, Any]) -> tuple[int, str]:
+    updated_at = _int_or_none(session_payload.get("updatedAt"))
+    return (
+        -(updated_at if updated_at is not None else -1),
+        _string_or_none(session_payload.get("key")) or "",
+    )
+
+
 def _iso8601_to_timestamp_ms(value: object) -> int | None:
     text = _string_or_none(value)
     if text is None:
@@ -964,3 +1059,80 @@ def _message_payload(
     if message_id is not None:
         payload["id"] = message_id
     return payload
+
+
+def _normalize_lookup_token(value: object) -> str | None:
+    text = _string_or_none(value)
+    if text is None:
+        return None
+    return text.lower()
+
+
+def _build_session_id_match_candidate(
+    *,
+    session: _CurrentControlChatSession,
+    updated_at_ms: int | None,
+    normalized_session_id: str,
+) -> _SessionIdMatchCandidate:
+    raw_session_key = session.current_session_key.strip()
+    normalized_session_key = canonicalize_session_key(raw_session_key) or raw_session_key.lower()
+    request_session_key = to_agent_request_session_key(raw_session_key) or raw_session_key
+    normalized_request_key = request_session_key.strip().lower()
+    return _SessionIdMatchCandidate(
+        session=session,
+        updated_at_ms=updated_at_ms,
+        normalized_session_key=normalized_session_key,
+        normalized_request_key=normalized_request_key,
+        is_canonical_session_key=raw_session_key == normalized_session_key,
+        is_structural=(
+            normalized_session_key.endswith(f":{normalized_session_id}")
+            or normalized_request_key == normalized_session_id
+            or normalized_request_key.endswith(f":{normalized_session_id}")
+        ),
+    )
+
+
+def _collapse_session_id_alias_matches(
+    matches: list[_SessionIdMatchCandidate],
+) -> list[_SessionIdMatchCandidate]:
+    grouped: dict[str, list[_SessionIdMatchCandidate]] = {}
+    for match in matches:
+        grouped.setdefault(match.normalized_request_key, []).append(match)
+    collapsed: list[_SessionIdMatchCandidate] = []
+    for group in grouped.values():
+        if len(group) == 1:
+            collapsed.append(group[0])
+            continue
+        collapsed.append(
+            sorted(
+                group,
+                key=lambda match: (
+                    -_updated_at_sort_value(match.updated_at_ms),
+                    0 if match.is_canonical_session_key else 1,
+                    match.normalized_session_key,
+                ),
+            )[0]
+        )
+    return collapsed
+
+
+def _select_unique_freshest_session_id_match(
+    matches: list[_SessionIdMatchCandidate],
+) -> _SessionIdMatchCandidate | None:
+    if len(matches) == 1:
+        return matches[0]
+    sorted_matches = sorted(
+        matches,
+        key=lambda match: -_updated_at_sort_value(match.updated_at_ms),
+    )
+    freshest = sorted_matches[0]
+    second_freshest = sorted_matches[1]
+    if _updated_at_sort_value(freshest.updated_at_ms) > _updated_at_sort_value(
+        second_freshest.updated_at_ms
+    ):
+        return freshest
+    return None
+
+
+def _updated_at_sort_value(value: int | None) -> int:
+    return value if value is not None else 0

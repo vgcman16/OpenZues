@@ -97,6 +97,7 @@ from openzues.services.reflexes import build_reflex_deck
 from openzues.services.scope_enforcer import build_scope_assessment
 from openzues.services.session_keys import (
     build_launch_session_key,
+    normalize_optional_account_id,
     resolve_thread_session_keys,
 )
 from openzues.services.skillbook import materialize_skillbook_pins
@@ -543,6 +544,16 @@ def _saved_outbound_delivery_replay_message(delivery_row: dict[str, Any]) -> str
     return summary or None
 
 
+def _session_delivery_message_id(result: object) -> str | None:
+    if isinstance(result, dict):
+        candidate = result.get("messageId") or result.get("id")
+    else:
+        candidate = getattr(result, "messageId", None) or getattr(result, "id", None)
+    if candidate is None:
+        return None
+    return str(candidate).strip() or None
+
+
 def _serialize_task(row: dict[str, Any]) -> TaskBlueprintView:
     return TaskBlueprintView.model_validate(row)
 
@@ -617,6 +628,52 @@ def _serialize_outbound_delivery(row: dict[str, Any]) -> OutboundDeliveryView:
     )
 
 
+def _saved_outbound_delivery_route_view(
+    row: dict[str, Any],
+    *,
+    delivery_enabled: bool,
+    last_error: str | None = None,
+) -> NotificationRouteView:
+    route_scope = row.get("route_scope")
+    if not isinstance(route_scope, dict):
+        route_scope = {}
+    route_kind = str(route_scope.get("route_kind") or row.get("route_kind") or "").strip().lower()
+    if route_kind not in {"announce", "session", "webhook"}:
+        route_kind = "webhook"
+    route_name = (
+        str(route_scope.get("route_name") or row.get("route_name") or "").strip()
+        or "Saved delivery"
+    )
+    route_target = (
+        str(route_scope.get("route_target") or row.get("route_target") or "").strip()
+        or str(row.get("session_key") or "").strip()
+    )
+    secret_header_name = str(route_scope.get("secret_header_name") or "").strip() or None
+    vault_secret_id = route_scope.get("vault_secret_id")
+    has_secret = secret_header_name is not None or vault_secret_id is not None
+    return NotificationRouteView.model_validate(
+        {
+            "id": 0,
+            "name": route_name,
+            "kind": route_kind,
+            "target": route_target,
+            "events": [],
+            "conversation_target": row.get("conversation_target"),
+            "enabled": delivery_enabled,
+            "secret_header_name": secret_header_name,
+            "vault_secret_id": vault_secret_id,
+            "vault_secret_label": None,
+            "has_secret": has_secret,
+            "secret_preview": None,
+            "last_delivery_at": None,
+            "last_result": None,
+            "last_error": last_error,
+            "created_at": row.get("created_at") or utcnow(),
+            "updated_at": row.get("updated_at") or utcnow(),
+        }
+    )
+
+
 def _outbound_delivery_backoff_seconds(attempt_count: int) -> int:
     if attempt_count < 0:
         return 0
@@ -673,9 +730,25 @@ def _normalize_conversation_target(
     if target is None:
         return None
     try:
-        return ConversationTargetView.model_validate(target).model_dump(mode="json")
+        raw = (
+            target
+            if isinstance(target, ConversationTargetView)
+            else ConversationTargetView.model_validate(target)
+        )
     except Exception:
         return None
+    channel = str(raw.channel or "").strip().lower()
+    if not channel:
+        return None
+    account_id = normalize_optional_account_id(raw.account_id)
+    peer_id = str(raw.peer_id or "").strip().lower() or None
+    peer_kind = raw.peer_kind if peer_id else None
+    return ConversationTargetView(
+        channel=channel,
+        account_id=account_id,
+        peer_kind=peer_kind,
+        peer_id=peer_id if peer_kind else None,
+    ).model_dump(mode="json")
 
 
 def _conversation_target_key(
@@ -3055,30 +3128,18 @@ class OpsMeshService:
                         row
                     )
                 else:
-                    ok, delivery_error = await self._deliver_saved_session_like_outbound_delivery_row(
-                        row
+                    ok, delivery_error = (
+                        await self._deliver_saved_session_like_outbound_delivery_row(row)
                     )
                 refreshed_row = await self.database.get_outbound_delivery(int(row["id"]))
-                route_view = NotificationRouteView.model_validate(
-                    {
-                        "id": 0,
-                        "name": str(row.get("route_name") or "Saved delivery"),
-                        "kind": "webhook",
-                        "target": str(row.get("route_target") or ""),
-                        "events": [],
-                        "conversation_target": row.get("conversation_target"),
-                        "enabled": self.session_delivery_service is not None,
-                        "secret_header_name": None,
-                        "vault_secret_id": None,
-                        "vault_secret_label": None,
-                        "has_secret": False,
-                        "secret_preview": None,
-                        "last_delivery_at": None,
-                        "last_result": None,
-                        "last_error": delivery_error,
-                        "created_at": utcnow(),
-                        "updated_at": utcnow(),
-                    }
+                route_view = _saved_outbound_delivery_route_view(
+                    refreshed_row or row,
+                    delivery_enabled=(
+                        True
+                        if route_kind == "webhook"
+                        else self.session_delivery_service is not None
+                    ),
+                    last_error=delivery_error,
                 )
                 if refreshed_row is None:
                     refreshed_view = None
@@ -3944,6 +4005,26 @@ class OpsMeshService:
         payload: dict[str, Any],
         message: str,
     ) -> None:
+        await self._deliver_direct_channel_message(
+            route_name=route_name,
+            conversation_target=conversation_target,
+            thread_id=thread_id,
+            event_type=event_type,
+            payload=payload,
+            message=message,
+        )
+
+    async def _deliver_direct_channel_message(
+        self,
+        *,
+        route_name: str,
+        conversation_target: ConversationTargetView,
+        thread_id: str | int | None,
+        event_type: str,
+        payload: dict[str, Any],
+        message: str,
+        route_scope_extra: dict[str, Any] | None = None,
+    ) -> dict[str, object]:
         serialized_target = conversation_target.model_dump(mode="json")
         normalized_thread_id = _normalized_delivery_thread_id(thread_id)
         announce_session_key = _announce_delivery_session_key(
@@ -3966,6 +4047,10 @@ class OpsMeshService:
             payload_with_target["threadId"] = thread_id
         if normalized_thread_id is not None:
             route_scope["thread_id"] = normalized_thread_id
+        if route_scope_extra:
+            for key, value in route_scope_extra.items():
+                if value is not None:
+                    route_scope[key] = value
         delivery_id = await self.database.create_outbound_delivery(
             route_id=None,
             route_name=route_name,
@@ -3988,17 +4073,24 @@ class OpsMeshService:
         )
         try:
             assert self.session_delivery_service is not None
-            await self.session_delivery_service(announce_session_key, message)
+            message_result = await self.session_delivery_service(announce_session_key, message)
         except Exception as exc:
+            error = str(exc)[:240]
             await self.database.update_outbound_delivery(
                 delivery_id,
                 delivery_state="failed",
                 attempt_count=1,
                 last_attempt_at=attempt_started_at,
                 delivered_at=None,
-                last_error=str(exc)[:240],
+                last_error=error,
             )
-            return
+            return {
+                "ok": False,
+                "delivery_id": delivery_id,
+                "session_key": announce_session_key,
+                "message_id": None,
+                "error": error,
+            }
         await self.database.update_outbound_delivery(
             delivery_id,
             delivery_state="delivered",
@@ -4007,6 +4099,77 @@ class OpsMeshService:
             delivered_at=utcnow(),
             last_error=None,
         )
+        return {
+            "ok": True,
+            "delivery_id": delivery_id,
+            "session_key": announce_session_key,
+            "message_id": _session_delivery_message_id(message_result),
+        }
+
+    async def send_direct_channel_message(
+        self,
+        *,
+        channel: str,
+        to: str,
+        message: str,
+        account_id: str | None = None,
+        agent_id: str | None = None,
+        thread_id: str | int | None = None,
+        session_key: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> dict[str, object]:
+        if self.session_delivery_service is None:
+            raise ValueError(
+                "send is unavailable until channel-target outbound delivery is wired"
+            )
+        conversation_target = _build_explicit_announce_conversation_target(
+            channel=channel,
+            to=to,
+            account_id=account_id,
+        )
+        if conversation_target is None:
+            raise ValueError("send requires an explicit channel target")
+        payload: dict[str, Any] = {
+            "message": message,
+            "channel": conversation_target.channel,
+            "to": str(to).strip(),
+        }
+        if account_id is not None:
+            payload["accountId"] = account_id
+        if agent_id is not None:
+            payload["agentId"] = agent_id
+        if session_key is not None:
+            payload["sourceSessionKey"] = session_key
+        if idempotency_key is not None:
+            payload["idempotencyKey"] = idempotency_key
+        result = await self._deliver_direct_channel_message(
+            route_name=f"Gateway send to {conversation_target.summary or str(to).strip()}",
+            conversation_target=conversation_target,
+            thread_id=thread_id,
+            event_type="gateway/send",
+            payload=payload,
+            message=message,
+            route_scope_extra={
+                "source": "gateway.send",
+                "source_session_key": session_key,
+                "agent_id": agent_id,
+                "idempotency_key": idempotency_key,
+            },
+        )
+        if result.get("ok") is not True:
+            raise ValueError(str(result.get("error") or "Channel-target delivery failed."))
+        delivery_id_value = result.get("delivery_id")
+        if not isinstance(delivery_id_value, int):
+            raise ValueError("Channel-target delivery did not report a delivery id.")
+        response: dict[str, object] = {
+            "ok": True,
+            "sessionKey": str(result["session_key"]),
+            "deliveryId": delivery_id_value,
+        }
+        message_id = str(result.get("message_id") or "").strip()
+        if message_id:
+            response["messageId"] = message_id
+        return response
 
     async def _deliver_cron_finished_delivery(
         self,

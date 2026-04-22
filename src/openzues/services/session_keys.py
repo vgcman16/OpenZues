@@ -74,11 +74,16 @@ def build_launch_session_key(
     if mode in {"task_lane", "saved_lane"} and preferred_instance_id is not None:
         parts.append(f"lane:{preferred_instance_id}")
     if conversation_target is not None:
-        parts.append(f"channel:{conversation_target.channel}")
-        if conversation_target.account_id:
-            parts.append(f"account:{conversation_target.account_id}")
-        if conversation_target.peer_kind and conversation_target.peer_id:
-            parts.append(f"peer:{conversation_target.peer_kind}:{conversation_target.peer_id}")
+        channel = _normalize_token(conversation_target.channel)
+        if channel:
+            parts.append(f"channel:{channel}")
+            account_id = normalize_optional_account_id(conversation_target.account_id)
+            if account_id:
+                parts.append(f"account:{account_id}")
+            peer_id = _normalize_token(conversation_target.peer_id)
+            peer_kind = _normalize_token(str(conversation_target.peer_kind or ""))
+            if peer_kind and peer_id:
+                parts.append(f"peer:{peer_kind}:{peer_id}")
     return ":".join(parts)
 
 
@@ -157,15 +162,31 @@ def parse_agent_session_key(session_key: str | None) -> ParsedAgentSessionKey | 
     )
 
 
+def _parse_agent_session_key_like_openclaw(
+    session_key: str | None,
+) -> ParsedAgentSessionKey | None:
+    raw = str(session_key or "").strip().lower()
+    if not raw:
+        return None
+    parts = [part for part in raw.split(":") if part]
+    if len(parts) < 3 or parts[0] != "agent":
+        return None
+    agent_id = str(parts[1]).strip()
+    rest = ":".join(parts[2:]).strip()
+    if not agent_id or not rest:
+        return None
+    return ParsedAgentSessionKey(agent_id=agent_id, rest=rest)
+
+
 def is_cron_run_session_key(session_key: str | None) -> bool:
-    parsed = parse_agent_session_key(session_key)
+    parsed = _parse_agent_session_key_like_openclaw(session_key)
     if parsed is None:
         return False
     return _CRON_RUN_SESSION_KEY_RE.fullmatch(parsed.rest) is not None
 
 
 def is_cron_session_key(session_key: str | None) -> bool:
-    parsed = parse_agent_session_key(session_key)
+    parsed = _parse_agent_session_key_like_openclaw(session_key)
     if parsed is None:
         return False
     return parsed.rest.startswith("cron:")
@@ -177,7 +198,7 @@ def is_subagent_session_key(session_key: str | None) -> bool:
         return False
     if raw.lower().startswith("subagent:"):
         return True
-    parsed = parse_agent_session_key(raw)
+    parsed = _parse_agent_session_key_like_openclaw(raw)
     return parsed is not None and parsed.rest.startswith("subagent:")
 
 
@@ -194,7 +215,7 @@ def is_acp_session_key(session_key: str | None) -> bool:
         return False
     if raw.lower().startswith("acp:"):
         return True
-    parsed = parse_agent_session_key(raw)
+    parsed = _parse_agent_session_key_like_openclaw(raw)
     return parsed is not None and parsed.rest.startswith("acp:")
 
 
@@ -202,7 +223,7 @@ def scoped_heartbeat_wake_options(
     session_key: str,
     wake_options: dict[str, Any],
 ) -> dict[str, Any]:
-    if parse_agent_session_key(session_key) is None:
+    if _parse_agent_session_key_like_openclaw(session_key) is None:
         return wake_options
     return {**wake_options, "session_key": session_key}
 
@@ -329,7 +350,7 @@ def to_agent_request_session_key(store_key: str | None) -> str | None:
     raw = str(store_key or "").strip()
     if not raw:
         return None
-    parsed = parse_agent_session_key(raw)
+    parsed = _parse_agent_session_key_like_openclaw(raw)
     return parsed.rest if parsed is not None else raw
 
 
@@ -352,7 +373,7 @@ def to_agent_store_session_key(
 
 
 def resolve_agent_id_from_session_key(session_key: str | None) -> str:
-    parsed = parse_agent_session_key(session_key)
+    parsed = _parse_agent_session_key_like_openclaw(session_key)
     if parsed is None:
         return DEFAULT_AGENT_ID
     return normalize_agent_id(parsed.agent_id)

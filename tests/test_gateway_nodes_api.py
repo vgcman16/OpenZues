@@ -17,7 +17,7 @@ from fastapi.testclient import TestClient
 
 from openzues.app import create_app
 from openzues.database import Database, utcnow
-from openzues.schemas import DashboardView
+from openzues.schemas import ConversationTargetView, DashboardView
 from openzues.services.ecc_catalog import configure_ecc_catalog
 from openzues.services.gateway_cron import build_gateway_cron_task_blueprint
 from openzues.services.gateway_node_methods import GatewayNodeMethodService
@@ -416,6 +416,111 @@ def test_gateway_node_pending_work_endpoint_can_request_wake_for_managed_lane(
     assert enqueue_payload["nodeId"] == "7"
     assert enqueue_payload["queued"]["type"] == "location.request"
     assert enqueue_payload["wakeTriggered"] is True
+
+
+def test_gateway_node_pending_work_endpoint_reuses_existing_item_without_rewaking(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+    manager = app.state.manager
+    manager.instances[7] = InstanceRuntime(
+        instance_id=7,
+        name="Managed Pending Node",
+        transport="stdio",
+        command="codex",
+        args="app-server",
+        websocket_url=None,
+        cwd=str(tmp_path),
+        auto_connect=False,
+    )
+    connect_calls = 0
+
+    async def fake_connect_instance(instance_id: int) -> InstanceRuntime:
+        nonlocal connect_calls
+        assert instance_id == 7
+        connect_calls += 1
+        runtime = manager.instances[instance_id]
+        runtime.connected = True
+        return runtime
+
+    monkeypatch.setattr(manager, "connect_instance", fake_connect_instance)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        first_response = client.post(
+            "/api/gateway/nodes/7/pending-work",
+            json={
+                "type": "location.request",
+                "priority": "high",
+                "expiresInMs": 5_000,
+                "payload": {"reason": "gps"},
+                "wake": True,
+            },
+        )
+        manager.instances[7].connected = False
+        second_response = client.post(
+            "/api/gateway/nodes/7/pending-work",
+            json={
+                "type": "location.request",
+                "priority": "default",
+                "expiresInMs": 1_000,
+                "payload": {"reason": "wifi"},
+                "wake": True,
+            },
+        )
+        drained_response = client.get("/api/gateway/nodes/7/pending-work")
+
+    assert first_response.status_code == 200
+    first_payload = first_response.json()
+    assert first_payload["nodeId"] == "7"
+    assert first_payload["revision"] == 1
+    assert first_payload["queued"]["type"] == "location.request"
+    assert first_payload["queued"]["priority"] == "high"
+    assert first_payload["queued"]["payload"] == {"reason": "gps"}
+    assert first_payload["wakeTriggered"] is True
+
+    assert second_response.status_code == 200
+    second_payload = second_response.json()
+    assert second_payload["nodeId"] == "7"
+    assert second_payload["revision"] == 1
+    assert second_payload["queued"]["id"] == first_payload["queued"]["id"]
+    assert second_payload["queued"]["type"] == "location.request"
+    assert second_payload["queued"]["priority"] == "high"
+    assert second_payload["queued"]["createdAtMs"] == first_payload["queued"]["createdAtMs"]
+    assert second_payload["queued"]["expiresAtMs"] == first_payload["queued"]["expiresAtMs"]
+    assert second_payload["queued"]["payload"] == {"reason": "gps"}
+    assert second_payload["wakeTriggered"] is False
+    assert connect_calls == 1
+
+    assert drained_response.status_code == 200
+    assert drained_response.json() == {
+        "nodeId": "7",
+        "revision": 1,
+        "items": [
+            {
+                "id": first_payload["queued"]["id"],
+                "type": "location.request",
+                "priority": "high",
+                "createdAtMs": first_payload["queued"]["createdAtMs"],
+                "expiresAtMs": first_payload["queued"]["expiresAtMs"],
+                "payload": {"reason": "gps"},
+            },
+            {
+                "id": "baseline-status",
+                "type": "status.request",
+                "priority": "default",
+                "createdAtMs": drained_response.json()["items"][1]["createdAtMs"],
+                "expiresAtMs": None,
+                "payload": None,
+            },
+        ],
+        "hasMore": False,
+    }
 
 
 def test_managed_node_sync_emits_voicewake_snapshot_only_on_fresh_connect(
@@ -886,6 +991,125 @@ def test_gateway_node_pair_request_endpoint_persists_pending_requests_across_res
     }
 
 
+def test_gateway_node_pair_request_endpoint_refresh_preserves_omitted_fields_and_clears_explicit_lists(
+    tmp_path,
+) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        created_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "node.pair.request",
+                "params": {
+                    "nodeId": "pair-node-refresh-api",
+                    "displayName": "Persistent Node",
+                    "platform": "ios",
+                    "version": "1.2.3",
+                    "coreVersion": "2.0.0",
+                    "uiVersion": "3.0.0",
+                    "deviceFamily": "iphone",
+                    "modelIdentifier": "iphone15,3",
+                    "caps": ["voice", "canvas"],
+                    "commands": ["canvas.present"],
+                    "remoteIp": "10.0.0.8",
+                },
+            },
+        )
+        refreshed_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "node.pair.request",
+                "params": {
+                    "nodeId": "pair-node-refresh-api",
+                    "commands": ["canvas.present", "system.run"],
+                },
+            },
+        )
+        cleared_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "node.pair.request",
+                "params": {
+                    "nodeId": "pair-node-refresh-api",
+                    "caps": [],
+                    "commands": [],
+                },
+            },
+        )
+        pair_list_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={"method": "node.pair.list", "params": {}},
+        )
+
+    assert created_response.status_code == 200
+    request_id = created_response.json()["request"]["requestId"]
+
+    assert refreshed_response.status_code == 200
+    assert refreshed_response.json() == {
+        "status": "pending",
+        "request": {
+            "requestId": request_id,
+            "nodeId": "pair-node-refresh-api",
+            "displayName": "Persistent Node",
+            "platform": "ios",
+            "version": "1.2.3",
+            "coreVersion": "2.0.0",
+            "uiVersion": "3.0.0",
+            "deviceFamily": "iphone",
+            "modelIdentifier": "iphone15,3",
+            "caps": ["voice", "canvas"],
+            "commands": ["canvas.present", "system.run"],
+            "remoteIp": "10.0.0.8",
+            "ts": refreshed_response.json()["request"]["ts"],
+        },
+        "created": False,
+    }
+    assert cleared_response.status_code == 200
+    assert cleared_response.json() == {
+        "status": "pending",
+        "request": {
+            "requestId": request_id,
+            "nodeId": "pair-node-refresh-api",
+            "displayName": "Persistent Node",
+            "platform": "ios",
+            "version": "1.2.3",
+            "coreVersion": "2.0.0",
+            "uiVersion": "3.0.0",
+            "deviceFamily": "iphone",
+            "modelIdentifier": "iphone15,3",
+            "caps": [],
+            "commands": [],
+            "remoteIp": "10.0.0.8",
+            "ts": cleared_response.json()["request"]["ts"],
+        },
+        "created": False,
+    }
+    assert pair_list_response.status_code == 200
+    assert pair_list_response.json() == {
+        "pending": [
+            {
+                "requestId": request_id,
+                "nodeId": "pair-node-refresh-api",
+                "displayName": "Persistent Node",
+                "platform": "ios",
+                "version": "1.2.3",
+                "coreVersion": "2.0.0",
+                "uiVersion": "3.0.0",
+                "remoteIp": "10.0.0.8",
+                "ts": cleared_response.json()["request"]["ts"],
+                "requiredApproveScopes": ["operator.pairing"],
+            }
+        ],
+        "paired": [],
+    }
+
+
 def test_gateway_node_pair_reject_endpoint_removes_pending_request(tmp_path) -> None:
     app_settings = Settings(
         data_dir=tmp_path / "data",
@@ -1126,6 +1350,119 @@ def test_gateway_nodes_endpoints_include_persisted_approved_nodes_after_restart(
         "connected": False,
         "connected_at_ms": None,
         "approved_at_ms": approved_at_ms,
+    }
+
+
+def test_gateway_nodes_endpoints_keep_empty_live_command_surface_over_paired_values(
+    tmp_path,
+) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        request_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "node.pair.request",
+                "params": {
+                    "nodeId": "pair-node-live-empty",
+                    "displayName": "Catalog Node",
+                    "platform": "linux",
+                    "version": "1.0.0",
+                    "coreVersion": "2.0.0",
+                    "uiVersion": "3.0.0",
+                    "deviceFamily": "server",
+                    "modelIdentifier": "vm-standard",
+                    "caps": ["shell"],
+                    "commands": ["system.run"],
+                    "remoteIp": "10.0.0.11",
+                },
+            },
+        )
+        request_id = request_response.json()["request"]["requestId"]
+        approve_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={"method": "node.pair.approve", "params": {"requestId": request_id}},
+        )
+        assert approve_response.status_code == 200
+
+        registry = client.app.state.gateway_node_service.registry
+        registry.register(
+            _AutoReplyNodeConnection(registry, "conn-pair-node-live-empty"),
+            GatewayNodeConnect(
+                client_id="live-pair-node-live-empty",
+                device_id="pair-node-live-empty",
+                client_mode="desktop",
+                display_name="Catalog Node",
+                platform="linux",
+                version="1.0.1",
+                core_version="2.0.1",
+                ui_version="3.0.1",
+                device_family="server",
+                model_identifier="vm-standard",
+                path_env=str(tmp_path),
+                caps=(),
+                commands=(),
+            ),
+            remote_ip="10.0.0.12",
+            connected_at_ms=321,
+        )
+
+        nodes_response = client.get("/api/gateway/nodes")
+        node_response = client.get("/api/gateway/nodes/pair-node-live-empty")
+
+    assert nodes_response.status_code == 200
+    nodes_payload = nodes_response.json()
+    assert nodes_payload["paired_count"] == 1
+    assert nodes_payload["connected_count"] == 1
+    assert nodes_payload["nodes"] == [
+        {
+            "node_id": "pair-node-live-empty",
+            "display_name": "Catalog Node",
+            "platform": "linux",
+            "version": "1.0.1",
+            "core_version": "2.0.1",
+            "ui_version": "3.0.1",
+            "client_id": "live-pair-node-live-empty",
+            "client_mode": "desktop",
+            "remote_ip": "10.0.0.12",
+            "device_family": "server",
+            "model_identifier": "vm-standard",
+            "path_env": str(tmp_path),
+            "caps": [],
+            "commands": [],
+            "permissions": None,
+            "paired": True,
+            "connected": True,
+            "connected_at_ms": 321,
+            "approved_at_ms": nodes_payload["nodes"][0]["approved_at_ms"],
+        }
+    ]
+    assert node_response.status_code == 200
+    assert node_response.json() == {
+        "node_id": "pair-node-live-empty",
+        "display_name": "Catalog Node",
+        "platform": "linux",
+        "version": "1.0.1",
+        "core_version": "2.0.1",
+        "ui_version": "3.0.1",
+        "client_id": "live-pair-node-live-empty",
+        "client_mode": "desktop",
+        "remote_ip": "10.0.0.12",
+        "device_family": "server",
+        "model_identifier": "vm-standard",
+        "path_env": str(tmp_path),
+        "caps": [],
+        "commands": [],
+        "permissions": None,
+        "paired": True,
+        "connected": True,
+        "connected_at_ms": 321,
+        "approved_at_ms": nodes_payload["nodes"][0]["approved_at_ms"],
     }
 
 
@@ -2579,6 +2916,10 @@ def test_gateway_node_method_call_endpoint_supports_config_schema_and_lookup(tmp
             "/api/gateway/node-methods/call",
             json={"method": "config.schema.lookup", "params": {"path": "assistantName"}},
         )
+        array_lookup_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={"method": "config.schema.lookup", "params": {"path": "localMediaPreviewRoots"}},
+        )
 
     assert schema_response.status_code == 200
     assert schema_response.json()["version"] == "openzues-control-ui-bootstrap-v1"
@@ -2594,6 +2935,27 @@ def test_gateway_node_method_call_endpoint_supports_config_schema_and_lookup(tmp
         "hint": {"label": "Assistant Name"},
         "hintPath": "assistantName",
         "children": [],
+    }
+    assert array_lookup_response.status_code == 200
+    assert array_lookup_response.json() == {
+        "path": "localMediaPreviewRoots",
+        "schema": {
+            "type": "array",
+            "title": "Local Media Preview Roots",
+        },
+        "hint": {"label": "Local Media Preview Roots"},
+        "hintPath": "localMediaPreviewRoots",
+        "children": [
+            {
+                "key": "*",
+                "path": "localMediaPreviewRoots.*",
+                "type": "string",
+                "required": False,
+                "hasChildren": False,
+                "hint": {"label": "Local Media Preview Root"},
+                "hintPath": "localMediaPreviewRoots[]",
+            }
+        ],
     }
 
 
@@ -6833,12 +7195,63 @@ def test_gateway_node_method_call_endpoint_supports_wizard_start_next_completion
         assert start.status_code == 200
         start_payload = start.json()
         session_id = start_payload["sessionId"]
-        step = start_payload["step"]
+        operator_step = start_payload["step"]
 
         status = client.post(
             "/api/gateway/node-methods/call",
             json={"method": "wizard.status", "params": {"sessionId": session_id}},
         )
+        email_step_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "wizard.next",
+                "params": {
+                    "sessionId": session_id,
+                    "answer": {
+                        "stepId": operator_step["id"],
+                        "value": "Remote Builder",
+                    },
+                },
+            },
+        )
+        assert email_step_response.status_code == 200
+        email_step_payload = email_step_response.json()
+        email_step = email_step_payload["step"]
+
+        team_step_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "wizard.next",
+                "params": {
+                    "sessionId": session_id,
+                    "answer": {
+                        "stepId": email_step["id"],
+                        "value": "remote.builder@example.com",
+                    },
+                },
+            },
+        )
+        assert team_step_response.status_code == 200
+        team_step_payload = team_step_response.json()
+        team_step = team_step_payload["step"]
+
+        task_step_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "wizard.next",
+                "params": {
+                    "sessionId": session_id,
+                    "answer": {
+                        "stepId": team_step["id"],
+                        "value": "Platform Ops",
+                    },
+                },
+            },
+        )
+        assert task_step_response.status_code == 200
+        task_step_payload = task_step_response.json()
+        task_step = task_step_payload["step"]
+
         next_response = client.post(
             "/api/gateway/node-methods/call",
             json={
@@ -6846,7 +7259,7 @@ def test_gateway_node_method_call_endpoint_supports_wizard_start_next_completion
                 "params": {
                     "sessionId": session_id,
                     "answer": {
-                        "stepId": step["id"],
+                        "stepId": task_step["id"],
                         "value": "Parity Workspace Loop",
                     },
                 },
@@ -6856,23 +7269,571 @@ def test_gateway_node_method_call_endpoint_supports_wizard_start_next_completion
 
     assert start_payload["done"] is False
     assert start_payload["status"] == "running"
-    assert step == {
-        "id": step["id"],
+    assert operator_step == {
+        "id": operator_step["id"],
         "type": "text",
-        "title": "Task Name",
-        "message": "Name the recurring setup task.",
+        "title": "Operator Name",
+        "message": "Name the operator who should receive the remote ingress API key.",
+        "placeholder": "Remote Builder",
         "executor": "client",
     }
     assert status.status_code == 200
     assert status.json() == {"status": "running"}
+    assert email_step_payload == {
+        "done": False,
+        "status": "running",
+        "step": {
+            "id": email_step["id"],
+            "type": "text",
+            "title": "Operator Email",
+            "message": "Optionally add an email for the remote API key handoff.",
+            "placeholder": "builder@example.com",
+            "required": False,
+            "inputType": "email",
+            "executor": "client",
+        },
+    }
+    assert team_step_payload == {
+        "done": False,
+        "status": "running",
+        "step": {
+            "id": team_step["id"],
+            "type": "text",
+            "title": "Operator Team",
+            "message": "Optionally group the remote operator under a team label.",
+            "placeholder": "Platform Ops",
+            "required": False,
+            "executor": "client",
+        },
+    }
+    assert task_step_payload == {
+        "done": False,
+        "status": "running",
+        "step": {
+            "id": task_step["id"],
+            "type": "text",
+            "title": "Task Name",
+            "message": "Name the recurring setup task.",
+            "executor": "client",
+        },
+    }
     assert next_response.status_code == 200
     assert next_response.json() == {"done": True, "status": "done"}
     assert saved.status_code == 200
     saved_payload = saved.json()
     assert saved_payload["mode"] == "remote"
     assert saved_payload["flow"] == "advanced"
+    assert saved_payload["operator_name"] == "Remote Builder"
+    assert saved_payload["operator_email"] == "remote.builder@example.com"
+    assert saved_payload["team_name"] == "Platform Ops"
     assert saved_payload["project_path"] == str(tmp_path)
     assert saved_payload["task_name"] == "Parity Workspace Loop"
+
+
+def test_onboarding_wizard_http_endpoint_supports_remote_completion(tmp_path) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        start = client.post(
+            "/api/onboarding/wizard/start",
+            json={
+                "mode": "remote",
+                "flow": "quickstart",
+                "project_path": str(tmp_path),
+            },
+        )
+        assert start.status_code == 200
+        start_payload = start.json()
+        session_id = start_payload["sessionId"]
+        operator_step = start_payload["step"]
+
+        email_step_response = client.post(
+            "/api/onboarding/wizard/next",
+            json={
+                "sessionId": session_id,
+                "answer": {
+                    "stepId": operator_step["id"],
+                    "value": "Remote Builder",
+                },
+            },
+        )
+        assert email_step_response.status_code == 200
+        email_step_payload = email_step_response.json()
+        email_step = email_step_payload["step"]
+
+        team_step_response = client.post(
+            "/api/onboarding/wizard/next",
+            json={
+                "sessionId": session_id,
+                "answer": {
+                    "stepId": email_step["id"],
+                    "value": "",
+                },
+            },
+        )
+        assert team_step_response.status_code == 200
+        team_step_payload = team_step_response.json()
+        team_step = team_step_payload["step"]
+
+        task_step_response = client.post(
+            "/api/onboarding/wizard/next",
+            json={
+                "sessionId": session_id,
+                "answer": {
+                    "stepId": team_step["id"],
+                    "value": "",
+                },
+            },
+        )
+        assert task_step_response.status_code == 200
+        task_step_payload = task_step_response.json()
+        task_step = task_step_payload["step"]
+
+        done = client.post(
+            "/api/onboarding/wizard/next",
+            json={
+                "sessionId": session_id,
+                "answer": {
+                    "stepId": task_step["id"],
+                    "value": "Remote Guided Loop",
+                },
+            },
+        )
+        saved = client.get("/api/setup/wizard")
+
+    assert start_payload["done"] is False
+    assert start_payload["status"] == "running"
+    assert operator_step == {
+        "id": operator_step["id"],
+        "type": "text",
+        "title": "Operator Name",
+        "message": "Name the operator who should receive the remote ingress API key.",
+        "placeholder": "Remote Builder",
+        "executor": "client",
+    }
+    assert email_step_payload == {
+        "done": False,
+        "status": "running",
+        "step": {
+            "id": email_step["id"],
+            "type": "text",
+            "title": "Operator Email",
+            "message": "Optionally add an email for the remote API key handoff.",
+            "placeholder": "builder@example.com",
+            "required": False,
+            "inputType": "email",
+            "executor": "client",
+        },
+    }
+    assert team_step_payload == {
+        "done": False,
+        "status": "running",
+        "step": {
+            "id": team_step["id"],
+            "type": "text",
+            "title": "Operator Team",
+            "message": "Optionally group the remote operator under a team label.",
+            "placeholder": "Platform Ops",
+            "required": False,
+            "executor": "client",
+        },
+    }
+    assert task_step_payload == {
+        "done": False,
+        "status": "running",
+        "step": {
+            "id": task_step["id"],
+            "type": "text",
+            "title": "Task Name",
+            "message": "Name the recurring setup task.",
+            "executor": "client",
+        },
+    }
+    assert done.status_code == 200
+    assert done.json() == {"done": True, "status": "done"}
+    assert saved.status_code == 200
+    saved_payload = saved.json()
+    assert saved_payload["mode"] == "remote"
+    assert saved_payload["flow"] == "advanced"
+    assert saved_payload["operator_name"] == "Remote Builder"
+    assert saved_payload["operator_email"] is None
+    assert saved_payload["team_name"] is None
+    assert saved_payload["project_path"] == str(tmp_path)
+    assert saved_payload["task_name"] == "Remote Guided Loop"
+
+
+def test_onboarding_wizard_http_endpoint_prompts_for_mode_and_local_flow_from_blank_start(
+    tmp_path,
+) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        start = client.post(
+            "/api/onboarding/wizard/start",
+            json={},
+        )
+        assert start.status_code == 200
+        start_payload = start.json()
+        session_id = start_payload["sessionId"]
+        mode_step = start_payload["step"]
+
+        flow_response = client.post(
+            "/api/onboarding/wizard/next",
+            json={
+                "sessionId": session_id,
+                "answer": {
+                    "stepId": mode_step["id"],
+                    "value": "local",
+                },
+            },
+        )
+        assert flow_response.status_code == 200
+        flow_payload = flow_response.json()
+        flow_step = flow_payload["step"]
+
+        workspace_response = client.post(
+            "/api/onboarding/wizard/next",
+            json={
+                "sessionId": session_id,
+                "answer": {
+                    "stepId": flow_step["id"],
+                    "value": "advanced",
+                },
+            },
+        )
+        assert workspace_response.status_code == 200
+        workspace_payload = workspace_response.json()
+        workspace_step = workspace_payload["step"]
+
+        operator_response = client.post(
+            "/api/onboarding/wizard/next",
+            json={
+                "sessionId": session_id,
+                "answer": {
+                    "stepId": workspace_step["id"],
+                    "value": str(tmp_path),
+                },
+            },
+        )
+        assert operator_response.status_code == 200
+        operator_payload = operator_response.json()
+        operator_step = operator_payload["step"]
+
+        task_response = client.post(
+            "/api/onboarding/wizard/next",
+            json={
+                "sessionId": session_id,
+                "answer": {
+                    "stepId": operator_step["id"],
+                    "value": "Local Builder",
+                },
+            },
+        )
+        assert task_response.status_code == 200
+        task_payload = task_response.json()
+        task_step = task_payload["step"]
+
+        done = client.post(
+            "/api/onboarding/wizard/next",
+            json={
+                "sessionId": session_id,
+                "answer": {
+                    "stepId": task_step["id"],
+                    "value": "Local Guided Loop",
+                },
+            },
+        )
+        saved = client.get("/api/setup/wizard")
+
+    assert start_payload["done"] is False
+    assert start_payload["status"] == "running"
+    assert mode_step == {
+        "id": mode_step["id"],
+        "type": "select",
+        "title": "Setup Mode",
+        "message": "Choose how you want the gateway wizard to stage setup.",
+        "options": [
+            {
+                "value": "local",
+                "label": "Local",
+                "hint": "Use a local control plane and desktop lane.",
+            },
+            {
+                "value": "remote",
+                "label": "Remote",
+                "hint": "Stage the workspace spine first and bind a lane later.",
+            },
+        ],
+        "initialvalue": "local",
+        "executor": "client",
+    }
+    assert flow_payload == {
+        "done": False,
+        "status": "running",
+        "step": {
+            "id": flow_step["id"],
+            "type": "select",
+            "title": "Setup Flow",
+            "message": "Choose how deeply to stage the local bootstrap posture.",
+            "options": [
+                {
+                    "value": "quickstart",
+                    "label": "QuickStart",
+                    "hint": "Reuse the current control plane and tune the rest later.",
+                },
+                {
+                    "value": "advanced",
+                    "label": "Advanced",
+                    "hint": "Stage the full local control plane posture before bootstrap.",
+                },
+            ],
+            "initialvalue": "quickstart",
+            "executor": "client",
+        },
+    }
+    assert workspace_payload == {
+        "done": False,
+        "status": "running",
+        "step": {
+            "id": workspace_step["id"],
+            "type": "text",
+            "title": "Workspace",
+            "message": "Enter the workspace path to stage for setup.",
+            "placeholder": "C:/workspace",
+            "executor": "client",
+        },
+    }
+    assert operator_payload == {
+        "done": False,
+        "status": "running",
+        "step": {
+            "id": operator_step["id"],
+            "type": "text",
+            "title": "Operator Name",
+            "message": "Name the operator who should receive the local bootstrap access.",
+            "placeholder": "Operator",
+            "executor": "client",
+        },
+    }
+    assert task_payload == {
+        "done": False,
+        "status": "running",
+        "step": {
+            "id": task_step["id"],
+            "type": "text",
+            "title": "Task Name",
+            "message": "Name the recurring setup task.",
+            "executor": "client",
+        },
+    }
+    assert done.status_code == 200
+    assert done.json() == {"done": True, "status": "done"}
+    assert saved.status_code == 200
+    saved_payload = saved.json()
+    assert saved_payload["mode"] == "local"
+    assert saved_payload["flow"] == "advanced"
+    assert saved_payload["project_path"] == str(tmp_path)
+    assert saved_payload["operator_name"] == "Local Builder"
+    assert saved_payload["task_name"] == "Local Guided Loop"
+
+
+def test_gateway_node_method_call_endpoint_supports_local_wizard_completion_from_saved_draft(
+    tmp_path,
+) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        saved_draft = client.put(
+            "/api/setup/wizard",
+            json={
+                "mode": "local",
+                "flow": "quickstart",
+                "project_path": str(tmp_path),
+            },
+        )
+        assert saved_draft.status_code == 200
+
+        start = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "wizard.start",
+                "params": {
+                    "mode": "local",
+                    "workspace": str(tmp_path),
+                },
+            },
+        )
+        assert start.status_code == 200
+        start_payload = start.json()
+        session_id = start_payload["sessionId"]
+        operator_step = start_payload["step"]
+
+        task_step_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "wizard.next",
+                "params": {
+                    "sessionId": session_id,
+                    "answer": {
+                        "stepId": operator_step["id"],
+                        "value": "Local Builder",
+                    },
+                },
+            },
+        )
+        assert task_step_response.status_code == 200
+        task_step_payload = task_step_response.json()
+        task_step = task_step_payload["step"]
+
+        done = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "wizard.next",
+                "params": {
+                    "sessionId": session_id,
+                    "answer": {
+                        "stepId": task_step["id"],
+                        "value": "Local Guided Loop",
+                    },
+                },
+            },
+        )
+        saved = client.get("/api/setup/wizard")
+
+    assert start_payload["done"] is False
+    assert start_payload["status"] == "running"
+    assert operator_step == {
+        "id": operator_step["id"],
+        "type": "text",
+        "title": "Operator Name",
+        "message": "Name the operator who should receive the local bootstrap access.",
+        "placeholder": "Operator",
+        "executor": "client",
+    }
+    assert task_step_payload == {
+        "done": False,
+        "status": "running",
+        "step": {
+            "id": task_step["id"],
+            "type": "text",
+            "title": "Task Name",
+            "message": "Name the recurring setup task.",
+            "executor": "client",
+        },
+    }
+    assert done.status_code == 200
+    assert done.json() == {"done": True, "status": "done"}
+    assert saved.status_code == 200
+    saved_payload = saved.json()
+    assert saved_payload["mode"] == "local"
+    assert saved_payload["flow"] == "quickstart"
+    assert saved_payload["project_path"] == str(tmp_path)
+    assert saved_payload["operator_name"] == "Local Builder"
+    assert saved_payload["task_name"] == "Local Guided Loop"
+
+
+def test_onboarding_wizard_start_clears_explicit_blank_optional_remote_identity_fields(
+    tmp_path,
+) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        seeded = client.put(
+            "/api/setup/wizard",
+            json={
+                "mode": "remote",
+                "flow": "advanced",
+                "project_path": str(tmp_path),
+                "operator_name": "Remote Builder",
+                "operator_email": "stale@example.com",
+                "team_name": "Old Team",
+            },
+        )
+        assert seeded.status_code == 200
+
+        start = client.post(
+            "/api/onboarding/wizard/start",
+            json={
+                "mode": "remote",
+                "flow": "advanced",
+                "project_path": str(tmp_path),
+                "operator_name": "Remote Builder",
+                "operator_email": None,
+                "team_name": None,
+            },
+        )
+        saved = client.get("/api/setup/wizard")
+
+    assert start.status_code == 200
+    start_payload = start.json()
+    assert start_payload["done"] is False
+    assert start_payload["status"] == "running"
+    assert start_payload["step"] == {
+        "id": start_payload["step"]["id"],
+        "type": "text",
+        "title": "Operator Email",
+        "message": "Optionally add an email for the remote API key handoff.",
+        "placeholder": "builder@example.com",
+        "required": False,
+        "inputType": "email",
+        "executor": "client",
+    }
+    assert saved.status_code == 200
+    saved_payload = saved.json()
+    assert saved_payload["operator_name"] == "Remote Builder"
+    assert saved_payload["operator_email"] is None
+    assert saved_payload["team_name"] is None
+
+
+def test_onboarding_wizard_http_endpoint_cancel_without_persisting_draft(tmp_path) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        start = client.post(
+            "/api/onboarding/wizard/start",
+            json={},
+        )
+        assert start.status_code == 200
+        session_id = start.json()["sessionId"]
+
+        cancel = client.post(
+            "/api/onboarding/wizard/cancel",
+            json={"sessionId": session_id},
+        )
+        saved = client.get("/api/setup/wizard")
+
+    assert cancel.status_code == 200
+    assert cancel.json() == {"status": "cancelled", "error": "cancelled"}
+    assert saved.status_code == 200
+    saved_payload = saved.json()
+    assert saved_payload["updated_at"] is None
+    assert saved_payload["project_path"] is None
+    assert saved_payload["task_name"] is None
 
 
 def test_gateway_node_method_call_endpoint_supports_wizard_cancel_without_persisting_draft(
@@ -9184,7 +10145,7 @@ def test_gateway_node_method_call_endpoint_routes_main_system_event_cron_run_thr
     assert missions == []
 
 
-def test_gateway_node_method_call_endpoint_routes_main_system_event_cron_run_session_key_through_wake_queue() -> None:
+def test_main_system_event_cron_run_routes_session_key_through_wake_queue() -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-run-session-key-api"
     shutil.rmtree(tmp_path, ignore_errors=True)
     tmp_path.mkdir(parents=True, exist_ok=True)
@@ -9203,7 +10164,9 @@ def test_gateway_node_method_call_endpoint_routes_main_system_event_cron_run_ses
                 "method": "cron.add",
                 "params": {
                     "name": "Wake Main Lane Session Key",
-                    "description": "Nudge the main lane on the next heartbeat with a target session.",
+                    "description": (
+                        "Nudge the main lane on the next heartbeat with a target session."
+                    ),
                     "enabled": True,
                     "schedule": {"kind": "every", "everyMs": 3_600_000},
                     "sessionTarget": "main",
@@ -17645,15 +18608,34 @@ def test_message_action_endpoint_allows_blank_optional_routing_identifiers(
     assert response.json() == {"detail": "Channel slack does not support action react."}
 
 
-def test_send_endpoint_returns_validated_unavailable_contract(tmp_path) -> None:
+def test_send_endpoint_delivers_channel_target_message_and_records_outbound_delivery(
+    tmp_path,
+) -> None:
     app_settings = Settings(
         data_dir=tmp_path / "data",
         db_path=tmp_path / "data" / "openzues-test.db",
     )
     app = create_app(app_settings)
+    expected_session_key = resolve_thread_session_keys(
+        base_session_key=build_launch_session_key(
+            mode="workspace_affinity",
+            preferred_instance_id=None,
+            task_id=None,
+            project_id=None,
+            operator_id=None,
+            conversation_target=ConversationTargetView(
+                channel="slack",
+                account_id="default",
+                peer_kind="channel",
+                peer_id="channel:C123",
+            ),
+        ),
+        thread_id="1710000000.9999",
+    ).session_key
 
     with TestClient(app, client=("testclient", 50000)) as client:
         _allow_mutating_api_requests(client)
+        database = client.app.state.database
         response = client.post(
             "/api/gateway/node-methods/call",
             json={
@@ -17670,11 +18652,30 @@ def test_send_endpoint_returns_validated_unavailable_contract(tmp_path) -> None:
                 },
             },
         )
+        delivery = asyncio.run(database.get_outbound_delivery(1))
+        messages = asyncio.run(
+            database.list_control_chat_messages(limit=10, session_key=expected_session_key)
+        )
 
-    assert response.status_code == 503
+    assert response.status_code == 200
     assert response.json() == {
-        "detail": "send is unavailable until channel-target outbound delivery is wired"
+        "ok": True,
+        "messageId": "1",
+        "sessionKey": expected_session_key,
+        "deliveryId": 1,
     }
+    assert delivery is not None
+    assert delivery["route_kind"] == "announce"
+    assert delivery["event_type"] == "gateway/send"
+    assert delivery["session_key"] == expected_session_key
+    assert delivery["message_summary"] == "Ship parity."
+    assert delivery["route_scope"]["source"] == "gateway.send"
+    assert delivery["route_scope"]["source_session_key"] == "agent:main:slack:channel:C123"
+    assert delivery["route_scope"]["thread_id"] == "1710000000.9999"
+    assert len(messages) == 1
+    assert messages[0]["id"] == 1
+    assert messages[0]["role"] == "assistant"
+    assert messages[0]["content"] == "Ship parity."
 
 
 def test_send_endpoint_rejects_invalid_whatsapp_target_shape(tmp_path) -> None:
@@ -17760,6 +18761,18 @@ def test_send_endpoint_allows_blank_optional_routing_identifiers(
         db_path=tmp_path / "data" / "openzues-test.db",
     )
     app = create_app(app_settings)
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=ConversationTargetView(
+            channel="slack",
+            peer_kind="channel",
+            peer_id="channel:C123",
+        ),
+    )
 
     with TestClient(app, client=("testclient", 50000)) as client:
         _allow_mutating_api_requests(client)
@@ -17777,9 +18790,12 @@ def test_send_endpoint_allows_blank_optional_routing_identifiers(
             },
         )
 
-    assert response.status_code == 503
+    assert response.status_code == 200
     assert response.json() == {
-        "detail": "send is unavailable until channel-target outbound delivery is wired"
+        "ok": True,
+        "messageId": "1",
+        "sessionKey": expected_session_key,
+        "deliveryId": 1,
     }
 
 

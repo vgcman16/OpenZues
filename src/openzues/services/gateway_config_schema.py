@@ -8,9 +8,11 @@ from typing import Any
 from openzues.database import utcnow
 
 _SCHEMA_VERSION = "openzues-control-ui-bootstrap-v1"
-_PATH_INDEX_RE = re.compile(r"\[(\d+)\]")
+_PATH_INDEX_RE = re.compile(r"\[(\*|\d*)\]")
 _LOOKUP_PATH_PATTERN = re.compile(r"^[A-Za-z0-9_./\[\]\-*]+$")
 _LOOKUP_PATH_MAX_LENGTH = 1024
+_LOOKUP_PATH_MAX_SEGMENTS = 32
+_FORBIDDEN_LOOKUP_SEGMENTS = frozenset({"__proto__", "constructor", "prototype"})
 _ROOT_REQUIRED = ("assistantName", "assistantAvatar", "assistantAgentId")
 _ROOT_PROPERTIES: dict[str, dict[str, Any]] = {
     "basePath": {
@@ -63,6 +65,7 @@ _UI_HINTS: dict[str, dict[str, Any]] = {
     "assistantAgentId": {"label": "Assistant Agent ID"},
     "serverVersion": {"label": "Server Version"},
     "localMediaPreviewRoots": {"label": "Local Media Preview Roots"},
+    "localMediaPreviewRoots[]": {"label": "Local Media Preview Root"},
     "embedSandbox": {"label": "Embed Sandbox"},
     "allowExternalEmbedUrls": {"label": "Allow External Embed URLs"},
 }
@@ -88,6 +91,8 @@ class GatewayConfigSchemaService:
         normalized_path = _normalize_lookup_path(path)
         if normalized_path is None:
             return None
+        if normalized_path and len(_split_lookup_path(normalized_path)) > _LOOKUP_PATH_MAX_SEGMENTS:
+            return None
         node = _lookup_schema_node(normalized_path)
         if node is None:
             return None
@@ -99,10 +104,10 @@ class GatewayConfigSchemaService:
                 node["schema"],
             ),
         }
-        hint = _hint_for_path(node["hint_path"])
-        if hint is not None:
-            result["hint"] = hint
-            result["hintPath"] = node["hint_path"]
+        hint_match = _resolve_hint_match(normalized_path)
+        if hint_match is not None:
+            result["hint"] = hint_match["hint"]
+            result["hintPath"] = hint_match["path"]
         return result
 
 
@@ -132,45 +137,72 @@ def _normalize_lookup_path(path: str) -> str | None:
     if not _LOOKUP_PATH_PATTERN.fullmatch(normalized):
         return None
 
-    normalized = _PATH_INDEX_RE.sub(r".\1", normalized)
-    normalized = normalized.strip(".")
+    normalized = _PATH_INDEX_RE.sub(lambda match: f".{match.group(1) or '*'}", normalized)
+    normalized = re.sub(r"\.+", ".", normalized.strip("."))
     return normalized
+
+
+def _split_lookup_path(path: str) -> list[str]:
+    if not path:
+        return []
+    return [segment for segment in path.split(".") if segment]
+
+
+def _resolve_items_schema(
+    schema: dict[str, Any],
+    *,
+    index: int | None = None,
+) -> dict[str, Any] | None:
+    items = schema.get("items")
+    if isinstance(items, list):
+        if index is None:
+            for entry in items:
+                if isinstance(entry, dict):
+                    return entry
+            return None
+        if 0 <= index < len(items) and isinstance(items[index], dict):
+            return items[index]
+        return None
+    return items if isinstance(items, dict) else None
+
+
+def _resolve_lookup_child_schema(
+    schema: dict[str, Any],
+    segment: str,
+) -> dict[str, Any] | None:
+    if segment in _FORBIDDEN_LOOKUP_SEGMENTS:
+        return None
+
+    properties = schema.get("properties")
+    if isinstance(properties, dict):
+        property_schema = properties.get(segment)
+        if isinstance(property_schema, dict):
+            return property_schema
+
+    item_index = int(segment) if segment.isdigit() else None
+    items = _resolve_items_schema(schema, index=item_index)
+    if (segment == "*" or item_index is not None) and items is not None:
+        return items
+
+    additional_properties = schema.get("additionalProperties")
+    if isinstance(additional_properties, dict):
+        return additional_properties
+    return None
 
 
 def _lookup_schema_node(path: str) -> dict[str, Any] | None:
     schema = _root_schema()
-    hint_path = ""
     if not path:
-        return {"schema": schema, "hint_path": hint_path}
+        return {"schema": schema}
 
     current_schema: dict[str, Any] = schema
-    current_hint_path = ""
-    for segment in path.split("."):
-        properties = current_schema.get("properties")
-        if isinstance(properties, dict):
-            property_schema = properties.get(segment)
-            if not isinstance(property_schema, dict):
-                return None
-            current_schema = property_schema
-            current_hint_path = (
-                segment
-                if not current_hint_path
-                else f"{current_hint_path}.{segment}"
-            )
-            continue
+    for segment in _split_lookup_path(path):
+        next_schema = _resolve_lookup_child_schema(current_schema, segment)
+        if next_schema is None:
+            return None
+        current_schema = next_schema
 
-        if current_schema.get("type") == "array" and segment.isdigit():
-            items = current_schema.get("items")
-            if not isinstance(items, dict):
-                return None
-            current_schema = items
-            current_hint_path = (
-                f"{current_hint_path}[]" if current_hint_path else "[]"
-            )
-            continue
-        return None
-
-    return {"schema": current_schema, "hint_path": current_hint_path}
+    return {"schema": current_schema}
 
 
 def _lookup_schema_view(schema: dict[str, Any]) -> dict[str, Any]:
@@ -184,29 +216,44 @@ def _lookup_schema_view(schema: dict[str, Any]) -> dict[str, Any]:
 
 
 def _build_lookup_children(path: str, schema: dict[str, Any]) -> list[dict[str, Any]]:
-    properties = schema.get("properties")
-    if not isinstance(properties, dict):
-        return []
-
     required = set(schema.get("required") or [])
     children: list[dict[str, Any]] = []
-    for key, child_schema in properties.items():
-        if not isinstance(child_schema, dict):
-            continue
+
+    def _append_child(
+        key: str,
+        child_schema: dict[str, Any],
+        *,
+        required_child: bool,
+    ) -> None:
         child_path = key if not path else f"{path}.{key}"
-        child_hint_path = key if not path else f"{path}.{key}"
         child: dict[str, Any] = {
             "key": key,
             "path": child_path,
             "type": deepcopy(child_schema.get("type")),
-            "required": key in required,
+            "required": required_child,
             "hasChildren": _schema_has_children(child_schema),
         }
-        hint = _hint_for_path(child_hint_path)
-        if hint is not None:
-            child["hint"] = hint
-            child["hintPath"] = child_hint_path
+        hint_match = _resolve_hint_match(child_path)
+        if hint_match is not None:
+            child["hint"] = hint_match["hint"]
+            child["hintPath"] = hint_match["path"]
         children.append(child)
+
+    properties = schema.get("properties")
+    if isinstance(properties, dict):
+        for key, child_schema in properties.items():
+            if not isinstance(child_schema, dict):
+                continue
+            _append_child(key, child_schema, required_child=key in required)
+
+    wildcard_schema = None
+    additional_properties = schema.get("additionalProperties")
+    if isinstance(additional_properties, dict):
+        wildcard_schema = additional_properties
+    else:
+        wildcard_schema = _resolve_items_schema(schema)
+    if wildcard_schema is not None:
+        _append_child("*", wildcard_schema, required_child=False)
     return children
 
 
@@ -214,10 +261,39 @@ def _schema_has_children(schema: dict[str, Any]) -> bool:
     properties = schema.get("properties")
     if isinstance(properties, dict) and properties:
         return True
+    additional_properties = schema.get("additionalProperties")
+    if isinstance(additional_properties, dict):
+        return True
     items = schema.get("items")
-    return isinstance(items, dict) and bool(items.get("properties"))
+    if isinstance(items, dict):
+        return True
+    return isinstance(items, list) and any(isinstance(item, dict) for item in items)
 
 
-def _hint_for_path(path: str) -> dict[str, Any] | None:
-    hint = _UI_HINTS.get(path)
-    return deepcopy(hint) if hint is not None else None
+def _resolve_hint_match(path: str) -> dict[str, Any] | None:
+    target_parts = _split_lookup_path(path)
+    best_match: tuple[str, dict[str, Any], int] | None = None
+
+    for hint_path, hint in _UI_HINTS.items():
+        hint_parts = _split_lookup_path(_normalize_lookup_path(hint_path) or "")
+        if len(hint_parts) != len(target_parts):
+            continue
+
+        wildcard_count = 0
+        for hint_part, target_part in zip(hint_parts, target_parts, strict=False):
+            if hint_part == target_part:
+                continue
+            if hint_part == "*":
+                wildcard_count += 1
+                continue
+            break
+        else:
+            if best_match is None or wildcard_count < best_match[2]:
+                best_match = (hint_path, hint, wildcard_count)
+
+    if best_match is None:
+        return None
+    return {
+        "path": best_match[0],
+        "hint": deepcopy(best_match[1]),
+    }

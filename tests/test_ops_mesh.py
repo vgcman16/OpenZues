@@ -2920,7 +2920,7 @@ async def test_ops_mesh_service_routes_due_main_system_event_task_through_wake_q
 
 
 @pytest.mark.asyncio
-async def test_ops_mesh_service_routes_due_main_system_event_task_session_key_through_wake_queue() -> None:
+async def test_ops_mesh_routes_due_main_system_event_session_key_through_wake_queue() -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-cron-session-key-wake"
     shutil.rmtree(tmp_path, ignore_errors=True)
     tmp_path.mkdir(parents=True, exist_ok=True)
@@ -3969,6 +3969,10 @@ async def test_replay_outbound_deliveries_retries_saved_failed_session_delivery(
             '\u26a0\ufe0f Cron job "Replay Session Delivery" failed: lane timed out',
         )
     ]
+    assert result.deliveries[0].route.kind == "session"
+    assert result.deliveries[0].route.name == "Session delivery for Replay Session Delivery"
+    assert result.deliveries[0].route.target == session_key
+    assert result.deliveries[0].route.enabled is True
     assert result.deliveries[0].delivery is not None
     assert result.deliveries[0].delivery.delivery_state == "delivered"
     assert refreshed_delivery is not None
@@ -4063,6 +4067,13 @@ async def test_replay_outbound_deliveries_retries_saved_failed_announce_delivery
             '\u26a0\ufe0f Cron job "Replay Announce Delivery" failed: lane timed out',
         )
     ]
+    assert result.deliveries[0].route.kind == "announce"
+    assert result.deliveries[0].route.name == "Announce delivery for Replay Announce Delivery"
+    assert result.deliveries[0].route.target == "telegram coordinator channel deploy-room"
+    assert result.deliveries[0].route.enabled is True
+    assert result.deliveries[0].route.conversation_target is not None
+    assert result.deliveries[0].route.conversation_target.channel == "telegram"
+    assert result.deliveries[0].route.conversation_target.account_id == "coordinator"
     assert result.deliveries[0].delivery is not None
     assert result.deliveries[0].delivery.delivery_state == "delivered"
     assert refreshed_delivery is not None
@@ -4238,7 +4249,7 @@ async def test_ops_mesh_service_persists_secret_backed_replay_auth_for_ad_hoc_we
 
 
 @pytest.mark.asyncio
-async def test_replay_outbound_deliveries_retries_saved_failed_secret_backed_ad_hoc_webhook_delivery(
+async def test_replay_outbound_deliveries_retry_secret_backed_ad_hoc_webhook_delivery(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-replay-secret-ad-hoc-webhook"
@@ -4328,6 +4339,11 @@ async def test_replay_outbound_deliveries_retries_saved_failed_secret_backed_ad_
             "Bearer replay-auth-token",
         )
     ]
+    assert result.deliveries[0].route.kind == "webhook"
+    assert result.deliveries[0].route.target == "https://example.invalid/replay-auth-webhook"
+    assert result.deliveries[0].route.enabled is True
+    assert result.deliveries[0].route.has_secret is True
+    assert result.deliveries[0].route.secret_header_name == "Authorization"
     assert result.deliveries[0].delivery is not None
     assert result.deliveries[0].delivery.delivery_state == "delivered"
     assert refreshed_delivery is not None

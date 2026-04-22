@@ -25,6 +25,7 @@ import uvicorn
 from openzues.app import build_brief, build_launchpad, build_radar
 from openzues.database import Database
 from openzues.schemas import (
+    BrowserPostureView,
     ConversationTargetView,
     DashboardView,
     GatewayBootstrapView,
@@ -50,11 +51,11 @@ from openzues.services.cortex import build_cortex, build_doctrines
 from openzues.services.device_bootstrap_profile import default_device_bootstrap_profile
 from openzues.services.environment import EnvironmentService
 from openzues.services.followups import operator_blocked_missions
-from openzues.services.gateway_bootstrap import GatewayBootstrapService
 from openzues.services.gateway_agents import GatewayAgentsService
+from openzues.services.gateway_bootstrap import GatewayBootstrapService
+from openzues.services.gateway_capability import GatewayCapabilityService
 from openzues.services.gateway_channels import GatewayChannelsService
 from openzues.services.gateway_commands import GatewayCommandsService
-from openzues.services.gateway_capability import GatewayCapabilityService
 from openzues.services.github import GitHubService
 from openzues.services.hermes_platform import HermesPlatformService
 from openzues.services.hermes_runtime_profile import load_saved_runtime_preferences
@@ -144,9 +145,16 @@ def _control_plane_base_url(app_settings: Settings) -> str:
         if isinstance(payload, dict):
             host_value = str(payload.get("host") or "").strip()
             port_value = payload.get("port")
-            try:
-                port_number = int(port_value)
-            except (TypeError, ValueError):
+            if isinstance(port_value, bool):
+                port_number = 0
+            elif isinstance(port_value, int):
+                port_number = port_value
+            elif isinstance(port_value, str):
+                try:
+                    port_number = int(port_value)
+                except ValueError:
+                    port_number = 0
+            else:
                 port_number = 0
             if (
                 host_value
@@ -1372,12 +1380,21 @@ def _emit_outbound_deliveries(payload: list[dict[str, object]], *, json_output: 
         state = str(delivery.get("delivery_state") or "").strip() or "pending"
         event_type = str(delivery.get("event_type") or "").strip()
         route_name = str(delivery.get("route_name") or "").strip()
+        route_kind = str(delivery.get("route_kind") or "").strip()
+        route_target = str(delivery.get("route_target") or "").strip()
         summary = str(delivery.get("message_summary") or "").strip()
         session_key = str(delivery.get("session_key") or "").strip()
         conversation_target = delivery.get("conversation_target")
         typer.echo(f"[{delivery_id}] {state} {event_type}".strip())
         if route_name:
-            typer.echo(f"  route: {route_name}")
+            route_label = route_name
+            if route_kind:
+                route_label += f" [{route_kind}]"
+            typer.echo(f"  route: {route_label}")
+        elif route_kind:
+            typer.echo(f"  route: [{route_kind}]")
+        if route_target:
+            typer.echo(f"  target: {route_target}")
         if summary:
             typer.echo(f"  summary: {summary}")
         if session_key:
@@ -1419,8 +1436,20 @@ def _emit_outbound_delivery_replay(payload: dict[str, object], *, json_output: b
             continue
         status = "ok" if bool(item.get("ok")) else "error"
         route_name = str(item.get("route_name") or "").strip()
+        route_target = str(item.get("target") or "").strip()
         event_type = str(item.get("event_type") or "").strip()
-        typer.echo(f"[{status}] {event_type} -> {route_name}".strip())
+        route_kind = ""
+        route = item.get("route")
+        if isinstance(route, dict):
+            route_kind = str(route.get("kind") or "").strip()
+            if not route_target:
+                route_target = str(route.get("target") or "").strip()
+        headline = f"[{status}] {event_type} -> {route_name}".strip()
+        if route_kind:
+            headline += f" [{route_kind}]"
+        typer.echo(headline)
+        if route_target:
+            typer.echo(f"  target: {route_target}")
         detail = str(item.get("summary") or "").strip()
         if detail:
             typer.echo(f"  summary: {detail}")
@@ -2730,7 +2759,10 @@ def _attention_queue_plan_payload(plan) -> dict[str, object] | None:
     }
 
 
-def _find_launchpad_opportunity(dashboard: SimpleNamespace, opportunity_id: str):
+def _find_launchpad_opportunity(
+    dashboard: DashboardView | SimpleNamespace,
+    opportunity_id: str,
+):
     wanted = opportunity_id.strip()
     if not wanted:
         return None
@@ -2744,7 +2776,7 @@ def _find_launchpad_opportunity(dashboard: SimpleNamespace, opportunity_id: str)
     )
 
 
-def _available_launchpad_ids(dashboard: SimpleNamespace) -> list[str]:
+def _available_launchpad_ids(dashboard: DashboardView | SimpleNamespace) -> list[str]:
     return [opportunity.id for opportunity in dashboard.launchpad.opportunities]
 
 
@@ -2758,13 +2790,20 @@ def _attention_queue_idle_reply(*, signal_id: str | None = None) -> str:
     return _ATTENTION_QUEUE_IDLE_REPLY
 
 
-def _build_status_payload(dashboard: SimpleNamespace) -> dict[str, object]:
+def _build_status_payload(
+    dashboard: DashboardView | SimpleNamespace,
+) -> dict[str, object]:
     active_count = sum(1 for mission in dashboard.missions if mission.status == "active")
     blocked_count = len(operator_blocked_missions(dashboard.missions))
     paused_count = sum(1 for mission in dashboard.missions if mission.status == "paused")
     failed_count = sum(1 for mission in dashboard.missions if mission.status == "failed")
     connected_count = sum(1 for instance in dashboard.instances if instance.connected)
     typed_dashboard = cast(DashboardView, dashboard)
+    browser_posture = (
+        typed_dashboard.browser_posture
+        if isinstance(typed_dashboard.browser_posture, BrowserPostureView)
+        else None
+    )
     status_plan = plan_control_chat("status", typed_dashboard)
     queue_plan = plan_attention_queue(typed_dashboard)
     return {
@@ -2783,9 +2822,7 @@ def _build_status_payload(dashboard: SimpleNamespace) -> dict[str, object]:
             "total_count": len(dashboard.instances),
         },
         "browser_posture": (
-            dashboard.browser_posture.model_dump(mode="json")
-            if getattr(dashboard, "browser_posture", None) is not None
-            else None
+            browser_posture.model_dump(mode="json") if browser_posture is not None else None
         ),
         "gateway_capability": dashboard.gateway_capability.model_dump(mode="json"),
         "radar": dashboard.radar.model_dump(mode="json"),

@@ -3,6 +3,7 @@ import codecs
 import json
 import os
 import re
+import shutil
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -1319,6 +1320,192 @@ def test_routes_deliveries_json_surfaces_saved_outbound_deliveries(tmp_path, mon
     assert payload[0]["route_scope"]["route_match"] == "test"
     assert payload[0]["event_payload"]["routeConversationTarget"]["peer_id"] == "deploy-room"
     assert payload[0]["event_payload"]["summary"] == "OpenZues test delivery ping."
+
+
+def test_routes_deliveries_reports_saved_direct_transport_identity(monkeypatch) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "cli-routes-deliveries-direct-transport"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch)
+
+    settings = Settings(data_dir=data_dir, db_path=data_dir / "openzues.db")
+    api_app = create_app(settings)
+    with TestClient(api_app, client=("testclient", 50000)):
+        pass
+
+    database = Database(settings.db_path)
+    asyncio.run(
+        database.create_outbound_delivery(
+            route_id=None,
+            route_name="Announce delivery for CLI replay",
+            route_kind="announce",
+            route_target="telegram account coordinator channel deploy-room",
+            event_type="cron/failure",
+            session_key=(
+                "launch:mode:workspace_affinity:channel:telegram:account:coordinator:"
+                "peer:channel:deploy-room"
+            ),
+            conversation_target={
+                "channel": "telegram",
+                "account_id": "coordinator",
+                "peer_kind": "channel",
+                "peer_id": "deploy-room",
+                "summary": "telegram account coordinator channel deploy-room",
+            },
+            route_scope={
+                "route_name": "Announce delivery for CLI replay",
+                "route_kind": "announce",
+                "route_target": "telegram account coordinator channel deploy-room",
+                "route_match": "explicitTarget",
+            },
+            event_payload={
+                "message": 'Cron job "CLI replay" failed: lane timed out',
+            },
+            message_summary='Cron job "CLI replay" failed: lane timed out',
+            test_delivery=False,
+            delivery_state="failed",
+            attempt_count=1,
+            last_attempt_at=(datetime.now(UTC) - timedelta(minutes=10)).isoformat(),
+            last_error="temporary delivery timeout",
+        )
+    )
+
+    result = runner.invoke(app, ["routes", "deliveries"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "route: Announce delivery for CLI replay [announce]" in result.stdout
+    assert "target: telegram account coordinator channel deploy-room" in result.stdout
+    assert (
+        "session: launch:mode:workspace_affinity:channel:telegram:account:coordinator:"
+        in result.stdout
+    )
+
+
+def test_routes_replay_json_reports_saved_announce_transport_identity(
+    monkeypatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "cli-routes-replay-announce-identity"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch)
+
+    settings = Settings(data_dir=data_dir, db_path=data_dir / "openzues.db")
+    api_app = create_app(settings)
+    with TestClient(api_app, client=("testclient", 50000)):
+        pass
+
+    database = Database(settings.db_path)
+    delivery_id = asyncio.run(
+        database.create_outbound_delivery(
+            route_id=None,
+            route_name="Announce delivery for CLI replay",
+            route_kind="announce",
+            route_target="telegram account coordinator channel deploy-room",
+            event_type="cron/failure",
+            session_key=(
+                "launch:mode:workspace_affinity:channel:telegram:account:coordinator:"
+                "peer:channel:deploy-room"
+            ),
+            conversation_target={
+                "channel": "telegram",
+                "account_id": "coordinator",
+                "peer_kind": "channel",
+                "peer_id": "deploy-room",
+                "summary": "telegram account coordinator channel deploy-room",
+            },
+            route_scope={
+                "route_name": "Announce delivery for CLI replay",
+                "route_kind": "announce",
+                "route_target": "telegram account coordinator channel deploy-room",
+                "route_match": "explicitTarget",
+            },
+            event_payload={
+                "message": 'Cron job "CLI replay" failed: lane timed out',
+            },
+            message_summary='Cron job "CLI replay" failed: lane timed out',
+            test_delivery=False,
+            delivery_state="failed",
+            attempt_count=1,
+            last_attempt_at=(datetime.now(UTC) - timedelta(minutes=10)).isoformat(),
+            last_error="temporary delivery timeout",
+        )
+    )
+
+    result = runner.invoke(app, ["routes", "replay", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is True
+    assert payload["attempted_count"] == 1
+    assert payload["replayed_count"] == 1
+    assert payload["deliveries"][0]["delivery_id"] == delivery_id
+    assert payload["deliveries"][0]["route"]["kind"] == "announce"
+    assert (
+        payload["deliveries"][0]["route"]["target"]
+        == "telegram account coordinator channel deploy-room"
+    )
+    assert payload["deliveries"][0]["route"]["enabled"] is True
+    assert payload["deliveries"][0]["route"]["conversation_target"]["channel"] == "telegram"
+    assert payload["deliveries"][0]["route"]["conversation_target"]["account_id"] == "coordinator"
+    assert payload["deliveries"][0]["delivery"]["delivery_state"] == "delivered"
+
+
+def test_routes_replay_reports_saved_announce_transport_identity(monkeypatch) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "cli-routes-replay-announce-plain"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch)
+
+    settings = Settings(data_dir=data_dir, db_path=data_dir / "openzues.db")
+    api_app = create_app(settings)
+    with TestClient(api_app, client=("testclient", 50000)):
+        pass
+
+    database = Database(settings.db_path)
+    asyncio.run(
+        database.create_outbound_delivery(
+            route_id=None,
+            route_name="Announce delivery for CLI replay",
+            route_kind="announce",
+            route_target="telegram account coordinator channel deploy-room",
+            event_type="cron/failure",
+            session_key=(
+                "launch:mode:workspace_affinity:channel:telegram:account:coordinator:"
+                "peer:channel:deploy-room"
+            ),
+            conversation_target={
+                "channel": "telegram",
+                "account_id": "coordinator",
+                "peer_kind": "channel",
+                "peer_id": "deploy-room",
+                "summary": "telegram account coordinator channel deploy-room",
+            },
+            route_scope={
+                "route_name": "Announce delivery for CLI replay",
+                "route_kind": "announce",
+                "route_target": "telegram account coordinator channel deploy-room",
+                "route_match": "explicitTarget",
+            },
+            event_payload={
+                "message": 'Cron job "CLI replay" failed: lane timed out',
+            },
+            message_summary='Cron job "CLI replay" failed: lane timed out',
+            test_delivery=False,
+            delivery_state="failed",
+            attempt_count=1,
+            last_attempt_at=(datetime.now(UTC) - timedelta(minutes=10)).isoformat(),
+            last_error="temporary delivery timeout",
+        )
+    )
+
+    result = runner.invoke(app, ["routes", "replay"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "[ok] cron/failure -> Announce delivery for CLI replay [announce]" in result.stdout
+    assert "target: telegram account coordinator channel deploy-room" in result.stdout
 
 
 def test_routes_replay_json_retries_saved_failed_delivery(tmp_path, monkeypatch) -> None:

@@ -1530,14 +1530,14 @@ class RuntimeManager:
                 raw_turn_id = turn.get("id")
                 if isinstance(raw_turn_id, str) and raw_turn_id:
                     turn_id = raw_turn_id
-            status_patch: dict[str, Any] = {"type": "active"}
+            active_status_patch: dict[str, Any] = {"type": "active"}
             if turn_id is not None:
-                status_patch["turnId"] = turn_id
-                status_patch["activeTurnId"] = turn_id
+                active_status_patch["turnId"] = turn_id
+                active_status_patch["activeTurnId"] = turn_id
             runtime.threads = _patch_thread_summary(
                 runtime.threads,
                 thread_id,
-                {"status": status_patch},
+                {"status": active_status_patch},
             )
             runtime.loaded_thread_ids = _add_loaded_thread_id(runtime.loaded_thread_ids, thread_id)
             return
@@ -1549,15 +1549,15 @@ class RuntimeManager:
                 raw_status = turn.get("status")
                 if isinstance(raw_status, str) and raw_status:
                     turn_status = raw_status
-            status_patch: dict[str, Any] = {}
+            completed_status_patch: dict[str, Any] = {}
             if turn_status == "failed":
-                status_patch["type"] = "systemError"
+                completed_status_patch["type"] = "systemError"
             elif turn_status:
-                status_patch["type"] = "idle"
+                completed_status_patch["type"] = "idle"
             runtime.threads = _patch_thread_summary(
                 runtime.threads,
                 thread_id,
-                {"status": status_patch},
+                {"status": completed_status_patch},
             )
             status = next(
                 (

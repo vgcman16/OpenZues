@@ -35,6 +35,37 @@ def test_enqueue_dedupes_work_by_type_and_acknowledge_removes_items() -> None:
     assert [item.id for item in after_ack.items] == ["baseline-status"]
 
 
+def test_enqueue_dedupes_work_by_type_and_preserves_first_payload() -> None:
+    store = GatewayNodePendingWorkStore()
+
+    first = store.enqueue(
+        node_id="node-2b",
+        work_type="location.request",
+        priority="high",
+        payload={"reason": "gps"},
+    )
+    second = store.enqueue(
+        node_id="node-2b",
+        work_type="location.request",
+        priority="default",
+        payload={"reason": "wifi"},
+    )
+
+    assert first.deduped is False
+    assert first.revision == 1
+    assert second.deduped is True
+    assert second.revision == first.revision
+    assert second.item.id == first.item.id
+    assert second.item.priority == "high"
+    assert second.item.payload == {"reason": "gps"}
+
+    drained = store.drain("node-2b")
+    assert drained.revision == 1
+    assert drained.items[0].id == first.item.id
+    assert drained.items[0].priority == "high"
+    assert drained.items[0].payload == {"reason": "gps"}
+
+
 def test_drain_keeps_has_more_true_when_baseline_status_item_is_deferred() -> None:
     store = GatewayNodePendingWorkStore()
     store.enqueue(node_id="node-3", work_type="location.request")

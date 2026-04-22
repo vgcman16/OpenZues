@@ -12,6 +12,8 @@ from openzues.services.codex_desktop import CodexDesktopService
 
 
 def _desktop_source_label(source_kind: str | None) -> str:
+    if source_kind is None:
+        return "desktop runtime"
     return {
         "package": "packaged desktop runtime",
         "session": "desktop session runtime",
@@ -113,6 +115,9 @@ class EnvironmentService:
 
         codex_exe = shutil.which("codex")
         codex_probe = self._run(["codex", "--version"]) if codex_exe else None
+        codex_status: DiagnosticStatus
+        codex_detail: str
+        codex_action: str | None
         if codex_probe is None:
             if desktop.source_path is not None:
                 codex_status = "info"
@@ -233,11 +238,7 @@ class EnvironmentService:
                 "or keep using WebSocket transport."
             )
         elif desktop.staged_path is None or not desktop.staged_ready:
-            bridge_source_label = {
-                "package": "packaged desktop runtime",
-                "session": "desktop session runtime",
-                "path": "PATH runtime",
-            }.get(desktop.source_kind, "desktop runtime")
+            bridge_source_label = _desktop_source_label(desktop.source_kind)
             bridge_status = "info"
             bridge_detail = (
                 "OpenZues will stage a local runnable Codex binary from the "

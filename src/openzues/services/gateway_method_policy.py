@@ -135,6 +135,7 @@ EXPLICIT_GATEWAY_METHOD_SCOPE_GROUPS: dict[str, tuple[str, ...]] = {
         "tts.providers",
         "commands.list",
         "models.list",
+        "models.authStatus",
         "tools.catalog",
         "tools.effective",
         "agents.list",
@@ -202,6 +203,7 @@ EXPLICIT_GATEWAY_METHOD_SCOPE_GROUPS: dict[str, tuple[str, ...]] = {
         "node.pending.enqueue",
     ),
     ADMIN_GATEWAY_METHOD_SCOPE: (
+        "channels.start",
         "channels.logout",
         "agents.create",
         "agents.update",

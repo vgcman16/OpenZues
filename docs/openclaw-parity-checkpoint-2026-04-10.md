@@ -1,11 +1,11 @@
 ﻿# OpenClaw Parity Checkpoint
 
-## Current Rollup (through 2026-04-21 addenda)
+## Current Rollup (through 2026-04-22 addenda)
 
 - Estimated parity progress: roughly `25-35%` of the full OpenClaw product surface is now covered, with gateway/control-plane seams materially further along than whole-product parity. Registry, routing/session-key, large parts of gateway session/usage/cron compatibility, and operator-control seams have moved forward; channels, nodes, browser-control, canvas, voice, packaging, and companion apps still dominate the remaining gap.
 - Active feature family progress: the live queue is the gateway/cron/session-delivery family, and it is roughly `65-75%` complete along the current bounded local parity path. The latest addenda moved that family from session-target normalization into delivery metadata, runtime delivery ownership, webhook/session fallback behavior, and preserved `sessionKey` wake routing.
-- Latest completed seams: the freshest landed seams are `cron runtime delivery-status`, `cron announce fallback and delivery.threadId`, `cron session delivery fallback`, and `cron system-event sessionKey wake` parity, layered on top of the already-locked gateway method registry seam and the `usage.cost` / `usage.status` bridge.
-- Current queue head: explicit peer-target announce delivery remains the next honest seam. OpenZues now covers webhook delivery, notification-route delivery, and `sessionKey` / `channel="last"` fallback, but it still does not own a true direct announce transport for explicit `channel` / `to` / `accountId` targets.
+- Latest completed seams: the freshest landed seams are `shared direct channel-target send owner`, `saved direct replay transport identity surfacing`, `cron runtime delivery-status`, `cron announce fallback and delivery.threadId`, `cron session delivery fallback`, and `cron system-event sessionKey wake` parity, layered on top of the already-locked gateway method registry seam and the `usage.cost` / `usage.status` bridge.
+- Current queue head: true outbound provider runtime for direct channel/account send + announce remains the next honest seam. OpenZues now covers webhook delivery, notification-route delivery, `sessionKey` / `channel="last"` fallback, and a shared text-only explicit-target owner, but it still does not match OpenClaw's real outbound provider runtime for `channel` / `to` / `accountId`.
 - How to read this checkpoint: treat the dated checkpoint sections near the top as seam locks and re-anchors, then use the newest `Recovery addendum` entries later in the file for the live edge. The final addendum's "Next exact seam" callout is the current queue head unless a newer dated section overrides it.
 
 ## 2026-04-18 Usage Compatibility Bridge Checkpoint
@@ -13887,4 +13887,155 @@ Next best slice:
   - the touched authenticated replay and vault boundary type-checks cleanly.
 - Next exact seam inside the active cron/integration queue:
   - saved ad-hoc webhook replay is now parity-safe for explicit auth headers, but replay result surfacing still collapses saved direct transports into a synthetic webhook-only route view instead of exposing the richer saved transport identity OpenClaw reports.
+
+### Recovery addendum 2026-04-22 repo-level seam queue and shard verification America/Chicago
+
+- Integrated the current dirty-tree shard state into a repo-level unresolved seam queue instead of stacking more edits onto already-hot gateway/session surfaces.
+- Landed one safe verification-found regression fix while doing that integration:
+  - `GatewayModelsService.build_catalog(...)` now sorts merged catalog entries by provider plus canonical model id before display name, which keeps richer duplicate display names from destabilizing catalog order.
+- Verified the currently landed or landing shard slices with focused proofs:
+  - `C:\Users\skull\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m pytest tests/test_gateway_models.py -q`
+    - result: `3 passed`
+  - `C:\Users\skull\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m pytest tests/test_gateway_node_pending_work.py -q`
+    - result: `7 passed`
+  - `C:\Users\skull\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m pytest tests/test_gateway_wizard.py -k "remote_wizard_collects_operator_name_before_task_name" -q`
+    - result: `1 passed`
+  - `C:\Users\skull\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m pytest tests/test_gateway_nodes_api.py -k "main_system_event_cron_run_routes_session_key_through_wake_queue" -q`
+    - result: `1 passed`
+  - `C:\Users\skull\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m pytest tests/test_ops_mesh.py -k "replay_outbound_deliveries_retry_secret_backed_ad_hoc_webhook_delivery or ops_mesh_routes_due_main_system_event_session_key_through_wake_queue" -q`
+    - result: `2 passed`
+  - `C:\Users\skull\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m ruff check src/openzues/services/gateway_models.py tests/test_gateway_models.py`
+    - result: clean
+  - `C:\Users\skull\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m mypy src/openzues/services/gateway_models.py`
+    - result: clean
+- Verified the temp-path-sensitive session and local-wizard proofs by directly executing the exact test functions against repo-local temp paths because the local pytest temp cleanup path currently hits Windows access-denied errors:
+  - `test_build_snapshot_discovers_mission_and_transcript_sessions_without_metadata`
+  - `test_build_snapshot_sorts_discovered_sessions_by_updated_at_desc`
+  - `test_resolve_key_prefers_structural_session_id_match_over_fresher_fuzzy_duplicate`
+  - `test_resolve_key_rejects_ambiguous_structural_session_id_duplicates`
+  - `test_gateway_node_method_call_endpoint_supports_local_wizard_completion_from_saved_draft`
+- Queue effect from this run:
+  - explicit peer-target announce delivery remains the highest-leverage open seam from the checkpoint tail, but it is already a hot write set in the current dirty tree.
+  - the next honest unowned continuation for the orchestrator is replay result surfacing for saved direct transports if the explicit announce runtime seam remains busy next run.
+- Shared queue owner file added:
+  - `docs/openclaw-parity-unresolved-seams.md`
+- Verification blocker observed:
+  - pytest temp-path cleanup currently hits `WinError 5` in this Windows/OneDrive environment; direct invocation of the exact temp-path tests was sufficient to separate harness noise from product behavior on this run.
+
+### Recovery addendum 2026-04-22 saved direct replay transport identity surfacing America/Chicago
+
+- Continued the repo-level parity queue at the next honest unowned replay/read-model seam while the explicit announce runtime work stays hot elsewhere in the dirty tree.
+- Key findings in OpenZues before the fix:
+  - `OpsMeshService.replay_outbound_deliveries(...)` already replayed saved `session`, `announce`, and route-less `webhook` deliveries correctly, but it surfaced all three through a synthetic `NotificationRouteView(kind="webhook")`.
+  - the human `openzues routes deliveries` and `openzues routes replay` output also hid the saved transport kind, so direct delivery history still read like generic webhook routing unless the caller manually inspected raw saved rows.
+- Landed the next bounded OpenZues slices:
+  - replay results for saved direct deliveries now preserve the real transport identity in the surfaced route view:
+    - `session` rows surface as `kind="session"` with the saved session key target.
+    - `announce` rows surface as `kind="announce"` with the saved explicit-target summary plus conversation target identity.
+    - route-less `webhook` rows keep `kind="webhook"` and now also surface persisted replay-auth hints honestly when present.
+  - human CLI delivery-history and replay output now prints the saved route kind and target instead of only the friendly route name.
+  - the fix stayed read-model-only: no second delivery owner or broader channel runtime was introduced.
+- Product effect proved end to end:
+  - replay/read-model consumers can now distinguish saved direct `session`, `announce`, and ad-hoc `webhook` transport history without reverse-engineering `route_scope`.
+  - saved replay auth for route-less webhooks remains visible as part of the surfaced direct transport identity instead of being flattened into a generic webhook-only route shell.
+- Focused proofs added or widened in this continuation:
+  - `tests/test_ops_mesh.py`
+    - widened `test_replay_outbound_deliveries_retries_saved_failed_session_delivery`
+    - widened `test_replay_outbound_deliveries_retries_saved_failed_announce_delivery`
+    - widened `test_replay_outbound_deliveries_retry_secret_backed_ad_hoc_webhook_delivery`
+  - `tests/test_cli.py`
+    - added `test_routes_deliveries_reports_saved_direct_transport_identity`
+    - added `test_routes_replay_json_reports_saved_announce_transport_identity`
+    - added `test_routes_replay_reports_saved_announce_transport_identity`
+- Verified this continuation with:
+  - `C:\Users\skull\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m pytest tests/test_ops_mesh.py -k "replay_outbound_deliveries_retries_saved_failed_session_delivery or replay_outbound_deliveries_retries_saved_failed_announce_delivery or replay_outbound_deliveries_retry_secret_backed_ad_hoc_webhook_delivery" -q`
+  - `C:\Users\skull\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m pytest tests/test_cli.py -k "routes_deliveries_reports_saved_direct_transport_identity or routes_replay_json_reports_saved_announce_transport_identity or routes_replay_reports_saved_announce_transport_identity" -q`
+  - `C:\Users\skull\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m mypy src/openzues/services/ops_mesh.py src/openzues/cli.py src/openzues/schemas.py`
+  - `C:\Users\skull\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m ruff check src/openzues/schemas.py src/openzues/services/ops_mesh.py src/openzues/cli.py tests/test_ops_mesh.py tests/test_cli.py`
+- Result:
+  - the focused replay route-identity proofs pass (`3 passed`).
+  - the focused CLI read-model proofs pass (`3 passed`).
+  - the touched runtime and schema surfaces type-check cleanly.
+  - Ruff is clean on the touched runtime, schema, and regression tests.
+  - the local repo virtualenv launcher still points at a missing base Python, so verification used the Codex runtime interpreter with `.venv\Lib\site-packages` on `PYTHONPATH` instead of the stale launcher wrapper.
+- Queue effect from this run:
+  - the saved direct replay/read-model seam is now closed.
+  - explicit peer-target announce delivery remains the live queue head.
+  - the next honest unowned follow-on is broad native channel/account runtime beyond the current cron/session fallback slices if the direct announce owner stays busy next run.
+
+### Recovery addendum 2026-04-22 canonical channel-account routing identity kernel America/Chicago
+
+- Continued the repo-level queue at the first reusable channel/account kernel that was still unowned while the explicit announce transport write set stays hot elsewhere in the dirty tree.
+- Key findings in OpenZues before this fix:
+  - `src/openzues/services/launch_routing.py` already normalized routed conversation targets with OpenClaw-style account-id sanitization and lowercase peer identity.
+  - `src/openzues/services/session_keys.py` still embedded raw `conversation_target.account_id` and raw peer text into launch session keys.
+  - `src/openzues/services/ops_mesh.py` still matched notification-route `conversation_target.account_id` with ad hoc lowercase-and-trim rules, so a human account label like `Workspace Bot` and the canonical routed account id `workspace-bot` could diverge across launch/session/delivery surfaces.
+- Landed the next bounded OpenZues slices:
+  - `build_launch_session_key(...)` now canonicalizes channel/account/peer segments from routed conversation targets before embedding them in launch session keys.
+  - Ops Mesh conversation-target normalization now applies the same canonical account-id rule before route matching and payload surfacing, while keeping peer punctuation intact and lowercased.
+  - added focused regression coverage in `tests/test_channel_account_routing.py` for:
+    - canonical launch session keys built from mixed-case channel/account/peer identity
+    - peer/account-scoped route matching when saved notification routes still carry a human account label but the mission event carries the canonical routed account id
+- Product effect:
+  - channel/account delivery routing is more reusable and honest because launch keys and notification-route matching now agree on the same routed identity kernel.
+  - explicit-target announce delivery is still not a first-class native transport owner, but the remaining owner seam now sits on canonicalized channel/account identity instead of raw branch-local text handling.
+- Verified this continuation with:
+  - `C:\Users\skull\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m mypy src/openzues/services/session_keys.py src/openzues/services/ops_mesh.py`
+  - `.\.venv\Scripts\ruff.exe check src/openzues/services/session_keys.py src/openzues/services/ops_mesh.py tests/test_channel_account_routing.py`
+  - direct invocation of these exact proofs against repo-local temp paths using the Codex runtime interpreter:
+    - `test_build_launch_session_key_canonicalizes_channel_account_and_peer_identity`
+    - `test_ops_mesh_matches_routes_after_account_id_canonicalization`
+    - `test_ops_mesh_service_filters_notification_routes_by_conversation_target`
+- Result:
+  - the touched routing runtime type-checks cleanly.
+  - Ruff is clean on the touched routing runtime and the new regression file.
+  - the exact new routing-kernel proofs pass when invoked directly against repo-local temp paths.
+  - standard pytest session cleanup for temp-path-heavy tests still trips `PermissionError: [WinError 5] Access is denied` in this Windows/OneDrive environment, so those proofs were executed directly instead of relying on pytest teardown.
+- Queue effect from this run:
+  - explicit peer-target announce delivery remains the live queue head.
+  - the next honest unowned follow-on, if that seam stays hot, is to promote this canonical channel/account identity kernel into a reusable outbound transport owner instead of adding more cron-specific branches.
+
+### Recovery addendum 2026-04-22 shared direct channel-target send owner America/Chicago
+
+- Continued the repo-level queue at the first reusable direct-target delivery owner instead of leaving `gateway.send` as a permanent 503 placeholder.
+- Upstream behavior re-anchored before editing:
+  - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-cron.ts`
+  - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\cron\delivery.ts`
+  - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\cron\isolated-agent\delivery-target.ts`
+- Key findings in OpenZues before this fix:
+  - the canonical channel/account routing kernel was already landed, and cron explicit announce delivery already used a private session-backed owner in `OpsMeshService`.
+  - `GatewayNodeMethodService.call("send", ...)` still ended at `"send is unavailable until channel-target outbound delivery is wired"`, so the runtime was not reusable across gateway/cron/session surfaces.
+  - the honest next seam from the queue was therefore to expose one shared direct-target owner before widening into more channel-specific branches.
+- Landed the next bounded OpenZues slices:
+  - extracted the explicit-target announce/session-backed delivery path in `src/openzues/services/ops_mesh.py` into one shared direct channel-message owner that both cron announce delivery and gateway callers can use.
+  - added public `OpsMeshService.send_direct_channel_message(...)` so gateway/app wiring can record saved outbound delivery history, resolve the canonical target session key, and append the assistant message into that session through the existing control-chat delivery bridge.
+  - wired `GatewayNodeMethodService` and app construction so `gateway.send` now uses that owner when the runtime is present, while preserving the old 503 boundary for unwired contexts.
+  - kept the continuation narrow and honest: `gateway.send` now supports text-only direct delivery, still rejects media payloads explicitly, and leaves `poll` untouched.
+  - blank optional routing identifiers now normalize to `None`, and a thread-scoped `sessionKey` can supply `threadId` when the caller omits it explicitly.
+- Product effect:
+  - `gateway.send` now lands text-only direct channel/account messages through the same canonical explicit-target owner cron announce delivery uses, and those sends persist honest saved `announce` delivery history instead of disappearing behind an unavailable gateway method.
+  - replay/read-model consumers can treat gateway direct sends as the same saved direct transport family the earlier replay identity work already understands.
+  - honest boundary: this is still a local session-backed direct owner, not an OpenClaw-style outbound provider runtime, so true provider parity plus media/poll breadth remain open.
+- Focused proofs added or widened in this continuation:
+  - `tests/test_gateway_node_methods.py`
+    - added `test_send_uses_channel_message_runtime_and_derives_thread_from_session_key`
+  - `tests/test_gateway_nodes_api.py`
+    - added `test_send_endpoint_delivers_channel_target_message_and_records_outbound_delivery`
+    - widened `test_send_endpoint_allows_blank_optional_routing_identifiers`
+- Verified this continuation with:
+  - `C:\Users\skull\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m pytest tests/test_gateway_node_methods.py -k "test_send_returns_validated_unavailable_contract or test_send_uses_channel_message_runtime_and_derives_thread_from_session_key" -q`
+  - direct invocation of these exact API proofs against repo-local temp paths using the Codex runtime interpreter with `src` plus `.venv\Lib\site-packages` on `PYTHONPATH`:
+    - `test_send_endpoint_delivers_channel_target_message_and_records_outbound_delivery`
+    - `test_send_endpoint_allows_blank_optional_routing_identifiers`
+  - `C:\Users\skull\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m mypy src/openzues/services/ops_mesh.py src/openzues/services/gateway_node_methods.py`
+  - `C:\Users\skull\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m ruff check --extend-ignore E501 src/openzues/services/ops_mesh.py src/openzues/services/gateway_node_methods.py src/openzues/app.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+- Result:
+  - the focused gateway send unit proofs pass (`2 passed`).
+  - the exact API proofs pass when invoked directly against repo-local temp paths.
+  - the touched direct-send runtime types check cleanly.
+  - Ruff is clean on the touched direct-send files with `E501` ignored because `tests/test_gateway_nodes_api.py` already contains unrelated historical long lines.
+  - standard pytest cleanup still trips `PermissionError: [WinError 5] Access is denied` against temp roots in this Windows/OneDrive environment, so the API proofs used direct invocation rather than relying on pytest teardown.
+- Queue effect from this run:
+  - the old "promote the canonical channel/account identity kernel into a reusable outbound transport owner" seam is now closed for text-only local direct sends.
+  - the next honest unowned follow-on is either true outbound provider runtime parity for direct channel/account delivery or the remaining channel-target breadth gaps (`send` media and `poll`) if product scope intentionally stays session-backed.
 

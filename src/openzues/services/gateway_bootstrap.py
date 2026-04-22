@@ -509,6 +509,59 @@ def _resource_from_project(project: ProjectView | None) -> GatewayBootstrapResou
     return GatewayBootstrapResourceView(id=project.id, label=project.label, detail=detail)
 
 
+def _is_ingress_integration(integration: dict[str, Any]) -> bool:
+    return bool(str(integration.get("base_url") or "").strip())
+
+
+def _integration_auth_scheme(integration: dict[str, Any]) -> str:
+    return str(integration.get("auth_scheme") or "").strip().lower()
+
+
+def _integration_requires_secret(integration: dict[str, Any]) -> bool:
+    return _integration_auth_scheme(integration) not in {"", "none", "anonymous"}
+
+
+def _integration_has_secret_material(integration: dict[str, Any]) -> bool:
+    if integration.get("vault_secret_id") is not None:
+        return True
+    return bool(str(integration.get("secret_value") or "").strip())
+
+
+def _integration_is_auth_configured(integration: dict[str, Any]) -> bool:
+    if not _integration_requires_secret(integration):
+        return True
+    return _integration_has_secret_material(integration)
+
+
+def _select_saved_workspace_integration(
+    integration_candidates: list[dict[str, Any]],
+) -> tuple[dict[str, Any] | None, str | None]:
+    if not integration_candidates:
+        return None, None
+
+    ingress_candidates = [
+        integration
+        for integration in integration_candidates
+        if _is_ingress_integration(integration)
+    ]
+    if ingress_candidates:
+        auth_ready_ingress = [
+            integration
+            for integration in ingress_candidates
+            if _integration_is_auth_configured(integration)
+        ]
+        if auth_ready_ingress:
+            selection_reason = (
+                "auth_ready_ingress"
+                if auth_ready_ingress[0] is not ingress_candidates[0]
+                else "first_ingress"
+            )
+            return dict(auth_ready_ingress[0]), selection_reason
+        return dict(ingress_candidates[0]), "first_ingress"
+
+    return dict(integration_candidates[0]), "first_enabled"
+
+
 def _resource_from_integration(integration: dict | None) -> GatewayBootstrapResourceView | None:
     if integration is None:
         return None
@@ -519,7 +572,7 @@ def _resource_from_integration(integration: dict | None) -> GatewayBootstrapReso
     auth_scheme = str(integration.get("auth_scheme") or "").strip()
     if auth_scheme:
         detail_parts.append(auth_scheme)
-    if integration.get("vault_secret_id") or integration.get("secret_label"):
+    if _integration_requires_secret(integration) and _integration_has_secret_material(integration):
         detail_parts.append("secret ready")
     return GatewayBootstrapResourceView(
         id=int(integration["id"]),
@@ -545,6 +598,8 @@ def _resource_from_operator(operator: OperatorView | None) -> GatewayBootstrapRe
         detail = f"{detail} · remote key ready"
     else:
         detail = f"{detail} · local-only"
+    if not operator.enabled:
+        detail = f"{detail} · disabled"
     return GatewayBootstrapResourceView(id=operator.id, label=operator.name, detail=detail)
 
 
@@ -564,7 +619,7 @@ def _operator_ready_for_setup_mode(
     *,
     setup_mode: SetupMode,
 ) -> bool:
-    if operator is None:
+    if operator is None or not operator.enabled:
         return False
     if setup_mode == "remote":
         return operator.has_api_key
@@ -818,14 +873,9 @@ class GatewayBootstrapService:
         integration_candidates = (
             integrations_by_project.get(project.id, []) if project is not None else []
         )
-        integration_candidates = sorted(
-            integration_candidates,
-            key=lambda item: (
-                not bool(str(item.get("base_url") or "").strip()),
-                str(item.get("name") or "").lower(),
-            ),
+        selected_integration, integration_selection_reason = _select_saved_workspace_integration(
+            integration_candidates
         )
-        integration = integration_candidates[0] if integration_candidates else None
         team = teams.get(int(row["team_id"])) if row["team_id"] else None
         operator = operators.get(int(row["operator_id"])) if row["operator_id"] else None
         task = tasks.get(int(row["task_blueprint_id"])) if row["task_blueprint_id"] else None
@@ -852,19 +902,37 @@ class GatewayBootstrapService:
             warnings.append("The saved default workspace no longer exists.")
             broken_references = True
         if project is not None and len(integration_candidates) > 1:
-            warnings.append(
-                "Multiple integrations are attached to the saved workspace; "
-                "showing the first enabled ingress record."
-            )
+            if integration_selection_reason == "auth_ready_ingress":
+                warnings.append(
+                    "Multiple integrations are attached to the saved workspace; "
+                    "showing the first auth-ready ingress record."
+                )
+            elif integration_selection_reason == "first_ingress":
+                warnings.append(
+                    "Multiple integrations are attached to the saved workspace; "
+                    "showing the first enabled ingress record."
+                )
+            else:
+                warnings.append(
+                    "Multiple integrations are attached to the saved workspace; "
+                    "showing the first enabled record."
+                )
         if row["operator_id"] and operator is None:
             warnings.append("The saved default operator no longer exists.")
             broken_references = True
+        elif operator is not None and not operator.enabled:
+            warnings.append("The saved default operator is disabled.")
         if row["task_blueprint_id"] and task is None:
             warnings.append("The saved default recurring task no longer exists.")
             broken_references = True
         if instance is not None and not instance.connected:
             warnings.append("The default lane is saved, but it is not connected right now.")
-        if setup_mode == "remote" and operator is not None and not operator.has_api_key:
+        if (
+            setup_mode == "remote"
+            and operator is not None
+            and operator.enabled
+            and not operator.has_api_key
+        ):
             warnings.append("The default remote operator does not have an active API key.")
         if setup_mode == "remote" and not instances:
             warnings.append(
@@ -882,7 +950,7 @@ class GatewayBootstrapService:
             required_ready = [
                 instance is not None,
                 project is not None,
-                operator is not None,
+                operator_ready,
                 task is not None,
             ]
             launch_ready = (
@@ -980,7 +1048,7 @@ class GatewayBootstrapService:
             route_binding_mode=route_binding_mode,
             instance=_resource_from_instance(instance),
             project=_resource_from_project(project),
-            integration=_resource_from_integration(integration),
+            integration=_resource_from_integration(selected_integration),
             team=_resource_from_team(team),
             operator=_resource_from_operator(operator),
             task_blueprint=_resource_from_task(task),

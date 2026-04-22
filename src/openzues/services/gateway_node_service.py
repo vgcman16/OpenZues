@@ -377,6 +377,8 @@ def _merge_catalog_node_payload(
     persisted: dict[str, object | None],
     observed: dict[str, object | None],
 ) -> dict[str, object | None]:
+    observed_caps = observed.get("caps")
+    observed_commands = observed.get("commands")
     return {
         "node_id": observed["node_id"],
         "display_name": observed.get("display_name") or persisted.get("display_name"),
@@ -390,8 +392,12 @@ def _merge_catalog_node_payload(
         "device_family": observed.get("device_family") or persisted.get("device_family"),
         "model_identifier": observed.get("model_identifier") or persisted.get("model_identifier"),
         "path_env": observed.get("path_env"),
-        "caps": observed.get("caps") or persisted.get("caps") or [],
-        "commands": observed.get("commands") or persisted.get("commands") or [],
+        "caps": observed_caps if observed_caps is not None else persisted.get("caps") or [],
+        "commands": (
+            observed_commands
+            if observed_commands is not None
+            else persisted.get("commands") or []
+        ),
         "permissions": (
             observed.get("permissions")
             if observed.get("permissions") is not None

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 import sys
 from collections.abc import Callable
@@ -11,13 +10,39 @@ from typing import Any
 from openzues.schemas import ControlUiBootstrapConfigView
 
 
+def _escape_powershell_single_quoted_string(value: str) -> str:
+    return value.replace("'", "''")
+
+
+def resolve_gateway_config_open_command(
+    path: Path,
+    *,
+    platform: str | None = None,
+) -> tuple[str, list[str]]:
+    target = str(path)
+    normalized_platform = platform or sys.platform
+    if normalized_platform.startswith("win"):
+        return (
+            "powershell.exe",
+            [
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                (
+                    "Start-Process -LiteralPath "
+                    f"'{_escape_powershell_single_quoted_string(target)}'"
+                ),
+            ],
+        )
+    if normalized_platform == "darwin":
+        return ("open", [target])
+    return ("xdg-open", [target])
+
+
 def _open_gateway_config_path(path: Path) -> None:
-    if sys.platform.startswith("win"):
-        os.startfile(path)
-        return
-    command = ["open", str(path)] if sys.platform == "darwin" else ["xdg-open", str(path)]
+    command, args = resolve_gateway_config_open_command(path)
     subprocess.Popen(  # noqa: S603
-        command,
+        [command, *args],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )

@@ -140,33 +140,100 @@ def _clip_text(value: str | None, *, limit: int = 220) -> str | None:
     return cleaned[:limit] + ("..." if len(cleaned) > limit else "")
 
 
+def _mapping_string_value(mapping: dict[str, Any], *keys: str) -> str | None:
+    for key in keys:
+        raw = mapping.get(key)
+        if isinstance(raw, str) and raw.strip():
+            return raw.strip()
+    return None
+
+
 def _catalog_item_name(item: object) -> str | None:
     if isinstance(item, str):
         name = item.strip()
         return name or None
     if not isinstance(item, dict):
         return None
-    for key in ("name", "id", "uri", "method", "title", "serviceId"):
-        raw = item.get(key)
-        if isinstance(raw, str) and raw.strip():
-            return raw.strip()
-    nested_service = item.get("service")
-    if isinstance(nested_service, dict):
-        for key in ("name", "id", "uri", "title"):
-            raw = nested_service.get(key)
-            if isinstance(raw, str) and raw.strip():
-                return raw.strip()
+    name = _mapping_string_value(
+        item,
+        "name",
+        "id",
+        "uri",
+        "method",
+        "title",
+        "serviceId",
+        "toolName",
+        "pluginId",
+        "plugin_id",
+    )
+    if name is not None:
+        return name
+    for nested_key in ("service", "function", "tool", "plugin", "resource", "template"):
+        nested = item.get(nested_key)
+        if not isinstance(nested, dict):
+            continue
+        nested_name = _mapping_string_value(
+            nested,
+            "name",
+            "id",
+            "uri",
+            "method",
+            "title",
+            "serviceId",
+            "toolName",
+            "pluginId",
+            "plugin_id",
+        )
+        if nested_name is not None:
+            return nested_name
     return None
 
 
 def _plugin_entry_name(entry: object) -> str | None:
     if not isinstance(entry, dict):
         return None
-    value = entry.get("name") or entry.get("id") or entry.get("source")
-    if value is None:
-        return None
-    name = str(value).strip()
-    return name or None
+    name = _mapping_string_value(entry, "name", "id", "source", "pluginId", "plugin_id")
+    if name is not None:
+        return name
+    plugin = entry.get("plugin")
+    if isinstance(plugin, dict):
+        return _mapping_string_value(
+            plugin,
+            "name",
+            "id",
+            "source",
+            "pluginId",
+            "plugin_id",
+        )
+    return None
+
+
+def _status_entry_name(entry: dict[str, Any], *, fallback: str) -> str:
+    return _mapping_string_value(
+        entry,
+        "name",
+        "id",
+        "source",
+        "pluginId",
+        "plugin_id",
+    ) or fallback
+
+
+def _status_entry_source_name(entry: dict[str, Any]) -> str | None:
+    name = _mapping_string_value(entry, "source", "pluginId", "plugin_id")
+    if name is not None:
+        return name
+    plugin = entry.get("plugin")
+    if isinstance(plugin, dict):
+        return _mapping_string_value(
+            plugin,
+            "name",
+            "id",
+            "source",
+            "pluginId",
+            "plugin_id",
+        )
+    return None
 
 
 def _lane_plugin_names(
@@ -178,11 +245,7 @@ def _lane_plugin_names(
         if (name := _plugin_entry_name(entry)) is not None:
             names.setdefault(name.lower(), name)
     for entry in status_entries or []:
-        source = entry.get("source")
-        if source is None:
-            continue
-        name = str(source).strip()
-        if name:
+        if name := _status_entry_source_name(entry):
             names.setdefault(name.lower(), name)
     return sorted(names.values(), key=str.lower)
 
@@ -237,12 +300,7 @@ def _catalog_method_scope_entries(value: Any) -> list[tuple[str, str | None]]:
                 continue
             if not isinstance(item, dict):
                 continue
-            name: str | None = None
-            for key in ("name", "id", "uri", "method", "title"):
-                raw = item.get(key)
-                if isinstance(raw, str) and raw.strip():
-                    name = raw.strip()
-                    break
+            name = _catalog_item_name(item)
             if name is None:
                 continue
             raw_scope = item.get("scope")
@@ -386,16 +444,11 @@ def _build_browser_runtime_view(
         ]
         browser_servers = sorted(
             {
-                name
+                server_name
                 for entry in [*instance.mcp_servers, *status_entries]
                 if isinstance(entry, dict)
                 and _is_browser_runtime_name(
-                    str(entry.get("name") or entry.get("id") or entry.get("source") or "")
-                )
-                and (
-                    name := str(
-                        entry.get("name") or entry.get("id") or entry.get("source") or ""
-                    ).strip()
+                    server_name := _status_entry_name(entry, fallback="")
                 )
             },
             key=str.lower,
@@ -559,10 +612,7 @@ def _build_mempalace_tool_proof(
         if not (is_mempalace_integration(entry) or tool_names.intersection(known_tools)):
             continue
 
-        server_name = (
-            str(entry.get("name") or entry.get("source") or "MemPalace MCP server").strip()
-            or "MemPalace MCP server"
-        )
+        server_name = _status_entry_name(entry, fallback="MemPalace MCP server")
         missing_tools = [
             tool_name for tool_name in MEMPALACE_REQUIRED_TOOLS if tool_name not in tool_names
         ]
@@ -637,9 +687,7 @@ def _build_callable_method_catalog(
         for entry in mcp_server_status_by_instance.get(instance.id, []):
             if not isinstance(entry, dict):
                 continue
-            server_name = str(entry.get("name") or entry.get("source") or "MCP server").strip()
-            if not server_name:
-                server_name = "MCP server"
+            server_name = _status_entry_name(entry, fallback="MCP server")
             tool_entries = _catalog_method_scope_entries(entry.get("tools"))
             names = [name for name, _scope in tool_entries]
             if not names:

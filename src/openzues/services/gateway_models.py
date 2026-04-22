@@ -5,6 +5,22 @@ from typing import Any
 
 from openzues.schemas import InstanceView
 
+_PROVIDER_ALIASES: dict[str, str] = {
+    "modelstudio": "qwen",
+    "qwencloud": "qwen",
+    "z.ai": "zai",
+    "z-ai": "zai",
+    "opencode-zen": "opencode",
+    "opencode-go-auth": "opencode-go",
+    "kimi": "kimi",
+    "kimi-code": "kimi",
+    "kimi-coding": "kimi",
+    "bedrock": "amazon-bedrock",
+    "aws-bedrock": "amazon-bedrock",
+    "bytedance": "volcengine",
+    "doubao": "volcengine",
+}
+
 _DEFAULT_MODELS: tuple[dict[str, Any], ...] = (
     {
         "id": "gpt-5.4",
@@ -30,7 +46,7 @@ class GatewayModelsService:
 
     async def build_catalog(self) -> dict[str, Any]:
         entries: list[dict[str, Any]] = []
-        seen: set[tuple[str | None, str]] = set()
+        indexes: dict[tuple[str | None, str], int] = {}
 
         if self._list_instance_views is not None:
             for instance in await self._list_instance_views():
@@ -38,28 +54,34 @@ class GatewayModelsService:
                     normalized = _normalize_model_entry(raw_entry)
                     if normalized is None:
                         continue
-                    _append_model(entries, seen, normalized)
+                    _upsert_model(entries, indexes, normalized)
 
         for raw_entry in _DEFAULT_MODELS:
-            _append_model(entries, seen, dict(raw_entry))
+            _upsert_model(entries, indexes, dict(raw_entry))
 
+        entries.sort(key=_model_sort_key)
         return {"models": entries}
 
 
-def _append_model(
+def _upsert_model(
     entries: list[dict[str, Any]],
-    seen: set[tuple[str | None, str]],
+    indexes: dict[tuple[str | None, str], int],
     entry: dict[str, Any],
 ) -> None:
-    provider = _optional_non_empty_string(entry.get("provider"))
-    model_id = _optional_non_empty_string(entry.get("id"))
-    if model_id is None:
+    key = _model_key(entry)
+    if key is None:
         return
-    key = (provider.lower() if provider is not None else None, model_id.lower())
-    if key in seen:
+    index = indexes.get(key)
+    if index is None and key[0] is not None:
+        providerless_key = (None, key[1])
+        if providerless_key in indexes:
+            index = indexes.pop(providerless_key)
+            indexes[key] = index
+    if index is None:
+        indexes[key] = len(entries)
+        entries.append(entry)
         return
-    seen.add(key)
-    entries.append(entry)
+    entries[index] = _merge_model_entries(entries[index], entry)
 
 
 def _normalize_model_entry(value: object) -> dict[str, Any] | None:
@@ -74,7 +96,12 @@ def _normalize_model_entry(value: object) -> dict[str, Any] | None:
     if raw_identifier is None:
         return None
     parsed_provider, parsed_model_id = _split_provider_prefixed_model(raw_identifier)
-    provider = _first_non_empty_string(value.get("provider"), parsed_provider)
+    provider = _first_non_empty_string(
+        value.get("provider"),
+        value.get("providerId"),
+        parsed_provider,
+    )
+    normalized_provider = _normalize_provider_id(provider)
     model_id = parsed_model_id or raw_identifier
     name = _first_non_empty_string(
         value.get("displayName"),
@@ -85,8 +112,8 @@ def _normalize_model_entry(value: object) -> dict[str, Any] | None:
         return None
 
     normalized: dict[str, Any] = {"id": model_id, "name": name}
-    if provider is not None:
-        normalized["provider"] = provider
+    if normalized_provider is not None:
+        normalized["provider"] = normalized_provider
 
     alias = _optional_non_empty_string(value.get("alias"))
     if alias is not None:
@@ -105,6 +132,16 @@ def _normalize_model_entry(value: object) -> dict[str, Any] | None:
     context_window = _optional_positive_int(value.get("contextWindow"))
     if context_window is not None:
         normalized["contextWindow"] = context_window
+
+    reasoning = value.get("reasoning")
+    if isinstance(reasoning, bool):
+        normalized["reasoning"] = reasoning
+
+    input_types = _normalize_string_list(value.get("input"))
+    if input_types is None:
+        input_types = _normalize_string_list(value.get("inputs"))
+    if input_types is not None:
+        normalized["input"] = input_types
 
     is_default = value.get("isDefault")
     if isinstance(is_default, bool):
@@ -139,3 +176,107 @@ def _optional_positive_int(value: object) -> int | None:
     if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
         return None
     return value
+
+
+def _normalize_provider_id(value: str | None) -> str | None:
+    provider = _optional_non_empty_string(value)
+    if provider is None:
+        return None
+    return _PROVIDER_ALIASES.get(provider.casefold(), provider.casefold())
+
+
+def _normalize_string_list(value: object) -> list[str] | None:
+    if not isinstance(value, list):
+        return None
+    seen: set[str] = set()
+    normalized: list[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            continue
+        cleaned = item.strip()
+        lowered = cleaned.casefold()
+        if not cleaned or lowered in seen:
+            continue
+        seen.add(lowered)
+        normalized.append(cleaned)
+    return normalized or None
+
+
+def _model_key(entry: dict[str, Any]) -> tuple[str | None, str] | None:
+    model_id = _optional_non_empty_string(entry.get("id"))
+    if model_id is None:
+        return None
+    provider = _normalize_provider_id(_optional_non_empty_string(entry.get("provider")))
+    return (provider, model_id.casefold())
+
+
+def _merge_model_entries(existing: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(existing)
+
+    provider = _normalize_provider_id(_optional_non_empty_string(merged.get("provider")))
+    incoming_provider = _normalize_provider_id(
+        _optional_non_empty_string(incoming.get("provider"))
+    )
+    if provider is not None:
+        merged["provider"] = provider
+    if provider is None and incoming_provider is not None:
+        merged["provider"] = incoming_provider
+
+    preferred_name = _preferred_model_name(existing, incoming)
+    if preferred_name is not None:
+        merged["name"] = preferred_name
+
+    for field in ("alias", "description", "defaultReasoningEffort", "contextWindow", "reasoning"):
+        if field not in merged and field in incoming:
+            merged[field] = incoming[field]
+
+    merged_input = _merge_string_lists(merged.get("input"), incoming.get("input"))
+    if merged_input is not None:
+        merged["input"] = merged_input
+
+    if incoming.get("isDefault") is True:
+        merged["isDefault"] = True
+
+    return merged
+
+
+def _preferred_model_name(existing: dict[str, Any], incoming: dict[str, Any]) -> str | None:
+    existing_name = _optional_non_empty_string(existing.get("name"))
+    incoming_name = _optional_non_empty_string(incoming.get("name"))
+    if incoming_name is None:
+        return existing_name
+    if existing_name is None:
+        return incoming_name
+    existing_id = _optional_non_empty_string(existing.get("id"))
+    if (
+        existing_id is not None
+        and existing_name.casefold() == existing_id.casefold()
+        and incoming_name.casefold() != existing_name.casefold()
+    ):
+        return incoming_name
+    return existing_name
+
+
+def _merge_string_lists(existing: object, incoming: object) -> list[str] | None:
+    values: list[str] = []
+    seen: set[str] = set()
+    for source in (existing, incoming):
+        if not isinstance(source, list):
+            continue
+        for item in source:
+            if not isinstance(item, str):
+                continue
+            cleaned = item.strip()
+            lowered = cleaned.casefold()
+            if not cleaned or lowered in seen:
+                continue
+            seen.add(lowered)
+            values.append(cleaned)
+    return values or None
+
+
+def _model_sort_key(entry: dict[str, Any]) -> tuple[str, str, str]:
+    provider = _normalize_provider_id(_optional_non_empty_string(entry.get("provider"))) or ""
+    model_id = _optional_non_empty_string(entry.get("id")) or ""
+    name = _optional_non_empty_string(entry.get("name")) or ""
+    return (provider, model_id.casefold(), name.casefold())

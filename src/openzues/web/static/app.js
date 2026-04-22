@@ -1,3 +1,5 @@
+const ONBOARDING_WIZARD_STORAGE_KEY = "openzues.onboardingWizard";
+
 const state = {
   dashboard: null,
   diagnostics: null,
@@ -13,6 +15,7 @@ const state = {
   lastSocketRefreshAt: 0,
   radarReserveExpanded: false,
   lastBootstrapResult: null,
+  onboardingWizard: loadSavedOnboardingWizard(),
 };
 const SWARM_COLLABORATION_MODE = "swarm_constitution";
 const SOCKET_REFRESH_DEBOUNCE_MS = 250;
@@ -147,6 +150,7 @@ const gatewayCapabilitySummaryEl = document.querySelector("#gateway-capability-s
 const gatewayBootstrapProfileEl = document.querySelector("#gateway-bootstrap-profile");
 const onboardingResultEl = document.querySelector("#onboarding-result");
 const onboardingFormEl = document.querySelector("#onboarding-form");
+const onboardingWizardTriggerEl = document.querySelector("#onboarding-wizard-trigger");
 const onboardingSetupModeEl = document.querySelector("#onboarding-setup-mode");
 const onboardingSetupFlowEl = document.querySelector("#onboarding-setup-flow");
 const onboardingInstanceModeEl = document.querySelector("#onboarding-instance-mode");
@@ -386,6 +390,63 @@ function clipText(value, maxLength = 220) {
   return `${text.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
 }
 
+function loadSavedOnboardingWizard() {
+  if (typeof window === "undefined" || !window.sessionStorage) {
+    return null;
+  }
+  try {
+    const raw = window.sessionStorage.getItem(ONBOARDING_WIZARD_STORAGE_KEY);
+    if (!raw) {
+      return null;
+    }
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") {
+      return null;
+    }
+    const sessionId = String(parsed.sessionId || "").trim();
+    const step = parsed.step && typeof parsed.step === "object" ? parsed.step : null;
+    if (!sessionId || !step) {
+      return null;
+    }
+    return { sessionId, step };
+  } catch {
+    return null;
+  }
+}
+
+function persistOnboardingWizard() {
+  if (typeof window === "undefined" || !window.sessionStorage) {
+    return;
+  }
+  try {
+    if (!state.onboardingWizard) {
+      window.sessionStorage.removeItem(ONBOARDING_WIZARD_STORAGE_KEY);
+      return;
+    }
+    window.sessionStorage.setItem(
+      ONBOARDING_WIZARD_STORAGE_KEY,
+      JSON.stringify(state.onboardingWizard),
+    );
+  } catch {
+    // Ignore browser storage failures and keep the in-memory draft.
+  }
+}
+
+function setOnboardingWizardState(value) {
+  state.onboardingWizard = value;
+  persistOnboardingWizard();
+}
+
+function normalizeOptionalText(value) {
+  const text = String(value ?? "").trim();
+  return text || null;
+}
+
+function normalizeOptionalFieldValue(value) {
+  const text = String(value ?? "");
+  return text.trim() ? text : null;
+}
+
 function chatActionButton(label, action, dataset = {}, extraClass = "") {
   const attrs = Object.entries(dataset)
     .filter(([, value]) => value !== undefined && value !== null && value !== "")
@@ -420,7 +481,7 @@ function renderControlChatEntry(message) {
   const isUser = message.role === "user";
   return renderChatMessage({
     stamp: isUser ? "YOU" : "OZ",
-    lane: isUser ? "Directive" : "Zues",
+    lane: isUser ? "Directive" : "Zeus",
     tone: isUser ? "user" : "assistant",
     compact: true,
     title: message.content,
@@ -434,6 +495,41 @@ function renderControlChatEntry(message) {
       `<span class="chat-age">${escapeHtml(formatRelativeTimestamp(message.created_at))}</span>`,
     ],
   });
+}
+
+function renderTranscriptStarter(title, body) {
+  return [
+    renderChatMessage({
+      stamp: "OZ",
+      lane: "Zeus",
+      tone: "ok",
+      title,
+      meta: [pill("ready", "ok")],
+      body,
+      items: ["Thread-first control", "Mission launch rail", "Live parity posture"],
+    }),
+    renderChatMessage({
+      stamp: "MR",
+      lane: "Getting started",
+      compact: true,
+      title: "Use the thread or the rail to kick off the first move",
+      body: "The command lane stays active while launch controls, connections, and deeper ledgers remain beside it instead of replacing it.",
+      cards: [
+        renderChatCard({
+          title: "Send a directive",
+          body: "Describe the next thing you want built, fixed, or verified, and Zeus will plan or act from the transcript.",
+        }),
+        renderChatCard({
+          title: "Launch a bounded run",
+          body: "Use the mission rail when you want a named objective, runtime controls, and a checkpointed autonomous loop.",
+        }),
+        renderChatCard({
+          title: "Attach a live lane",
+          body: "Quick Connect or create a connection to hydrate the workspace with live Codex thread state and approvals.",
+        }),
+      ],
+    }),
+  ].join("");
 }
 
 function compressRepeatedMessages(messages = []) {
@@ -924,15 +1020,10 @@ function renderChat() {
       controlChatHintEl.textContent =
         "Chat can decide when to wait, resume, recover, harden, or launch without making you work through manual action buttons first.";
     }
-    opsChatEl.innerHTML = `
-      <article class="chat-empty">
-        <strong>No transcript yet.</strong>
-        <p class="small-muted">
-          Connect a Codex lane or launch a mission and the control plane will start writing the live
-          conversation here.
-        </p>
-      </article>
-    `;
+    opsChatEl.innerHTML = renderTranscriptStarter(
+      "No transcript yet",
+      "Connect a Codex lane or launch a mission and the control plane will begin writing the live conversation here.",
+    );
     return;
   }
 
@@ -1438,7 +1529,12 @@ function renderChat() {
     );
   }
 
-  opsChatEl.innerHTML = messages.join("");
+  opsChatEl.innerHTML = messages.length
+    ? messages.join("")
+    : renderTranscriptStarter(
+        "Transcript is standing by",
+        "Zeus has the surface ready. Connect a lane, launch a run, or send a directive to start the working thread.",
+      );
 }
 
 function renderRadar() {
@@ -1839,12 +1935,13 @@ function renderLaunchRoute(route) {
 }
 
 function renderBootstrapResult() {
+  const wizardMarkup = renderOnboardingWizardStep();
   const result = state.lastBootstrapResult || state.setup?.launch_handoff;
   if (!onboardingResultEl) {
     return;
   }
   if (!result) {
-    onboardingResultEl.innerHTML = "";
+    onboardingResultEl.innerHTML = wizardMarkup;
     return;
   }
   const resources = [
@@ -1858,6 +1955,7 @@ function renderBootstrapResult() {
   const actionLabel = state.lastBootstrapResult ? "Load launch draft" : "Load saved launch draft";
   const actionKey = state.lastBootstrapResult ? "apply-bootstrap-draft" : "apply-setup-launch-draft";
   onboardingResultEl.innerHTML = `
+    ${wizardMarkup}
     <article class="bootstrap-result">
       <div class="section-header">
         <div>
@@ -2295,6 +2393,301 @@ function applyWizardSessionToForm(force = false) {
 
 function getOnboardingField(name) {
   return onboardingFormEl?.querySelector(`[name="${name}"]`) || null;
+}
+
+function collectOnboardingDraftValues(form) {
+  const setupMode = onboardingSetupModeEl?.value || "local";
+  const setupFlow = onboardingSetupFlowEl?.value || "quickstart";
+  const cadenceMinutes = form.get("cadence_minutes") ? Number(form.get("cadence_minutes")) : 180;
+  const maxTurns = form.get("max_turns") ? Number(form.get("max_turns")) : 4;
+  return {
+    mode: setupMode,
+    flow: setupMode === "remote" ? "advanced" : setupFlow,
+    use_mempalace: form.get("use_mempalace") === "on",
+    instance_mode:
+      setupMode === "remote" ? "existing" : normalizeOptionalText(form.get("instance_mode")),
+    instance_id: form.get("instance_id") ? Number(form.get("instance_id")) : null,
+    instance_name: normalizeOptionalText(form.get("instance_name")) || "Local Codex Desktop",
+    project_path: normalizeOptionalText(form.get("project_path")),
+    project_label: normalizeOptionalText(form.get("project_label")),
+    team_name: normalizeOptionalText(form.get("team_name")),
+    operator_name: normalizeOptionalText(form.get("operator_name")),
+    operator_email: normalizeOptionalText(form.get("operator_email")),
+    task_name: normalizeOptionalText(form.get("task_name")),
+    cadence_minutes: cadenceMinutes,
+    model: normalizeOptionalText(form.get("model")) || "gpt-5.4",
+    max_turns: maxTurns,
+    objective_template: normalizeOptionalFieldValue(form.get("objective_template")),
+    conversation_target: buildConversationTargetPayload(form),
+    toolsets: parseCsvList(form.get("toolsets") || ""),
+  };
+}
+
+function buildOnboardingWizardDraftPayload(form) {
+  const draft = collectOnboardingDraftValues(form);
+  if (state.setup?.wizard_session?.updated_at) {
+    return draft;
+  }
+
+  const payload = {};
+  if (draft.mode !== "local") {
+    payload.mode = draft.mode;
+  }
+  if (draft.mode === "remote") {
+    payload.flow = "advanced";
+    payload.instance_mode = "existing";
+  } else if (draft.flow !== "quickstart") {
+    payload.flow = draft.flow;
+  }
+  if (draft.use_mempalace) {
+    payload.use_mempalace = true;
+  }
+  if (draft.instance_mode && draft.instance_mode !== "quick_connect_desktop") {
+    payload.instance_mode = draft.instance_mode;
+  }
+  if (draft.instance_id != null) {
+    payload.instance_id = draft.instance_id;
+  }
+  if (draft.instance_name && draft.instance_name !== "Local Codex Desktop") {
+    payload.instance_name = draft.instance_name;
+  }
+  if (draft.project_path) {
+    payload.project_path = draft.project_path;
+  }
+  if (draft.project_label) {
+    payload.project_label = draft.project_label;
+  }
+  if (draft.team_name) {
+    payload.team_name = draft.team_name;
+  }
+  if (draft.operator_name) {
+    payload.operator_name = draft.operator_name;
+  }
+  if (draft.operator_email) {
+    payload.operator_email = draft.operator_email;
+  }
+  if (draft.task_name) {
+    payload.task_name = draft.task_name;
+  }
+  if (draft.cadence_minutes !== 180) {
+    payload.cadence_minutes = draft.cadence_minutes;
+  }
+  if (draft.model !== "gpt-5.4") {
+    payload.model = draft.model;
+  }
+  if (draft.max_turns !== 4) {
+    payload.max_turns = draft.max_turns;
+  }
+  if (draft.objective_template) {
+    payload.objective_template = draft.objective_template;
+  }
+  if (draft.conversation_target) {
+    payload.conversation_target = draft.conversation_target;
+  }
+  if (draft.toolsets.length) {
+    payload.toolsets = draft.toolsets;
+  }
+  return payload;
+}
+
+function buildOnboardingBootstrapPayload(form) {
+  const draft = collectOnboardingDraftValues(form);
+  const useMempalace = draft.use_mempalace;
+  return {
+    setup_mode: draft.mode,
+    setup_flow: draft.mode === "remote" ? "advanced" : draft.flow,
+    instance_mode: draft.mode === "remote" ? "existing" : draft.instance_mode,
+    instance_id: draft.instance_id,
+    instance_name: draft.instance_name || "Local Codex Desktop",
+    project_path: draft.project_path,
+    project_label: draft.project_label,
+    team_name: draft.team_name,
+    team_slug: null,
+    team_description: null,
+    operator_name: draft.operator_name,
+    operator_email: draft.operator_email,
+    operator_role: "operator",
+    issue_api_key: form.get("issue_api_key") === "on",
+    use_mempalace: useMempalace,
+    vault_secret_label: normalizeOptionalText(form.get("vault_secret_label")),
+    vault_secret_value: normalizeOptionalFieldValue(form.get("vault_secret_value")),
+    vault_secret_kind: "token",
+    vault_secret_notes: null,
+    integration_name: normalizeOptionalText(form.get("integration_name")),
+    integration_kind: normalizeOptionalText(form.get("integration_kind")),
+    integration_base_url: normalizeOptionalText(form.get("integration_base_url")),
+    integration_auth_scheme: useMempalace ? "none" : "token",
+    integration_notes: null,
+    skill_name: normalizeOptionalText(form.get("skill_name")),
+    skill_prompt_hint: normalizeOptionalFieldValue(form.get("skill_prompt_hint")),
+    skill_source: normalizeOptionalText(form.get("skill_source")),
+    task_name: draft.task_name,
+    task_summary: null,
+    objective_template: draft.objective_template,
+    conversation_target: draft.conversation_target,
+    cadence_minutes: draft.cadence_minutes ?? 180,
+    completion_marker: null,
+    model: draft.model || "gpt-5.4",
+    max_turns: draft.max_turns ?? 4,
+    toolsets: draft.toolsets,
+    use_builtin_agents: form.get("use_builtin_agents") === "on",
+    run_verification: form.get("run_verification") === "on",
+    auto_commit: form.get("auto_commit") === "on",
+    pause_on_approval: form.get("pause_on_approval") === "on",
+    allow_auto_reflexes: true,
+    auto_recover: true,
+    auto_recover_limit: 2,
+    reflex_cooldown_seconds: 900,
+    allow_failover: true,
+    enabled: form.get("enabled") === "on",
+  };
+}
+
+function renderOnboardingWizardStep() {
+  const wizard = state.onboardingWizard;
+  const step = wizard?.step;
+  if (!wizard || !step) {
+    return "";
+  }
+  const initialValue = String(step.initialvalue ?? "");
+  const isRequired = step.required !== false;
+  const inputType = step.inputType === "email" ? "email" : "text";
+  const submitLabel = isRequired ? "Save Guided Answer" : "Save or Skip";
+  const hints = Array.isArray(step.options)
+    ? step.options
+        .filter((option) => option && option.hint)
+        .map(
+          (option) =>
+            `<div class="small-muted">${escapeHtml(option.label || option.value)}: ${escapeHtml(option.hint)}</div>`,
+        )
+        .join("")
+    : "";
+  const optionalHint = isRequired
+    ? ""
+    : `<div class="small-muted">Optional. Leave blank to skip this step.</div>`;
+  const control =
+    step.type === "select"
+      ? `
+        <select name="value"${isRequired ? " required" : ""}>
+          ${(Array.isArray(step.options) ? step.options : [])
+            .map((option) => {
+              const value = String(option?.value ?? "");
+              const selected = value === initialValue ? " selected" : "";
+              return `<option value="${escapeHtml(value)}"${selected}>${escapeHtml(option?.label || value)}</option>`;
+            })
+            .join("")}
+        </select>
+      `
+      : `
+        <input
+          name="value"
+          type="${escapeHtml(inputType)}"
+          value="${escapeHtml(initialValue)}"
+          placeholder="${escapeHtml(step.placeholder || "")}"
+          autocomplete="${inputType === "email" ? "email" : "off"}"
+          ${isRequired ? "required" : ""}
+        />
+      `;
+  return `
+    <article class="bootstrap-result">
+      <div class="section-header">
+        <div>
+          <p class="eyebrow">Guided Setup</p>
+          <h2>${escapeHtml(step.title || "Complete the next setup step")}</h2>
+        </div>
+        <p class="panel-lede">${escapeHtml(step.message || "Answer the next guided setup prompt.")}</p>
+      </div>
+      <form id="onboarding-wizard-form" class="stack">
+        <input type="hidden" name="step_id" value="${escapeHtml(step.id || "")}" />
+        ${control}
+        ${optionalHint}
+        ${hints}
+        <div class="chat-actions">
+          <button type="submit">${submitLabel}</button>
+          <button type="button" class="ghost" data-action="cancel-onboarding-wizard">
+            Cancel Guided Setup
+          </button>
+        </div>
+      </form>
+    </article>
+  `;
+}
+
+async function cancelOnboardingWizard(quiet = false) {
+  const wizard = state.onboardingWizard;
+  if (!wizard?.sessionId) {
+    setOnboardingWizardState(null);
+    renderOnboarding();
+    return;
+  }
+  try {
+    await submitJson("/api/onboarding/wizard/cancel", {
+      sessionId: wizard.sessionId,
+    });
+  } catch (error) {
+    if (!quiet) {
+      showToast(normalizeError(error), true);
+    }
+  } finally {
+    setOnboardingWizardState(null);
+    renderOnboarding();
+  }
+  if (!quiet) {
+    showToast("Guided setup cancelled.");
+  }
+}
+
+async function runOnboardingWizard() {
+  if (!onboardingFormEl) {
+    return;
+  }
+  if (state.onboardingWizard?.sessionId) {
+    await cancelOnboardingWizard(true);
+  }
+  const form = new FormData(onboardingFormEl);
+  const draft = buildOnboardingWizardDraftPayload(form);
+  const result = await submitJson("/api/onboarding/wizard/start", draft);
+  if (result.done) {
+    setOnboardingWizardState(null);
+    if (onboardingFormEl) {
+      onboardingFormEl.dataset.prefilled = "";
+    }
+    renderOnboarding();
+    showToast("Guided setup draft is already complete.");
+    return;
+  }
+  setOnboardingWizardState({
+    sessionId: String(result.sessionId || "").trim(),
+    step: result.step,
+  });
+  if (onboardingFormEl) {
+    onboardingFormEl.dataset.prefilled = "";
+  }
+  renderOnboarding();
+  showToast(result.step?.title || "Guided setup is ready.");
+}
+
+async function submitOnboardingBootstrap() {
+  if (!onboardingFormEl) {
+    return;
+  }
+  if (state.onboardingWizard?.sessionId) {
+    await cancelOnboardingWizard(true);
+  }
+  const form = new FormData(onboardingFormEl);
+  const result = await submitJson(
+    "/api/onboarding/bootstrap",
+    buildOnboardingBootstrapPayload(form),
+  );
+  state.lastBootstrapResult = result;
+  render();
+  if (result.mission_draft) {
+    applyMissionDraft(result.mission_draft);
+  }
+  if (result.api_key) {
+    revealApiKey(result.api_key, result.operator?.label || "operator");
+  }
+  showToast(result.headline || "Bootstrap complete.");
 }
 
 function syncOnboardingIntegrationPreset() {
@@ -3867,7 +4260,7 @@ function renderCortex() {
         <article class="cortex-card empty-state">
           <strong>No Hermes learning reviews yet.</strong>
           <p class="small-muted">
-            As repeatable successes and failures accumulate, Zues will extract reusable lessons here.
+            As repeatable successes and failures accumulate, Zeus will extract reusable lessons here.
           </p>
         </article>
       `;
@@ -5833,7 +6226,7 @@ if (controlChatFormEl) {
     const form = new FormData(event.currentTarget);
     const text = String(form.get("text") || "").trim();
     if (!text) {
-      showToast("Write a message before sending it to Zues.", true);
+      showToast("Write a message before sending it to Zeus.", true);
       return;
     }
     try {
@@ -5843,7 +6236,7 @@ if (controlChatFormEl) {
         controlChatInputEl.placeholder = state.dashboard.control_chat.input_placeholder;
       }
       controlChatInputEl?.focus();
-      showToast(result?.assistant?.content || "Zues handled the request.");
+      showToast(result?.assistant?.content || "Zeus handled the request.");
     } catch (error) {
       showToast(normalizeError(error), true);
     }
@@ -5950,15 +6343,21 @@ async function persistSetupWizardSelection() {
 }
 
 if (onboardingSetupModeEl) {
-  onboardingSetupModeEl.addEventListener("change", () => {
+  onboardingSetupModeEl.addEventListener("change", async () => {
     syncOnboardingMode();
+    if (state.onboardingWizard?.sessionId) {
+      await cancelOnboardingWizard(true);
+    }
     persistSetupWizardSelection().catch((error) => showToast(normalizeError(error), true));
   });
 }
 
 if (onboardingSetupFlowEl) {
-  onboardingSetupFlowEl.addEventListener("change", () => {
+  onboardingSetupFlowEl.addEventListener("change", async () => {
     syncOnboardingMode();
+    if (state.onboardingWizard?.sessionId) {
+      await cancelOnboardingWizard(true);
+    }
     persistSetupWizardSelection().catch((error) => showToast(normalizeError(error), true));
   });
 }
@@ -5978,71 +6377,17 @@ if (onboardingMempalaceToggleEl) {
   syncOnboardingIntegrationPreset();
 }
 
+if (onboardingWizardTriggerEl) {
+  onboardingWizardTriggerEl.addEventListener("click", () => {
+    runOnboardingWizard().catch((error) => showToast(normalizeError(error), true));
+  });
+}
+
 if (onboardingFormEl) {
   onboardingFormEl.addEventListener("submit", async (event) => {
     event.preventDefault();
-    const form = new FormData(event.currentTarget);
     try {
-      const setupMode = onboardingSetupModeEl?.value || "local";
-      const setupFlow = onboardingSetupFlowEl?.value || "quickstart";
-      const useMempalace = form.get("use_mempalace") === "on";
-      const result = await submitJson("/api/onboarding/bootstrap", {
-        setup_mode: setupMode,
-        setup_flow: setupMode === "remote" ? "advanced" : setupFlow,
-        instance_mode: setupMode === "remote" ? "existing" : form.get("instance_mode"),
-        instance_id: form.get("instance_id") ? Number(form.get("instance_id")) : null,
-        instance_name: form.get("instance_name") || "Local Codex Desktop",
-        project_path: form.get("project_path"),
-        project_label: form.get("project_label") || null,
-        team_name: form.get("team_name") || null,
-        team_slug: null,
-        team_description: null,
-        operator_name: form.get("operator_name"),
-        operator_email: form.get("operator_email") || null,
-        operator_role: "operator",
-        issue_api_key: form.get("issue_api_key") === "on",
-        use_mempalace: useMempalace,
-        vault_secret_label: form.get("vault_secret_label") || null,
-        vault_secret_value: form.get("vault_secret_value") || null,
-        vault_secret_kind: "token",
-        vault_secret_notes: null,
-        integration_name: form.get("integration_name") || null,
-        integration_kind: form.get("integration_kind") || null,
-        integration_base_url: form.get("integration_base_url") || null,
-        integration_auth_scheme: useMempalace ? "none" : "token",
-        integration_notes: null,
-        skill_name: form.get("skill_name") || null,
-        skill_prompt_hint: form.get("skill_prompt_hint") || null,
-        skill_source: form.get("skill_source") || null,
-        task_name: form.get("task_name"),
-        task_summary: null,
-        objective_template: form.get("objective_template"),
-        conversation_target: buildConversationTargetPayload(form),
-        cadence_minutes: form.get("cadence_minutes") ? Number(form.get("cadence_minutes")) : 180,
-        completion_marker: null,
-        model: form.get("model") || "gpt-5.4",
-        max_turns: form.get("max_turns") ? Number(form.get("max_turns")) : 4,
-        toolsets: parseCsvList(form.get("toolsets") || ""),
-        use_builtin_agents: form.get("use_builtin_agents") === "on",
-        run_verification: form.get("run_verification") === "on",
-        auto_commit: form.get("auto_commit") === "on",
-        pause_on_approval: form.get("pause_on_approval") === "on",
-        allow_auto_reflexes: true,
-        auto_recover: true,
-        auto_recover_limit: 2,
-        reflex_cooldown_seconds: 900,
-        allow_failover: true,
-        enabled: form.get("enabled") === "on",
-      });
-      state.lastBootstrapResult = result;
-      render();
-      if (result.mission_draft) {
-        applyMissionDraft(result.mission_draft);
-      }
-      if (result.api_key) {
-        revealApiKey(result.api_key, result.operator?.label || "operator");
-      }
-      showToast(result.headline || "Bootstrap complete.");
+      await submitOnboardingBootstrap();
     } catch (error) {
       showToast(normalizeError(error), true);
     }
@@ -6256,6 +6601,10 @@ document.addEventListener("click", async (event) => {
   if (target.dataset.action === "toggle-radar-reserve") {
     state.radarReserveExpanded = !state.radarReserveExpanded;
     renderRadar();
+    return;
+  }
+  if (target.dataset.action === "cancel-onboarding-wizard") {
+    await cancelOnboardingWizard();
     return;
   }
   const instanceId = target.dataset.instanceId;
@@ -6623,6 +6972,49 @@ document.addEventListener("click", async (event) => {
 });
 
 document.addEventListener("submit", async (event) => {
+  if (event.target?.id === "onboarding-wizard-form") {
+    event.preventDefault();
+    const wizard = state.onboardingWizard;
+    if (!wizard?.sessionId || !wizard.step?.id) {
+      setOnboardingWizardState(null);
+      renderOnboarding();
+      showToast("Guided setup step expired. Start it again.", true);
+      return;
+    }
+    const form = new FormData(event.target);
+    try {
+      const result = await submitJson("/api/onboarding/wizard/next", {
+        sessionId: wizard.sessionId,
+        answer: {
+          stepId: wizard.step.id,
+          value: form.get("value"),
+        },
+      });
+      if (result.done) {
+        setOnboardingWizardState(null);
+        if (onboardingFormEl) {
+          onboardingFormEl.dataset.prefilled = "";
+        }
+        renderOnboarding();
+        showToast("Guided setup draft saved. Review the form and bootstrap when ready.");
+      } else {
+        setOnboardingWizardState({
+          sessionId: wizard.sessionId,
+          step: result.step,
+        });
+        renderOnboarding();
+        showToast(result.step?.title || "Next guided setup step ready.");
+      }
+    } catch (error) {
+      const message = normalizeError(error);
+      if (message.includes("wizard not found") || message.includes("no pending step")) {
+        setOnboardingWizardState(null);
+        renderOnboarding();
+      }
+      showToast(message, true);
+    }
+    return;
+  }
   if (event.target?.id === "hermes-profile-form") {
     event.preventDefault();
     const form = new FormData(event.target);

@@ -99,7 +99,9 @@ def test_agent_session_helpers_match_openclaw_store_and_request_shapes() -> None
         "agent:worker-1:main"
     )
     assert to_agent_request_session_key("agent:worker_1:thread:abc") == "thread:abc"
+    assert to_agent_request_session_key("AGENT:Bad ID:Main") == "main"
     assert to_agent_request_session_key("slack:deploy-room") == "slack:deploy-room"
+    assert to_agent_request_session_key("agent::bad") == "agent::bad"
     assert to_agent_store_session_key(agent_id="Worker 1", request_key=None) == (
         "agent:worker-1:main"
     )
@@ -119,6 +121,7 @@ def test_agent_session_helpers_match_openclaw_store_and_request_shapes() -> None
         request_key="AGENT::bad",
     ) == "agent::bad"
     assert resolve_agent_id_from_session_key("agent:Worker_1:main") == "worker_1"
+    assert resolve_agent_id_from_session_key("AGENT:Bad ID:Main") == "bad-id"
     assert resolve_agent_id_from_session_key("agent::main") == "main"
 
 
@@ -194,14 +197,18 @@ def test_openclaw_session_key_helper_surface_matches_cron_subagent_and_acp_shape
     assert not is_cron_run_session_key("agent:main:cron:job-1")
     assert is_cron_session_key("agent:main:cron:job-1")
     assert is_cron_session_key("agent:main:cron:job-1:run:run-1")
+    assert is_cron_run_session_key("AGENT:Bad ID:cron:job-1:run:run-1")
+    assert is_cron_session_key("AGENT:Bad ID:cron:job-1")
     assert not is_cron_session_key("cron:job-1")
     assert is_subagent_session_key("subagent:worker")
     assert is_subagent_session_key("agent:main:subagent:worker")
+    assert is_subagent_session_key("AGENT:Bad ID:subagent:worker")
     assert not is_subagent_session_key("agent:main:main")
     assert get_subagent_depth("agent:main:subagent:parent:subagent:child") == 2
     assert get_subagent_depth("agent:main:main") == 0
     assert is_acp_session_key("acp:control-plane")
     assert is_acp_session_key("agent:main:acp:control-plane")
+    assert is_acp_session_key("AGENT:Bad ID:acp:control-plane")
     assert not is_acp_session_key("agent:main:main")
 
 
@@ -210,6 +217,10 @@ def test_scoped_heartbeat_wake_options_only_threads_agent_session_keys() -> None
         "agent:main:cron:job-1",
         {"reason": "exec-event"},
     ) == {"reason": "exec-event", "session_key": "agent:main:cron:job-1"}
+    assert scoped_heartbeat_wake_options(
+        "AGENT:Bad ID:cron:job-1",
+        {"reason": "exec-event"},
+    ) == {"reason": "exec-event", "session_key": "AGENT:Bad ID:cron:job-1"}
     wake_options = {"reason": "exec-event"}
     assert (
         scoped_heartbeat_wake_options("launch:mode:workspace_affinity", wake_options)
@@ -363,6 +374,43 @@ async def test_resolve_session_key_for_run_reads_swarm_mission_state_from_store(
     )
 
     assert await resolve_session_key_for_run("run-123", database=database) == "thread:thread-123"
+
+
+@pytest.mark.asyncio
+async def test_resolve_session_key_for_run_uses_openclaw_request_shape_for_malformed_agent_store_key(
+    tmp_path,
+) -> None:
+    reset_resolved_session_key_for_run_cache_for_test()
+    database = Database(tmp_path / "session-keys.db")
+    await database.initialize()
+
+    await database.create_mission(
+        name="Malformed agent session",
+        objective="Mirror OpenClaw request-key extraction for nonblank malformed agent ids.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="ignored",
+        session_key="AGENT:Bad ID:Main",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=4,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        swarm={"run_id": "run-malformed"},
+        toolsets=["debugging"],
+    )
+
+    assert await resolve_session_key_for_run("run-malformed", database=database) == "main"
 
 
 @pytest.mark.asyncio

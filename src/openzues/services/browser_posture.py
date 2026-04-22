@@ -9,6 +9,7 @@ from openzues.schemas import (
     GatewayBootstrapView,
     GatewayCapabilityBrowserRuntimeView,
     GatewayCapabilityView,
+    SignalLevel,
 )
 
 
@@ -123,6 +124,7 @@ def build_browser_posture(
     elif known_runtime is not None and known_runtime.recommended_action:
         recommended_action = known_runtime.recommended_action
 
+    status: SignalLevel
     if local_tool.available and ready_runtime is not None:
         ready_subject, ready_plural = _runtime_subject(
             saved_launch_runtime=saved_launch_runtime,

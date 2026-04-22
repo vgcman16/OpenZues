@@ -19,6 +19,7 @@ DreamStatus = Literal["forming", "ready", "fresh"]
 EconomyState = Literal["compounding", "balanced", "speculative", "leaking", "hibernating"]
 TaskStatus = Literal["idle", "due", "running", "attention", "completed", "disabled"]
 NotificationRouteKind = Literal["webhook"]
+NotificationRouteViewKind = Literal["webhook", "session", "announce"]
 GatewayBootstrapStatus = Literal["unconfigured", "staged", "ready", "degraded"]
 GatewayRouteBindingMode = Literal["saved_lane", "workspace_affinity"]
 SetupRecommendedAction = Literal["bootstrap", "keep", "modify", "reset"]
@@ -1250,7 +1251,7 @@ class NotificationRouteCreate(BaseModel):
 class NotificationRouteView(BaseModel):
     id: int
     name: str
-    kind: NotificationRouteKind
+    kind: NotificationRouteViewKind
     target: str
     events: list[str] = Field(default_factory=list)
     conversation_target: ConversationTargetView | None = None

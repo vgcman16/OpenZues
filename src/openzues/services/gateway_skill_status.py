@@ -266,7 +266,9 @@ class GatewaySkillStatusService:
             missing_env = []
             missing_config = []
             missing_os = []
-        eligible = not disabled and (always or not (missing_bins or missing_env or missing_config or missing_os))
+        eligible = not disabled and (
+            always or not (missing_bins or missing_env or missing_config or missing_os)
+        )
 
         return {
             "name": name,
