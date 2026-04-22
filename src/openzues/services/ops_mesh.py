@@ -100,7 +100,7 @@ from openzues.services.session_keys import (
     resolve_thread_session_keys,
 )
 from openzues.services.skillbook import materialize_skillbook_pins
-from openzues.services.vault import VaultService, mask_secret
+from openzues.services.vault import VaultDecryptionError, VaultService, mask_secret
 
 logger = logging.getLogger(__name__)
 DEFAULT_TASK_COMPLETION_MARKER = "TASK COMPLETE"
@@ -525,6 +525,22 @@ def _summarize_outbound_event(event_type: str, event: dict[str, Any]) -> str:
         if value:
             return value[:240]
     return f"Outbound delivery for {event_type}"[:240]
+
+
+def _saved_outbound_delivery_replay_message(delivery_row: dict[str, Any]) -> str | None:
+    event_type = str(delivery_row.get("event_type") or "").strip().lower()
+    payload = delivery_row.get("event_payload")
+    if isinstance(payload, dict):
+        if event_type == "cron/failure":
+            message = str(payload.get("message") or "").strip()
+            if message:
+                return f"\u26a0\ufe0f {message}"
+        for key in ("summary", "message", "title", "headline"):
+            value = str(payload.get(key) or "").strip()
+            if value:
+                return value
+    summary = str(delivery_row.get("message_summary") or "").strip()
+    return summary or None
 
 
 def _serialize_task(row: dict[str, Any]) -> TaskBlueprintView:
@@ -2838,6 +2854,174 @@ class OpsMeshService:
         )
         return True, None
 
+    async def _deliver_saved_session_like_outbound_delivery_row(
+        self,
+        delivery_row: dict[str, Any],
+    ) -> tuple[bool, str | None]:
+        delivery_id = int(delivery_row["id"])
+        route_kind = str(delivery_row.get("route_kind") or "").strip().lower() or "session"
+        session_key = str(delivery_row.get("session_key") or "").strip()
+        replay_message = _saved_outbound_delivery_replay_message(delivery_row)
+        attempt_started_at = utcnow()
+        existing_attempts = max(0, int(delivery_row.get("attempt_count") or 0))
+        await self.database.update_outbound_delivery(
+            delivery_id,
+            last_attempt_at=attempt_started_at,
+        )
+        if self.session_delivery_service is None:
+            error = f"Saved {route_kind} delivery is unavailable for replay."
+            await self.database.update_outbound_delivery(
+                delivery_id,
+                delivery_state="failed",
+                attempt_count=max(existing_attempts + 1, OUTBOUND_DELIVERY_MAX_RETRIES),
+                last_attempt_at=attempt_started_at,
+                delivered_at=None,
+                last_error=error,
+            )
+            return False, error
+        if not session_key:
+            error = f"Saved {route_kind} delivery is missing its session key."
+            await self.database.update_outbound_delivery(
+                delivery_id,
+                delivery_state="failed",
+                attempt_count=max(existing_attempts + 1, OUTBOUND_DELIVERY_MAX_RETRIES),
+                last_attempt_at=attempt_started_at,
+                delivered_at=None,
+                last_error=error,
+            )
+            return False, error
+        if not replay_message:
+            error = f"Saved {route_kind} delivery is missing its replay message."
+            await self.database.update_outbound_delivery(
+                delivery_id,
+                delivery_state="failed",
+                attempt_count=max(existing_attempts + 1, OUTBOUND_DELIVERY_MAX_RETRIES),
+                last_attempt_at=attempt_started_at,
+                delivered_at=None,
+                last_error=error,
+            )
+            return False, error
+        try:
+            await self.session_delivery_service(session_key, replay_message)
+        except Exception as exc:
+            error = str(exc)[:240]
+            await self.database.update_outbound_delivery(
+                delivery_id,
+                delivery_state="failed",
+                attempt_count=existing_attempts + 1,
+                last_attempt_at=attempt_started_at,
+                delivered_at=None,
+                last_error=error,
+            )
+            return False, error
+        await self.database.update_outbound_delivery(
+            delivery_id,
+            delivery_state="delivered",
+            attempt_count=existing_attempts + 1,
+            last_attempt_at=attempt_started_at,
+            delivered_at=utcnow(),
+            last_error=None,
+        )
+        return True, None
+
+    async def _deliver_saved_ad_hoc_webhook_delivery_row(
+        self,
+        delivery_row: dict[str, Any],
+    ) -> tuple[bool, str | None]:
+        delivery_id = int(delivery_row["id"])
+        route_target = str(delivery_row.get("route_target") or "").strip()
+        route_scope = dict(delivery_row.get("route_scope") or {})
+        event_payload = dict(delivery_row.get("event_payload") or {})
+        attempt_started_at = utcnow()
+        existing_attempts = max(0, int(delivery_row.get("attempt_count") or 0))
+        await self.database.update_outbound_delivery(
+            delivery_id,
+            last_attempt_at=attempt_started_at,
+        )
+        if not route_target:
+            error = "Saved webhook delivery is missing its target."
+            await self.database.update_outbound_delivery(
+                delivery_id,
+                delivery_state="failed",
+                attempt_count=max(existing_attempts + 1, OUTBOUND_DELIVERY_MAX_RETRIES),
+                last_attempt_at=attempt_started_at,
+                delivered_at=None,
+                last_error=error,
+            )
+            return False, error
+        secret_header_name = str(route_scope.get("secret_header_name") or "").strip() or None
+        secret_token: str | None = None
+        raw_secret_id = route_scope.get("vault_secret_id")
+        if raw_secret_id is not None:
+            try:
+                secret_id = int(raw_secret_id)
+            except (TypeError, ValueError):
+                error = "Saved webhook delivery has an invalid replay secret reference."
+                await self.database.update_outbound_delivery(
+                    delivery_id,
+                    delivery_state="failed",
+                    attempt_count=max(existing_attempts + 1, OUTBOUND_DELIVERY_MAX_RETRIES),
+                    last_attempt_at=attempt_started_at,
+                    delivered_at=None,
+                    last_error=error,
+                )
+                return False, error
+            try:
+                secret_token = await self.vault.get_secret_value(secret_id)
+            except KeyError:
+                error = f"Saved webhook delivery replay secret {secret_id} is missing."
+                await self.database.update_outbound_delivery(
+                    delivery_id,
+                    delivery_state="failed",
+                    attempt_count=max(existing_attempts + 1, OUTBOUND_DELIVERY_MAX_RETRIES),
+                    last_attempt_at=attempt_started_at,
+                    delivered_at=None,
+                    last_error=error,
+                )
+                return False, error
+            except VaultDecryptionError:
+                error = f"Saved webhook delivery replay secret {secret_id} cannot be decrypted."
+                await self.database.update_outbound_delivery(
+                    delivery_id,
+                    delivery_state="failed",
+                    attempt_count=max(existing_attempts + 1, OUTBOUND_DELIVERY_MAX_RETRIES),
+                    last_attempt_at=attempt_started_at,
+                    delivered_at=None,
+                    last_error=error,
+                )
+                return False, error
+        try:
+            await asyncio.to_thread(
+                self._post_json_webhook,
+                route_target,
+                event_payload,
+                secret_header_name=secret_header_name,
+                secret_token=secret_token,
+            )
+        except Exception as exc:
+            error = str(exc)[:240]
+            attempt_count = existing_attempts + 1
+            if _is_permanent_outbound_delivery_error(error):
+                attempt_count = max(attempt_count, OUTBOUND_DELIVERY_MAX_RETRIES)
+            await self.database.update_outbound_delivery(
+                delivery_id,
+                delivery_state="failed",
+                attempt_count=attempt_count,
+                last_attempt_at=attempt_started_at,
+                delivered_at=None,
+                last_error=error,
+            )
+            return False, error
+        await self.database.update_outbound_delivery(
+            delivery_id,
+            delivery_state="delivered",
+            attempt_count=existing_attempts + 1,
+            last_attempt_at=attempt_started_at,
+            delivered_at=utcnow(),
+            last_error=None,
+        )
+        return True, None
+
     async def replay_outbound_deliveries(
         self,
         *,
@@ -2864,6 +3048,65 @@ class OpsMeshService:
                 continue
             attempted += 1
             route_id = row.get("route_id")
+            route_kind = str(row.get("route_kind") or "").strip().lower()
+            if route_id is None and route_kind in {"announce", "session", "webhook"}:
+                if route_kind == "webhook":
+                    ok, delivery_error = await self._deliver_saved_ad_hoc_webhook_delivery_row(
+                        row
+                    )
+                else:
+                    ok, delivery_error = await self._deliver_saved_session_like_outbound_delivery_row(
+                        row
+                    )
+                refreshed_row = await self.database.get_outbound_delivery(int(row["id"]))
+                route_view = NotificationRouteView.model_validate(
+                    {
+                        "id": 0,
+                        "name": str(row.get("route_name") or "Saved delivery"),
+                        "kind": "webhook",
+                        "target": str(row.get("route_target") or ""),
+                        "events": [],
+                        "conversation_target": row.get("conversation_target"),
+                        "enabled": self.session_delivery_service is not None,
+                        "secret_header_name": None,
+                        "vault_secret_id": None,
+                        "vault_secret_label": None,
+                        "has_secret": False,
+                        "secret_preview": None,
+                        "last_delivery_at": None,
+                        "last_result": None,
+                        "last_error": delivery_error,
+                        "created_at": utcnow(),
+                        "updated_at": utcnow(),
+                    }
+                )
+                if refreshed_row is None:
+                    refreshed_view = None
+                else:
+                    refreshed_view = _serialize_outbound_delivery(refreshed_row)
+                if ok:
+                    replayed += 1
+                else:
+                    failed += 1
+                results.append(
+                    OutboundDeliveryReplayResultView(
+                        ok=ok,
+                        delivery_id=int(row["id"]),
+                        route_id=0,
+                        route_name=str(row.get("route_name") or route_view.name),
+                        target=str(row.get("route_target") or route_view.target),
+                        event_type=str(row.get("event_type") or ""),
+                        summary=(
+                            delivery_error
+                            or str(row.get("message_summary") or "").strip()
+                            or f"Replayed {route_kind} delivery"
+                        ),
+                        delivery=refreshed_view,
+                        error=delivery_error,
+                        route=route_view,
+                    )
+                )
+                continue
             route_row = (
                 await self._get_notification_route_row(int(route_id))
                 if route_id is not None
@@ -3466,10 +3709,12 @@ class OpsMeshService:
             raise RuntimeError("gateway wake service unavailable")
 
         message = _task_cron_payload_text(task)
+        session_key = _task_cron_session_key(task)
         await self.wake_service.wake(
             mode=cast(Literal["now", "next-heartbeat"], _task_cron_wake_mode(task)),
             text=message,
             reason=f"cron:{task.id}",
+            session_key=session_key,
         )
         update_fields: dict[str, Any] = {
             "last_launched_at": utcnow(),
@@ -3566,11 +3811,20 @@ class OpsMeshService:
         secret_header_name: str | None = None,
         secret_token: str | None = None,
     ) -> None:
-        route_scope = {
+        route_scope: dict[str, Any] = {
             "route_name": route_name,
             "route_kind": "webhook",
             "route_target": route_target,
         }
+        if secret_header_name and secret_token:
+            replay_secret = await self.vault.create_secret_value(
+                label=f"{route_name} replay webhook secret",
+                value=secret_token,
+                kind="webhook-token",
+                notes=route_target,
+            )
+            route_scope["secret_header_name"] = secret_header_name
+            route_scope["vault_secret_id"] = replay_secret.id
         delivery_id = await self.database.create_outbound_delivery(
             route_id=None,
             route_name=route_name,

@@ -14,10 +14,21 @@ not complete yet.
 
 What that means in practice:
 
-- the strongest path today is local-first mission control, approvals, checkpoints, playbooks, routing, and operator oversight
+- the strongest path today is local-first mission control, approvals, checkpoints, playbooks, routing, operator oversight, and a growing slice of OpenClaw-style gateway/setup/session/cron behavior
 - Windows and Codex Desktop bridging are first-class; other environments are improving but less battle-tested
 - APIs, automation posture, and dashboard surfaces may still change quickly between releases
 - this is not yet full OpenClaw or Hermes end-to-end parity across channels, nodes, voice, browser runtime, or companion apps
+
+## OpenClaw parity progress
+
+Best-effort estimate: OpenZues is at roughly **30%** of overall OpenClaw parity today, with a reasonable band of about **25-35%**.
+That estimate is intentionally conservative and reflects the whole OpenClaw product surface, not just the local control-plane path.
+
+Most of the parity progress so far is in gateway/control-plane-adjacent work: setup and bootstrap flows, launch routing and session-key handling, operator supervision, checkpoint continuity, gateway method coverage, bounded session surfaces, and mission-backed cron/usage compatibility.
+The current active gateway/cron/session-delivery family is materially further along, at roughly **70%** of its bounded local parity path.
+The biggest gaps are still the broader OpenClaw runtime surfaces: multi-channel delivery, wider CLI/runtime parity, browser and canvas control, nodes, voice, packaging, and companion apps.
+
+For the detailed parity rollup, see [docs/openclaw-parity-progress.md](docs/openclaw-parity-progress.md) and the living checkpoint ledger at [docs/openclaw-parity-checkpoint-2026-04-10.md](docs/openclaw-parity-checkpoint-2026-04-10.md).
 
 ## Why it exists
 

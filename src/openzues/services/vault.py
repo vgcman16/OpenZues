@@ -150,6 +150,18 @@ class VaultService:
                 continue
             secret_id = int(raw_secret_id)
             counts[secret_id] = counts.get(secret_id, 0) + 1
+        for row in await self.database.list_outbound_deliveries(limit=None):
+            route_scope = row.get("route_scope")
+            if not isinstance(route_scope, dict):
+                continue
+            raw_secret_id = route_scope.get("vault_secret_id")
+            if raw_secret_id is None:
+                continue
+            try:
+                secret_id = int(raw_secret_id)
+            except (TypeError, ValueError):
+                continue
+            counts[secret_id] = counts.get(secret_id, 0) + 1
         return counts
 
     def _serialize_secret(

@@ -1938,7 +1938,7 @@ class Database:
     async def list_outbound_deliveries(
         self,
         *,
-        limit: int = 25,
+        limit: int | None = 25,
         states: list[str] | None = None,
         newest_first: bool = True,
     ) -> list[dict[str, Any]]:
@@ -1949,13 +1949,13 @@ class Database:
             where = f"WHERE delivery_state IN ({placeholders})"
             params.extend(states)
         order = "DESC" if newest_first else "ASC"
-        params.append(limit)
+        query = f"SELECT * FROM outbound_deliveries {where} ORDER BY id {order}"
+        if limit is not None:
+            query += " LIMIT ?"
+            params.append(limit)
         async with aiosqlite.connect(self.path) as db:
             db.row_factory = aiosqlite.Row
-            cursor = await db.execute(
-                f"SELECT * FROM outbound_deliveries {where} ORDER BY id {order} LIMIT ?",
-                params,
-            )
+            cursor = await db.execute(query, params)
             try:
                 rows = await cursor.fetchall()
                 output: list[dict[str, Any]] = []

@@ -2920,6 +2920,79 @@ async def test_ops_mesh_service_routes_due_main_system_event_task_through_wake_q
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_routes_due_main_system_event_task_session_key_through_wake_queue() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-cron-session-key-wake"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_project(path="C:/workspace", label="OpenZues Workspace")
+    stored_session_key = "agent:openzues:telegram:direct:123:thread:77"
+    await database.create_task_blueprint(
+        name="Wake Main Lane Session Key",
+        summary="Nudge the main lane on the next heartbeat with a stored session key.",
+        project_id=1,
+        instance_id=1,
+        cadence_minutes=60,
+        enabled=True,
+        payload={
+            "objective_template": "Resume the main lane from cron.",
+            "cron_session_target": "main",
+            "cron_session_key": stored_session_key,
+            "cron_wake_mode": "next-heartbeat",
+            "cron_payload_kind": "systemEvent",
+            "cron_payload_text": "Resume the main lane from cron.",
+            "cwd": "C:/workspace",
+            "model": "gpt-5.4",
+            "reasoning_effort": None,
+            "collaboration_mode": None,
+            "max_turns": 2,
+            "use_builtin_agents": True,
+            "run_verification": True,
+            "auto_commit": False,
+            "pause_on_approval": True,
+            "allow_auto_reflexes": True,
+            "auto_recover": True,
+            "auto_recover_limit": 2,
+            "reflex_cooldown_seconds": 900,
+            "allow_failover": True,
+        },
+    )
+    await database.update_task_blueprint(
+        1,
+        last_launched_at=(datetime.now(UTC) - timedelta(hours=2)).isoformat(),
+        last_status="completed",
+        last_result_summary="Previous cron wake finished.",
+    )
+
+    fake_missions = FakeMissionService()
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        fake_missions,  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        wake_service=GatewayWakeService(database),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    await service.tick_once()
+
+    wake_requests = await database.list_gateway_wake_requests()
+    events = await database.list_events()
+
+    assert fake_missions.created_payloads == []
+    assert len(wake_requests) == 1
+    assert wake_requests[0]["mode"] == "next-heartbeat"
+    assert wake_requests[0]["status"] == "pending"
+    assert wake_requests[0]["session_key"] == stored_session_key
+    assert len(events) == 1
+    assert events[0]["method"] == "system-event"
+    assert events[0]["payload"]["sessionKey"] == stored_session_key
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_disables_consumed_one_shot_main_system_event_task_after_queueing(
     tmp_path: Path,
 ) -> None:
@@ -3818,6 +3891,443 @@ async def test_replay_outbound_deliveries_retries_saved_failed_delivery(
     assert result.skipped_max_retries_count == 0
     assert len(deliveries) == 1
     assert deliveries[0][0] == "mission/updated"
+    assert result.deliveries[0].delivery is not None
+    assert result.deliveries[0].delivery.delivery_state == "delivered"
+    assert refreshed_delivery is not None
+    assert refreshed_delivery["delivery_state"] == "delivered"
+    assert refreshed_delivery["attempt_count"] == 2
+    assert refreshed_delivery["last_error"] is None
+
+
+@pytest.mark.asyncio
+async def test_replay_outbound_deliveries_retries_saved_failed_session_delivery() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-replay-session-delivery"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    session_key = "agent:main:telegram:direct:123:thread:99"
+    delivery_id = await database.create_outbound_delivery(
+        route_id=None,
+        route_name="Session delivery for Replay Session Delivery",
+        route_kind="session",
+        route_target=session_key,
+        event_type="cron/failure",
+        session_key=session_key,
+        conversation_target=None,
+        route_scope={
+            "route_name": "Session delivery for Replay Session Delivery",
+            "route_kind": "session",
+            "route_target": session_key,
+            "route_match": "sessionKey",
+        },
+        event_payload={
+            "missionId": 11,
+            "taskId": 7,
+            "jobId": "task-blueprint:7",
+            "jobName": "Replay Session Delivery",
+            "message": 'Cron job "Replay Session Delivery" failed: lane timed out',
+            "status": "error",
+            "error": "lane timed out",
+            "sessionKey": session_key,
+        },
+        message_summary='Cron job "Replay Session Delivery" failed: lane timed out',
+        test_delivery=False,
+        delivery_state="failed",
+        attempt_count=1,
+        last_attempt_at=(datetime.now(UTC) - timedelta(minutes=10)).isoformat(),
+        last_error="temporary delivery timeout",
+    )
+    session_deliveries: list[tuple[str, str]] = []
+
+    async def fake_session_delivery(target_session_key: str, message: str) -> None:
+        session_deliveries.append((target_session_key, message))
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),
+        FakeMissionService([]),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_session_delivery,
+    )
+
+    result = await service.replay_outbound_deliveries(limit=10)
+    refreshed_delivery = await database.get_outbound_delivery(delivery_id)
+
+    assert result.ok is True
+    assert result.attempted_count == 1
+    assert result.replayed_count == 1
+    assert result.failed_count == 0
+    assert result.deferred_count == 0
+    assert result.skipped_max_retries_count == 0
+    assert session_deliveries == [
+        (
+            session_key,
+            '\u26a0\ufe0f Cron job "Replay Session Delivery" failed: lane timed out',
+        )
+    ]
+    assert result.deliveries[0].delivery is not None
+    assert result.deliveries[0].delivery.delivery_state == "delivered"
+    assert refreshed_delivery is not None
+    assert refreshed_delivery["delivery_state"] == "delivered"
+    assert refreshed_delivery["attempt_count"] == 2
+    assert refreshed_delivery["last_error"] is None
+
+
+@pytest.mark.asyncio
+async def test_replay_outbound_deliveries_retries_saved_failed_announce_delivery() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-replay-announce-delivery"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    session_key = (
+        "launch:mode:workspace_affinity:channel:telegram:account:coordinator:"
+        "peer:channel:deploy-room"
+    )
+    delivery_id = await database.create_outbound_delivery(
+        route_id=None,
+        route_name="Announce delivery for Replay Announce Delivery",
+        route_kind="announce",
+        route_target="telegram coordinator channel deploy-room",
+        event_type="cron/failure",
+        session_key=session_key,
+        conversation_target={
+            "channel": "telegram",
+            "account_id": "coordinator",
+            "peer_kind": "channel",
+            "peer_id": "deploy-room",
+            "summary": "telegram account coordinator channel deploy-room",
+        },
+        route_scope={
+            "route_name": "Announce delivery for Replay Announce Delivery",
+            "route_kind": "announce",
+            "route_target": "telegram coordinator channel deploy-room",
+            "route_match": "explicitTarget",
+        },
+        event_payload={
+            "missionId": 12,
+            "taskId": 8,
+            "jobId": "task-blueprint:8",
+            "jobName": "Replay Announce Delivery",
+            "message": 'Cron job "Replay Announce Delivery" failed: lane timed out',
+            "status": "error",
+            "error": "lane timed out",
+            "sessionKey": session_key,
+            "conversationTarget": {
+                "channel": "telegram",
+                "account_id": "coordinator",
+                "peer_kind": "channel",
+                "peer_id": "deploy-room",
+                "summary": "telegram account coordinator channel deploy-room",
+            },
+        },
+        message_summary='Cron job "Replay Announce Delivery" failed: lane timed out',
+        test_delivery=False,
+        delivery_state="failed",
+        attempt_count=1,
+        last_attempt_at=(datetime.now(UTC) - timedelta(minutes=10)).isoformat(),
+        last_error="temporary delivery timeout",
+    )
+    session_deliveries: list[tuple[str, str]] = []
+
+    async def fake_session_delivery(target_session_key: str, message: str) -> None:
+        session_deliveries.append((target_session_key, message))
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),
+        FakeMissionService([]),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_session_delivery,
+    )
+
+    result = await service.replay_outbound_deliveries(limit=10)
+    refreshed_delivery = await database.get_outbound_delivery(delivery_id)
+
+    assert result.ok is True
+    assert result.attempted_count == 1
+    assert result.replayed_count == 1
+    assert result.failed_count == 0
+    assert result.deferred_count == 0
+    assert result.skipped_max_retries_count == 0
+    assert session_deliveries == [
+        (
+            session_key,
+            '\u26a0\ufe0f Cron job "Replay Announce Delivery" failed: lane timed out',
+        )
+    ]
+    assert result.deliveries[0].delivery is not None
+    assert result.deliveries[0].delivery.delivery_state == "delivered"
+    assert refreshed_delivery is not None
+    assert refreshed_delivery["delivery_state"] == "delivered"
+    assert refreshed_delivery["attempt_count"] == 2
+    assert refreshed_delivery["last_error"] is None
+
+
+@pytest.mark.asyncio
+async def test_replay_outbound_deliveries_retries_saved_failed_ad_hoc_webhook_delivery(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-replay-ad-hoc-webhook-delivery"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    delivery_id = await database.create_outbound_delivery(
+        route_id=None,
+        route_name="Cron webhook for Replay Webhook Delivery",
+        route_kind="webhook",
+        route_target="https://example.invalid/replay-webhook",
+        event_type="cron/finished",
+        session_key="launch:mode:workspace_affinity",
+        conversation_target=None,
+        route_scope={
+            "route_name": "Cron webhook for Replay Webhook Delivery",
+            "route_kind": "webhook",
+            "route_target": "https://example.invalid/replay-webhook",
+        },
+        event_payload={
+            "missionId": 13,
+            "taskId": 9,
+            "jobId": "task-blueprint:9",
+            "summary": "Replay webhook ship landed.",
+        },
+        message_summary="Replay webhook ship landed.",
+        test_delivery=False,
+        delivery_state="failed",
+        attempt_count=1,
+        last_attempt_at=(datetime.now(UTC) - timedelta(minutes=10)).isoformat(),
+        last_error="temporary upstream timeout",
+    )
+    webhook_calls: list[tuple[str, dict[str, object]]] = []
+
+    def fake_post_json_webhook(
+        self,  # noqa: ANN001
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> None:
+        del self, secret_header_name, secret_token
+        webhook_calls.append((target, payload))
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),
+        FakeMissionService([]),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.replay_outbound_deliveries(limit=10)
+    refreshed_delivery = await database.get_outbound_delivery(delivery_id)
+
+    assert result.ok is True
+    assert result.attempted_count == 1
+    assert result.replayed_count == 1
+    assert result.failed_count == 0
+    assert result.deferred_count == 0
+    assert result.skipped_max_retries_count == 0
+    assert webhook_calls == [
+        (
+            "https://example.invalid/replay-webhook",
+            {
+                "missionId": 13,
+                "taskId": 9,
+                "jobId": "task-blueprint:9",
+                "summary": "Replay webhook ship landed.",
+            },
+        )
+    ]
+    assert result.deliveries[0].delivery is not None
+    assert result.deliveries[0].delivery.delivery_state == "delivered"
+    assert refreshed_delivery is not None
+    assert refreshed_delivery["delivery_state"] == "delivered"
+    assert refreshed_delivery["attempt_count"] == 2
+    assert refreshed_delivery["last_error"] is None
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_persists_secret_backed_replay_auth_for_ad_hoc_webhook_delivery(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-ad-hoc-webhook-replay-auth"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    webhook_calls: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_post_json_webhook(
+        self,  # noqa: ANN001
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> None:
+        del self
+        webhook_calls.append((target, payload, secret_header_name, secret_token))
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+
+    vault = make_vault(database, tmp_path)
+    service = OpsMeshService(
+        database,
+        FakeManager(),
+        FakeMissionService([]),  # type: ignore[arg-type]
+        BroadcastHub(),
+        vault,
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    await service._send_ad_hoc_webhook_delivery(
+        route_name="Cron webhook for Authenticated Replay",
+        route_target="https://example.invalid/authenticated-replay",
+        event_type="cron/finished",
+        payload={
+            "missionId": 14,
+            "taskId": 10,
+            "jobId": "task-blueprint:10",
+            "summary": "Authenticated replay webhook landed.",
+        },
+        session_key="launch:mode:workspace_affinity",
+        conversation_target=None,
+        secret_header_name="Authorization",
+        secret_token="Bearer replayable-webhook-token",
+    )
+
+    deliveries = await service.list_outbound_delivery_views(limit=10)
+    assert len(deliveries) == 1
+    stored_delivery = await database.get_outbound_delivery(deliveries[0].id)
+
+    assert webhook_calls == [
+        (
+            "https://example.invalid/authenticated-replay",
+            {
+                "missionId": 14,
+                "taskId": 10,
+                "jobId": "task-blueprint:10",
+                "summary": "Authenticated replay webhook landed.",
+            },
+            "Authorization",
+            "Bearer replayable-webhook-token",
+        )
+    ]
+    assert stored_delivery is not None
+    assert stored_delivery["delivery_state"] == "delivered"
+    assert stored_delivery["route_scope"]["secret_header_name"] == "Authorization"
+    secret_id = int(stored_delivery["route_scope"]["vault_secret_id"])
+    secret_view = await vault.get_secret_view(secret_id)
+    assert secret_view is not None
+    assert secret_view.usage_count == 1
+    assert await vault.get_secret_value(secret_id) == "Bearer replayable-webhook-token"
+
+
+@pytest.mark.asyncio
+async def test_replay_outbound_deliveries_retries_saved_failed_secret_backed_ad_hoc_webhook_delivery(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-replay-secret-ad-hoc-webhook"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    vault = make_vault(database, tmp_path)
+    replay_secret = await vault.create_secret_value(
+        label="Cron webhook for Replay Secret Webhook Delivery replay webhook secret",
+        value="Bearer replay-auth-token",
+        kind="webhook-token",
+        notes="https://example.invalid/replay-auth-webhook",
+    )
+    delivery_id = await database.create_outbound_delivery(
+        route_id=None,
+        route_name="Cron webhook for Replay Secret Webhook Delivery",
+        route_kind="webhook",
+        route_target="https://example.invalid/replay-auth-webhook",
+        event_type="cron/finished",
+        session_key="launch:mode:workspace_affinity",
+        conversation_target=None,
+        route_scope={
+            "route_name": "Cron webhook for Replay Secret Webhook Delivery",
+            "route_kind": "webhook",
+            "route_target": "https://example.invalid/replay-auth-webhook",
+            "secret_header_name": "Authorization",
+            "vault_secret_id": replay_secret.id,
+        },
+        event_payload={
+            "missionId": 15,
+            "taskId": 11,
+            "jobId": "task-blueprint:11",
+            "summary": "Replay secret-backed webhook landed.",
+        },
+        message_summary="Replay secret-backed webhook landed.",
+        test_delivery=False,
+        delivery_state="failed",
+        attempt_count=1,
+        last_attempt_at=(datetime.now(UTC) - timedelta(minutes=10)).isoformat(),
+        last_error="temporary upstream timeout",
+    )
+    webhook_calls: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_post_json_webhook(
+        self,  # noqa: ANN001
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> None:
+        del self
+        webhook_calls.append((target, payload, secret_header_name, secret_token))
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),
+        FakeMissionService([]),  # type: ignore[arg-type]
+        BroadcastHub(),
+        vault,
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.replay_outbound_deliveries(limit=10)
+    refreshed_delivery = await database.get_outbound_delivery(delivery_id)
+
+    assert result.ok is True
+    assert result.attempted_count == 1
+    assert result.replayed_count == 1
+    assert result.failed_count == 0
+    assert result.deferred_count == 0
+    assert result.skipped_max_retries_count == 0
+    assert webhook_calls == [
+        (
+            "https://example.invalid/replay-auth-webhook",
+            {
+                "missionId": 15,
+                "taskId": 11,
+                "jobId": "task-blueprint:11",
+                "summary": "Replay secret-backed webhook landed.",
+            },
+            "Authorization",
+            "Bearer replay-auth-token",
+        )
+    ]
     assert result.deliveries[0].delivery is not None
     assert result.deliveries[0].delivery.delivery_state == "delivered"
     assert refreshed_delivery is not None

@@ -9184,6 +9184,65 @@ def test_gateway_node_method_call_endpoint_routes_main_system_event_cron_run_thr
     assert missions == []
 
 
+def test_gateway_node_method_call_endpoint_routes_main_system_event_cron_run_session_key_through_wake_queue() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-run-session-key-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+    stored_session_key = "agent:openzues:telegram:direct:123:thread:77"
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        add_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "cron.add",
+                "params": {
+                    "name": "Wake Main Lane Session Key",
+                    "description": "Nudge the main lane on the next heartbeat with a target session.",
+                    "enabled": True,
+                    "schedule": {"kind": "every", "everyMs": 3_600_000},
+                    "sessionTarget": "main",
+                    "sessionKey": "telegram:direct:123:thread:77",
+                    "wakeMode": "next-heartbeat",
+                    "payload": {
+                        "kind": "systemEvent",
+                        "text": "Resume the main lane from cron.",
+                    },
+                },
+            },
+        )
+        assert add_response.status_code == 200
+        job_id = str(add_response.json()["id"])
+
+        run_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "cron.run",
+                "params": {"id": job_id, "mode": "force"},
+            },
+        )
+        database = client.app.state.database
+        wake_requests = asyncio.run(database.list_gateway_wake_requests())
+        events = asyncio.run(database.list_events())
+
+    assert run_response.status_code == 200
+    payload = run_response.json()
+    assert payload["ok"] is True
+    assert payload["enqueued"] is True
+    assert isinstance(payload["runId"], str)
+    assert len(wake_requests) == 1
+    assert wake_requests[0]["mode"] == "next-heartbeat"
+    assert wake_requests[0]["session_key"] == stored_session_key
+    assert len(events) == 1
+    assert events[0]["method"] == "system-event"
+    assert events[0]["payload"]["sessionKey"] == stored_session_key
+
+
 def test_gateway_node_method_call_endpoint_surfaces_cron_runs_for_main_system_event_wake_jobs(
     tmp_path,
 ) -> None:

@@ -1,5 +1,13 @@
 ﻿# OpenClaw Parity Checkpoint
 
+## Current Rollup (through 2026-04-21 addenda)
+
+- Estimated parity progress: roughly `25-35%` of the full OpenClaw product surface is now covered, with gateway/control-plane seams materially further along than whole-product parity. Registry, routing/session-key, large parts of gateway session/usage/cron compatibility, and operator-control seams have moved forward; channels, nodes, browser-control, canvas, voice, packaging, and companion apps still dominate the remaining gap.
+- Active feature family progress: the live queue is the gateway/cron/session-delivery family, and it is roughly `65-75%` complete along the current bounded local parity path. The latest addenda moved that family from session-target normalization into delivery metadata, runtime delivery ownership, webhook/session fallback behavior, and preserved `sessionKey` wake routing.
+- Latest completed seams: the freshest landed seams are `cron runtime delivery-status`, `cron announce fallback and delivery.threadId`, `cron session delivery fallback`, and `cron system-event sessionKey wake` parity, layered on top of the already-locked gateway method registry seam and the `usage.cost` / `usage.status` bridge.
+- Current queue head: explicit peer-target announce delivery remains the next honest seam. OpenZues now covers webhook delivery, notification-route delivery, and `sessionKey` / `channel="last"` fallback, but it still does not own a true direct announce transport for explicit `channel` / `to` / `accountId` targets.
+- How to read this checkpoint: treat the dated checkpoint sections near the top as seam locks and re-anchors, then use the newest `Recovery addendum` entries later in the file for the live edge. The final addendum's "Next exact seam" callout is the current queue head unless a newer dated section overrides it.
+
 ## 2026-04-18 Usage Compatibility Bridge Checkpoint
 
 - Seam locked: `usage.cost` and `usage.status` gateway method parity.
@@ -13787,4 +13795,96 @@ Next best slice:
   - the next honest continuation is the explicit-target announce runtime seam:
     - either add a real direct announce transport owner for `channel` / `to` / `accountId`
     - or document that OpenZues intentionally caps cron announce delivery at session-backed fallback plus notification-route/webhook delivery.
+
+### Recovery addendum 2026-04-21 cron system-event sessionKey wake parity America/Chicago
+
+- Continued the active cron wake queue at the next concrete integration seam instead of stopping at delivery history.
+  - upstream source anchor re-used for this continuation:
+    - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-cron.ts`
+- Key upstream behavior re-anchored before editing:
+  - main-lane cron `systemEvent` jobs carry the resolved cron `sessionKey` into heartbeat wake dispatch, not only into add/list/update metadata.
+- Key finding in OpenZues before the fix:
+  - cron add/update/list already preserved `cron_session_key`, and cron failure delivery already consumed it, but `OpsMeshService.dispatch_cron_system_event_task(...)` still called `wake_service.wake(...)` without that stored target, so queued main-lane wake dispatch lost the cron-scoped session identity.
+- Landed the next bounded OpenZues slice:
+  - `OpsMeshService.dispatch_cron_system_event_task(...)` now passes the stored cron `sessionKey` into the gateway wake service.
+  - queued wake rows and the mirrored `system-event` payload now preserve the canonical cron session key for main `systemEvent` cron runs.
+- Product effect proved end to end:
+  - a main-session cron `systemEvent` run with an explicit `sessionKey` now enqueues the wake against that exact canonical session instead of dropping back to an unscoped main-lane wake.
+  - the same stored target is visible both in gateway wake storage and in the emitted event payload, so downstream wake consumers receive the same routing identity OpenClaw uses.
+- Focused proofs added in this continuation:
+  - `tests/test_ops_mesh.py`
+    - added `test_ops_mesh_service_routes_due_main_system_event_task_session_key_through_wake_queue`
+  - `tests/test_gateway_nodes_api.py`
+    - added `test_gateway_node_method_call_endpoint_routes_main_system_event_cron_run_session_key_through_wake_queue`
+- Verified this continuation with:
+  - `C:\Users\skull\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m pytest tests/test_ops_mesh.py -k "routes_due_main_system_event_task_session_key_through_wake_queue" -q`
+  - `C:\Users\skull\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m pytest tests/test_gateway_nodes_api.py -k "routes_main_system_event_cron_run_session_key_through_wake_queue" -q`
+  - `C:\Users\skull\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m mypy src/openzues/services/ops_mesh.py`
+  - `.\.venv\Scripts\ruff.exe check --ignore E501 src/openzues/services/ops_mesh.py tests/test_ops_mesh.py tests/test_gateway_nodes_api.py`
+- Result:
+  - both new focused wake-routing proofs pass.
+  - Ruff is clean on the touched files.
+  - the touched runtime owner type-checks cleanly under the bundled Python runtime.
+  - older adjacent pytest cases that still rely on the sandbox-blocked global temp fixture were left untouched; this continuation uses repo-local temp paths for the new proofs instead of widening into unrelated test-harness work.
+- Next exact seam inside the active cron wake/delivery family:
+  - OpenClaw still resolves explicit announce delivery through a true direct outbound provider owner for `channel` / `to` / `accountId`.
+  - OpenZues now carries cron `sessionKey` through queued wake dispatch and last-channel/session-backed delivery, but explicit peer-target announce delivery still stops at notification-route and webhook ownership.
+
+### Recovery addendum 2026-04-21 outbound replay parity for saved cron-owned deliveries America/Chicago
+
+- Continued the active cron/integration queue at the outbound replay seam instead of stopping at live delivery.
+- Key findings in OpenZues before the fix:
+  - `OpsMeshService.replay_outbound_deliveries(...)` only knew how to replay rows backed by a saved notification route.
+  - cron-owned `session`, `announce`, and ad-hoc `webhook` deliveries are stored with `route_id=None`, so failed saved rows in those owners replayed as `"Saved delivery is missing its notification route."` even though the local runtime still had enough information to resend them.
+- Landed the next bounded OpenZues slices:
+  - replay now re-sends saved failed `session` deliveries through the existing session-delivery owner using the persisted target session key.
+  - replay now re-sends saved failed `announce` deliveries through the same local explicit-target session owner using the persisted derived announce session key.
+  - replay now re-posts saved failed ad-hoc `webhook` deliveries by using the stored target URL and payload when no notification route row exists.
+- Product effect proved end to end:
+  - failed cron-owned `session` and `announce` deliveries no longer dead-end in replay just because they were created ad hoc.
+  - failed cron-owned ad-hoc webhook deliveries can now replay from saved delivery history without requiring a notification route row.
+- Focused proofs added in this continuation:
+  - `tests/test_ops_mesh.py`
+    - added `test_replay_outbound_deliveries_retries_saved_failed_session_delivery`
+    - added `test_replay_outbound_deliveries_retries_saved_failed_announce_delivery`
+    - added `test_replay_outbound_deliveries_retries_saved_failed_ad_hoc_webhook_delivery`
+- Verified this continuation with:
+  - `C:\Users\skull\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m pytest tests/test_ops_mesh.py -k "replay_outbound_deliveries_retries_saved_failed_session_delivery or replay_outbound_deliveries_retries_saved_failed_announce_delivery or replay_outbound_deliveries_retries_saved_failed_ad_hoc_webhook_delivery" -q`
+  - `C:\Users\skull\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m mypy src/openzues/services/ops_mesh.py`
+  - `.\.venv\Scripts\ruff.exe check --ignore E501 src/openzues/services/ops_mesh.py tests/test_ops_mesh.py`
+- Result:
+  - all three focused replay proofs pass.
+  - Ruff is clean on the touched files.
+  - the touched replay runtime boundary type-checks cleanly.
+- Next exact seam inside the active cron/integration queue:
+  - saved ad-hoc webhook replay still only has the stored target URL and payload; OpenZues does not yet persist secret-backed ad-hoc webhook auth material for replay, so authenticated cron webhook replays remain weaker than the live send path.
+
+### Recovery addendum 2026-04-21 authenticated outbound replay parity for saved ad-hoc webhooks America/Chicago
+
+- Continued the active cron/integration queue at the authenticated replay seam instead of stopping at headerless webhook replay.
+- Key findings in OpenZues before the fix:
+  - live ad-hoc cron webhook sends already accepted `secret_header_name` and `secret_token`, but `_send_ad_hoc_webhook_delivery(...)` only persisted the target URL in `route_scope`.
+  - replay for saved route-less webhook deliveries therefore dropped auth entirely and retried every authenticated webhook as an anonymous POST.
+  - vault usage counts also ignored outbound delivery replay secrets, so even if replay auth was persisted, deletes would undercount those live references.
+- Landed the next bounded OpenZues slices:
+  - ad-hoc webhook sends now mint a vault-backed replay secret when they carry explicit auth headers, and persist the `secret_header_name` plus `vault_secret_id` in saved delivery `route_scope`.
+  - saved ad-hoc webhook replay now restores the stored header/token pair from `route_scope` plus vault before re-posting the saved payload.
+  - vault usage counting now includes outbound delivery replay secrets so those references stay visible to the existing delete guardrails.
+- Product effect proved end to end:
+  - authenticated cron-owned route-less webhooks no longer lose their auth when replayed from saved delivery history.
+  - saved replay auth remains vault-backed instead of leaking plaintext webhook tokens into outbound delivery rows.
+- Focused proofs added in this continuation:
+  - `tests/test_ops_mesh.py`
+    - added `test_ops_mesh_service_persists_secret_backed_replay_auth_for_ad_hoc_webhook_delivery`
+    - added `test_replay_outbound_deliveries_retries_saved_failed_secret_backed_ad_hoc_webhook_delivery`
+- Verified this continuation with:
+  - `C:\Users\skull\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m pytest tests/test_ops_mesh.py -k "persists_secret_backed_replay_auth_for_ad_hoc_webhook_delivery or replay_outbound_deliveries_retries_saved_failed_secret_backed_ad_hoc_webhook_delivery" -q`
+  - `C:\Users\skull\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m mypy src/openzues/services/ops_mesh.py src/openzues/services/vault.py`
+  - `.\.venv\Scripts\ruff.exe check --ignore E501 src/openzues/services/ops_mesh.py src/openzues/services/vault.py tests/test_ops_mesh.py`
+- Result:
+  - both focused authenticated replay proofs pass.
+  - Ruff is clean on the touched files.
+  - the touched authenticated replay and vault boundary type-checks cleanly.
+- Next exact seam inside the active cron/integration queue:
+  - saved ad-hoc webhook replay is now parity-safe for explicit auth headers, but replay result surfacing still collapses saved direct transports into a synthetic webhook-only route view instead of exposing the richer saved transport identity OpenClaw reports.
 
