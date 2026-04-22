@@ -46,6 +46,7 @@ from openzues.services.gateway_method_policy import (
     NODE_ROLE_GATEWAY_METHOD_SCOPE,
     ORDERED_OPERATOR_SCOPES,
     RESERVED_ADMIN_GATEWAY_METHOD_SCOPE,
+    WRITE_GATEWAY_METHOD_SCOPE,
     classify_gateway_methods,
     is_node_role_gateway_method,
     is_reserved_admin_gateway_method,
@@ -150,11 +151,11 @@ def _mapping_string_value(mapping: dict[str, Any], *keys: str) -> str | None:
 
 def _catalog_item_name(item: object) -> str | None:
     if isinstance(item, str):
-        name = item.strip()
-        return name or None
+        text = item.strip()
+        return text or None
     if not isinstance(item, dict):
         return None
-    name = _mapping_string_value(
+    name: str | None = _mapping_string_value(
         item,
         "name",
         "id",
@@ -287,6 +288,22 @@ def _catalog_names(value: Any) -> list[str]:
                 names.append(name)
         return names
     if isinstance(value, dict):
+        wrapped_entries = _list_entries(
+            value,
+            "data",
+            "items",
+            "servers",
+            "services",
+            "resources",
+            "templates",
+            "resourceTemplates",
+            "tools",
+        )
+        if wrapped_entries is not None:
+            for item in wrapped_entries:
+                if name := _catalog_item_name(item):
+                    names.append(name)
+            return names
         return [str(key).strip() for key in value if str(key).strip()]
     return []
 
@@ -296,7 +313,7 @@ def _catalog_method_scope_entries(value: Any) -> list[tuple[str, str | None]]:
     if isinstance(value, list):
         for item in value:
             if isinstance(item, str) and item.strip():
-                entries.append((item.strip(), None))
+                entries.append((item.strip(), WRITE_GATEWAY_METHOD_SCOPE))
                 continue
             if not isinstance(item, dict):
                 continue
@@ -304,21 +321,56 @@ def _catalog_method_scope_entries(value: Any) -> list[tuple[str, str | None]]:
             if name is None:
                 continue
             raw_scope = item.get("scope")
-            scope = raw_scope.strip() if isinstance(raw_scope, str) and raw_scope.strip() else None
+            scope = (
+                raw_scope.strip()
+                if isinstance(raw_scope, str) and raw_scope.strip()
+                else WRITE_GATEWAY_METHOD_SCOPE
+            )
             entries.append((name, scope))
         return entries
     if isinstance(value, dict):
+        wrapped_entries = _list_entries(value, "data", "items", "tools")
+        if wrapped_entries is not None:
+            for item in wrapped_entries:
+                if isinstance(item, str) and item.strip():
+                    entries.append((item.strip(), WRITE_GATEWAY_METHOD_SCOPE))
+                    continue
+                if not isinstance(item, dict):
+                    continue
+                name = _catalog_item_name(item)
+                if name is None:
+                    continue
+                raw_scope = item.get("scope")
+                scope = (
+                    raw_scope.strip()
+                    if isinstance(raw_scope, str) and raw_scope.strip()
+                    else WRITE_GATEWAY_METHOD_SCOPE
+                )
+                entries.append((name, scope))
+            return entries
         for key, raw_scope in value.items():
             name = str(key).strip()
             if not name:
                 continue
-            scope = (
+            mapped_scope: str | None = (
                 raw_scope.strip()
                 if isinstance(raw_scope, str) and raw_scope.strip()
                 else None
             )
-            entries.append((name, scope))
+            entries.append((name, mapped_scope))
     return entries
+
+
+def _list_entries(value: Any, *keys: str) -> list[object] | None:
+    if isinstance(value, list):
+        return list(value)
+    if not isinstance(value, dict):
+        return None
+    for key in keys:
+        child = value.get(key)
+        if isinstance(child, list):
+            return list(child)
+    return None
 
 
 def _instance_connected_at_ms(instance: InstanceView) -> int:
@@ -1772,15 +1824,14 @@ class GatewayCapabilityService:
         self,
         instances: list[InstanceView],
     ) -> dict[int, list[dict[str, Any]]]:
-        connected_instances = [instance for instance in instances if instance.connected]
-        if not connected_instances:
+        if not instances:
             return {}
 
         status_by_instance: dict[int, list[dict[str, Any]]] = {}
         responses = await asyncio.gather(
-            *(self._refresh_mcp_server_status(instance.id) for instance in connected_instances)
+            *(self._refresh_mcp_server_status(instance.id) for instance in instances)
         )
-        for instance, response in zip(connected_instances, responses, strict=False):
+        for instance, response in zip(instances, responses, strict=False):
             status_by_instance[instance.id] = response
         return status_by_instance
 
@@ -1794,11 +1845,11 @@ class GatewayCapabilityService:
             for item in (runtime.mcp_server_status if runtime is not None else [])
             if isinstance(item, dict)
         ]
-        if cached:
+        if runtime is None or not runtime.connected or runtime.client is None:
             return cached
         try:
             response = await asyncio.wait_for(
-                self.manager.list_mcp_server_status(instance_id, refresh=True),
+                runtime.client.call("mcpServerStatus/list", {"limit": 50}),
                 timeout=GATEWAY_MCP_STATUS_REFRESH_TIMEOUT_SECONDS,
             )
         except TimeoutError:
@@ -1815,7 +1866,10 @@ class GatewayCapabilityService:
                 exc,
             )
             return cached
-        return response if isinstance(response, list) else cached
+        raw_entries = _list_entries(response, "data", "items", "servers")
+        if raw_entries is not None:
+            return [dict(item) for item in raw_entries if isinstance(item, dict)]
+        return cached
 
     def _build_lane_health(
         self,

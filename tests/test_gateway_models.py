@@ -11,6 +11,7 @@ def _instance_view(
     *,
     instance_id: int = 1,
     name: str = "Local Codex Desktop",
+    config: dict[str, object] | None = None,
 ) -> InstanceView:
     return InstanceView(
         id=instance_id,
@@ -23,6 +24,7 @@ def _instance_view(
         auto_connect=False,
         connected=True,
         models=models,
+        config=config,
     )
 
 
@@ -186,3 +188,76 @@ async def test_gateway_models_build_catalog_normalizes_openclaw_provider_aliases
         "provider": "qwen",
         "input": ["text"],
     }
+
+
+@pytest.mark.asyncio
+async def test_gateway_models_build_catalog_synthesizes_configured_primary_model() -> None:
+    async def list_instance_views() -> list[InstanceView]:
+        return [
+            _instance_view(
+                [],
+                config={
+                    "model": "anthropic/claude-3.7-sonnet",
+                    "model_reasoning_effort": "high",
+                },
+            )
+        ]
+
+    payload = await GatewayModelsService(
+        list_instance_views=list_instance_views
+    ).build_catalog()
+
+    assert next(
+        model for model in payload["models"] if model["id"] == "claude-3.7-sonnet"
+    ) == {
+        "id": "claude-3.7-sonnet",
+        "name": "claude-3.7-sonnet",
+        "provider": "anthropic",
+        "isDefault": True,
+        "defaultReasoningEffort": "high",
+    }
+    assert [model["id"] for model in payload["models"] if model.get("isDefault")] == [
+        "claude-3.7-sonnet"
+    ]
+    assert next(model for model in payload["models"] if model["id"] == "gpt-5.4") == {
+        "id": "gpt-5.4",
+        "name": "gpt-5.4",
+        "provider": "openai",
+    }
+
+
+@pytest.mark.asyncio
+async def test_gateway_models_build_catalog_infers_provider_for_unprefixed_configured_model(
+) -> None:
+    async def list_instance_views() -> list[InstanceView]:
+        return [
+            _instance_view(
+                [
+                    {
+                        "id": "openai/gpt-5.4-mini",
+                        "displayName": "GPT 5.4 Mini",
+                        "contextWindow": 128_000,
+                    }
+                ],
+                config={
+                    "model": "gpt-5.4-mini",
+                    "model_reasoning_effort": "medium",
+                },
+            )
+        ]
+
+    payload = await GatewayModelsService(
+        list_instance_views=list_instance_views
+    ).build_catalog()
+
+    assert next(model for model in payload["models"] if model["id"] == "gpt-5.4-mini") == {
+        "id": "gpt-5.4-mini",
+        "name": "GPT 5.4 Mini",
+        "provider": "openai",
+        "contextWindow": 128_000,
+        "isDefault": True,
+        "defaultReasoningEffort": "medium",
+    }
+    assert [model["id"] for model in payload["models"] if model.get("isDefault")] == [
+        "gpt-5.4-mini"
+    ]

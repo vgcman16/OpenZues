@@ -3,6 +3,8 @@ from __future__ import annotations
 from typing import Any
 from uuid import uuid4
 
+import aiosqlite
+
 from openzues.database import Database
 from openzues.services.session_keys import canonicalize_session_key, parse_thread_session_suffix
 
@@ -86,6 +88,7 @@ class GatewaySessionCompactionService:
             payload=normalized_checkpoint,
             archived_messages=[_checkpoint_message_payload(canonical_key, row) for row in rows],
         )
+        await self._trim_session_checkpoints(session_key=canonical_key)
         await self._database.delete_control_chat_messages_through_id(
             session_key=canonical_key,
             max_id=last_archived_id,
@@ -169,6 +172,7 @@ class GatewaySessionCompactionService:
             payload=normalized_checkpoint,
             archived_messages=[_checkpoint_message_payload(session_key, row) for row in rows],
         )
+        await self._trim_session_checkpoints(session_key=session_key)
         kept_lines = _message_line_count(summary_content) + sum(
             _message_line_count(str(row.get("content") or "")) for row in kept_rows
         )
@@ -283,6 +287,23 @@ class GatewaySessionCompactionService:
         if checkpoint is None:
             raise ValueError(f"checkpoint not found: {checkpoint_id}")
         return {"ok": True, "key": canonical_key, "checkpoint": checkpoint}
+
+    async def _trim_session_checkpoints(self, *, session_key: str) -> None:
+        async with aiosqlite.connect(self._database.path) as db:
+            await db.execute(
+                """
+                DELETE FROM control_chat_compaction_checkpoints
+                WHERE checkpoint_id IN (
+                    SELECT checkpoint_id
+                    FROM control_chat_compaction_checkpoints
+                    WHERE LOWER(TRIM(session_key)) = LOWER(TRIM(?))
+                    ORDER BY created_at_ms DESC, checkpoint_id DESC
+                    LIMIT -1 OFFSET ?
+                )
+                """,
+                (session_key, _MAX_COMPACTION_CHECKPOINTS),
+            )
+            await db.commit()
 
     async def _resolve_compaction_session_id(self, session_key: str) -> str:
         mission = await self._database.get_latest_mission_by_session_key(

@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+import sqlite3
+
 import pytest
 
 from openzues.database import Database
 from openzues.schemas import ConversationTargetView
 from openzues.services.session_keys import (
     build_agent_main_session_key,
-    build_agent_session_key,
     build_agent_peer_session_key,
+    build_agent_session_key,
     build_group_history_key,
     build_launch_session_key,
     canonicalize_session_key,
@@ -18,23 +20,32 @@ from openzues.services.session_keys import (
     is_cron_session_key,
     is_subagent_session_key,
     is_valid_agent_id,
-    normalize_agent_id,
     normalize_account_id,
+    normalize_agent_id,
     normalize_main_key,
     normalize_optional_account_id,
     parse_agent_session_key,
     parse_thread_session_suffix,
+    reset_resolved_session_key_for_run_cache_for_test,
     resolve_agent_id_from_session_key,
     resolve_session_key_for_run,
     resolve_thread_parent_session_key,
     resolve_thread_session_keys,
-    reset_resolved_session_key_for_run_cache_for_test,
-    scoped_heartbeat_wake_options,
     sanitize_agent_id,
+    scoped_heartbeat_wake_options,
     session_key_lookup_aliases,
     to_agent_request_session_key,
     to_agent_store_session_key,
 )
+
+
+def _set_mission_updated_at(database: Database, *, session_key: str, updated_at: str) -> None:
+    with sqlite3.connect(database.path) as connection:
+        connection.execute(
+            "UPDATE missions SET updated_at = ? WHERE session_key = ?",
+            (updated_at, session_key),
+        )
+        connection.commit()
 
 
 def test_build_launch_session_key_preserves_workspace_affinity_shape() -> None:
@@ -377,7 +388,7 @@ async def test_resolve_session_key_for_run_reads_swarm_mission_state_from_store(
 
 
 @pytest.mark.asyncio
-async def test_resolve_session_key_for_run_uses_openclaw_request_shape_for_malformed_agent_store_key(
+async def test_resolve_session_key_for_run_uses_request_shape_for_malformed_agent_store_key(
     tmp_path,
 ) -> None:
     reset_resolved_session_key_for_run_cache_for_test()
@@ -386,7 +397,7 @@ async def test_resolve_session_key_for_run_uses_openclaw_request_shape_for_malfo
 
     await database.create_mission(
         name="Malformed agent session",
-        objective="Mirror OpenClaw request-key extraction for nonblank malformed agent ids.",
+        objective="Mirror OpenClaw request-key extraction for malformed agent ids.",
         status="active",
         instance_id=7,
         project_id=None,
@@ -411,6 +422,163 @@ async def test_resolve_session_key_for_run_uses_openclaw_request_shape_for_malfo
     )
 
     assert await resolve_session_key_for_run("run-malformed", database=database) == "main"
+
+
+@pytest.mark.asyncio
+async def test_resolve_session_key_for_run_falls_back_to_thread_id_session_match(
+    tmp_path,
+) -> None:
+    reset_resolved_session_key_for_run_cache_for_test()
+    database = Database(tmp_path / "session-keys.db")
+    await database.initialize()
+
+    await database.create_mission(
+        name="Thread-id fallback mission",
+        objective="Resolve run id through the persisted session id when swarm state is absent.",
+        status="completed",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread-321",
+        session_key="agent:main:thread:thread-321",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=4,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        swarm=None,
+        toolsets=["debugging"],
+    )
+
+    assert await resolve_session_key_for_run("thread-321", database=database) == (
+        "thread:thread-321"
+    )
+
+
+@pytest.mark.asyncio
+async def test_resolve_session_key_for_run_prefers_structural_thread_id_match(
+    tmp_path,
+) -> None:
+    reset_resolved_session_key_for_run_cache_for_test()
+    database = Database(tmp_path / "session-keys.db")
+    await database.initialize()
+
+    thread_id = "shared-thread"
+    structural_key = "agent:main:thread:shared-thread"
+    fuzzy_key = "agent:main:other"
+
+    for session_key, name in (
+        (structural_key, "Structural match"),
+        (fuzzy_key, "Fuzzy duplicate"),
+    ):
+        await database.create_mission(
+            name=name,
+            objective=(
+                "Resolve thread-id duplicates the same way OpenClaw "
+                "resolves sessionId matches."
+            ),
+            status="completed",
+            instance_id=7,
+            project_id=None,
+            thread_id=thread_id,
+            session_key=session_key,
+            cwd="C:/workspace",
+            model="gpt-5.4",
+            reasoning_effort=None,
+            collaboration_mode=None,
+            max_turns=4,
+            use_builtin_agents=True,
+            run_verification=True,
+            auto_commit=False,
+            pause_on_approval=True,
+            allow_auto_reflexes=True,
+            auto_recover=True,
+            auto_recover_limit=2,
+            reflex_cooldown_seconds=900,
+            allow_failover=True,
+            swarm=None,
+            toolsets=["debugging"],
+        )
+
+    _set_mission_updated_at(
+        database,
+        session_key=structural_key,
+        updated_at="2025-01-01T00:00:00Z",
+    )
+    _set_mission_updated_at(
+        database,
+        session_key=fuzzy_key,
+        updated_at="2026-01-01T00:00:00Z",
+    )
+
+    assert (
+        await resolve_session_key_for_run(thread_id, database=database)
+        == "thread:shared-thread"
+    )
+
+
+@pytest.mark.asyncio
+async def test_resolve_session_key_for_run_returns_none_for_ambiguous_structural_thread_id_matches(
+    tmp_path,
+) -> None:
+    reset_resolved_session_key_for_run_cache_for_test()
+    database = Database(tmp_path / "session-keys.db")
+    await database.initialize()
+
+    thread_id = "shared-thread"
+    structural_key_a = "agent:main:thread:shared-thread"
+    structural_key_b = "launch:mode:workspace_affinity:task:7:operator:1:thread:shared-thread"
+
+    for session_key, name in (
+        (structural_key_a, "Structural agent match"),
+        (structural_key_b, "Structural launch match"),
+    ):
+        await database.create_mission(
+            name=name,
+            objective="Keep ambiguous structural thread-id matches unresolved.",
+            status="completed",
+            instance_id=7,
+            project_id=None,
+            thread_id=thread_id,
+            session_key=session_key,
+            cwd="C:/workspace",
+            model="gpt-5.4",
+            reasoning_effort=None,
+            collaboration_mode=None,
+            max_turns=4,
+            use_builtin_agents=True,
+            run_verification=True,
+            auto_commit=False,
+            pause_on_approval=True,
+            allow_auto_reflexes=True,
+            auto_recover=True,
+            auto_recover_limit=2,
+            reflex_cooldown_seconds=900,
+            allow_failover=True,
+            swarm=None,
+            toolsets=["debugging"],
+        )
+
+    _set_mission_updated_at(
+        database,
+        session_key=structural_key_a,
+        updated_at="2025-01-01T00:00:00Z",
+    )
+    _set_mission_updated_at(
+        database,
+        session_key=structural_key_b,
+        updated_at="2025-01-01T00:00:00Z",
+    )
+
+    assert await resolve_session_key_for_run(thread_id, database=database) is None
 
 
 @pytest.mark.asyncio

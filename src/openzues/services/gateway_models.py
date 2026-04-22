@@ -5,6 +5,7 @@ from typing import Any
 
 from openzues.schemas import InstanceView
 
+_DEFAULT_PROVIDER = "openai"
 _PROVIDER_ALIASES: dict[str, str] = {
     "modelstudio": "qwen",
     "qwencloud": "qwen",
@@ -34,6 +35,14 @@ _DEFAULT_MODELS: tuple[dict[str, Any], ...] = (
         "provider": "openai",
     },
 )
+_FALLBACK_MODELS: tuple[dict[str, Any], ...] = tuple(
+    {
+        key: value
+        for key, value in entry.items()
+        if key != "isDefault"
+    }
+    for entry in _DEFAULT_MODELS
+)
 
 
 class GatewayModelsService:
@@ -47,6 +56,7 @@ class GatewayModelsService:
     async def build_catalog(self) -> dict[str, Any]:
         entries: list[dict[str, Any]] = []
         indexes: dict[tuple[str | None, str], int] = {}
+        has_explicit_default = False
 
         if self._list_instance_views is not None:
             for instance in await self._list_instance_views():
@@ -55,8 +65,17 @@ class GatewayModelsService:
                     if normalized is None:
                         continue
                     _upsert_model(entries, indexes, normalized)
+                    if normalized.get("isDefault") is True:
+                        has_explicit_default = True
+                configured_model = _normalize_configured_model_entry(
+                    instance.config,
+                    known_models=[*instance.models, *entries, *_DEFAULT_MODELS],
+                )
+                if configured_model is not None:
+                    _upsert_model(entries, indexes, configured_model)
+                    has_explicit_default = True
 
-        for raw_entry in _DEFAULT_MODELS:
+        for raw_entry in (_FALLBACK_MODELS if has_explicit_default else _DEFAULT_MODELS):
             _upsert_model(entries, indexes, dict(raw_entry))
 
         entries.sort(key=_model_sort_key)
@@ -85,24 +104,12 @@ def _upsert_model(
 
 
 def _normalize_model_entry(value: object) -> dict[str, Any] | None:
-    if not isinstance(value, Mapping):
+    identity = _extract_model_identity(value)
+    if identity is None:
         return None
 
-    raw_identifier = _first_non_empty_string(
-        value.get("id"),
-        value.get("model"),
-        value.get("slug"),
-    )
-    if raw_identifier is None:
-        return None
-    parsed_provider, parsed_model_id = _split_provider_prefixed_model(raw_identifier)
-    provider = _first_non_empty_string(
-        value.get("provider"),
-        value.get("providerId"),
-        parsed_provider,
-    )
-    normalized_provider = _normalize_provider_id(provider)
-    model_id = parsed_model_id or raw_identifier
+    normalized_provider, model_id = identity
+    assert isinstance(value, Mapping)
     name = _first_non_empty_string(
         value.get("displayName"),
         value.get("name"),
@@ -150,6 +157,50 @@ def _normalize_model_entry(value: object) -> dict[str, Any] | None:
     return normalized
 
 
+def _normalize_configured_model_entry(
+    value: object,
+    *,
+    known_models: list[object],
+) -> dict[str, Any] | None:
+    if not isinstance(value, Mapping):
+        return None
+
+    configured_model = _optional_non_empty_string(value.get("model"))
+    if configured_model is None:
+        return None
+
+    parsed_provider, parsed_model_id = _split_provider_prefixed_model(configured_model)
+    model_id = parsed_model_id or configured_model
+    provider = _normalize_provider_id(parsed_provider)
+    if provider is None:
+        provider = _infer_unique_provider_for_model(
+            model_id,
+            known_models,
+        )
+    name = _resolve_known_model_name(
+        provider=provider,
+        model_id=model_id,
+        known_models=known_models,
+    ) or model_id
+
+    normalized: dict[str, Any] = {
+        "id": model_id,
+        "name": name,
+        "isDefault": True,
+    }
+    if provider is not None:
+        normalized["provider"] = provider
+
+    default_reasoning_effort = _first_non_empty_string(
+        value.get("model_reasoning_effort"),
+        value.get("modelReasoningEffort"),
+    )
+    if default_reasoning_effort is not None:
+        normalized["defaultReasoningEffort"] = default_reasoning_effort
+
+    return normalized
+
+
 def _split_provider_prefixed_model(identifier: str) -> tuple[str | None, str]:
     provider, _, model_id = identifier.partition("/")
     if not provider or not model_id:
@@ -178,6 +229,29 @@ def _optional_positive_int(value: object) -> int | None:
     return value
 
 
+def _extract_model_identity(value: object) -> tuple[str | None, str] | None:
+    if not isinstance(value, Mapping):
+        return None
+
+    raw_identifier = _first_non_empty_string(
+        value.get("id"),
+        value.get("model"),
+        value.get("slug"),
+    )
+    if raw_identifier is None:
+        return None
+
+    parsed_provider, parsed_model_id = _split_provider_prefixed_model(raw_identifier)
+    provider = _first_non_empty_string(
+        value.get("provider"),
+        value.get("providerId"),
+        parsed_provider,
+    )
+    normalized_provider = _normalize_provider_id(provider)
+    model_id = parsed_model_id or raw_identifier
+    return normalized_provider, model_id
+
+
 def _normalize_provider_id(value: str | None) -> str | None:
     provider = _optional_non_empty_string(value)
     if provider is None:
@@ -200,6 +274,58 @@ def _normalize_string_list(value: object) -> list[str] | None:
         seen.add(lowered)
         normalized.append(cleaned)
     return normalized or None
+
+
+def _infer_unique_provider_for_model(
+    model_id: str,
+    candidates: list[object],
+) -> str | None:
+    normalized_model_id = model_id.casefold()
+    providers: set[str] = set()
+    for candidate in candidates:
+        identity = _extract_model_identity(candidate)
+        if identity is None:
+            continue
+        provider, candidate_model_id = identity
+        if provider is None or candidate_model_id.casefold() != normalized_model_id:
+            continue
+        providers.add(provider)
+        if len(providers) > 1:
+            return None
+    if len(providers) == 1:
+        return next(iter(providers))
+    if normalized_model_id in {entry["id"].casefold() for entry in _DEFAULT_MODELS}:
+        return _DEFAULT_PROVIDER
+    return None
+
+
+def _resolve_known_model_name(
+    *,
+    provider: str | None,
+    model_id: str,
+    known_models: list[object],
+) -> str | None:
+    normalized_model_id = model_id.casefold()
+    fallback_name: str | None = None
+    for candidate in known_models:
+        identity = _extract_model_identity(candidate)
+        if identity is None:
+            continue
+        candidate_provider, candidate_model_id = identity
+        if candidate_model_id.casefold() != normalized_model_id:
+            continue
+        assert isinstance(candidate, Mapping)
+        candidate_name = _first_non_empty_string(
+            candidate.get("displayName"),
+            candidate.get("name"),
+            candidate_model_id,
+        )
+        if candidate_name is None:
+            continue
+        if provider is not None and candidate_provider == provider:
+            return candidate_name
+        fallback_name = fallback_name or candidate_name
+    return fallback_name
 
 
 def _model_key(entry: dict[str, Any]) -> tuple[str | None, str] | None:

@@ -626,6 +626,14 @@ def _operator_ready_for_setup_mode(
     return True
 
 
+def _remote_integration_ready_for_bootstrap(integration: dict[str, Any] | None) -> bool:
+    if integration is None:
+        return False
+    if not _is_ingress_integration(integration):
+        return False
+    return _integration_is_auth_configured(integration)
+
+
 @dataclass(slots=True)
 class GatewayBootstrapBootResult:
     status: str
@@ -893,7 +901,19 @@ class GatewayBootstrapService:
         tool_policy = build_hermes_tool_policy(toolsets, setup_mode=setup_mode)
         warnings: list[str] = []
         broken_references = False
-        operator_ready = _operator_ready_for_setup_mode(operator, setup_mode=setup_mode)
+        saved_team_missing = bool(row["team_id"]) and team is None
+        operator_team_consistent = True
+        if operator is not None:
+            if team is not None:
+                operator_team_consistent = int(operator.team_id) == int(team.id)
+            elif operator.team_name is None:
+                operator_team_consistent = False
+        operator_ready = _operator_ready_for_setup_mode(
+            operator,
+            setup_mode=setup_mode,
+        ) and operator_team_consistent
+        task_ready = task is not None and task.enabled
+        remote_integration_ready = _remote_integration_ready_for_bootstrap(selected_integration)
 
         if row["preferred_instance_id"] and instance is None:
             warnings.append("The saved default lane no longer exists.")
@@ -917,14 +937,25 @@ class GatewayBootstrapService:
                     "Multiple integrations are attached to the saved workspace; "
                     "showing the first enabled record."
                 )
+        if saved_team_missing:
+            warnings.append("The saved default team no longer exists.")
+            broken_references = True
         if row["operator_id"] and operator is None:
             warnings.append("The saved default operator no longer exists.")
+            broken_references = True
+        elif team is not None and operator is not None and int(operator.team_id) != int(team.id):
+            warnings.append("The saved default operator no longer belongs to the saved team.")
+            broken_references = True
+        elif not saved_team_missing and operator is not None and operator.team_name is None:
+            warnings.append("The saved default operator is attached to a missing team.")
             broken_references = True
         elif operator is not None and not operator.enabled:
             warnings.append("The saved default operator is disabled.")
         if row["task_blueprint_id"] and task is None:
             warnings.append("The saved default recurring task no longer exists.")
             broken_references = True
+        elif task is not None and not task.enabled:
+            warnings.append("The saved default recurring task is disabled.")
         if instance is not None and not instance.connected:
             warnings.append("The default lane is saved, but it is not connected right now.")
         if (
@@ -934,6 +965,11 @@ class GatewayBootstrapService:
             and not operator.has_api_key
         ):
             warnings.append("The default remote operator does not have an active API key.")
+        if setup_mode == "remote" and project is not None:
+            if selected_integration is None or not _is_ingress_integration(selected_integration):
+                warnings.append("The saved workspace does not have an enabled remote ingress yet.")
+            elif not remote_integration_ready:
+                warnings.append("The saved remote ingress is missing usable auth material.")
         if setup_mode == "remote" and not instances:
             warnings.append(
                 "Remote bootstrap is saved, but no Codex lane exists yet for the first launch."
@@ -942,8 +978,9 @@ class GatewayBootstrapService:
         if setup_mode == "remote":
             required_ready = [
                 project is not None,
+                remote_integration_ready,
                 operator_ready,
-                task is not None,
+                task_ready,
             ]
             launch_ready = all(required_ready) and bool(instances)
         else:
@@ -951,7 +988,7 @@ class GatewayBootstrapService:
                 instance is not None,
                 project is not None,
                 operator_ready,
-                task is not None,
+                task_ready,
             ]
             launch_ready = (
                 all(required_ready)

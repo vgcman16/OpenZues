@@ -4,6 +4,7 @@ import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Literal
 
 from openzues.schemas import ConversationTargetView, LaunchRouteBindingMode
@@ -50,6 +51,16 @@ class ResolvedThreadSessionKeys:
 class RunLookupCacheEntry:
     session_key: str | None
     expires_at_ms: float | None
+
+
+@dataclass(frozen=True, slots=True)
+class _RunSessionIdMatchCandidate:
+    session_key: str
+    updated_at_ms: int | None
+    normalized_session_key: str
+    normalized_request_key: str
+    is_canonical_session_key: bool
+    is_structural: bool
 
 
 _resolved_session_key_by_run_id: dict[str, RunLookupCacheEntry] = {}
@@ -525,9 +536,149 @@ async def resolve_session_key_for_run(
                 now_ms=current_now_ms,
             )
             return request_session_key
+    fallback_session_key = await _resolve_session_key_for_run_from_session_id(
+        normalized_run_id,
+        database=database,
+        instance_id=instance_id,
+    )
+    if fallback_session_key is not None:
+        _set_resolved_session_key_for_run_cache(
+            normalized_run_id,
+            fallback_session_key,
+            now_ms=current_now_ms,
+        )
+        return fallback_session_key
     _set_resolved_session_key_for_run_cache(normalized_run_id, None, now_ms=current_now_ms)
     return None
 
 
 def reset_resolved_session_key_for_run_cache_for_test() -> None:
     _resolved_session_key_by_run_id.clear()
+
+
+async def _resolve_session_key_for_run_from_session_id(
+    run_id: str,
+    *,
+    database: Any,
+    instance_id: int | None,
+) -> str | None:
+    matches: list[_RunSessionIdMatchCandidate] = []
+    for mission in await database.list_missions():
+        if instance_id is not None and mission.get("instance_id") != instance_id:
+            continue
+        if str(mission.get("thread_id") or "").strip() != run_id:
+            continue
+        stored_session_key = str(mission.get("session_key") or "").strip()
+        if not stored_session_key:
+            continue
+        matches.append(
+            _build_run_session_id_match_candidate(
+                mission=mission,
+                normalized_session_id=run_id.lower(),
+            )
+        )
+    selected_session_key = _resolve_preferred_session_key_for_run_session_id_matches(matches)
+    if selected_session_key is None:
+        return None
+    return to_agent_request_session_key(selected_session_key) or selected_session_key
+
+
+def _build_run_session_id_match_candidate(
+    *,
+    mission: dict[str, Any],
+    normalized_session_id: str,
+) -> _RunSessionIdMatchCandidate:
+    raw_session_key = str(mission.get("session_key") or "").strip()
+    normalized_session_key = canonicalize_session_key(raw_session_key) or raw_session_key.lower()
+    request_session_key = to_agent_request_session_key(raw_session_key) or raw_session_key
+    normalized_request_key = request_session_key.strip().lower()
+    return _RunSessionIdMatchCandidate(
+        session_key=raw_session_key,
+        updated_at_ms=_parse_timestamp_ms(mission.get("updated_at")),
+        normalized_session_key=normalized_session_key,
+        normalized_request_key=normalized_request_key,
+        is_canonical_session_key=raw_session_key == normalized_session_key,
+        is_structural=(
+            normalized_session_key.endswith(f":{normalized_session_id}")
+            or normalized_request_key == normalized_session_id
+            or normalized_request_key.endswith(f":{normalized_session_id}")
+        ),
+    )
+
+
+def _resolve_preferred_session_key_for_run_session_id_matches(
+    matches: list[_RunSessionIdMatchCandidate],
+) -> str | None:
+    if not matches:
+        return None
+    canonical_matches = _collapse_run_session_id_alias_matches(matches)
+    if len(canonical_matches) == 1:
+        return canonical_matches[0].session_key
+    structural_matches = [match for match in canonical_matches if match.is_structural]
+    freshest_structural = _select_unique_freshest_run_session_id_match(structural_matches)
+    if freshest_structural is not None:
+        return freshest_structural.session_key
+    if len(structural_matches) > 1:
+        return None
+    freshest_canonical = _select_unique_freshest_run_session_id_match(canonical_matches)
+    if freshest_canonical is not None:
+        return freshest_canonical.session_key
+    return None
+
+
+def _collapse_run_session_id_alias_matches(
+    matches: list[_RunSessionIdMatchCandidate],
+) -> list[_RunSessionIdMatchCandidate]:
+    grouped: dict[str, list[_RunSessionIdMatchCandidate]] = {}
+    for match in matches:
+        grouped.setdefault(match.normalized_request_key, []).append(match)
+    collapsed: list[_RunSessionIdMatchCandidate] = []
+    for group in grouped.values():
+        if len(group) == 1:
+            collapsed.append(group[0])
+            continue
+        collapsed.append(
+            sorted(
+                group,
+                key=lambda match: (
+                    -_updated_at_sort_value(match.updated_at_ms),
+                    0 if match.is_canonical_session_key else 1,
+                    match.normalized_session_key,
+                ),
+            )[0]
+        )
+    return collapsed
+
+
+def _select_unique_freshest_run_session_id_match(
+    matches: list[_RunSessionIdMatchCandidate],
+) -> _RunSessionIdMatchCandidate | None:
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) < 2:
+        return None
+    sorted_matches = sorted(
+        matches,
+        key=lambda match: -_updated_at_sort_value(match.updated_at_ms),
+    )
+    freshest = sorted_matches[0]
+    second_freshest = sorted_matches[1]
+    if _updated_at_sort_value(freshest.updated_at_ms) > _updated_at_sort_value(
+        second_freshest.updated_at_ms
+    ):
+        return freshest
+    return None
+
+
+def _parse_timestamp_ms(value: object) -> int | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        return int(datetime.fromisoformat(text.replace("Z", "+00:00")).timestamp() * 1000)
+    except ValueError:
+        return None
+
+
+def _updated_at_sort_value(value: int | None) -> int:
+    return value if value is not None else 0

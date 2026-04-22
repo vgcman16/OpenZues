@@ -4,7 +4,7 @@ import asyncio
 import json
 import logging
 import re
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -65,6 +65,10 @@ from openzues.schemas import (
 )
 from openzues.services.continuity import build_continuity_packet
 from openzues.services.ecc_catalog import build_ecc_workspace_lines
+from openzues.services.gateway_outbound_runtime import (
+    GatewayOutboundRuntimeService,
+    GatewayOutboundRuntimeUnavailableError,
+)
 from openzues.services.gateway_wake import GatewayWakeService
 from openzues.services.hermes_runtime_profile import (
     DEFAULT_HERMES_EXECUTOR,
@@ -96,6 +100,7 @@ from openzues.services.playbooks import PlaybookService, summarize_playbook_resu
 from openzues.services.reflexes import build_reflex_deck
 from openzues.services.scope_enforcer import build_scope_assessment
 from openzues.services.session_keys import (
+    DEFAULT_ACCOUNT_ID,
     build_launch_session_key,
     normalize_optional_account_id,
     resolve_thread_session_keys,
@@ -532,6 +537,14 @@ def _saved_outbound_delivery_replay_message(delivery_row: dict[str, Any]) -> str
     event_type = str(delivery_row.get("event_type") or "").strip().lower()
     payload = delivery_row.get("event_payload")
     if isinstance(payload, dict):
+        if event_type == "gateway/send":
+            replay_message = _format_direct_channel_send_replay_message(payload)
+            if replay_message:
+                return replay_message
+        if event_type == "gateway/poll":
+            replay_message = _format_direct_channel_poll_replay_message(payload)
+            if replay_message:
+                return replay_message
         if event_type == "cron/failure":
             message = str(payload.get("message") or "").strip()
             if message:
@@ -542,6 +555,241 @@ def _saved_outbound_delivery_replay_message(delivery_row: dict[str, Any]) -> str
                 return value
     summary = str(delivery_row.get("message_summary") or "").strip()
     return summary or None
+
+
+def _normalize_direct_channel_media_urls(
+    *,
+    media_url: str | None = None,
+    media_urls: list[str] | None = None,
+) -> list[str]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    candidates: list[str] = []
+    if media_url is not None:
+        candidates.append(media_url)
+    if media_urls is not None:
+        candidates.extend(media_urls)
+    for candidate in candidates:
+        trimmed = str(candidate).strip()
+        if not trimmed or trimmed in seen:
+            continue
+        seen.add(trimmed)
+        normalized.append(trimmed)
+    return normalized
+
+
+def _summarize_direct_channel_media(media_urls: list[str]) -> str:
+    item_label = "item" if len(media_urls) == 1 else "items"
+    return f"Media delivery ({len(media_urls)} {item_label})"
+
+
+def _format_direct_channel_send_message(
+    *,
+    message: str,
+    media_urls: list[str],
+    gif_playback: bool | None = None,
+) -> str:
+    if not media_urls:
+        return message
+    lines: list[str] = []
+    if message.strip():
+        lines.extend((message, ""))
+    lines.append("Media:")
+    lines.extend(f"{index}. {url}" for index, url in enumerate(media_urls, start=1))
+    settings: list[str] = []
+    if gif_playback is not None:
+        settings.append(f"gifPlayback={str(gif_playback).lower()}")
+    if settings:
+        lines.extend(("", "Settings: " + ", ".join(settings)))
+    return "\n".join(lines)
+
+
+def _format_direct_channel_send_replay_message(payload: dict[str, Any]) -> str | None:
+    message = str(payload.get("message") or "")
+    raw_media_urls = payload.get("mediaUrls")
+    media_urls = _normalize_direct_channel_media_urls(
+        media_url=(
+            str(payload.get("mediaUrl"))
+            if isinstance(payload.get("mediaUrl"), str)
+            else None
+        ),
+        media_urls=(
+            [str(entry) for entry in raw_media_urls]
+            if isinstance(raw_media_urls, list)
+            else None
+        ),
+    )
+    if not message.strip() and not media_urls:
+        return None
+    gif_playback = payload.get("gifPlayback")
+    resolved_gif_playback = gif_playback if isinstance(gif_playback, bool) else None
+    return _format_direct_channel_send_message(
+        message=message,
+        media_urls=media_urls,
+        gif_playback=resolved_gif_playback,
+    )
+
+
+def _format_direct_channel_poll_replay_message(payload: dict[str, Any]) -> str | None:
+    question = str(payload.get("question") or payload.get("summary") or "").strip()
+    raw_options = payload.get("options")
+    options = (
+        [str(entry).strip() for entry in raw_options if str(entry).strip()]
+        if isinstance(raw_options, list)
+        else []
+    )
+    if not question:
+        return None
+    max_selections = payload.get("maxSelections")
+    resolved_max_selections = (
+        max_selections
+        if isinstance(max_selections, int) and not isinstance(max_selections, bool)
+        else None
+    )
+    duration_seconds = payload.get("durationSeconds")
+    resolved_duration_seconds = (
+        duration_seconds
+        if isinstance(duration_seconds, int) and not isinstance(duration_seconds, bool)
+        else None
+    )
+    duration_hours = payload.get("durationHours")
+    resolved_duration_hours = (
+        duration_hours
+        if isinstance(duration_hours, int) and not isinstance(duration_hours, bool)
+        else None
+    )
+    silent = payload.get("silent")
+    resolved_silent = silent if isinstance(silent, bool) else None
+    is_anonymous = payload.get("isAnonymous")
+    resolved_is_anonymous = is_anonymous if isinstance(is_anonymous, bool) else None
+    return _format_direct_channel_poll_message(
+        question=question,
+        options=options,
+        max_selections=resolved_max_selections,
+        duration_seconds=resolved_duration_seconds,
+        duration_hours=resolved_duration_hours,
+        silent=resolved_silent,
+        is_anonymous=resolved_is_anonymous,
+    )
+
+
+def _format_direct_channel_poll_message(
+    *,
+    question: str,
+    options: list[str],
+    max_selections: int | None,
+    duration_seconds: int | None,
+    duration_hours: int | None,
+    silent: bool | None,
+    is_anonymous: bool | None,
+) -> str:
+    lines = [f"Poll: {question}"]
+    lines.extend(f"{index}. {option}" for index, option in enumerate(options, start=1))
+    settings: list[str] = []
+    if max_selections is not None:
+        settings.append(f"maxSelections={max_selections}")
+    if duration_seconds is not None:
+        settings.append(f"durationSeconds={duration_seconds}")
+    if duration_hours is not None:
+        settings.append(f"durationHours={duration_hours}")
+    if silent is not None:
+        settings.append(f"silent={str(silent).lower()}")
+    if is_anonymous is not None:
+        settings.append(f"isAnonymous={str(is_anonymous).lower()}")
+    if settings:
+        lines.extend(("", "Settings: " + ", ".join(settings)))
+    return "\n".join(lines)
+
+
+def _build_direct_channel_transport(
+    *,
+    channel: str | None,
+    target: str | None,
+    account_id: str | None,
+    thread_id: str | int | None,
+    session_key: str | None,
+) -> dict[str, str]:
+    transport: dict[str, str] = {"runtime": "session-backed"}
+    normalized_channel = str(channel or "").strip().lower()
+    if normalized_channel:
+        transport["channel"] = normalized_channel
+    normalized_target = str(target or "").strip()
+    if normalized_target:
+        transport["target"] = normalized_target
+    normalized_account_id = normalize_optional_account_id(account_id)
+    if normalized_account_id is not None:
+        transport["account_id"] = normalized_account_id
+    normalized_thread_id = _normalized_delivery_thread_id(thread_id)
+    if normalized_thread_id is not None:
+        transport["thread_id"] = normalized_thread_id
+    normalized_session_key = str(session_key or "").strip()
+    if normalized_session_key:
+        transport["session_key"] = normalized_session_key
+    return transport
+
+
+def _direct_channel_transport_from_delivery_row(
+    delivery_row: dict[str, Any],
+) -> dict[str, str] | None:
+    route_scope = delivery_row.get("route_scope")
+    if not isinstance(route_scope, dict):
+        return None
+    source = str(route_scope.get("source") or "").strip().lower()
+    if source not in {"gateway.send", "gateway.poll"}:
+        return None
+    event_payload = delivery_row.get("event_payload")
+    if not isinstance(event_payload, dict):
+        event_payload = {}
+    conversation_target = _normalize_conversation_target(
+        delivery_row.get("conversation_target")
+    ) or _normalize_conversation_target(event_payload.get("conversationTarget"))
+    channel = str(
+        event_payload.get("channel") or (conversation_target or {}).get("channel") or ""
+    ).strip().lower() or None
+    target = str(
+        event_payload.get("to") or (conversation_target or {}).get("peer_id") or ""
+    ).strip() or None
+    account_id = str(
+        event_payload.get("accountId")
+        or (conversation_target or {}).get("account_id")
+        or route_scope.get("resolved_account_id")
+        or ""
+    ).strip() or None
+    thread_id = event_payload.get("threadId")
+    if thread_id is None:
+        thread_id = route_scope.get("thread_id")
+    session_key = str(delivery_row.get("session_key") or "").strip() or None
+    return _build_direct_channel_transport(
+        channel=channel,
+        target=target,
+        account_id=account_id,
+        thread_id=thread_id,
+        session_key=session_key,
+    )
+
+
+def _serialize_gateway_direct_channel_transport(
+    transport: dict[str, Any],
+) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "runtime": str(transport.get("runtime") or "session-backed"),
+    }
+    channel = str(transport.get("channel") or "").strip().lower()
+    if channel:
+        payload["channel"] = channel
+    target = str(transport.get("target") or "").strip()
+    if target:
+        payload["target"] = target
+    account_id = str(transport.get("account_id") or "").strip()
+    if account_id:
+        payload["accountId"] = account_id
+    thread_id = str(transport.get("thread_id") or "").strip()
+    if thread_id:
+        payload["threadId"] = thread_id
+    session_key = str(transport.get("session_key") or "").strip()
+    if session_key:
+        payload["sessionKey"] = session_key
+    return payload
 
 
 def _session_delivery_message_id(result: object) -> str | None:
@@ -621,6 +869,7 @@ def _serialize_outbound_delivery(row: dict[str, Any]) -> OutboundDeliveryView:
     return OutboundDeliveryView.model_validate(
         {
             **row,
+            "transport": _direct_channel_transport_from_delivery_row(row),
             "replay_ready": replay_ready,
             "next_retry_at": next_retry_at,
             "max_retries_reached": max_retries_reached,
@@ -2755,10 +3004,19 @@ class OpsMeshService:
     poll_interval_seconds: float = 20.0
     snapshot_interval_seconds: float = 1800.0
     parity_checkpoint_path: Path | None = None
+    outbound_runtime_service: GatewayOutboundRuntimeService | None = None
     session_delivery_service: Callable[[str, str], Awaitable[object]] | None = None
     _task: asyncio.Task[None] | None = field(init=False, default=None)
     _stop_event: asyncio.Event = field(init=False, default_factory=asyncio.Event)
     _notified_inbox_items: dict[str, str] = field(init=False, default_factory=dict)
+    _direct_delivery_inflight: dict[tuple[str, str], asyncio.Task[dict[str, object]]] = field(
+        init=False,
+        default_factory=dict,
+    )
+    _direct_delivery_inflight_lock: asyncio.Lock = field(
+        init=False,
+        default_factory=asyncio.Lock,
+    )
 
     async def start(self) -> None:
         if self._task is not None:
@@ -2776,6 +3034,24 @@ class OpsMeshService:
             except asyncio.CancelledError:
                 pass
             self._task = None
+
+    def _resolve_outbound_runtime_service(self) -> GatewayOutboundRuntimeService | None:
+        runtime = self.outbound_runtime_service
+        if runtime is None:
+            if self.session_delivery_service is None:
+                return None
+            runtime = GatewayOutboundRuntimeService(
+                session_deliverer=self.session_delivery_service
+            )
+            self.outbound_runtime_service = runtime
+            return runtime
+        if self.session_delivery_service is not None and not runtime.is_available():
+            runtime.bind_session_deliverer(self.session_delivery_service)
+        return runtime
+
+    def _outbound_runtime_available(self) -> bool:
+        runtime = self._resolve_outbound_runtime_service()
+        return runtime is not None and runtime.is_available()
 
     async def list_task_blueprint_views(self) -> list[TaskBlueprintView]:
         projects = {int(project["id"]): project for project in await self.database.list_projects()}
@@ -2935,13 +3211,14 @@ class OpsMeshService:
         route_kind = str(delivery_row.get("route_kind") or "").strip().lower() or "session"
         session_key = str(delivery_row.get("session_key") or "").strip()
         replay_message = _saved_outbound_delivery_replay_message(delivery_row)
+        runtime = self._resolve_outbound_runtime_service()
         attempt_started_at = utcnow()
         existing_attempts = max(0, int(delivery_row.get("attempt_count") or 0))
         await self.database.update_outbound_delivery(
             delivery_id,
             last_attempt_at=attempt_started_at,
         )
-        if self.session_delivery_service is None:
+        if runtime is None or not runtime.is_available():
             error = f"Saved {route_kind} delivery is unavailable for replay."
             await self.database.update_outbound_delivery(
                 delivery_id,
@@ -2975,8 +3252,11 @@ class OpsMeshService:
             )
             return False, error
         try:
-            await self.session_delivery_service(session_key, replay_message)
-        except Exception as exc:
+            runtime_result = await runtime.deliver_message(
+                session_key=session_key,
+                message=replay_message,
+            )
+        except (GatewayOutboundRuntimeUnavailableError, Exception) as exc:
             error = str(exc)[:240]
             await self.database.update_outbound_delivery(
                 delivery_id,
@@ -2994,6 +3274,7 @@ class OpsMeshService:
             last_attempt_at=attempt_started_at,
             delivered_at=utcnow(),
             last_error=None,
+            delivery_message_id=runtime_result.message_id,
         )
         return True, None
 
@@ -3137,7 +3418,7 @@ class OpsMeshService:
                     delivery_enabled=(
                         True
                         if route_kind == "webhook"
-                        else self.session_delivery_service is not None
+                        else self._outbound_runtime_available()
                     ),
                     last_error=delivery_error,
                 )
@@ -3974,9 +4255,16 @@ class OpsMeshService:
             last_attempt_at=attempt_started_at,
         )
         try:
-            assert self.session_delivery_service is not None
-            await self.session_delivery_service(session_key, message)
-        except Exception as exc:
+            runtime = self._resolve_outbound_runtime_service()
+            if runtime is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    "gateway outbound runtime is unavailable"
+                )
+            runtime_result = await runtime.deliver_message(
+                session_key=session_key,
+                message=message,
+            )
+        except (GatewayOutboundRuntimeUnavailableError, Exception) as exc:
             await self.database.update_outbound_delivery(
                 delivery_id,
                 delivery_state="failed",
@@ -3993,6 +4281,7 @@ class OpsMeshService:
             last_attempt_at=attempt_started_at,
             delivered_at=utcnow(),
             last_error=None,
+            delivery_message_id=runtime_result.message_id,
         )
 
     async def _send_ad_hoc_announce_delivery(
@@ -4014,6 +4303,129 @@ class OpsMeshService:
             message=message,
         )
 
+    async def _resolve_default_channel_account_id(
+        self,
+        channel: str,
+    ) -> str | None:
+        normalized_channel = str(channel or "").strip().lower()
+        if not normalized_channel:
+            return None
+        account_ids: set[str] = set()
+        for row in await self.database.list_notification_routes():
+            target = _normalize_conversation_target(row.get("conversation_target"))
+            if target is None:
+                continue
+            if str(target.get("channel") or "").strip().lower() != normalized_channel:
+                continue
+            account_id = normalize_optional_account_id(
+                str(target.get("account_id") or "").strip()
+            )
+            account_ids.add(account_id or DEFAULT_ACCOUNT_ID)
+        if not account_ids:
+            return None
+        if DEFAULT_ACCOUNT_ID in account_ids:
+            return DEFAULT_ACCOUNT_ID
+        return sorted(account_ids)[0]
+
+    async def _resolve_explicit_delivery_conversation_target(
+        self,
+        conversation_target: ConversationTargetView,
+    ) -> ConversationTargetView:
+        normalized = _normalize_conversation_target(conversation_target)
+        if normalized is None:
+            raise ValueError("send requires an explicit channel target")
+        resolved_target = ConversationTargetView.model_validate(normalized)
+        if resolved_target.account_id is not None:
+            return resolved_target
+        default_account_id = await self._resolve_default_channel_account_id(
+            resolved_target.channel
+        )
+        if default_account_id is None:
+            return resolved_target
+        return ConversationTargetView(
+            channel=resolved_target.channel,
+            account_id=default_account_id,
+            peer_kind=resolved_target.peer_kind,
+            peer_id=resolved_target.peer_id,
+        )
+
+    def _cached_direct_channel_delivery_result(
+        self,
+        delivery_row: dict[str, Any],
+    ) -> dict[str, object]:
+        delivery_id = int(delivery_row["id"])
+        session_key = str(delivery_row.get("session_key") or "").strip()
+        message_id = str(delivery_row.get("delivery_message_id") or "").strip() or None
+        run_id = str(delivery_row.get("request_idempotency_key") or "").strip() or None
+        transport = _direct_channel_transport_from_delivery_row(delivery_row)
+        channel = (
+            str((transport or {}).get("channel") or "").strip().lower()
+            if transport is not None
+            else ""
+        )
+        delivery_state = str(delivery_row.get("delivery_state") or "").strip().lower()
+        base_result: dict[str, object] = {
+            "delivery_id": delivery_id,
+            "session_key": session_key or None,
+            "message_id": message_id,
+        }
+        if run_id is not None:
+            base_result["run_id"] = run_id
+        if channel:
+            base_result["channel"] = channel
+        if transport is not None:
+            base_result["transport"] = transport
+        if delivery_state == "delivered" and session_key:
+            return {"ok": True, **base_result}
+        error = str(delivery_row.get("last_error") or "").strip()
+        if not error:
+            if delivery_state == "pending":
+                error = "Channel-target delivery is already pending for this idempotency key."
+            elif delivery_state:
+                error = (
+                    "Channel-target delivery is already "
+                    f"{delivery_state} for this idempotency key."
+                )
+            else:
+                error = "Channel-target delivery is unavailable for this idempotency key."
+        return {"ok": False, **base_result, "error": error}
+
+    async def _run_idempotent_direct_channel_delivery(
+        self,
+        *,
+        event_type: str,
+        request_idempotency_key: str | None,
+        delivery_factory: Callable[[], Coroutine[Any, Any, dict[str, object]]],
+    ) -> dict[str, object]:
+        if request_idempotency_key is None:
+            return await delivery_factory()
+        cache_key = (event_type, request_idempotency_key)
+        created_task = False
+        async with self._direct_delivery_inflight_lock:
+            inflight = self._direct_delivery_inflight.get(cache_key)
+            if inflight is None:
+                cached_delivery = (
+                    await self.database.find_outbound_delivery_by_request_idempotency_key(
+                        event_type=event_type,
+                        request_idempotency_key=request_idempotency_key,
+                    )
+                )
+                if cached_delivery is not None:
+                    return self._cached_direct_channel_delivery_result(cached_delivery)
+                inflight = asyncio.create_task(
+                    delivery_factory(),
+                    name=f"openzues-{event_type.replace('/', '-')}-delivery",
+                )
+                self._direct_delivery_inflight[cache_key] = inflight
+                created_task = True
+        try:
+            return dict(await inflight)
+        finally:
+            if created_task:
+                async with self._direct_delivery_inflight_lock:
+                    if self._direct_delivery_inflight.get(cache_key) is inflight:
+                        self._direct_delivery_inflight.pop(cache_key, None)
+
     async def _deliver_direct_channel_message(
         self,
         *,
@@ -4024,11 +4436,46 @@ class OpsMeshService:
         payload: dict[str, Any],
         message: str,
         route_scope_extra: dict[str, Any] | None = None,
+        request_idempotency_key: str | None = None,
     ) -> dict[str, object]:
-        serialized_target = conversation_target.model_dump(mode="json")
+        async def perform_delivery() -> dict[str, object]:
+            return await self._deliver_direct_channel_message_once(
+                route_name=route_name,
+                conversation_target=conversation_target,
+                thread_id=thread_id,
+                event_type=event_type,
+                payload=payload,
+                message=message,
+                route_scope_extra=route_scope_extra,
+                request_idempotency_key=request_idempotency_key,
+            )
+
+        return await self._run_idempotent_direct_channel_delivery(
+            event_type=event_type,
+            request_idempotency_key=request_idempotency_key,
+            delivery_factory=perform_delivery,
+        )
+
+    async def _deliver_direct_channel_message_once(
+        self,
+        *,
+        route_name: str,
+        conversation_target: ConversationTargetView,
+        thread_id: str | int | None,
+        event_type: str,
+        payload: dict[str, Any],
+        message: str,
+        route_scope_extra: dict[str, Any] | None = None,
+        request_idempotency_key: str | None = None,
+    ) -> dict[str, object]:
+        requested_account_id = normalize_optional_account_id(conversation_target.account_id)
+        resolved_target = await self._resolve_explicit_delivery_conversation_target(
+            conversation_target
+        )
+        serialized_target = resolved_target.model_dump(mode="json")
         normalized_thread_id = _normalized_delivery_thread_id(thread_id)
         announce_session_key = _announce_delivery_session_key(
-            conversation_target,
+            resolved_target,
             thread_id=normalized_thread_id,
         )
         route_target = (
@@ -4043,10 +4490,14 @@ class OpsMeshService:
         payload_with_target = dict(payload)
         payload_with_target["sessionKey"] = announce_session_key
         payload_with_target["conversationTarget"] = serialized_target
+        if "accountId" not in payload_with_target and resolved_target.account_id is not None:
+            payload_with_target["accountId"] = resolved_target.account_id
         if thread_id is not None:
             payload_with_target["threadId"] = thread_id
         if normalized_thread_id is not None:
             route_scope["thread_id"] = normalized_thread_id
+        if requested_account_id is None and resolved_target.account_id is not None:
+            route_scope["resolved_account_id"] = resolved_target.account_id
         if route_scope_extra:
             for key, value in route_scope_extra.items():
                 if value is not None:
@@ -4061,6 +4512,7 @@ class OpsMeshService:
             conversation_target=serialized_target,
             route_scope=route_scope,
             event_payload=payload_with_target,
+            request_idempotency_key=request_idempotency_key,
             message_summary=_summarize_outbound_event(event_type, payload),
             test_delivery=False,
             delivery_state="pending",
@@ -4072,9 +4524,20 @@ class OpsMeshService:
             last_attempt_at=attempt_started_at,
         )
         try:
-            assert self.session_delivery_service is not None
-            message_result = await self.session_delivery_service(announce_session_key, message)
-        except Exception as exc:
+            runtime = self._resolve_outbound_runtime_service()
+            if runtime is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    "gateway outbound runtime is unavailable"
+                )
+            runtime_result = await runtime.deliver_message(
+                session_key=announce_session_key,
+                message=message,
+                channel=resolved_target.channel,
+                target=str(payload.get("to") or resolved_target.peer_id or "").strip() or None,
+                account_id=resolved_target.account_id,
+                thread_id=normalized_thread_id,
+            )
+        except (GatewayOutboundRuntimeUnavailableError, Exception) as exc:
             error = str(exc)[:240]
             await self.database.update_outbound_delivery(
                 delivery_id,
@@ -4089,8 +4552,19 @@ class OpsMeshService:
                 "delivery_id": delivery_id,
                 "session_key": announce_session_key,
                 "message_id": None,
+                "run_id": request_idempotency_key,
+                "channel": resolved_target.channel,
+                "transport": _build_direct_channel_transport(
+                    channel=resolved_target.channel,
+                    target=str(payload.get("to") or resolved_target.peer_id or "").strip() or None,
+                    account_id=resolved_target.account_id,
+                    thread_id=normalized_thread_id,
+                    session_key=announce_session_key,
+                ),
                 "error": error,
             }
+        message_id = runtime_result.message_id
+        transport = runtime_result.transport.as_payload()
         await self.database.update_outbound_delivery(
             delivery_id,
             delivery_state="delivered",
@@ -4098,12 +4572,16 @@ class OpsMeshService:
             last_attempt_at=attempt_started_at,
             delivered_at=utcnow(),
             last_error=None,
+            delivery_message_id=message_id,
         )
         return {
             "ok": True,
             "delivery_id": delivery_id,
             "session_key": announce_session_key,
-            "message_id": _session_delivery_message_id(message_result),
+            "message_id": message_id,
+            "run_id": request_idempotency_key,
+            "channel": resolved_target.channel,
+            "transport": transport,
         }
 
     async def send_direct_channel_message(
@@ -4112,13 +4590,15 @@ class OpsMeshService:
         channel: str,
         to: str,
         message: str,
+        media_urls: list[str] | None = None,
+        gif_playback: bool | None = None,
         account_id: str | None = None,
         agent_id: str | None = None,
         thread_id: str | int | None = None,
         session_key: str | None = None,
         idempotency_key: str | None = None,
     ) -> dict[str, object]:
-        if self.session_delivery_service is None:
+        if not self._outbound_runtime_available():
             raise ValueError(
                 "send is unavailable until channel-target outbound delivery is wired"
             )
@@ -4129,11 +4609,22 @@ class OpsMeshService:
         )
         if conversation_target is None:
             raise ValueError("send requires an explicit channel target")
+        normalized_media_urls = _normalize_direct_channel_media_urls(media_urls=media_urls)
+        if not message.strip() and not normalized_media_urls:
+            raise ValueError("send requires text or media")
         payload: dict[str, Any] = {
             "message": message,
             "channel": conversation_target.channel,
             "to": str(to).strip(),
         }
+        if normalized_media_urls:
+            if len(normalized_media_urls) == 1:
+                payload["mediaUrl"] = normalized_media_urls[0]
+            payload["mediaUrls"] = normalized_media_urls
+            if gif_playback is not None:
+                payload["gifPlayback"] = gif_playback
+            if not message.strip():
+                payload["summary"] = _summarize_direct_channel_media(normalized_media_urls)
         if account_id is not None:
             payload["accountId"] = account_id
         if agent_id is not None:
@@ -4148,13 +4639,18 @@ class OpsMeshService:
             thread_id=thread_id,
             event_type="gateway/send",
             payload=payload,
-            message=message,
+            message=_format_direct_channel_send_message(
+                message=message,
+                media_urls=normalized_media_urls,
+                gif_playback=gif_playback if normalized_media_urls else None,
+            ),
             route_scope_extra={
                 "source": "gateway.send",
                 "source_session_key": session_key,
                 "agent_id": agent_id,
                 "idempotency_key": idempotency_key,
             },
+            request_idempotency_key=idempotency_key,
         )
         if result.get("ok") is not True:
             raise ValueError(str(result.get("error") or "Channel-target delivery failed."))
@@ -4165,7 +4661,105 @@ class OpsMeshService:
             "ok": True,
             "sessionKey": str(result["session_key"]),
             "deliveryId": delivery_id_value,
+            "channel": str(result.get("channel") or conversation_target.channel),
         }
+        run_id = str(result.get("run_id") or "").strip()
+        if run_id:
+            response["runId"] = run_id
+        transport = result.get("transport")
+        if isinstance(transport, dict):
+            response["transport"] = _serialize_gateway_direct_channel_transport(transport)
+        message_id = str(result.get("message_id") or "").strip()
+        if message_id:
+            response["messageId"] = message_id
+        return response
+
+    async def send_direct_channel_poll(
+        self,
+        *,
+        channel: str,
+        to: str,
+        question: str,
+        options: list[str],
+        max_selections: int | None = None,
+        duration_seconds: int | None = None,
+        duration_hours: int | None = None,
+        silent: bool | None = None,
+        is_anonymous: bool | None = None,
+        account_id: str | None = None,
+        thread_id: str | int | None = None,
+        idempotency_key: str | None = None,
+    ) -> dict[str, object]:
+        if not self._outbound_runtime_available():
+            raise ValueError(
+                "poll is unavailable until channel-target poll delivery is wired"
+            )
+        conversation_target = _build_explicit_announce_conversation_target(
+            channel=channel,
+            to=to,
+            account_id=account_id,
+        )
+        if conversation_target is None:
+            raise ValueError("poll requires an explicit channel target")
+        normalized_question = str(question).strip()
+        normalized_options = [str(option).strip() for option in options]
+        payload: dict[str, Any] = {
+            "summary": normalized_question,
+            "question": normalized_question,
+            "options": normalized_options,
+            "channel": conversation_target.channel,
+            "to": str(to).strip(),
+        }
+        if account_id is not None:
+            payload["accountId"] = account_id
+        if max_selections is not None:
+            payload["maxSelections"] = max_selections
+        if duration_seconds is not None:
+            payload["durationSeconds"] = duration_seconds
+        if duration_hours is not None:
+            payload["durationHours"] = duration_hours
+        if silent is not None:
+            payload["silent"] = silent
+        if is_anonymous is not None:
+            payload["isAnonymous"] = is_anonymous
+        result = await self._deliver_direct_channel_message(
+            route_name=f"Gateway poll to {conversation_target.summary or str(to).strip()}",
+            conversation_target=conversation_target,
+            thread_id=thread_id,
+            event_type="gateway/poll",
+            payload=payload,
+            message=_format_direct_channel_poll_message(
+                question=normalized_question,
+                options=normalized_options,
+                max_selections=max_selections,
+                duration_seconds=duration_seconds,
+                duration_hours=duration_hours,
+                silent=silent,
+                is_anonymous=is_anonymous,
+            ),
+            route_scope_extra={
+                "source": "gateway.poll",
+                "idempotency_key": idempotency_key,
+            },
+            request_idempotency_key=idempotency_key,
+        )
+        if result.get("ok") is not True:
+            raise ValueError(str(result.get("error") or "Channel-target poll delivery failed."))
+        delivery_id_value = result.get("delivery_id")
+        if not isinstance(delivery_id_value, int):
+            raise ValueError("Channel-target poll delivery did not report a delivery id.")
+        response: dict[str, object] = {
+            "ok": True,
+            "sessionKey": str(result["session_key"]),
+            "deliveryId": delivery_id_value,
+            "channel": str(result.get("channel") or conversation_target.channel),
+        }
+        run_id = str(result.get("run_id") or "").strip()
+        if run_id:
+            response["runId"] = run_id
+        transport = result.get("transport")
+        if isinstance(transport, dict):
+            response["transport"] = _serialize_gateway_direct_channel_transport(transport)
         message_id = str(result.get("message_id") or "").strip()
         if message_id:
             response["messageId"] = message_id
@@ -4253,7 +4847,7 @@ class OpsMeshService:
             if failure_destination_mode != "webhook":
                 if (
                     failure_destination_target is not None
-                    and self.session_delivery_service is not None
+                    and self._outbound_runtime_available()
                 ):
                     await self._send_ad_hoc_announce_delivery(
                         route_name=(
@@ -4269,7 +4863,7 @@ class OpsMeshService:
                     failure_destination_mode == "announce"
                     and failure_destination_channel == "last"
                     and delivery_session_key is not None
-                    and self.session_delivery_service is not None
+                    and self._outbound_runtime_available()
                 ):
                     session_payload = dict(payload)
                     session_payload["sessionKey"] = delivery_session_key
@@ -4284,7 +4878,7 @@ class OpsMeshService:
                     return
                 if (
                     explicit_announce_target is not None
-                    and self.session_delivery_service is not None
+                    and self._outbound_runtime_available()
                 ):
                     await self._send_ad_hoc_announce_delivery(
                         route_name=f"Announce delivery for {task.name}",
@@ -4300,7 +4894,7 @@ class OpsMeshService:
                     and _task_cron_delivery_mode(task) != "webhook"
                     and _task_cron_delivery_channel(task) == "last"
                     and delivery_session_key is not None
-                    and self.session_delivery_service is not None
+                    and self._outbound_runtime_available()
                 ):
                     session_payload = dict(payload)
                     session_payload["sessionKey"] = delivery_session_key

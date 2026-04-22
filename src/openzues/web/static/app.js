@@ -1,4 +1,28 @@
 const ONBOARDING_WIZARD_STORAGE_KEY = "openzues.onboardingWizard";
+const ONBOARDING_SELECTION_STORAGE_KEY = "openzues.onboardingSelection";
+const ONBOARDING_SELECTION_DRAFT_FIELDS = new Set(["mode", "flow", "use_mempalace"]);
+const ONBOARDING_WIZARD_DRAFT_FIELDS = new Set([
+  "mode",
+  "flow",
+  "instance_mode",
+  "instance_id",
+  "instance_name",
+  "project_path",
+  "operator_name",
+  "operator_email",
+  "team_name",
+  "task_name",
+]);
+const ONBOARDING_GUIDED_FIELD_NAMES = [
+  "project_path",
+  "instance_mode",
+  "instance_id",
+  "instance_name",
+  "operator_name",
+  "operator_email",
+  "team_name",
+  "task_name",
+];
 
 const state = {
   dashboard: null,
@@ -15,6 +39,7 @@ const state = {
   lastSocketRefreshAt: 0,
   radarReserveExpanded: false,
   lastBootstrapResult: null,
+  onboardingSelectionDraft: loadSavedOnboardingSelectionDraft(),
   onboardingWizard: loadSavedOnboardingWizard(),
 };
 const SWARM_COLLABORATION_MODE = "swarm_constitution";
@@ -151,6 +176,10 @@ const gatewayBootstrapProfileEl = document.querySelector("#gateway-bootstrap-pro
 const onboardingResultEl = document.querySelector("#onboarding-result");
 const onboardingFormEl = document.querySelector("#onboarding-form");
 const onboardingWizardTriggerEl = document.querySelector("#onboarding-wizard-trigger");
+const onboardingSelectionFieldsEl = document.querySelector("#onboarding-selection-fields");
+const onboardingGuidedSelectionNoteEl = document.querySelector(
+  "#onboarding-guided-selection-note",
+);
 const onboardingSetupModeEl = document.querySelector("#onboarding-setup-mode");
 const onboardingSetupFlowEl = document.querySelector("#onboarding-setup-flow");
 const onboardingInstanceModeEl = document.querySelector("#onboarding-instance-mode");
@@ -408,7 +437,26 @@ function loadSavedOnboardingWizard() {
     if (!sessionId || !step) {
       return null;
     }
-    return { sessionId, step };
+    return {
+      sessionId,
+      step,
+      draft: sanitizeOnboardingWizardDraft(parsed.draft),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function loadSavedOnboardingSelectionDraft() {
+  if (typeof window === "undefined" || !window.sessionStorage) {
+    return null;
+  }
+  try {
+    const raw = window.sessionStorage.getItem(ONBOARDING_SELECTION_STORAGE_KEY);
+    if (!raw) {
+      return null;
+    }
+    return sanitizeOnboardingSelectionDraft(JSON.parse(raw));
   } catch {
     return null;
   }
@@ -432,14 +480,275 @@ function persistOnboardingWizard() {
   }
 }
 
+function persistOnboardingSelectionDraft() {
+  if (typeof window === "undefined" || !window.sessionStorage) {
+    return;
+  }
+  try {
+    if (!state.onboardingSelectionDraft) {
+      window.sessionStorage.removeItem(ONBOARDING_SELECTION_STORAGE_KEY);
+      return;
+    }
+    window.sessionStorage.setItem(
+      ONBOARDING_SELECTION_STORAGE_KEY,
+      JSON.stringify(state.onboardingSelectionDraft),
+    );
+  } catch {
+    // Ignore browser storage failures and keep the in-memory selection.
+  }
+}
+
 function setOnboardingWizardState(value) {
   state.onboardingWizard = value;
   persistOnboardingWizard();
 }
 
+function setOnboardingSelectionDraftState(value) {
+  state.onboardingSelectionDraft = sanitizeOnboardingSelectionDraft(value);
+  persistOnboardingSelectionDraft();
+}
+
+function normalizeOnboardingWizardDraftValue(field, value) {
+  if (field === "mode") {
+    return value === "remote" ? "remote" : value === "local" ? "local" : undefined;
+  }
+  if (field === "flow") {
+    return value === "advanced" ? "advanced" : value === "quickstart" ? "quickstart" : undefined;
+  }
+  return normalizeOptionalText(value);
+}
+
+function sanitizeOnboardingWizardDraft(value) {
+  if (!value || typeof value !== "object") {
+    return {};
+  }
+  const draft = {};
+  for (const field of ONBOARDING_WIZARD_DRAFT_FIELDS) {
+    if (!Object.prototype.hasOwnProperty.call(value, field)) {
+      continue;
+    }
+    const normalized = normalizeOnboardingWizardDraftValue(field, value[field]);
+    if (normalized !== undefined) {
+      draft[field] = normalized;
+    }
+  }
+  return draft;
+}
+
+function sanitizeOnboardingSelectionDraft(value) {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const draft = {};
+  for (const field of ONBOARDING_SELECTION_DRAFT_FIELDS) {
+    if (!Object.prototype.hasOwnProperty.call(value, field)) {
+      continue;
+    }
+    if (field === "use_mempalace") {
+      draft.use_mempalace = Boolean(value.use_mempalace);
+      continue;
+    }
+    const normalized = normalizeOnboardingWizardDraftValue(field, value[field]);
+    if (normalized !== undefined) {
+      draft[field] = normalized;
+    }
+  }
+  if (draft.mode === "remote") {
+    draft.flow = "advanced";
+  }
+  return Object.keys(draft).length ? draft : null;
+}
+
+function getStoredOnboardingSelectionDraft(wizard = state.setup?.wizard_session) {
+  if (hasSubstantiveSavedOnboardingWizardSession(wizard)) {
+    return null;
+  }
+  return sanitizeOnboardingSelectionDraft(state.onboardingSelectionDraft);
+}
+
+function applyOnboardingSelectionDraftToForm(draft, wizard = state.setup?.wizard_session) {
+  const nextDraft = getStoredOnboardingSelectionDraft(wizard) ?? sanitizeOnboardingSelectionDraft(draft);
+  if (!nextDraft || hasSubstantiveSavedOnboardingWizardSession(wizard)) {
+    return;
+  }
+  if (Object.prototype.hasOwnProperty.call(nextDraft, "mode")) {
+    setOnboardingFormValue("setup_mode", nextDraft.mode);
+  }
+  if (Object.prototype.hasOwnProperty.call(nextDraft, "flow")) {
+    setOnboardingFormValue("setup_flow", nextDraft.flow);
+  }
+  if (Object.prototype.hasOwnProperty.call(nextDraft, "use_mempalace")) {
+    setOnboardingFormValue("use_mempalace", nextDraft.use_mempalace);
+  }
+}
+
+function reconcileOnboardingSelectionDraft(wizard = state.setup?.wizard_session) {
+  if (hasSubstantiveSavedOnboardingWizardSession(wizard)) {
+    if (state.onboardingSelectionDraft) {
+      setOnboardingSelectionDraftState(null);
+    }
+    return;
+  }
+  const sanitized = sanitizeOnboardingSelectionDraft(state.onboardingSelectionDraft);
+  if (!sanitized && state.onboardingSelectionDraft) {
+    setOnboardingSelectionDraftState(null);
+  }
+}
+
+function getOnboardingStepField(step) {
+  const field = normalizeOptionalText(step?.field);
+  return field && ONBOARDING_WIZARD_DRAFT_FIELDS.has(field) ? field : null;
+}
+
+function mergeOnboardingWizardDraft(currentDraft, step, rawValue) {
+  const field = getOnboardingStepField(step);
+  const draft = sanitizeOnboardingWizardDraft(currentDraft);
+  if (!field) {
+    return draft;
+  }
+  const normalized = normalizeOnboardingWizardDraftValue(field, rawValue);
+  if (normalized === undefined) {
+    return draft;
+  }
+  draft[field] = normalized;
+  if (field === "mode") {
+    if (normalized === "remote") {
+      draft.flow = "advanced";
+    } else {
+      delete draft.flow;
+    }
+  } else if (field === "flow" && draft.mode === "remote") {
+    draft.flow = "advanced";
+  }
+  return draft;
+}
+
+function setOnboardingFormValue(name, value) {
+  const field = getOnboardingField(name);
+  if (!field) {
+    return;
+  }
+  if (field instanceof HTMLInputElement && field.type === "checkbox") {
+    field.checked = Boolean(value);
+    return;
+  }
+  field.value = value == null ? "" : String(value);
+}
+
+function applyOnboardingWizardDraftToForm(draft) {
+  if (!onboardingFormEl) {
+    return;
+  }
+  const nextDraft = sanitizeOnboardingWizardDraft(draft);
+  for (const [field, value] of Object.entries(nextDraft)) {
+    const targetName =
+      field === "mode" ? "setup_mode" : field === "flow" ? "setup_flow" : field;
+    setOnboardingFormValue(targetName, value);
+  }
+}
+
 function normalizeOptionalText(value) {
   const text = String(value ?? "").trim();
   return text || null;
+}
+
+function hasSubstantiveSavedOnboardingWizardSession(wizard) {
+  if (!wizard || typeof wizard !== "object") {
+    return false;
+  }
+  if (normalizeOptionalText(wizard.project_path)) {
+    return true;
+  }
+  if (normalizeOptionalText(wizard.project_label)) {
+    return true;
+  }
+  if (wizard.instance_id != null) {
+    return true;
+  }
+  const instanceMode = normalizeOptionalText(wizard.instance_mode);
+  if (instanceMode && instanceMode !== "quick_connect_desktop") {
+    if (
+      instanceMode !== "existing"
+      || normalizeOptionalText(wizard.instance_name) !== "Local Codex Desktop"
+    ) {
+      return true;
+    }
+  }
+  if (normalizeOptionalText(wizard.instance_name) && wizard.instance_name !== "Local Codex Desktop") {
+    return true;
+  }
+  if (normalizeOptionalText(wizard.team_name)) {
+    return true;
+  }
+  if (normalizeOptionalText(wizard.operator_name)) {
+    return true;
+  }
+  if (normalizeOptionalText(wizard.operator_email)) {
+    return true;
+  }
+  if (Array.isArray(wizard.bootstrap_roles) && wizard.bootstrap_roles.length) {
+    return true;
+  }
+  if (Array.isArray(wizard.bootstrap_scopes) && wizard.bootstrap_scopes.length) {
+    return true;
+  }
+  if (normalizeOptionalText(wizard.task_name)) {
+    return true;
+  }
+  if (wizard.cadence_minutes != null && Number(wizard.cadence_minutes) !== 180) {
+    return true;
+  }
+  if (normalizeOptionalText(wizard.model) && wizard.model !== "gpt-5.4") {
+    return true;
+  }
+  if (wizard.max_turns != null && Number(wizard.max_turns) !== 4) {
+    return true;
+  }
+  if (normalizeOptionalText(wizard.objective_template)) {
+    return true;
+  }
+  if (wizard.conversation_target) {
+    return true;
+  }
+  if (Array.isArray(wizard.toolsets) && wizard.toolsets.length) {
+    return true;
+  }
+  return false;
+}
+
+function getEffectiveOnboardingSelection(wizard = state.setup?.wizard_session) {
+  const activeWizard = state.onboardingWizard;
+  const activeDraft = sanitizeOnboardingWizardDraft(activeWizard?.draft);
+  const pendingField = getOnboardingStepField(activeWizard?.step);
+  const pendingMode =
+    pendingField === "mode"
+      ? normalizeOnboardingWizardDraftValue(
+          "mode",
+          activeWizard?.step?.initialValue ?? activeWizard?.step?.initialvalue,
+        )
+      : undefined;
+  const pendingFlow =
+    pendingField === "flow"
+      ? normalizeOnboardingWizardDraftValue(
+          "flow",
+          activeWizard?.step?.initialValue ?? activeWizard?.step?.initialvalue,
+        )
+      : undefined;
+  const mode =
+    activeDraft.mode
+    || pendingMode
+    || normalizeOnboardingWizardDraftValue("mode", onboardingSetupModeEl?.value)
+    || normalizeOnboardingWizardDraftValue("mode", wizard?.mode)
+    || "local";
+  const flow =
+    mode === "remote"
+      ? "advanced"
+      : activeDraft.flow
+        || pendingFlow
+        || normalizeOnboardingWizardDraftValue("flow", onboardingSetupFlowEl?.value)
+        || normalizeOnboardingWizardDraftValue("flow", wizard?.flow)
+        || "quickstart";
+  return { mode, flow };
 }
 
 function normalizeOptionalFieldValue(value) {
@@ -722,6 +1031,14 @@ function normalizeError(error) {
   return error instanceof Error ? error.message : String(error);
 }
 
+function shouldRestartOnboardingWizard(message) {
+  return (
+    message.includes("wizard not found")
+    || message.includes("wizard not running")
+    || message.includes("no pending step")
+  );
+}
+
 async function api(path, options = {}) {
   const response = await fetch(path, {
     headers: {
@@ -760,8 +1077,56 @@ async function loadDiagnostics() {
   renderDiagnostics();
 }
 
+function clearOnboardingWizardDraftOverlay() {
+  setOnboardingWizardState(null);
+  if (onboardingFormEl) {
+    onboardingFormEl.dataset.prefilled = "";
+  }
+}
+
+async function restoreSavedOnboardingWizardDraft() {
+  clearOnboardingWizardDraftOverlay();
+  try {
+    await loadSetup();
+  } catch {
+    renderOnboarding();
+  }
+}
+
+async function restartLostOnboardingWizard(draft) {
+  if (!onboardingFormEl) {
+    return null;
+  }
+  applyOnboardingWizardDraftToForm(draft);
+  clearOnboardingWizardDraftOverlay();
+  return await runOnboardingWizard({ quiet: true });
+}
+
+async function reconcileOnboardingWizardState() {
+  const sessionId = normalizeOptionalText(state.onboardingWizard?.sessionId);
+  if (!sessionId) {
+    return;
+  }
+  try {
+    const status = await api(
+      `/api/onboarding/wizard/status?sessionId=${encodeURIComponent(sessionId)}`,
+    );
+    if (status?.status === "running") {
+      return;
+    }
+  } catch (error) {
+    const message = normalizeError(error);
+    if (!message.includes("wizard not found")) {
+      return;
+    }
+  }
+  clearOnboardingWizardDraftOverlay();
+}
+
 async function loadSetup() {
   state.setup = await api("/api/setup");
+  reconcileOnboardingSelectionDraft();
+  await reconcileOnboardingWizardState();
   renderOnboarding();
 }
 
@@ -2350,43 +2715,38 @@ function applyWizardSessionToForm(force = false) {
     return;
   }
   const wizard = state.setup?.wizard_session;
-  if (!wizard) {
-    return;
-  }
   if (!force && onboardingFormEl.dataset.prefilled === "true") {
+    applyOnboardingWizardDraftToForm(state.onboardingWizard?.draft);
     return;
   }
-  const setValue = (name, value) => {
-    const field = onboardingFormEl.querySelector(`[name="${name}"]`);
-    if (!field || value == null) {
-      return;
+  if (wizard) {
+    setOnboardingFormValue("setup_mode", wizard.mode);
+    setOnboardingFormValue("setup_flow", wizard.flow);
+    setOnboardingFormValue("project_path", wizard.project_path);
+    setOnboardingFormValue("project_label", wizard.project_label);
+    setOnboardingFormValue("instance_mode", wizard.instance_mode);
+    setOnboardingFormValue("instance_id", wizard.instance_id ?? "");
+    setOnboardingFormValue("instance_name", wizard.instance_name);
+    setOnboardingFormValue("team_name", wizard.team_name);
+    setOnboardingFormValue("operator_name", wizard.operator_name);
+    setOnboardingFormValue("operator_email", wizard.operator_email);
+    setOnboardingFormValue("task_name", wizard.task_name);
+    setOnboardingFormValue("cadence_minutes", wizard.cadence_minutes);
+    setOnboardingFormValue("model", wizard.model);
+    setOnboardingFormValue("max_turns", wizard.max_turns ?? "");
+    setOnboardingFormValue("objective_template", wizard.objective_template);
+    applyConversationTargetToForm(onboardingFormEl, wizard.conversation_target || null);
+    setOnboardingFormValue(
+      "toolsets",
+      Array.isArray(wizard.toolsets) ? wizard.toolsets.join(", ") : "",
+    );
+    const mempalaceToggle = getOnboardingField("use_mempalace");
+    if (mempalaceToggle) {
+      mempalaceToggle.checked = Boolean(wizard.use_mempalace);
     }
-    field.value = String(value);
-  };
-  setValue("setup_mode", wizard.mode);
-  setValue("setup_flow", wizard.flow);
-  setValue("project_path", wizard.project_path);
-  setValue("project_label", wizard.project_label);
-  setValue("instance_mode", wizard.instance_mode);
-  setValue("instance_id", wizard.instance_id ?? "");
-  setValue("instance_name", wizard.instance_name);
-  setValue("team_name", wizard.team_name);
-  setValue("operator_name", wizard.operator_name);
-  setValue("operator_email", wizard.operator_email);
-  setValue("task_name", wizard.task_name);
-  setValue("cadence_minutes", wizard.cadence_minutes);
-  setValue("model", wizard.model);
-  setValue("max_turns", wizard.max_turns ?? "");
-  setValue("objective_template", wizard.objective_template);
-  applyConversationTargetToForm(onboardingFormEl, wizard.conversation_target || null);
-  setValue(
-    "toolsets",
-    Array.isArray(wizard.toolsets) ? wizard.toolsets.join(", ") : "",
-  );
-  const mempalaceToggle = getOnboardingField("use_mempalace");
-  if (mempalaceToggle) {
-    mempalaceToggle.checked = Boolean(wizard.use_mempalace);
   }
+  applyOnboardingSelectionDraftToForm(state.onboardingSelectionDraft, wizard);
+  applyOnboardingWizardDraftToForm(state.onboardingWizard?.draft);
   syncOnboardingIntegrationPreset();
   onboardingFormEl.dataset.prefilled = "true";
 }
@@ -2396,8 +2756,9 @@ function getOnboardingField(name) {
 }
 
 function collectOnboardingDraftValues(form) {
-  const setupMode = onboardingSetupModeEl?.value || "local";
-  const setupFlow = onboardingSetupFlowEl?.value || "quickstart";
+  const selection = getEffectiveOnboardingSelection();
+  const setupMode = selection.mode;
+  const setupFlow = selection.flow;
   const cadenceMinutes = form.get("cadence_minutes") ? Number(form.get("cadence_minutes")) : 180;
   const maxTurns = form.get("max_turns") ? Number(form.get("max_turns")) : 4;
   return {
@@ -2423,22 +2784,45 @@ function collectOnboardingDraftValues(form) {
   };
 }
 
-function buildOnboardingWizardDraftPayload(form) {
-  const draft = collectOnboardingDraftValues(form);
-  if (state.setup?.wizard_session?.updated_at) {
+function assertOnboardingBootstrapDraftReady(draft) {
+  const pendingField = getOnboardingStepField(state.onboardingWizard?.step);
+  if (pendingField === "mode") {
+    throw new Error(
+      "Complete the guided Setup Mode step or cancel guided setup before bootstrapping.",
+    );
+  }
+  if (pendingField === "flow") {
+    throw new Error(
+      "Complete the guided Setup Flow step or cancel guided setup before bootstrapping.",
+    );
+  }
+  if (!draft.project_path) {
+    throw new Error(
+      "Complete the guided Workspace step or cancel guided setup before bootstrapping.",
+    );
+  }
+  if (!draft.operator_name) {
+    throw new Error(
+      "Complete the guided Operator Name step or cancel guided setup before bootstrapping.",
+    );
+  }
+  if (!draft.task_name) {
+    throw new Error(
+      "Complete the guided Task Name step or cancel guided setup before bootstrapping.",
+    );
+  }
+}
+
+function buildOnboardingWizardDraftPayload(form, draft = collectOnboardingDraftValues(form)) {
+  const savedWizard = state.setup?.wizard_session;
+  if (savedWizard?.updated_at && hasSubstantiveSavedOnboardingWizardSession(savedWizard)) {
     return draft;
   }
 
-  const payload = {};
-  if (draft.mode !== "local") {
-    payload.mode = draft.mode;
-  }
-  if (draft.mode === "remote") {
-    payload.flow = "advanced";
-    payload.instance_mode = "existing";
-  } else if (draft.flow !== "quickstart") {
-    payload.flow = draft.flow;
-  }
+  const payload = {
+    mode: draft.mode,
+    flow: draft.mode === "remote" ? "advanced" : draft.flow,
+  };
   if (draft.use_mempalace) {
     payload.use_mempalace = true;
   }
@@ -2490,8 +2874,7 @@ function buildOnboardingWizardDraftPayload(form) {
   return payload;
 }
 
-function buildOnboardingBootstrapPayload(form) {
-  const draft = collectOnboardingDraftValues(form);
+function buildOnboardingBootstrapPayload(form, draft = collectOnboardingDraftValues(form)) {
   const useMempalace = draft.use_mempalace;
   return {
     setup_mode: draft.mode,
@@ -2549,7 +2932,7 @@ function renderOnboardingWizardStep() {
   if (!wizard || !step) {
     return "";
   }
-  const initialValue = String(step.initialvalue ?? "");
+  const initialValue = String(step.initialValue ?? step.initialvalue ?? "");
   const isRequired = step.required !== false;
   const inputType = step.inputType === "email" ? "email" : "text";
   const submitLabel = isRequired ? "Save Guided Answer" : "Save or Skip";
@@ -2615,9 +2998,24 @@ function renderOnboardingWizardStep() {
 
 async function cancelOnboardingWizard(quiet = false) {
   const wizard = state.onboardingWizard;
+  const restoreSavedDraft = !quiet;
   if (!wizard?.sessionId) {
     setOnboardingWizardState(null);
-    renderOnboarding();
+    if (restoreSavedDraft) {
+      try {
+        if (onboardingFormEl) {
+          onboardingFormEl.dataset.prefilled = "";
+        }
+        await loadSetup();
+      } catch (error) {
+        renderOnboarding();
+        if (!quiet) {
+          showToast(normalizeError(error), true);
+        }
+      }
+    } else {
+      renderOnboarding();
+    }
     return;
   }
   try {
@@ -2630,56 +3028,98 @@ async function cancelOnboardingWizard(quiet = false) {
     }
   } finally {
     setOnboardingWizardState(null);
-    renderOnboarding();
+    if (restoreSavedDraft) {
+      try {
+        if (onboardingFormEl) {
+          onboardingFormEl.dataset.prefilled = "";
+        }
+        await loadSetup();
+      } catch (error) {
+        renderOnboarding();
+        if (!quiet) {
+          showToast(normalizeError(error), true);
+        }
+      }
+    } else {
+      renderOnboarding();
+    }
   }
   if (!quiet) {
     showToast("Guided setup cancelled.");
   }
 }
 
-async function runOnboardingWizard() {
+async function runOnboardingWizard({ quiet = false } = {}) {
   if (!onboardingFormEl) {
-    return;
+    return null;
   }
   if (state.onboardingWizard?.sessionId) {
     await cancelOnboardingWizard(true);
   }
   const form = new FormData(onboardingFormEl);
-  const draft = buildOnboardingWizardDraftPayload(form);
-  const result = await submitJson("/api/onboarding/wizard/start", draft);
+  const draft = collectOnboardingDraftValues(form);
+  const result = await api("/api/onboarding/wizard/start", {
+    method: "POST",
+    body: JSON.stringify(buildOnboardingWizardDraftPayload(form, draft)),
+  });
   if (result.done) {
     setOnboardingWizardState(null);
     if (onboardingFormEl) {
       onboardingFormEl.dataset.prefilled = "";
     }
-    renderOnboarding();
-    showToast("Guided setup draft is already complete.");
-    return;
+    await loadSetup();
+    if (!quiet) {
+      showToast("Guided setup draft is already complete.");
+    }
+    return result;
   }
   setOnboardingWizardState({
     sessionId: String(result.sessionId || "").trim(),
     step: result.step,
+    draft: sanitizeOnboardingWizardDraft(draft),
   });
   if (onboardingFormEl) {
     onboardingFormEl.dataset.prefilled = "";
   }
-  renderOnboarding();
-  showToast(result.step?.title || "Guided setup is ready.");
+  await loadSetup();
+  if (!quiet) {
+    showToast(result.step?.title || "Guided setup is ready.");
+  }
+  return result;
 }
 
 async function submitOnboardingBootstrap() {
   if (!onboardingFormEl) {
     return;
   }
-  if (state.onboardingWizard?.sessionId) {
-    await cancelOnboardingWizard(true);
-  }
+  const activeWizardSessionId = normalizeOptionalText(state.onboardingWizard?.sessionId);
   const form = new FormData(onboardingFormEl);
+  const draft = collectOnboardingDraftValues(form);
+  assertOnboardingBootstrapDraftReady(draft);
   const result = await submitJson(
     "/api/onboarding/bootstrap",
-    buildOnboardingBootstrapPayload(form),
+    buildOnboardingBootstrapPayload(form, draft),
   );
+  if (activeWizardSessionId) {
+    try {
+      await submitJson("/api/onboarding/wizard/cancel", {
+        sessionId: activeWizardSessionId,
+      });
+    } catch {
+      // The bootstrap is already saved; a stale wizard session should not block the handoff.
+    } finally {
+      setOnboardingWizardState(null);
+    }
+  }
   state.lastBootstrapResult = result;
+  const [dashboard, setup] = await Promise.all([
+    api("/api/dashboard"),
+    api("/api/setup"),
+  ]);
+  state.dashboard = dashboard;
+  state.setup = setup;
+  reconcileOnboardingSelectionDraft();
+  onboardingFormEl.dataset.prefilled = "";
   render();
   if (result.mission_draft) {
     applyMissionDraft(result.mission_draft);
@@ -2721,22 +3161,86 @@ function syncOnboardingIntegrationPreset() {
   integrationBaseUrlField.value = onboardingIntegrationDefaults.baseUrl;
 }
 
-function renderOnboardingModeCallout(wizard) {
+function describeOnboardingSelection(selection) {
+  if (selection.mode === "remote") {
+    return "Remote / Advanced";
+  }
+  return selection.flow === "advanced" ? "Local / Advanced" : "Local / QuickStart";
+}
+
+function renderOnboardingSelectionOwnership(selection) {
+  if (!onboardingSelectionFieldsEl || !onboardingGuidedSelectionNoteEl) {
+    return;
+  }
+  const activeWizard = state.onboardingWizard;
+  const guidedActive = Boolean(activeWizard?.sessionId);
+  for (const fieldName of ONBOARDING_GUIDED_FIELD_NAMES) {
+    const field = getOnboardingField(fieldName);
+    if (field instanceof HTMLSelectElement) {
+      field.disabled = guidedActive;
+      if (guidedActive) {
+        field.setAttribute("aria-disabled", "true");
+        field.title =
+          "Guided setup owns this field until the current session finishes or is cancelled.";
+      } else {
+        field.removeAttribute("aria-disabled");
+        field.removeAttribute("title");
+      }
+      continue;
+    }
+    if (!(field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement)) {
+      continue;
+    }
+    field.readOnly = guidedActive;
+    if (guidedActive) {
+      field.setAttribute("aria-readonly", "true");
+      field.title =
+        "Guided setup owns this field until the current session finishes or is cancelled.";
+    } else {
+      field.removeAttribute("aria-readonly");
+      field.removeAttribute("title");
+    }
+  }
+  onboardingSelectionFieldsEl.hidden = guidedActive;
+  onboardingGuidedSelectionNoteEl.hidden = !guidedActive;
+  if (!guidedActive) {
+    onboardingGuidedSelectionNoteEl.textContent = "";
+    return;
+  }
+  const ownershipTail =
+    "Manual mode, flow, and lane binding stay paused, and workspace, operator, and task fields stay locked until this session finishes or is cancelled.";
+  const pendingField = getOnboardingStepField(activeWizard?.step);
+  if (pendingField === "mode") {
+    onboardingGuidedSelectionNoteEl.textContent =
+      `Guided setup is choosing Setup Mode now. ${ownershipTail}`;
+    return;
+  }
+  if (pendingField === "flow") {
+    onboardingGuidedSelectionNoteEl.textContent =
+      `Guided setup selected Local mode and is choosing Setup Flow. ${ownershipTail}`;
+    return;
+  }
+  onboardingGuidedSelectionNoteEl.textContent =
+    `Guided setup is driving ${describeOnboardingSelection(selection)}. ${ownershipTail}`;
+}
+
+function renderOnboardingModeCallout(wizard, selection = getEffectiveOnboardingSelection(wizard)) {
   if (!onboardingModeLabelEl || !onboardingFlowPillEl || !onboardingModeSummaryEl) {
     return;
   }
-  if (!wizard) {
-    onboardingModeLabelEl.textContent = "Local-first bootstrap";
-    onboardingFlowPillEl.textContent = "QuickStart";
-    onboardingModeSummaryEl.textContent =
-      "This path reuses the existing control plane. It can stage or reuse a Desktop lane, register the workspace, issue remote operator access, vault a secret, pin a project skill, schedule the first recurring task, and preload the launch draft without inventing another config layer.";
-    return;
-  }
+  const summary =
+    wizard && wizard.mode === selection.mode && wizard.flow === selection.flow
+      ? wizard.summary
+      : selection.mode === "remote"
+        ? "Remote-first setup stages the workspace spine, operator access, and recurring task before lane binding."
+        : selection.flow === "advanced"
+          ? "Advanced local setup stages the full control plane posture before bootstrap."
+          : "QuickStart reuses the current control plane and tightens the saved workspace spine.";
   onboardingModeLabelEl.textContent =
-    wizard.mode === "remote" ? "Remote-first bootstrap" : "Local-first bootstrap";
-  onboardingFlowPillEl.textContent = wizard.flow === "advanced" ? "Advanced" : "QuickStart";
-  onboardingFlowPillEl.className = `pill ${wizard.mode === "remote" ? "warn" : "ok"}`;
-  onboardingModeSummaryEl.textContent = wizard.summary;
+    selection.mode === "remote" ? "Remote-first bootstrap" : "Local-first bootstrap";
+  onboardingFlowPillEl.textContent = selection.flow === "advanced" ? "Advanced" : "QuickStart";
+  onboardingFlowPillEl.className = `pill ${selection.mode === "remote" ? "warn" : "ok"}`;
+  onboardingModeSummaryEl.textContent = summary;
 }
 
 function renderOnboarding() {
@@ -2756,7 +3260,9 @@ function renderOnboarding() {
   }
 
   applyWizardSessionToForm();
-  renderOnboardingModeCallout(wizard);
+  const selection = getEffectiveOnboardingSelection(wizard);
+  renderOnboardingSelectionOwnership(selection);
+  renderOnboardingModeCallout(wizard, selection);
 
   const allReady =
     connected > 0 && projects.length > 0 && operators.length > 0 && apiKeyCount > 0 && tasks.length > 0;
@@ -2772,9 +3278,9 @@ function renderOnboarding() {
 
   const checklist = [
     {
-      label: wizard?.mode === "remote" ? "Lane Pool" : "Lane",
+      label: selection.mode === "remote" ? "Lane Pool" : "Lane",
       detail:
-        wizard?.mode === "remote"
+        selection.mode === "remote"
           ? connected > 0
             ? `${connected} connected lane${connected === 1 ? "" : "s"} available for remote launches`
             : instances.length
@@ -2790,7 +3296,7 @@ function renderOnboarding() {
           ? "ok"
           : instances.length
             ? "warn"
-            : wizard?.mode === "remote"
+            : selection.mode === "remote"
               ? "warn"
               : "bad",
     },
@@ -2927,6 +3433,7 @@ function renderOpsMesh() {
     syncVaultSecretOptions(null);
     return;
   }
+  const outboundDeliveries = opsMesh.outbound_deliveries ?? [];
 
   taskInboxHeadlineEl.textContent = opsMesh.task_inbox.headline;
   taskInboxSummaryEl.textContent = opsMesh.task_inbox.summary;
@@ -4449,12 +4956,16 @@ function syncOnboardingMode() {
   if (!onboardingInstanceModeEl || !onboardingInstanceSelectEl) {
     return;
   }
-  const isRemote = onboardingSetupModeEl?.value === "remote";
+  const selection = getEffectiveOnboardingSelection();
+  const guidedActive = Boolean(state.onboardingWizard?.sessionId);
+  const isRemote = selection.mode === "remote";
+  if (onboardingSetupModeEl) {
+    onboardingSetupModeEl.value = selection.mode;
+    onboardingSetupModeEl.disabled = guidedActive;
+  }
   if (onboardingSetupFlowEl) {
-    if (isRemote) {
-      onboardingSetupFlowEl.value = "advanced";
-    }
-    onboardingSetupFlowEl.disabled = isRemote;
+    onboardingSetupFlowEl.value = selection.flow;
+    onboardingSetupFlowEl.disabled = guidedActive || isRemote;
   }
   if (isRemote) {
     onboardingInstanceModeEl.value = "existing";
@@ -4514,7 +5025,7 @@ function syncMissionOptions() {
     taskInstanceSelectEl.value = selectedTaskInstance;
   }
   if (onboardingInstanceSelectEl) {
-    const remoteMode = onboardingSetupModeEl?.value === "remote";
+    const remoteMode = getEffectiveOnboardingSelection().mode === "remote";
     onboardingInstanceSelectEl.innerHTML = instances.length
       ? `
         <option value="">${remoteMode ? "No default lane yet" : "Select an existing lane"}</option>
@@ -6325,6 +6836,11 @@ async function persistSetupWizardSelection() {
   if (!onboardingSetupModeEl || !onboardingSetupFlowEl) {
     return;
   }
+  setOnboardingSelectionDraftState({
+    mode: onboardingSetupModeEl.value,
+    flow: onboardingSetupFlowEl.value,
+    use_mempalace: onboardingMempalaceToggleEl?.checked || false,
+  });
   const result = await submitJson(
     "/api/setup/wizard",
     {
@@ -6336,6 +6852,7 @@ async function persistSetupWizardSelection() {
   );
   state.setup = state.setup || {};
   state.setup.wizard_session = result;
+  reconcileOnboardingSelectionDraft(result);
   if (onboardingFormEl) {
     onboardingFormEl.dataset.prefilled = "";
   }
@@ -6348,7 +6865,12 @@ if (onboardingSetupModeEl) {
     if (state.onboardingWizard?.sessionId) {
       await cancelOnboardingWizard(true);
     }
-    persistSetupWizardSelection().catch((error) => showToast(normalizeError(error), true));
+    renderOnboarding();
+    try {
+      await persistSetupWizardSelection();
+    } catch (error) {
+      showToast(normalizeError(error), true);
+    }
   });
 }
 
@@ -6358,7 +6880,12 @@ if (onboardingSetupFlowEl) {
     if (state.onboardingWizard?.sessionId) {
       await cancelOnboardingWizard(true);
     }
-    persistSetupWizardSelection().catch((error) => showToast(normalizeError(error), true));
+    renderOnboarding();
+    try {
+      await persistSetupWizardSelection();
+    } catch (error) {
+      showToast(normalizeError(error), true);
+    }
   });
 }
 
@@ -6976,13 +7503,13 @@ document.addEventListener("submit", async (event) => {
     event.preventDefault();
     const wizard = state.onboardingWizard;
     if (!wizard?.sessionId || !wizard.step?.id) {
-      setOnboardingWizardState(null);
-      renderOnboarding();
+      await restoreSavedOnboardingWizardDraft();
       showToast("Guided setup step expired. Start it again.", true);
       return;
     }
     const form = new FormData(event.target);
     try {
+      const draft = mergeOnboardingWizardDraft(wizard.draft, wizard.step, form.get("value"));
       const result = await submitJson("/api/onboarding/wizard/next", {
         sessionId: wizard.sessionId,
         answer: {
@@ -6995,21 +7522,34 @@ document.addEventListener("submit", async (event) => {
         if (onboardingFormEl) {
           onboardingFormEl.dataset.prefilled = "";
         }
-        renderOnboarding();
+        await loadSetup();
         showToast("Guided setup draft saved. Review the form and bootstrap when ready.");
       } else {
         setOnboardingWizardState({
           sessionId: wizard.sessionId,
           step: result.step,
+          draft,
         });
         renderOnboarding();
         showToast(result.step?.title || "Next guided setup step ready.");
       }
     } catch (error) {
       const message = normalizeError(error);
-      if (message.includes("wizard not found") || message.includes("no pending step")) {
-        setOnboardingWizardState(null);
-        renderOnboarding();
+      if (shouldRestartOnboardingWizard(message)) {
+        try {
+          const restarted = await restartLostOnboardingWizard(draft);
+          showToast(
+            restarted?.done
+              ? "Guided setup session expired, but the saved draft is already complete."
+              : "Guided setup session expired and restarted.",
+            true,
+          );
+          return;
+        } catch (restartError) {
+          await restoreSavedOnboardingWizardDraft();
+          showToast(normalizeError(restartError), true);
+          return;
+        }
       }
       showToast(message, true);
     }
@@ -7113,8 +7653,40 @@ function connectSocket() {
   };
 }
 
-restoreDisclosureState();
-refreshAll().catch((error) => showToast(normalizeError(error), true));
-syncTransportFields();
-syncOnboardingMode();
-connectSocket();
+function shouldDisableClientBoot() {
+  return typeof window !== "undefined" && window.__OPENZUES_DISABLE_BOOT__ === true;
+}
+
+function exposeOpenZuesTestHooks() {
+  if (typeof window === "undefined" || window.__OPENZUES_ENABLE_TEST_HOOKS__ !== true) {
+    return;
+  }
+  window.__OPENZUES_TEST_HOOKS__ = {
+    state,
+    ONBOARDING_SELECTION_STORAGE_KEY,
+    ONBOARDING_WIZARD_STORAGE_KEY,
+    applyWizardSessionToForm,
+    buildOnboardingWizardDraftPayload,
+    collectOnboardingDraftValues,
+    getEffectiveOnboardingSelection,
+    mergeOnboardingWizardDraft,
+    persistSetupWizardSelection,
+    reconcileOnboardingWizardState,
+    renderOnboardingSelectionOwnership,
+    restartLostOnboardingWizard,
+    setOnboardingSelectionDraftState,
+    sanitizeOnboardingWizardDraft,
+    setOnboardingWizardState,
+    syncOnboardingMode,
+  };
+}
+
+exposeOpenZuesTestHooks();
+
+if (!shouldDisableClientBoot()) {
+  restoreDisclosureState();
+  refreshAll().catch((error) => showToast(normalizeError(error), true));
+  syncTransportFields();
+  syncOnboardingMode();
+  connectSocket();
+}

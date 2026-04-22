@@ -66,6 +66,23 @@ def test_enqueue_dedupes_work_by_type_and_preserves_first_payload() -> None:
     assert drained.items[0].payload == {"reason": "gps"}
 
 
+def test_enqueue_preserves_explicit_empty_payload_object() -> None:
+    store = GatewayNodePendingWorkStore()
+
+    queued = store.enqueue(
+        node_id="node-empty-payload",
+        work_type="location.request",
+        payload={},
+    )
+
+    assert queued.deduped is False
+    assert queued.item.payload == {}
+
+    drained = store.drain("node-empty-payload")
+    assert drained.items[0].id == queued.item.id
+    assert drained.items[0].payload == {}
+
+
 def test_drain_keeps_has_more_true_when_baseline_status_item_is_deferred() -> None:
     store = GatewayNodePendingWorkStore()
     store.enqueue(node_id="node-3", work_type="location.request")

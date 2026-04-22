@@ -7,7 +7,7 @@ import secrets
 import time
 import unicodedata
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -40,6 +40,7 @@ from openzues.services.gateway_method_policy import (
 from openzues.services.gateway_models import GatewayModelsService
 from openzues.services.gateway_node_command_policy import (
     is_node_command_allowed,
+    normalize_declared_node_commands,
     resolve_node_command_allowlist,
 )
 from openzues.services.gateway_node_pairing import (
@@ -139,6 +140,107 @@ class GatewayTrackedChatRun:
     started_at_ms: int
 
 
+@dataclass(frozen=True, slots=True)
+class GatewayNodeWakeAttempt:
+    attempted: bool = False
+    available: bool = False
+    connected: bool = False
+    path: str | None = None
+    duration_ms: int = 0
+
+
+def _coerce_wake_attempt(value: object) -> GatewayNodeWakeAttempt:
+    if isinstance(value, GatewayNodeWakeAttempt):
+        return value
+    if isinstance(value, bool):
+        return GatewayNodeWakeAttempt(
+            attempted=value,
+            available=value,
+            connected=False,
+            path="legacy-bool" if value else None,
+        )
+
+    def _raw_field(name: str) -> object | None:
+        if isinstance(value, dict):
+            return value.get(name)
+        return getattr(value, name, None)
+
+    attempted_value = _raw_field("attempted")
+    available_value = _raw_field("available")
+    connected_value = _raw_field("connected")
+    path_value = _raw_field("path")
+    duration_value = _raw_field("durationMs")
+    if duration_value is None:
+        duration_value = _raw_field("duration_ms")
+
+    attempted = attempted_value if isinstance(attempted_value, bool) else None
+    available = available_value if isinstance(available_value, bool) else None
+    connected = connected_value if isinstance(connected_value, bool) else None
+    duration_ms = (
+        max(0, int(duration_value))
+        if isinstance(duration_value, int | float) and not isinstance(duration_value, bool)
+        else 0
+    )
+    path = path_value.strip() if isinstance(path_value, str) and path_value.strip() else None
+
+    resolved_attempted = (
+        attempted
+        if attempted is not None
+        else bool((available if available is not None else False) or (connected if connected else False))
+    )
+    resolved_available = (
+        available
+        if available is not None
+        else bool(resolved_attempted or (connected if connected else False))
+    )
+    return GatewayNodeWakeAttempt(
+        attempted=resolved_attempted,
+        available=resolved_available,
+        connected=bool(connected),
+        path=path,
+        duration_ms=duration_ms,
+    )
+
+
+def _wake_attempt_available(attempt: GatewayNodeWakeAttempt) -> bool:
+    return attempt.available
+
+
+def _wake_attempt_details(attempt: GatewayNodeWakeAttempt | None) -> dict[str, object] | None:
+    if attempt is None or (
+        not attempt.attempted
+        and not attempt.available
+        and not attempt.connected
+        and attempt.path is None
+        and attempt.duration_ms == 0
+    ):
+        return None
+    payload: dict[str, object] = {
+        "attempted": attempt.attempted,
+        "available": attempt.available,
+        "connected": attempt.connected,
+        "durationMs": attempt.duration_ms,
+    }
+    if attempt.path is not None:
+        payload["path"] = attempt.path
+    return payload
+
+
+def _wake_attempt_with_connection(
+    attempt: GatewayNodeWakeAttempt | None,
+    *,
+    connected: bool,
+) -> GatewayNodeWakeAttempt | None:
+    if attempt is None or attempt.connected == connected:
+        return attempt
+    path = attempt.path
+    if connected and path in {None, "legacy-bool", "not-connected"}:
+        path = "connected"
+    if not connected and path == "already-connected":
+        path = "not-connected"
+    return replace(attempt, connected=connected, path=path)
+
+
 class GatewayNodeMethodService:
     def __init__(
         self,
@@ -182,6 +284,7 @@ class GatewayNodeMethodService:
         skill_install_service: GatewaySkillInstallService | None = None,
         skill_status_service: GatewaySkillStatusService | None = None,
         send_channel_message_service: Callable[..., Awaitable[dict[str, object]]] | None = None,
+        send_channel_poll_service: Callable[..., Awaitable[dict[str, object]]] | None = None,
         chat_send_service: Callable[..., Awaitable[dict[str, object]]] | None = None,
         chat_abort_service: Callable[..., Awaitable[dict[str, object]]] | None = None,
         sleep: Callable[[float], Awaitable[None]] | None = None,
@@ -193,7 +296,7 @@ class GatewayNodeMethodService:
         wake_service: GatewayWakeService | None = None,
         set_heartbeats_enabled: Callable[[bool], Awaitable[bool]] | None = None,
         sync: Callable[[], Awaitable[None]] | None = None,
-        wake_node: Callable[[str], Awaitable[bool]] | None = None,
+        wake_node: Callable[[str], Awaitable[object]] | None = None,
         probe_secret: Callable[[int], Awaitable[str | None]] | None = None,
     ) -> None:
         self.registry = registry
@@ -258,6 +361,7 @@ class GatewayNodeMethodService:
             skill_config_service=self._skill_config_service
         )
         self._send_channel_message_service = send_channel_message_service
+        self._send_channel_poll_service = send_channel_poll_service
         self._chat_send_service = chat_send_service
         self._chat_abort_service = chat_abort_service
         self._gateway_chat_run_ids_by_session_key: dict[str, str] = {}
@@ -289,6 +393,98 @@ class GatewayNodeMethodService:
                 return self.registry.get(node_id) is not None
             await self._sleep(min(0.05, remaining_seconds))
 
+    async def _request_node_pairing(
+        self,
+        *,
+        node_id: str,
+        display_name: str | None,
+        platform: str | None,
+        version: str | None,
+        core_version: str | None,
+        ui_version: str | None,
+        device_family: str | None,
+        model_identifier: str | None,
+        caps: list[str] | None,
+        commands: list[str] | None,
+        remote_ip: str | None,
+        silent: bool | None,
+        now_ms: int | None,
+    ) -> dict[str, object]:
+        if self._pairing_service is None:
+            raise GatewayNodeMethodError(
+                code="UNAVAILABLE",
+                message="node pairing storage unavailable",
+                status_code=503,
+            )
+        request_result = await self._pairing_service.request(
+            node_id=node_id,
+            display_name=display_name,
+            platform=platform,
+            version=version,
+            core_version=core_version,
+            ui_version=ui_version,
+            device_family=device_family,
+            model_identifier=model_identifier,
+            caps=caps,
+            commands=commands,
+            remote_ip=remote_ip,
+            silent=silent,
+            now_ms=_timestamp_ms(now_ms),
+        )
+        if (
+            request_result.get("status") == "pending"
+            and request_result.get("created") is True
+            and isinstance(request_result.get("request"), dict)
+        ):
+            await self._publish_gateway_event(
+                "node.pair.requested",
+                cast(dict[str, Any], request_result["request"]),
+            )
+        return request_result
+
+    async def _stage_scope_upgrade_request(
+        self,
+        node: KnownNode,
+        *,
+        paired_node: GatewayPairedNode,
+        now_ms: int | None,
+    ) -> dict[str, object] | None:
+        if self._pairing_service is None or not node.connected:
+            return None
+        allowlist = resolve_node_command_allowlist(
+            platform=node.platform or paired_node.platform,
+            device_family=node.device_family or paired_node.device_family,
+        )
+        live_commands = list(
+            normalize_declared_node_commands(
+                node.commands,
+                allowlist=allowlist,
+            )
+        )
+        approved_commands = set(
+            normalize_declared_node_commands(
+                paired_node.commands,
+                allowlist=allowlist,
+            )
+        )
+        if not live_commands or not any(command not in approved_commands for command in live_commands):
+            return None
+        return await self._request_node_pairing(
+            node_id=node.node_id,
+            display_name=node.display_name or paired_node.display_name,
+            platform=node.platform or paired_node.platform,
+            version=node.version or paired_node.version,
+            core_version=node.core_version or paired_node.core_version,
+            ui_version=node.ui_version or paired_node.ui_version,
+            device_family=node.device_family or paired_node.device_family,
+            model_identifier=node.model_identifier or paired_node.model_identifier,
+            caps=list(node.caps) if node.caps else list(paired_node.caps),
+            commands=live_commands,
+            remote_ip=node.remote_ip or paired_node.remote_ip,
+            silent=True,
+            now_ms=now_ms,
+        )
+
     async def call(
         self,
         method: str,
@@ -315,11 +511,21 @@ class GatewayNodeMethodService:
         if resolved_method == "node.list":
             _validate_exact_keys(resolved_method, payload, allowed_keys=())
             timestamp_ms = _timestamp_ms(now_ms)
+            known_nodes = self.registry.list_known_nodes()
+            known_nodes_by_id = {node.node_id: node for node in known_nodes}
             node_payloads: dict[str, dict[str, Any]] = {
-                node.node_id: _known_node_payload(node) for node in self.registry.list_known_nodes()
+                node_id: _known_node_payload(node)
+                for node_id, node in known_nodes_by_id.items()
             }
             if self._pairing_service is not None:
                 for paired_node in await self._pairing_service.list_paired_nodes():
+                    existing_node = known_nodes_by_id.get(paired_node.node_id)
+                    if existing_node is not None:
+                        await self._stage_scope_upgrade_request(
+                            existing_node,
+                            paired_node=paired_node,
+                            now_ms=now_ms,
+                        )
                     paired_payload = _known_paired_node_payload(paired_node)
                     existing = node_payloads.get(paired_node.node_id)
                     node_payloads[paired_node.node_id] = (
@@ -1682,10 +1888,17 @@ class GatewayNodeMethodService:
                 if "mediaUrls" in payload and payload.get("mediaUrls") is not None
                 else []
             )
-            if not message.strip() and not media_url.strip() and not media_urls:
+            normalized_media_urls = _normalize_gateway_send_media_urls(
+                media_url=media_url,
+                media_urls=media_urls,
+            )
+            if not message.strip() and not normalized_media_urls:
                 raise ValueError("invalid send params: text or media is required")
-            if "gifPlayback" in payload and payload.get("gifPlayback") is not None:
-                _require_bool(payload.get("gifPlayback"), label="gifPlayback")
+            gif_playback = (
+                _optional_bool(payload.get("gifPlayback"), label="gifPlayback")
+                if "gifPlayback" in payload
+                else None
+            )
             resolved_channel = await self._resolve_gateway_outbound_channel(
                 payload.get("channel"),
                 reject_webchat_as_internal_only=True,
@@ -1705,14 +1918,6 @@ class GatewayNodeMethodService:
                 payload.get("idempotencyKey"),
                 label="idempotencyKey",
             )
-            if media_url.strip() or media_urls:
-                raise GatewayNodeMethodError(
-                    code="UNAVAILABLE",
-                    message=(
-                        "send media is unavailable until channel-target media delivery is wired"
-                    ),
-                    status_code=503,
-                )
             if self._send_channel_message_service is None:
                 raise GatewayNodeMethodError(
                     code="UNAVAILABLE",
@@ -1722,16 +1927,21 @@ class GatewayNodeMethodService:
             effective_thread_id = explicit_thread_id
             if effective_thread_id is None and source_session_key is not None:
                 effective_thread_id = parse_thread_session_suffix(source_session_key).thread_id
-            return await self._send_channel_message_service(
-                channel=resolved_channel,
-                to=trimmed_to,
-                message=message,
-                account_id=account_id,
-                agent_id=agent_id,
-                thread_id=effective_thread_id,
-                session_key=source_session_key,
-                idempotency_key=idempotency_key,
-            )
+            send_payload: dict[str, object | None] = {
+                "channel": resolved_channel,
+                "to": trimmed_to,
+                "message": message,
+                "account_id": account_id,
+                "agent_id": agent_id,
+                "thread_id": effective_thread_id,
+                "session_key": source_session_key,
+                "idempotency_key": idempotency_key,
+            }
+            if normalized_media_urls:
+                send_payload["media_urls"] = normalized_media_urls
+                if gif_playback is not None:
+                    send_payload["gif_playback"] = gif_playback
+            return await self._send_channel_message_service(**send_payload)
 
         if resolved_method == "poll":
             _validate_exact_keys(
@@ -1753,51 +1963,66 @@ class GatewayNodeMethodService:
                 ),
             )
             to = _require_string(payload.get("to"), label="to")
-            _require_non_empty_string(payload.get("question"), label="question")
-            options = payload.get("options")
-            if not isinstance(options, list):
+            trimmed_to = to.strip()
+            question = _require_non_empty_string(payload.get("question"), label="question")
+            raw_options = payload.get("options")
+            if not isinstance(raw_options, list):
                 raise ValueError("options must be an array")
-            if len(options) < 2 or len(options) > 12:
+            if len(raw_options) < 2 or len(raw_options) > 12:
                 raise ValueError("options must contain between 2 and 12 items")
-            for entry in options:
-                _require_non_empty_string(entry, label="options[]")
-            _optional_bounded_int(
+            options = [
+                _require_non_empty_string(entry, label="options[]") for entry in raw_options
+            ]
+            max_selections = _optional_bounded_int(
                 payload.get("maxSelections"),
                 label="maxSelections",
                 minimum=1,
                 maximum=12,
             )
-            _optional_bounded_int(
+            duration_seconds = _optional_bounded_int(
                 payload.get("durationSeconds"),
                 label="durationSeconds",
                 minimum=1,
                 maximum=604_800,
             )
-            _optional_min_int(
+            duration_hours = _optional_min_int(
                 payload.get("durationHours"),
                 label="durationHours",
                 minimum=1,
             )
-            _optional_bool(payload.get("silent"), label="silent")
-            _optional_bool(payload.get("isAnonymous"), label="isAnonymous")
+            silent = _optional_bool(payload.get("silent"), label="silent")
+            is_anonymous = _optional_bool(payload.get("isAnonymous"), label="isAnonymous")
             resolved_channel = await self._resolve_gateway_outbound_channel(
                 payload.get("channel"),
                 reject_webchat_as_internal_only=True,
                 rejected_webchat_message="unsupported poll channel: webchat",
             )
             _validate_gateway_outbound_target(resolved_channel, to)
-            if "accountId" in payload and payload.get("accountId") is not None:
-                _require_string(payload.get("accountId"), label="accountId")
-            if "threadId" in payload and payload.get("threadId") is not None:
-                _require_string(payload.get("threadId"), label="threadId")
-            _require_non_empty_string(
+            account_id = _optional_normalized_string(payload.get("accountId"), label="accountId")
+            thread_id = _optional_normalized_string(payload.get("threadId"), label="threadId")
+            idempotency_key = _require_non_empty_string(
                 payload.get("idempotencyKey"),
                 label="idempotencyKey",
             )
-            raise GatewayNodeMethodError(
-                code="UNAVAILABLE",
-                message="poll is unavailable until channel-target poll delivery is wired",
-                status_code=503,
+            if self._send_channel_poll_service is None:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message="poll is unavailable until channel-target poll delivery is wired",
+                    status_code=503,
+                )
+            return await self._send_channel_poll_service(
+                channel=resolved_channel,
+                to=trimmed_to,
+                question=question,
+                options=options,
+                max_selections=max_selections,
+                duration_seconds=duration_seconds,
+                duration_hours=duration_hours,
+                silent=silent,
+                is_anonymous=is_anonymous,
+                account_id=account_id,
+                thread_id=thread_id,
+                idempotency_key=idempotency_key,
             )
 
         if resolved_method == "chat.history":
@@ -3873,30 +4098,34 @@ class GatewayNodeMethodService:
 
         if resolved_method == "node.pair.list":
             _validate_exact_keys(resolved_method, payload, allowed_keys=())
-            pending_requests = (
-                [] if self._pairing_service is None else await self._pairing_service.list_pending()
-            )
-            paired_payloads: dict[str, dict[str, Any]] = {}
+            pending_requests = []
+            paired_payloads: dict[str, dict[str, object]] = {}
             if self._pairing_service is not None:
-                for paired in await self._pairing_service.list_paired():
-                    paired_payloads[str(paired["nodeId"])] = dict(paired)
-            for node in self.registry.list_known_nodes():
-                if not node.paired:
-                    continue
-                node_payload = _paired_node_payload(node)
-                existing = paired_payloads.get(node.node_id)
-                paired_payloads[node.node_id] = (
-                    node_payload
-                    if existing is None
-                    else _merge_paired_node_payload(existing, node_payload)
-                )
-            paired_nodes = sorted(
-                paired_payloads.values(),
-                key=_paired_node_sort_key,
-            )
+                stored_paired_nodes = await self._pairing_service.list_paired_nodes()
+                known_nodes_by_id = {
+                    node.node_id: node for node in self.registry.list_known_nodes()
+                }
+                for stored_paired_node in stored_paired_nodes:
+                    existing_node = known_nodes_by_id.get(stored_paired_node.node_id)
+                    if existing_node is not None:
+                        await self._stage_scope_upgrade_request(
+                            existing_node,
+                            paired_node=stored_paired_node,
+                            now_ms=now_ms,
+                        )
+                    stored_payload = _stored_paired_node_payload(stored_paired_node)
+                    paired_payloads[stored_paired_node.node_id] = (
+                        stored_payload
+                        if existing_node is None
+                        else _merge_paired_node_payload(
+                            stored_payload,
+                            _paired_node_payload(existing_node),
+                        )
+                    )
+                pending_requests = await self._pairing_service.list_pending()
             return {
                 "pending": pending_requests,
-                "paired": paired_nodes,
+                "paired": sorted(paired_payloads.values(), key=_paired_node_sort_key),
             }
 
         if resolved_method == "node.pair.request":
@@ -3924,7 +4153,7 @@ class GatewayNodeMethodService:
                     message="node pairing storage unavailable",
                     status_code=503,
                 )
-            request_result = await self._pairing_service.request(
+            request_result = await self._request_node_pairing(
                 node_id=_require_non_empty_string(payload.get("nodeId"), label="nodeId"),
                 display_name=_optional_non_empty_string(
                     payload.get("displayName"),
@@ -3960,17 +4189,8 @@ class GatewayNodeMethodService:
                 ),
                 remote_ip=_optional_non_empty_string(payload.get("remoteIp"), label="remoteIp"),
                 silent=_optional_bool(payload.get("silent"), label="silent"),
-                now_ms=_timestamp_ms(now_ms),
+                now_ms=now_ms,
             )
-            if (
-                request_result.get("status") == "pending"
-                and request_result.get("created") is True
-                and isinstance(request_result.get("request"), dict)
-            ):
-                await self._publish_gateway_event(
-                    "node.pair.requested",
-                    cast(dict[str, Any], request_result["request"]),
-                )
             return request_result
 
         if resolved_method == "node.pair.reject":
@@ -4074,6 +4294,11 @@ class GatewayNodeMethodService:
                 if self._pairing_service is not None:
                     merged_paired_node = await self._pairing_service.get_paired_node(wanted_node_id)
                     if merged_paired_node is not None:
+                        await self._stage_scope_upgrade_request(
+                            described_node,
+                            paired_node=merged_paired_node,
+                            now_ms=now_ms,
+                        )
                         payload_node = _merge_known_node_payload(
                             _known_paired_node_payload(merged_paired_node),
                             payload_node,
@@ -4195,23 +4420,89 @@ class GatewayNodeMethodService:
             target_node = self.registry.describe_known_node(target_node_id)
             if target_node is None:
                 raise ValueError("unknown nodeId")
+            wake_attempt: GatewayNodeWakeAttempt | None = None
             if self.registry.get(target_node_id) is None and self._wake_node is not None:
-                wake_triggered = await self._wake_node(target_node_id)
-                if wake_triggered and self.registry.get(target_node_id) is None:
-                    await self._wait_for_node_connection(target_node_id)
+                wake_attempt = _coerce_wake_attempt(await self._wake_node(target_node_id))
+                if wake_attempt.available and self.registry.get(target_node_id) is None:
+                    reconnected = await self._wait_for_node_connection(target_node_id)
+                    wake_attempt = _wake_attempt_with_connection(
+                        wake_attempt,
+                        connected=reconnected,
+                    )
                 refreshed_node = self.registry.describe_known_node(target_node_id)
                 if refreshed_node is not None:
                     target_node = refreshed_node
-            allowlist = resolve_node_command_allowlist(
-                platform=target_node.platform,
-                device_family=target_node.device_family,
+            if self.registry.get(target_node_id) is None:
+                not_connected_details: dict[str, object] = {"code": "NOT_CONNECTED"}
+                wake_details = _wake_attempt_details(wake_attempt)
+                if wake_details is not None:
+                    not_connected_details["wake"] = wake_details
+                raise GatewayNodeMethodError(
+                    code="NOT_CONNECTED",
+                    message="node not connected",
+                    status_code=503,
+                    details=not_connected_details,
+                )
+            paired_node_record = (
+                await self._pairing_service.get_paired_node(target_node_id)
+                if self._pairing_service is not None
+                else None
             )
+            allowlist = resolve_node_command_allowlist(
+                platform=(
+                    target_node.platform
+                    or (paired_node_record.platform if paired_node_record else None)
+                ),
+                device_family=(
+                    target_node.device_family
+                    or (paired_node_record.device_family if paired_node_record else None)
+                ),
+            )
+            live_declared_commands = normalize_declared_node_commands(
+                target_node.commands,
+                allowlist=allowlist,
+            )
+            declared_commands = live_declared_commands
+            scope_upgrade_request_id: str | None = None
+            if paired_node_record is not None:
+                scope_upgrade_request = await self._stage_scope_upgrade_request(
+                    target_node,
+                    paired_node=paired_node_record,
+                    now_ms=now_ms,
+                )
+                scope_upgrade_request_id = _pairing_request_id_from_result(
+                    scope_upgrade_request
+                )
+                approved_declared_commands = normalize_declared_node_commands(
+                    paired_node_record.commands,
+                    allowlist=allowlist,
+                )
+                visible_commands = _visible_paired_commands(
+                    list(approved_declared_commands),
+                    list(live_declared_commands),
+                )
+                declared_commands = tuple(visible_commands or ())
             allowed, reason = is_node_command_allowed(
                 command=command,
-                declared_commands=target_node.commands,
+                declared_commands=declared_commands,
                 allowlist=allowlist,
             )
             if not allowed:
+                trimmed_command = command.strip()
+                if (
+                    paired_node_record is not None
+                    and scope_upgrade_request_id is not None
+                    and trimmed_command in live_declared_commands
+                    and trimmed_command not in declared_commands
+                ):
+                    raise GatewayNodeMethodError(
+                        code="FAILED_PRECONDITION",
+                        message=(
+                            f"scope upgrade pending approval "
+                            f"(requestId: {scope_upgrade_request_id})"
+                        ),
+                        status_code=409,
+                    )
                 raise ValueError(_build_node_command_rejection_hint(reason, command, target_node))
 
             result = await self.registry.invoke(
@@ -4239,10 +4530,17 @@ class GatewayNodeMethodService:
                         },
                         retryable=True,
                     )
+                error_details: dict[str, object] | None = None
+                if error_code == "NOT_CONNECTED":
+                    error_details = {"code": "NOT_CONNECTED"}
+                    wake_details = _wake_attempt_details(wake_attempt)
+                    if wake_details is not None:
+                        error_details["wake"] = wake_details
                 raise GatewayNodeMethodError(
                     code=error_code,
                     message=error_message,
                     status_code=503,
+                    details=error_details,
                 )
             return {
                 "ok": True,
@@ -4385,7 +4683,8 @@ class GatewayNodeMethodService:
                 and self.registry.get(target_node_id) is None
                 and self._wake_node is not None
             ):
-                wake_triggered = await self._wake_node(target_node_id)
+                wake_attempt = _coerce_wake_attempt(await self._wake_node(target_node_id))
+                wake_triggered = _wake_attempt_available(wake_attempt)
             return GatewayNodePendingWorkEnqueueView.model_validate(
                 {
                     "nodeId": target_node_id,
@@ -6864,6 +7163,27 @@ def _has_effective_agent_attachments(value: object) -> bool:
     return False
 
 
+def _normalize_gateway_send_media_urls(
+    *,
+    media_url: str | None = None,
+    media_urls: list[str] | None = None,
+) -> list[str]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    candidates: list[str] = []
+    if media_url is not None:
+        candidates.append(media_url)
+    if media_urls is not None:
+        candidates.extend(media_urls)
+    for candidate in candidates:
+        trimmed = str(candidate).strip()
+        if not trimmed or trimmed in seen:
+            continue
+        seen.add(trimmed)
+        normalized.append(trimmed)
+    return normalized
+
+
 def _normalize_gateway_chat_channel_id(raw: str) -> str | None:
     normalized = raw.strip().lower()
     if not normalized:
@@ -7108,6 +7428,19 @@ def _build_node_command_rejection_hint(
     return "node command not allowed"
 
 
+def _pairing_request_id_from_result(result: object) -> str | None:
+    if not isinstance(result, dict):
+        return None
+    request = result.get("request")
+    if not isinstance(request, dict):
+        return None
+    request_id = request.get("requestId")
+    if not isinstance(request_id, str):
+        return None
+    trimmed_request_id = request_id.strip()
+    return trimmed_request_id or None
+
+
 def _known_node_payload(node: KnownNode) -> dict[str, Any]:
     return {
         "nodeId": node.node_id,
@@ -7162,6 +7495,10 @@ def _merge_known_node_payload(
 ) -> dict[str, Any]:
     observed_caps = observed.get("caps")
     observed_commands = observed.get("commands")
+    visible_commands = _visible_paired_commands(
+        persisted.get("commands"),
+        observed_commands,
+    )
     return {
         "nodeId": observed["nodeId"],
         "displayName": observed.get("displayName") or persisted.get("displayName"),
@@ -7176,11 +7513,7 @@ def _merge_known_node_payload(
         "modelIdentifier": observed.get("modelIdentifier") or persisted.get("modelIdentifier"),
         "pathEnv": observed.get("pathEnv"),
         "caps": observed_caps if observed_caps is not None else persisted.get("caps") or [],
-        "commands": (
-            observed_commands
-            if observed_commands is not None
-            else persisted.get("commands") or []
-        ),
+        "commands": visible_commands if visible_commands is not None else [],
         "permissions": (
             observed.get("permissions")
             if observed.get("permissions") is not None
@@ -7206,6 +7539,28 @@ def _known_node_sort_key_from_payload(payload: dict[str, Any]) -> tuple[int, str
     return (0 if payload.get("connected") else 1, display_name, str(payload.get("nodeId") or ""))
 
 
+def _visible_paired_commands(
+    persisted_commands: object,
+    observed_commands: object,
+) -> list[str] | None:
+    approved = (
+        [command for command in persisted_commands if isinstance(command, str)]
+        if isinstance(persisted_commands, list)
+        else None
+    )
+    live = (
+        [command for command in observed_commands if isinstance(command, str)]
+        if isinstance(observed_commands, list)
+        else None
+    )
+    if live is None:
+        return approved
+    if approved is None:
+        return live
+    approved_set = set(approved)
+    return [command for command in live if command in approved_set]
+
+
 def _paired_node_payload(node: KnownNode) -> dict[str, Any]:
     return {
         "nodeId": node.node_id,
@@ -7214,11 +7569,36 @@ def _paired_node_payload(node: KnownNode) -> dict[str, Any]:
         "version": node.version,
         "coreVersion": node.core_version,
         "uiVersion": node.ui_version,
+        "deviceFamily": node.device_family,
+        "modelIdentifier": node.model_identifier,
+        "caps": list(node.caps),
+        "commands": list(node.commands),
         "remoteIp": node.remote_ip,
         "permissions": node.permissions,
         "createdAtMs": None,
         "approvedAtMs": node.approved_at_ms,
         "lastConnectedAtMs": node.connected_at_ms,
+    }
+
+
+def _stored_paired_node_payload(node: GatewayPairedNode) -> dict[str, Any]:
+    return {
+        "nodeId": node.node_id,
+        "token": node.token,
+        "displayName": node.display_name,
+        "platform": node.platform,
+        "version": node.version,
+        "coreVersion": node.core_version,
+        "uiVersion": node.ui_version,
+        "deviceFamily": node.device_family,
+        "modelIdentifier": node.model_identifier,
+        "caps": list(node.caps),
+        "commands": list(node.commands),
+        "remoteIp": node.remote_ip,
+        "permissions": node.permissions,
+        "createdAtMs": node.created_at_ms,
+        "approvedAtMs": node.approved_at_ms,
+        "lastConnectedAtMs": node.last_connected_at_ms,
     }
 
 
@@ -7228,11 +7608,30 @@ def _merge_paired_node_payload(
 ) -> dict[str, Any]:
     return {
         "nodeId": persisted["nodeId"],
-        "displayName": persisted.get("displayName") or observed.get("displayName"),
-        "platform": persisted.get("platform") or observed.get("platform"),
-        "version": persisted.get("version") or observed.get("version"),
-        "coreVersion": persisted.get("coreVersion") or observed.get("coreVersion"),
-        "uiVersion": persisted.get("uiVersion") or observed.get("uiVersion"),
+        "token": (
+            persisted.get("token")
+            if persisted.get("token") is not None
+            else observed.get("token")
+        ),
+        "displayName": observed.get("displayName") or persisted.get("displayName"),
+        "platform": observed.get("platform") or persisted.get("platform"),
+        "version": observed.get("version") or persisted.get("version"),
+        "coreVersion": observed.get("coreVersion") or persisted.get("coreVersion"),
+        "uiVersion": observed.get("uiVersion") or persisted.get("uiVersion"),
+        "deviceFamily": observed.get("deviceFamily") or persisted.get("deviceFamily"),
+        "modelIdentifier": (
+            observed.get("modelIdentifier") or persisted.get("modelIdentifier")
+        ),
+        "caps": (
+            persisted.get("caps")
+            if persisted.get("caps") is not None
+            else observed.get("caps") or []
+        ),
+        "commands": (
+            persisted.get("commands")
+            if persisted.get("commands") is not None
+            else observed.get("commands") or []
+        ),
         "remoteIp": observed.get("remoteIp") or persisted.get("remoteIp"),
         "permissions": (
             persisted.get("permissions")

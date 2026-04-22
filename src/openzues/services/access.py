@@ -48,6 +48,17 @@ _ADMIN_GATEWAY_METHOD_SCOPES = (
 )
 
 
+def _extract_header_value(headers: dict[str, str], *names: str) -> str | None:
+    for name in names:
+        value = headers.get(name)
+        if not isinstance(value, str):
+            continue
+        normalized = value.strip()
+        if normalized:
+            return normalized
+    return None
+
+
 def _slugify(value: str) -> str:
     lowered = value.strip().lower()
     slug = re.sub(r"[^a-z0-9]+", "-", lowered).strip("-")
@@ -296,18 +307,21 @@ class AccessService:
         return AuthenticatedOperator(operator=operator_view, team=team)
 
     def extract_api_key(self, headers: dict[str, str]) -> str | None:
-        authorization = headers.get("authorization") or headers.get("Authorization")
+        authorization = _extract_header_value(headers, "authorization", "Authorization")
         if authorization:
             prefix = "bearer "
             if authorization.lower().startswith(prefix):
                 candidate = authorization[len(prefix) :].strip()
                 if candidate:
                     return candidate
-        return (
-            headers.get("x-openzues-key")
-            or headers.get("X-OpenZues-Key")
-            or headers.get("x-api-key")
-            or headers.get("X-API-Key")
+        return _extract_header_value(
+            headers,
+            "x-openzues-key",
+            "X-OpenZues-Key",
+            "x-openclaw-token",
+            "X-OpenClaw-Token",
+            "x-api-key",
+            "X-API-Key",
         )
 
     async def _bootstrap_defaults(self) -> None:

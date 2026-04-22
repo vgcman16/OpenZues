@@ -59,6 +59,91 @@ def _normalize_path(value: str | None) -> str | None:
     return str(Path(text).expanduser().resolve(strict=False))
 
 
+def _text_or_none(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+_LIGHTWEIGHT_SETUP_WIZARD_SELECTION_FIELDS = frozenset({"mode", "flow", "use_mempalace"})
+_DEFAULT_SETUP_INSTANCE_MODE = "quick_connect_desktop"
+_DEFAULT_SETUP_INSTANCE_NAME = "Local Codex Desktop"
+_DEFAULT_SETUP_CADENCE_MINUTES = 180
+_DEFAULT_SETUP_MODEL = "gpt-5.4"
+_DEFAULT_SETUP_MAX_TURNS = 4
+
+
+def _has_substantive_setup_wizard_state(payload: dict[str, Any]) -> bool:
+    if _normalize_path(_text_or_none(payload.get("project_path"))) is not None:
+        return True
+    if _text_or_none(payload.get("project_label")) is not None:
+        return True
+
+    instance_id = payload.get("instance_id")
+    if instance_id is not None:
+        return True
+    instance_mode = _text_or_none(payload.get("instance_mode"))
+    if instance_mode is not None and instance_mode != _DEFAULT_SETUP_INSTANCE_MODE:
+        if instance_mode != "existing":
+            return True
+        if _text_or_none(payload.get("instance_name")) not in {None, _DEFAULT_SETUP_INSTANCE_NAME}:
+            return True
+    instance_name = _text_or_none(payload.get("instance_name"))
+    if instance_name is not None and instance_name != _DEFAULT_SETUP_INSTANCE_NAME:
+        return True
+
+    for field in ("team_name", "operator_name", "operator_email", "task_name"):
+        if _text_or_none(payload.get(field)) is not None:
+            return True
+
+    bootstrap_roles = payload.get("bootstrap_roles")
+    if isinstance(bootstrap_roles, list) and bootstrap_roles:
+        return True
+    bootstrap_scopes = payload.get("bootstrap_scopes")
+    if isinstance(bootstrap_scopes, list) and bootstrap_scopes:
+        return True
+
+    cadence_minutes = payload.get("cadence_minutes")
+    if cadence_minutes is not None and int(cadence_minutes) != _DEFAULT_SETUP_CADENCE_MINUTES:
+        return True
+    model = _text_or_none(payload.get("model"))
+    if model is not None and model != _DEFAULT_SETUP_MODEL:
+        return True
+    max_turns = payload.get("max_turns")
+    if max_turns is not None and int(max_turns) != _DEFAULT_SETUP_MAX_TURNS:
+        return True
+
+    if _text_or_none(payload.get("objective_template")) is not None:
+        return True
+    if payload.get("conversation_target") is not None:
+        return True
+    toolsets = payload.get("toolsets")
+    if isinstance(toolsets, list) and toolsets:
+        return True
+
+    return False
+
+
+def _filter_lightweight_setup_wizard_update(
+    current: dict[str, Any],
+    update_payload: dict[str, Any],
+) -> dict[str, Any]:
+    if not update_payload:
+        return update_payload
+    if set(update_payload).difference(_LIGHTWEIGHT_SETUP_WIZARD_SELECTION_FIELDS):
+        return update_payload
+    if _has_substantive_setup_wizard_state(current):
+        return update_payload
+
+    filtered: dict[str, Any] = {}
+    if "use_mempalace" in update_payload:
+        use_mempalace = bool(update_payload.get("use_mempalace"))
+        if use_mempalace or bool(current.get("use_mempalace")):
+            filtered["use_mempalace"] = use_mempalace
+    return filtered
+
+
 DEFAULT_SETUP_OBJECTIVE_TEMPLATE = (
     "Inspect the workspace, ship the next verified slice, run the relevant checks, "
     "and leave a concise operator handoff: completed, verified, next step, blockers."
@@ -243,6 +328,7 @@ class SetupService:
             }
         else:
             update_payload = {key: value for key, value in payload.items() if value is not None}
+        update_payload = _filter_lightweight_setup_wizard_update(current, update_payload)
         if not update_payload:
             return await self.get_wizard_session()
         merged = {**current, **update_payload, "updated_at": utcnow()}

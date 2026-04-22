@@ -2,22 +2,27 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import json
 import os
 import re
 import shutil
 import sqlite3
+import subprocess
 import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from fastapi.testclient import TestClient
 
 from openzues.app import create_app
 from openzues.database import Database, utcnow
 from openzues.schemas import ConversationTargetView, DashboardView
+from openzues.services import gateway_config_schema as gateway_config_schema_module
 from openzues.services.ecc_catalog import configure_ecc_catalog
 from openzues.services.gateway_cron import build_gateway_cron_task_blueprint
 from openzues.services.gateway_node_methods import GatewayNodeMethodService
@@ -102,6 +107,12 @@ class _FakeOpsMeshService:
         self.calls: list[tuple[int, str]] = []
         self.deleted_task_ids: list[int] = []
 
+    async def send_direct_channel_message(self, **_: object) -> dict[str, object]:
+        raise AssertionError("send_direct_channel_message should not be called in this fake")
+
+    async def send_direct_channel_poll(self, **_: object) -> dict[str, object]:
+        raise AssertionError("send_direct_channel_poll should not be called in this fake")
+
     async def run_task_blueprint_now(self, task_id: int, *, trigger: str = "manual") -> object:
         self.calls.append((task_id, trigger))
         return SimpleNamespace(id=52)
@@ -130,6 +141,7 @@ def _register_known_live_node(
     client_mode: str = "desktop",
     path_env: str | None = None,
     commands: tuple[str, ...] = (),
+    permissions: dict[str, bool] | None = None,
     connected_at_ms: int = 0,
 ) -> None:
     registry.remember(
@@ -141,6 +153,7 @@ def _register_known_live_node(
             client_mode=client_mode,
             path_env=path_env,
             commands=commands,
+            permissions=permissions,
             paired=True,
             connected=False,
         )
@@ -155,6 +168,7 @@ def _register_known_live_node(
             platform=platform,
             path_env=path_env,
             commands=commands,
+            permissions=permissions,
         ),
         connected_at_ms=connected_at_ms,
     )
@@ -264,6 +278,77 @@ def test_gateway_node_endpoints_surface_known_nodes_and_pending_actions(tmp_path
     }
 
 
+def test_gateway_node_endpoints_preserve_empty_live_permissions_map(tmp_path) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+    registry = app.state.gateway_node_service.registry
+    _register_known_live_node(
+        registry,
+        conn_id="conn-node-empty-permissions",
+        node_id="node-empty-permissions",
+        client_id="live-node-empty-permissions",
+        display_name="Runtime Permissions Node",
+        platform="android",
+        permissions={},
+        connected_at_ms=321,
+    )
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        nodes_response = client.get("/api/gateway/nodes")
+        node_response = client.get("/api/gateway/nodes/node-empty-permissions")
+
+    assert nodes_response.status_code == 200
+    assert nodes_response.json()["nodes"] == [
+        {
+            "node_id": "node-empty-permissions",
+            "display_name": "Runtime Permissions Node",
+            "platform": "android",
+            "version": None,
+            "core_version": None,
+            "ui_version": None,
+            "client_id": "live-node-empty-permissions",
+            "client_mode": "desktop",
+            "remote_ip": None,
+            "device_family": None,
+            "model_identifier": None,
+            "path_env": None,
+            "caps": [],
+            "commands": [],
+            "permissions": {},
+            "paired": True,
+            "connected": True,
+            "connected_at_ms": 321,
+            "approved_at_ms": None,
+        }
+    ]
+    assert node_response.status_code == 200
+    assert node_response.json() == {
+        "node_id": "node-empty-permissions",
+        "display_name": "Runtime Permissions Node",
+        "platform": "android",
+        "version": None,
+        "core_version": None,
+        "ui_version": None,
+        "client_id": "live-node-empty-permissions",
+        "client_mode": "desktop",
+        "remote_ip": None,
+        "device_family": None,
+        "model_identifier": None,
+        "path_env": None,
+        "caps": [],
+        "commands": [],
+        "permissions": {},
+        "paired": True,
+        "connected": True,
+        "connected_at_ms": 321,
+        "approved_at_ms": None,
+    }
+
+
 def test_gateway_node_endpoints_return_404_for_unknown_node(tmp_path) -> None:
     app_settings = Settings(
         data_dir=tmp_path / "data",
@@ -370,6 +455,69 @@ def test_gateway_node_pending_work_endpoints_surface_drain_and_enqueue_contract(
     }
 
 
+def test_gateway_node_pending_work_endpoint_preserves_explicit_empty_payload_object(
+    tmp_path,
+) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+    registry = app.state.gateway_node_service.registry
+    _register_known_live_node(
+        registry,
+        conn_id="conn-pending-empty-payload",
+        node_id="pending-empty-payload",
+        client_id="pending-empty-payload-live",
+        display_name="Pending Empty Payload Node",
+        platform="desktop",
+        path_env=str(tmp_path),
+    )
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        enqueue_response = client.post(
+            "/api/gateway/nodes/pending-empty-payload/pending-work",
+            json={
+                "type": "location.request",
+                "payload": {},
+            },
+        )
+        drained_response = client.get("/api/gateway/nodes/pending-empty-payload/pending-work")
+
+    assert enqueue_response.status_code == 200
+    enqueue_payload = enqueue_response.json()
+    assert enqueue_payload["nodeId"] == "pending-empty-payload"
+    assert enqueue_payload["queued"]["type"] == "location.request"
+    assert enqueue_payload["queued"]["payload"] == {}
+    assert enqueue_payload["wakeTriggered"] is False
+
+    assert drained_response.status_code == 200
+    assert drained_response.json() == {
+        "nodeId": "pending-empty-payload",
+        "revision": 1,
+        "items": [
+            {
+                "id": enqueue_payload["queued"]["id"],
+                "type": "location.request",
+                "priority": "normal",
+                "createdAtMs": enqueue_payload["queued"]["createdAtMs"],
+                "expiresAtMs": None,
+                "payload": {},
+            },
+            {
+                "id": "baseline-status",
+                "type": "status.request",
+                "priority": "default",
+                "createdAtMs": drained_response.json()["items"][1]["createdAtMs"],
+                "expiresAtMs": None,
+                "payload": None,
+            },
+        ],
+        "hasMore": False,
+    }
+
+
 def test_gateway_node_pending_work_endpoint_can_request_wake_for_managed_lane(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
@@ -416,6 +564,52 @@ def test_gateway_node_pending_work_endpoint_can_request_wake_for_managed_lane(
     assert enqueue_payload["nodeId"] == "7"
     assert enqueue_payload["queued"]["type"] == "location.request"
     assert enqueue_payload["wakeTriggered"] is True
+
+
+def test_gateway_node_pending_work_endpoint_keeps_wake_triggered_false_when_managed_wake_fails(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+    manager = app.state.manager
+    manager.instances[7] = InstanceRuntime(
+        instance_id=7,
+        name="Managed Pending Node",
+        transport="stdio",
+        command="codex",
+        args="app-server",
+        websocket_url=None,
+        cwd=str(tmp_path),
+        auto_connect=False,
+    )
+
+    async def fake_connect_instance(instance_id: int) -> InstanceRuntime:
+        assert instance_id == 7
+        raise RuntimeError("connect failed")
+
+    monkeypatch.setattr(manager, "connect_instance", fake_connect_instance)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        enqueue_response = client.post(
+            "/api/gateway/nodes/7/pending-work",
+            json={
+                "type": "location.request",
+                "priority": "high",
+                "expiresInMs": 5_000,
+                "wake": True,
+            },
+        )
+
+    assert enqueue_response.status_code == 200
+    enqueue_payload = enqueue_response.json()
+    assert enqueue_payload["nodeId"] == "7"
+    assert enqueue_payload["queued"]["type"] == "location.request"
+    assert enqueue_payload["wakeTriggered"] is False
 
 
 def test_gateway_node_pending_work_endpoint_reuses_existing_item_without_rewaking(
@@ -521,6 +715,66 @@ def test_gateway_node_pending_work_endpoint_reuses_existing_item_without_rewakin
         ],
         "hasMore": False,
     }
+
+
+def test_gateway_node_method_call_endpoint_keeps_not_connected_boundary_when_managed_wake_fails(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+    manager = app.state.manager
+    manager.instances[7] = InstanceRuntime(
+        instance_id=7,
+        name="Managed Offline Node",
+        transport="stdio",
+        command="codex",
+        args="app-server",
+        websocket_url=None,
+        cwd=str(tmp_path),
+        auto_connect=False,
+    )
+    app.state.gateway_node_service.registry.remember(
+        KnownNode(
+            node_id="7",
+            display_name="Managed Offline Node",
+            platform="stdio",
+            client_id="7",
+            client_mode="stdio",
+            commands=("system.run",),
+            paired=True,
+            connected=False,
+        )
+    )
+
+    async def fake_connect_instance(instance_id: int) -> InstanceRuntime:
+        assert instance_id == 7
+        raise RuntimeError("connect failed")
+
+    monkeypatch.setattr(manager, "connect_instance", fake_connect_instance)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        node_response = client.get("/api/gateway/nodes/7")
+        invoke_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "node.invoke",
+                "params": {
+                    "nodeId": "7",
+                    "command": "system.run",
+                    "params": {"command": "whoami"},
+                    "idempotencyKey": "idem-managed-offline-node",
+                },
+            },
+        )
+
+    assert node_response.status_code == 200
+    assert invoke_response.status_code == 503
+    assert invoke_response.json() == {"detail": "node not connected"}
 
 
 def test_managed_node_sync_emits_voicewake_snapshot_only_on_fresh_connect(
@@ -791,21 +1045,7 @@ def test_gateway_node_method_call_endpoint_surfaces_operator_method_payloads(tmp
     assert pair_list_response.status_code == 200
     assert pair_list_response.json() == {
         "pending": [],
-        "paired": [
-            {
-                "nodeId": "method-node-1",
-                "displayName": "Method Node Lane",
-                "platform": "desktop",
-                "version": None,
-                "coreVersion": None,
-                "uiVersion": None,
-                "remoteIp": None,
-                "permissions": None,
-                "createdAtMs": None,
-                "approvedAtMs": None,
-                "lastConnectedAtMs": 0,
-            }
-        ],
+        "paired": [],
     }
 
     assert describe_response.status_code == 200
@@ -841,6 +1081,37 @@ def test_remote_gateway_node_method_call_requires_api_key(tmp_path) -> None:
 
     assert response.status_code == 401
     assert "API key" in response.json()["detail"]
+
+
+def test_remote_gateway_node_method_call_accepts_x_openclaw_token_header(tmp_path) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    local_app = create_app(app_settings)
+
+    with TestClient(local_app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        owner_response = client.post("/api/operators/1/api-key")
+
+    assert owner_response.status_code == 200
+    api_key = owner_response.json()["api_key"]
+    assert isinstance(api_key, str)
+    assert api_key
+
+    remote_app = create_app(app_settings)
+    with TestClient(remote_app, client=("203.0.113.7", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            headers={"X-OpenClaw-Token": api_key},
+            json={"method": "gateway.identity.get", "params": {}},
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert re.fullmatch(r"[0-9a-f]{64}", payload["id"])
+    assert re.fullmatch(r"[A-Za-z0-9_-]{43}", payload["publicKey"])
 
 
 def test_remote_gateway_node_pair_approve_threads_operator_gateway_scopes(tmp_path) -> None:
@@ -953,6 +1224,7 @@ def test_gateway_node_pair_request_endpoint_persists_pending_requests_across_res
                     "platform": "macos",
                     "commands": ["system.run"],
                     "remoteIp": "10.0.0.8",
+                    "silent": True,
                 },
             },
         )
@@ -961,6 +1233,7 @@ def test_gateway_node_pair_request_endpoint_persists_pending_requests_across_res
     request_payload = request_response.json()
     request_id = request_payload["request"]["requestId"]
     request_ts = request_payload["request"]["ts"]
+    assert request_payload["request"]["silent"] is True
 
     restarted_app = create_app(app_settings)
     with TestClient(restarted_app, client=("testclient", 50000)) as client:
@@ -981,7 +1254,11 @@ def test_gateway_node_pair_request_endpoint_persists_pending_requests_across_res
                 "version": None,
                 "coreVersion": None,
                 "uiVersion": None,
+                "deviceFamily": None,
+                "modelIdentifier": None,
+                "caps": [],
                 "remoteIp": "10.0.0.8",
+                "silent": True,
                 "ts": request_ts,
                 "commands": ["system.run"],
                 "requiredApproveScopes": ["operator.pairing", "operator.admin"],
@@ -991,7 +1268,7 @@ def test_gateway_node_pair_request_endpoint_persists_pending_requests_across_res
     }
 
 
-def test_gateway_node_pair_request_endpoint_refresh_preserves_omitted_fields_and_clears_explicit_lists(
+def test_gateway_node_pair_request_endpoint_refresh_preserves_fields_and_clears_lists(
     tmp_path,
 ) -> None:
     app_settings = Settings(
@@ -1101,6 +1378,10 @@ def test_gateway_node_pair_request_endpoint_refresh_preserves_omitted_fields_and
                 "version": "1.2.3",
                 "coreVersion": "2.0.0",
                 "uiVersion": "3.0.0",
+                "deviceFamily": "iphone",
+                "modelIdentifier": "iphone15,3",
+                "caps": [],
+                "commands": [],
                 "remoteIp": "10.0.0.8",
                 "ts": cleared_response.json()["request"]["ts"],
                 "requiredApproveScopes": ["operator.pairing"],
@@ -1219,6 +1500,10 @@ def test_gateway_node_pair_approve_verify_and_rename_persist_across_restart(tmp_
             "version": None,
             "coreVersion": None,
             "uiVersion": None,
+            "deviceFamily": None,
+            "modelIdentifier": None,
+            "caps": [],
+            "commands": ["system.run"],
             "remoteIp": "10.0.0.10",
             "permissions": None,
             "createdAtMs": created_at_ms,
@@ -1237,11 +1522,16 @@ def test_gateway_node_pair_approve_verify_and_rename_persist_across_restart(tmp_
         "paired": [
             {
                 "nodeId": "pair-node-approved",
+                "token": token,
                 "displayName": "Approved Node",
                 "platform": "windows",
                 "version": None,
                 "coreVersion": None,
                 "uiVersion": None,
+                "deviceFamily": None,
+                "modelIdentifier": None,
+                "caps": [],
+                "commands": ["system.run"],
                 "remoteIp": "10.0.0.10",
                 "permissions": None,
                 "createdAtMs": created_at_ms,
@@ -1353,6 +1643,104 @@ def test_gateway_nodes_endpoints_include_persisted_approved_nodes_after_restart(
     }
 
 
+def test_managed_gateway_nodes_persist_last_connected_pairing_metadata_across_restart(
+    tmp_path,
+) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    first_app = create_app(app_settings)
+    manager = first_app.state.manager
+    manager.instances[7] = InstanceRuntime(
+        instance_id=7,
+        name="Managed Runtime Node",
+        transport="stdio",
+        command="codex",
+        args="app-server",
+        websocket_url=None,
+        cwd=str(tmp_path),
+        auto_connect=False,
+        connected=True,
+        last_event_at="2026-04-22T15:04:05Z",
+    )
+
+    with TestClient(first_app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        request_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "node.pair.request",
+                "params": {
+                    "nodeId": "7",
+                    "displayName": "Pending Managed Node",
+                    "platform": "linux",
+                },
+            },
+        )
+        request_id = request_response.json()["request"]["requestId"]
+        approve_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={"method": "node.pair.approve", "params": {"requestId": request_id}},
+        )
+        connected_response = client.get("/api/gateway/nodes/7")
+
+    assert approve_response.status_code == 200
+    expected_connected_at_ms = int(
+        datetime(2026, 4, 22, 15, 4, 5, tzinfo=UTC).timestamp() * 1000
+    )
+    assert connected_response.status_code == 200
+    assert connected_response.json() == {
+        "node_id": "7",
+        "display_name": "Managed Runtime Node",
+        "platform": "stdio",
+        "version": None,
+        "core_version": None,
+        "ui_version": None,
+        "client_id": "7",
+        "client_mode": "stdio",
+        "remote_ip": None,
+        "device_family": None,
+        "model_identifier": None,
+        "path_env": str(tmp_path),
+        "caps": [],
+        "commands": [],
+        "permissions": None,
+        "paired": True,
+        "connected": True,
+        "connected_at_ms": expected_connected_at_ms,
+        "approved_at_ms": approve_response.json()["node"]["approvedAtMs"],
+    }
+
+    restarted_app = create_app(app_settings)
+    with TestClient(restarted_app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        node_response = client.get("/api/gateway/nodes/7")
+
+    assert node_response.status_code == 200
+    assert node_response.json() == {
+        "node_id": "7",
+        "display_name": "Managed Runtime Node",
+        "platform": "stdio",
+        "version": None,
+        "core_version": None,
+        "ui_version": None,
+        "client_id": None,
+        "client_mode": None,
+        "remote_ip": None,
+        "device_family": None,
+        "model_identifier": None,
+        "path_env": None,
+        "caps": [],
+        "commands": [],
+        "permissions": None,
+        "paired": True,
+        "connected": False,
+        "connected_at_ms": expected_connected_at_ms,
+        "approved_at_ms": approve_response.json()["node"]["approvedAtMs"],
+    }
+
+
 def test_gateway_nodes_endpoints_keep_empty_live_command_surface_over_paired_values(
     tmp_path,
 ) -> None:
@@ -1414,6 +1802,10 @@ def test_gateway_nodes_endpoints_keep_empty_live_command_surface_over_paired_val
 
         nodes_response = client.get("/api/gateway/nodes")
         node_response = client.get("/api/gateway/nodes/pair-node-live-empty")
+        pair_list_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={"method": "node.pair.list", "params": {}},
+        )
 
     assert nodes_response.status_code == 200
     nodes_payload = nodes_response.json()
@@ -1464,6 +1856,366 @@ def test_gateway_nodes_endpoints_keep_empty_live_command_surface_over_paired_val
         "connected_at_ms": 321,
         "approved_at_ms": nodes_payload["nodes"][0]["approved_at_ms"],
     }
+    assert pair_list_response.status_code == 200
+    assert pair_list_response.json() == {
+        "pending": [],
+        "paired": [
+            {
+                "nodeId": "pair-node-live-empty",
+                "token": approve_response.json()["node"]["token"],
+                "displayName": "Catalog Node",
+                "platform": "linux",
+                "version": "1.0.1",
+                "coreVersion": "2.0.1",
+                "uiVersion": "3.0.1",
+                "deviceFamily": "server",
+                "modelIdentifier": "vm-standard",
+                "caps": ["shell"],
+                "commands": ["system.run"],
+                "remoteIp": "10.0.0.12",
+                "permissions": None,
+                "createdAtMs": approve_response.json()["node"]["createdAtMs"],
+                "approvedAtMs": approve_response.json()["node"]["approvedAtMs"],
+                "lastConnectedAtMs": 321,
+            }
+        ],
+    }
+
+
+def test_gateway_nodes_endpoints_pin_paired_commands_until_repair_request(tmp_path) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        request_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "node.pair.request",
+                "params": {
+                    "nodeId": "pair-node-command-pin",
+                    "displayName": "Pinned Node",
+                    "platform": "darwin",
+                    "commands": ["canvas.snapshot"],
+                },
+            },
+        )
+        request_id = request_response.json()["request"]["requestId"]
+        approve_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={"method": "node.pair.approve", "params": {"requestId": request_id}},
+        )
+        assert approve_response.status_code == 200
+
+        registry = client.app.state.gateway_node_service.registry
+        registry.register(
+            _AutoReplyNodeConnection(registry, "conn-pair-node-command-pin"),
+            GatewayNodeConnect(
+                client_id="live-pair-node-command-pin",
+                device_id="pair-node-command-pin",
+                client_mode="node",
+                display_name="Pinned Node",
+                platform="darwin",
+                version="1.0.1",
+                commands=("canvas.snapshot", "system.run"),
+            ),
+            connected_at_ms=321,
+        )
+
+        nodes_response = client.get("/api/gateway/nodes")
+        node_response = client.get("/api/gateway/nodes/pair-node-command-pin")
+
+    assert nodes_response.status_code == 200
+    nodes_payload = nodes_response.json()
+    assert nodes_payload["paired_count"] == 1
+    assert nodes_payload["connected_count"] == 1
+    assert nodes_payload["nodes"] == [
+        {
+            "node_id": "pair-node-command-pin",
+            "display_name": "Pinned Node",
+            "platform": "darwin",
+            "version": "1.0.1",
+            "core_version": None,
+            "ui_version": None,
+            "client_id": "live-pair-node-command-pin",
+            "client_mode": "node",
+            "remote_ip": None,
+            "device_family": None,
+            "model_identifier": None,
+            "path_env": None,
+            "caps": [],
+            "commands": ["canvas.snapshot"],
+            "permissions": None,
+            "paired": True,
+            "connected": True,
+            "connected_at_ms": 321,
+            "approved_at_ms": nodes_payload["nodes"][0]["approved_at_ms"],
+        }
+    ]
+    assert node_response.status_code == 200
+    assert node_response.json() == {
+        "node_id": "pair-node-command-pin",
+        "display_name": "Pinned Node",
+        "platform": "darwin",
+        "version": "1.0.1",
+        "core_version": None,
+        "ui_version": None,
+        "client_id": "live-pair-node-command-pin",
+        "client_mode": "node",
+        "remote_ip": None,
+        "device_family": None,
+        "model_identifier": None,
+        "path_env": None,
+        "caps": [],
+        "commands": ["canvas.snapshot"],
+        "permissions": None,
+        "paired": True,
+        "connected": True,
+        "connected_at_ms": 321,
+        "approved_at_ms": nodes_payload["nodes"][0]["approved_at_ms"],
+    }
+
+
+def test_gateway_nodes_endpoints_stage_silent_scope_upgrade_request_for_paired_command_expansion(
+    tmp_path,
+) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        request_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "node.pair.request",
+                "params": {
+                    "nodeId": "pair-node-scope-upgrade-catalog",
+                    "displayName": "Pinned Node",
+                    "platform": "darwin",
+                    "commands": ["canvas.snapshot"],
+                },
+            },
+        )
+        request_id = request_response.json()["request"]["requestId"]
+        approve_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={"method": "node.pair.approve", "params": {"requestId": request_id}},
+        )
+        assert approve_response.status_code == 200
+
+        registry = client.app.state.gateway_node_service.registry
+        registry.register(
+            _AutoReplyNodeConnection(registry, "conn-pair-node-scope-upgrade-catalog"),
+            GatewayNodeConnect(
+                client_id="live-pair-node-scope-upgrade-catalog",
+                device_id="pair-node-scope-upgrade-catalog",
+                client_mode="node",
+                display_name="Pinned Node",
+                platform="darwin",
+                version="1.0.1",
+                commands=("canvas.snapshot", "system.run"),
+            ),
+            connected_at_ms=321,
+        )
+
+        nodes_response = client.get("/api/gateway/nodes")
+        node_response = client.get("/api/gateway/nodes/pair-node-scope-upgrade-catalog")
+        pair_list_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={"method": "node.pair.list", "params": {}},
+        )
+
+    assert nodes_response.status_code == 200
+    nodes_payload = nodes_response.json()
+    assert nodes_payload["nodes"] == [
+        {
+            "node_id": "pair-node-scope-upgrade-catalog",
+            "display_name": "Pinned Node",
+            "platform": "darwin",
+            "version": "1.0.1",
+            "core_version": None,
+            "ui_version": None,
+            "client_id": "live-pair-node-scope-upgrade-catalog",
+            "client_mode": "node",
+            "remote_ip": None,
+            "device_family": None,
+            "model_identifier": None,
+            "path_env": None,
+            "caps": [],
+            "commands": ["canvas.snapshot"],
+            "permissions": None,
+            "paired": True,
+            "connected": True,
+            "connected_at_ms": 321,
+            "approved_at_ms": nodes_payload["nodes"][0]["approved_at_ms"],
+        }
+    ]
+    assert node_response.status_code == 200
+    assert node_response.json() == {
+        "node_id": "pair-node-scope-upgrade-catalog",
+        "display_name": "Pinned Node",
+        "platform": "darwin",
+        "version": "1.0.1",
+        "core_version": None,
+        "ui_version": None,
+        "client_id": "live-pair-node-scope-upgrade-catalog",
+        "client_mode": "node",
+        "remote_ip": None,
+        "device_family": None,
+        "model_identifier": None,
+        "path_env": None,
+        "caps": [],
+        "commands": ["canvas.snapshot"],
+        "permissions": None,
+        "paired": True,
+        "connected": True,
+        "connected_at_ms": 321,
+        "approved_at_ms": nodes_payload["nodes"][0]["approved_at_ms"],
+    }
+
+    assert pair_list_response.status_code == 200
+    pair_list_payload = pair_list_response.json()
+    pending_request_id = pair_list_payload["pending"][0]["requestId"]
+    assert pending_request_id != request_id
+    assert pair_list_payload["pending"] == [
+        {
+            "requestId": pending_request_id,
+            "nodeId": "pair-node-scope-upgrade-catalog",
+            "displayName": "Pinned Node",
+            "platform": "darwin",
+            "version": "1.0.1",
+            "coreVersion": None,
+            "uiVersion": None,
+            "deviceFamily": None,
+            "modelIdentifier": None,
+            "caps": [],
+            "commands": ["canvas.snapshot", "system.run"],
+            "remoteIp": None,
+            "silent": True,
+            "ts": pair_list_payload["pending"][0]["ts"],
+            "requiredApproveScopes": ["operator.pairing", "operator.admin"],
+        }
+    ]
+    assert pair_list_payload["paired"] == [
+        {
+            "nodeId": "pair-node-scope-upgrade-catalog",
+            "token": approve_response.json()["node"]["token"],
+            "displayName": "Pinned Node",
+            "platform": "darwin",
+            "version": "1.0.1",
+            "coreVersion": None,
+            "uiVersion": None,
+            "deviceFamily": None,
+            "modelIdentifier": None,
+            "caps": [],
+            "commands": ["canvas.snapshot"],
+            "remoteIp": None,
+            "permissions": None,
+            "createdAtMs": approve_response.json()["node"]["createdAtMs"],
+            "approvedAtMs": approve_response.json()["node"]["approvedAtMs"],
+            "lastConnectedAtMs": 321,
+        }
+    ]
+
+
+def test_gateway_node_method_call_endpoint_blocks_scope_upgrade_until_repair_request_is_approved(
+    tmp_path,
+) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        request_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "node.pair.request",
+                "params": {
+                    "nodeId": "pair-node-scope-upgrade-api",
+                    "displayName": "Pinned Node",
+                    "platform": "darwin",
+                    "commands": ["canvas.snapshot"],
+                },
+            },
+        )
+        approve_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "node.pair.approve",
+                "params": {"requestId": request_response.json()["request"]["requestId"]},
+            },
+        )
+        assert approve_response.status_code == 200
+
+        registry = client.app.state.gateway_node_service.registry
+        registry.register(
+            _AutoReplyNodeConnection(registry, "conn-pair-node-scope-upgrade-api"),
+            GatewayNodeConnect(
+                client_id="live-pair-node-scope-upgrade-api",
+                device_id="pair-node-scope-upgrade-api",
+                client_mode="node",
+                display_name="Pinned Node",
+                platform="darwin",
+                version="1.0.1",
+                commands=("canvas.snapshot", "system.run"),
+            ),
+            connected_at_ms=321,
+        )
+
+        invoke_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "node.invoke",
+                "params": {
+                    "nodeId": "pair-node-scope-upgrade-api",
+                    "command": "system.run",
+                    "params": {"command": "whoami"},
+                    "idempotencyKey": "idem-system-run",
+                },
+            },
+        )
+        node_response = client.get("/api/gateway/nodes/pair-node-scope-upgrade-api")
+        pair_list_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={"method": "node.pair.list", "params": {}},
+        )
+
+    assert pair_list_response.status_code == 200
+    pending_request_id = pair_list_response.json()["pending"][0]["requestId"]
+    assert invoke_response.status_code == 409
+    assert invoke_response.json() == {
+        "detail": f"scope upgrade pending approval (requestId: {pending_request_id})"
+    }
+    assert node_response.status_code == 200
+    assert node_response.json()["commands"] == ["canvas.snapshot"]
+    assert pair_list_response.json()["pending"] == [
+        {
+            "requestId": pending_request_id,
+            "nodeId": "pair-node-scope-upgrade-api",
+            "displayName": "Pinned Node",
+            "platform": "darwin",
+            "version": "1.0.1",
+            "coreVersion": None,
+            "uiVersion": None,
+            "deviceFamily": None,
+            "modelIdentifier": None,
+            "caps": [],
+            "commands": ["canvas.snapshot", "system.run"],
+            "remoteIp": None,
+            "silent": True,
+            "ts": pair_list_response.json()["pending"][0]["ts"],
+            "requiredApproveScopes": ["operator.pairing", "operator.admin"],
+        }
+    ]
 
 
 def test_gateway_node_method_call_endpoint_rejects_node_only_and_unknown_methods(tmp_path) -> None:
@@ -1597,6 +2349,59 @@ def test_gateway_node_method_call_endpoint_supports_gateway_identity_get(tmp_pat
     assert stored["deviceId"] == first_response.json()["id"]
     assert "BEGIN PUBLIC KEY" in stored["publicKeyPem"]
     assert "BEGIN PRIVATE KEY" in stored["privateKeyPem"]
+
+
+def test_gateway_node_method_call_endpoint_repairs_device_id_with_invalid_private_pem(
+    tmp_path,
+) -> None:
+    private_key = Ed25519PrivateKey.generate()
+    public_key_pem = private_key.public_key().public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    ).decode("utf-8")
+    public_key_bytes = private_key.public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+    expected_id = hashlib.sha256(public_key_bytes).hexdigest()
+    expected_public_key = base64.urlsafe_b64encode(public_key_bytes).decode("ascii").rstrip("=")
+    identity_path = tmp_path / "data" / "settings" / "gateway-identity.json"
+    identity_path.parent.mkdir(parents=True, exist_ok=True)
+    identity_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "deviceId": "stale-device-id",
+                "publicKeyPem": public_key_pem,
+                "privateKeyPem": "not-a-valid-private-key",
+                "createdAtMs": 123,
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={"method": "gateway.identity.get", "params": {}},
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {"id": expected_id, "publicKey": expected_public_key}
+    stored = json.loads(identity_path.read_text(encoding="utf-8"))
+    assert stored["deviceId"] == expected_id
+    assert stored["publicKeyPem"] == public_key_pem
+    assert stored["privateKeyPem"] == "not-a-valid-private-key"
+    assert stored["createdAtMs"] == 123
 
 
 def test_gateway_node_method_call_endpoint_supports_health(tmp_path) -> None:
@@ -2920,6 +3725,10 @@ def test_gateway_node_method_call_endpoint_supports_config_schema_and_lookup(tmp
             "/api/gateway/node-methods/call",
             json={"method": "config.schema.lookup", "params": {"path": "localMediaPreviewRoots"}},
         )
+        embed_lookup_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={"method": "config.schema.lookup", "params": {"path": "embedSandbox"}},
+        )
 
     assert schema_response.status_code == 200
     assert schema_response.json()["version"] == "openzues-control-ui-bootstrap-v1"
@@ -2957,6 +3766,18 @@ def test_gateway_node_method_call_endpoint_supports_config_schema_and_lookup(tmp
             }
         ],
     }
+    assert embed_lookup_response.status_code == 200
+    assert embed_lookup_response.json() == {
+        "path": "embedSandbox",
+        "schema": {
+            "type": "string",
+            "title": "Embed Sandbox",
+            "enum": ["strict", "scripts", "trusted"],
+        },
+        "hint": {"label": "Embed Sandbox"},
+        "hintPath": "embedSandbox",
+        "children": [],
+    }
 
 
 def test_gateway_node_method_call_endpoint_config_schema_lookup_rejects_unknown_path(
@@ -2977,6 +3798,178 @@ def test_gateway_node_method_call_endpoint_config_schema_lookup_rejects_unknown_
 
     assert response.status_code == 400
     assert response.json()["detail"] == "config schema path not found"
+
+
+def test_gateway_node_method_call_endpoint_config_schema_lookup_rejects_empty_or_dot_only_path(
+    tmp_path,
+) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        for path in ["", ".", "..."]:
+            response = client.post(
+                "/api/gateway/node-methods/call",
+                json={"method": "config.schema.lookup", "params": {"path": path}},
+            )
+
+            assert response.status_code == 400
+            assert response.json()["detail"] == "config schema path not found"
+
+
+def test_gateway_node_method_call_endpoint_marks_branch_schema_children(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        gateway_config_schema_module,
+        "_root_schema",
+        lambda: {
+            "type": "object",
+            "properties": {
+                "parent": {
+                    "type": "object",
+                    "properties": {
+                        "branch": {
+                            "title": "Branch Field",
+                            "allOf": [
+                                {"type": "string"},
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "token": {"type": "string"},
+                                    },
+                                },
+                            ],
+                        }
+                    },
+                }
+            },
+        },
+    )
+    monkeypatch.setattr(gateway_config_schema_module, "_UI_HINTS", {})
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={"method": "config.schema.lookup", "params": {"path": "parent"}},
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "path": "parent",
+        "schema": {
+            "type": "object",
+        },
+        "children": [
+            {
+                "key": "branch",
+                "path": "parent.branch",
+                "type": None,
+                "required": False,
+                "hasChildren": True,
+            }
+        ],
+    }
+
+
+def test_gateway_node_method_call_endpoint_supports_scoped_plugin_config_lookup(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        gateway_config_schema_module,
+        "_root_schema",
+        lambda: {
+            "type": "object",
+            "properties": {
+                "$schema": {
+                    "type": "string",
+                    "title": "Schema URI",
+                },
+                "plugins": {
+                    "type": "object",
+                    "properties": {
+                        "entries": {
+                            "type": "object",
+                            "properties": {
+                                "@openclaw/voice-call": {
+                                    "type": "object",
+                                    "properties": {
+                                        "config": {
+                                            "type": "object",
+                                            "title": "Voice Call Config",
+                                            "properties": {
+                                                "provider": {
+                                                    "type": "string",
+                                                    "title": "Provider",
+                                                }
+                                            },
+                                        }
+                                    },
+                                }
+                            },
+                        }
+                    },
+                },
+            },
+        },
+    )
+    monkeypatch.setattr(
+        gateway_config_schema_module,
+        "_UI_HINTS",
+        {
+            "$schema": {"label": "Schema URI"},
+            "plugins.entries.@openclaw/voice-call.config": {
+                "label": "Voice Call Config",
+            },
+        },
+    )
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "config.schema.lookup",
+                "params": {"path": "plugins.entries.@openclaw/voice-call.config"},
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "path": "plugins.entries.@openclaw/voice-call.config",
+        "schema": {
+            "type": "object",
+            "title": "Voice Call Config",
+        },
+        "hint": {"label": "Voice Call Config"},
+        "hintPath": "plugins.entries.@openclaw/voice-call.config",
+        "children": [
+            {
+                "key": "provider",
+                "path": "plugins.entries.@openclaw/voice-call.config.provider",
+                "type": "string",
+                "required": False,
+                "hasChildren": False,
+            }
+        ],
+    }
 
 
 def test_gateway_node_method_call_endpoint_supports_tools_catalog(tmp_path) -> None:
@@ -7271,6 +8264,7 @@ def test_gateway_node_method_call_endpoint_supports_wizard_start_next_completion
     assert start_payload["status"] == "running"
     assert operator_step == {
         "id": operator_step["id"],
+        "field": "operator_name",
         "type": "text",
         "title": "Operator Name",
         "message": "Name the operator who should receive the remote ingress API key.",
@@ -7284,6 +8278,7 @@ def test_gateway_node_method_call_endpoint_supports_wizard_start_next_completion
         "status": "running",
         "step": {
             "id": email_step["id"],
+            "field": "operator_email",
             "type": "text",
             "title": "Operator Email",
             "message": "Optionally add an email for the remote API key handoff.",
@@ -7298,6 +8293,7 @@ def test_gateway_node_method_call_endpoint_supports_wizard_start_next_completion
         "status": "running",
         "step": {
             "id": team_step["id"],
+            "field": "team_name",
             "type": "text",
             "title": "Operator Team",
             "message": "Optionally group the remote operator under a team label.",
@@ -7311,6 +8307,7 @@ def test_gateway_node_method_call_endpoint_supports_wizard_start_next_completion
         "status": "running",
         "step": {
             "id": task_step["id"],
+            "field": "task_name",
             "type": "text",
             "title": "Task Name",
             "message": "Name the recurring setup task.",
@@ -7410,6 +8407,7 @@ def test_onboarding_wizard_http_endpoint_supports_remote_completion(tmp_path) ->
     assert start_payload["status"] == "running"
     assert operator_step == {
         "id": operator_step["id"],
+        "field": "operator_name",
         "type": "text",
         "title": "Operator Name",
         "message": "Name the operator who should receive the remote ingress API key.",
@@ -7421,6 +8419,7 @@ def test_onboarding_wizard_http_endpoint_supports_remote_completion(tmp_path) ->
         "status": "running",
         "step": {
             "id": email_step["id"],
+            "field": "operator_email",
             "type": "text",
             "title": "Operator Email",
             "message": "Optionally add an email for the remote API key handoff.",
@@ -7435,6 +8434,7 @@ def test_onboarding_wizard_http_endpoint_supports_remote_completion(tmp_path) ->
         "status": "running",
         "step": {
             "id": team_step["id"],
+            "field": "team_name",
             "type": "text",
             "title": "Operator Team",
             "message": "Optionally group the remote operator under a team label.",
@@ -7448,6 +8448,7 @@ def test_onboarding_wizard_http_endpoint_supports_remote_completion(tmp_path) ->
         "status": "running",
         "step": {
             "id": task_step["id"],
+            "field": "task_name",
             "type": "text",
             "title": "Task Name",
             "message": "Name the recurring setup task.",
@@ -7465,6 +8466,84 @@ def test_onboarding_wizard_http_endpoint_supports_remote_completion(tmp_path) ->
     assert saved_payload["team_name"] is None
     assert saved_payload["project_path"] == str(tmp_path)
     assert saved_payload["task_name"] == "Remote Guided Loop"
+
+
+def test_onboarding_wizard_http_endpoint_allows_next_without_answer(tmp_path) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        start = client.post(
+            "/api/onboarding/wizard/start",
+            json={},
+        )
+        assert start.status_code == 200
+        start_payload = start.json()
+
+        current = client.post(
+            "/api/onboarding/wizard/next",
+            json={"sessionId": start_payload["sessionId"]},
+        )
+
+    assert current.status_code == 200
+    assert current.json() == {
+        "done": False,
+        "status": "running",
+        "step": {
+            "id": start_payload["step"]["id"],
+            "field": "mode",
+            "type": "select",
+            "title": "Setup Mode",
+            "message": "Choose how you want the gateway wizard to stage setup.",
+            "options": [
+                {
+                    "value": "local",
+                    "label": "Local",
+                    "hint": "Use a local control plane and desktop lane.",
+                },
+                {
+                    "value": "remote",
+                    "label": "Remote",
+                    "hint": "Stage the workspace spine first and bind a lane later.",
+                },
+            ],
+            "initialValue": "local",
+            "executor": "client",
+        },
+    }
+
+
+def test_onboarding_dashboard_marks_guided_owned_bootstrap_fields(tmp_path) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        response = client.get("/")
+
+    assert response.status_code == 200
+    html = response.text
+    assert 'id="onboarding-guided-selection-note"' in html
+    for field_name in (
+        "project_path",
+        "instance_mode",
+        "instance_id",
+        "instance_name",
+        "operator_name",
+        "operator_email",
+        "team_name",
+        "task_name",
+    ):
+        assert re.search(
+            rf'<(?:input|select)[^>]*name="{field_name}"[^>]*data-guided-owned="true"',
+            html,
+        )
 
 
 def test_onboarding_wizard_http_endpoint_prompts_for_mode_and_local_flow_from_blank_start(
@@ -7559,6 +8638,7 @@ def test_onboarding_wizard_http_endpoint_prompts_for_mode_and_local_flow_from_bl
     assert start_payload["status"] == "running"
     assert mode_step == {
         "id": mode_step["id"],
+        "field": "mode",
         "type": "select",
         "title": "Setup Mode",
         "message": "Choose how you want the gateway wizard to stage setup.",
@@ -7574,7 +8654,7 @@ def test_onboarding_wizard_http_endpoint_prompts_for_mode_and_local_flow_from_bl
                 "hint": "Stage the workspace spine first and bind a lane later.",
             },
         ],
-        "initialvalue": "local",
+        "initialValue": "local",
         "executor": "client",
     }
     assert flow_payload == {
@@ -7582,6 +8662,7 @@ def test_onboarding_wizard_http_endpoint_prompts_for_mode_and_local_flow_from_bl
         "status": "running",
         "step": {
             "id": flow_step["id"],
+            "field": "flow",
             "type": "select",
             "title": "Setup Flow",
             "message": "Choose how deeply to stage the local bootstrap posture.",
@@ -7597,7 +8678,7 @@ def test_onboarding_wizard_http_endpoint_prompts_for_mode_and_local_flow_from_bl
                     "hint": "Stage the full local control plane posture before bootstrap.",
                 },
             ],
-            "initialvalue": "quickstart",
+            "initialValue": "quickstart",
             "executor": "client",
         },
     }
@@ -7606,6 +8687,7 @@ def test_onboarding_wizard_http_endpoint_prompts_for_mode_and_local_flow_from_bl
         "status": "running",
         "step": {
             "id": workspace_step["id"],
+            "field": "project_path",
             "type": "text",
             "title": "Workspace",
             "message": "Enter the workspace path to stage for setup.",
@@ -7618,6 +8700,7 @@ def test_onboarding_wizard_http_endpoint_prompts_for_mode_and_local_flow_from_bl
         "status": "running",
         "step": {
             "id": operator_step["id"],
+            "field": "operator_name",
             "type": "text",
             "title": "Operator Name",
             "message": "Name the operator who should receive the local bootstrap access.",
@@ -7630,6 +8713,7 @@ def test_onboarding_wizard_http_endpoint_prompts_for_mode_and_local_flow_from_bl
         "status": "running",
         "step": {
             "id": task_step["id"],
+            "field": "task_name",
             "type": "text",
             "title": "Task Name",
             "message": "Name the recurring setup task.",
@@ -7645,6 +8729,67 @@ def test_onboarding_wizard_http_endpoint_prompts_for_mode_and_local_flow_from_bl
     assert saved_payload["project_path"] == str(tmp_path)
     assert saved_payload["operator_name"] == "Local Builder"
     assert saved_payload["task_name"] == "Local Guided Loop"
+
+
+def test_picker_only_setup_wizard_save_does_not_preseed_guided_mode_step(tmp_path) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        saved = client.put(
+            "/api/setup/wizard",
+            json={
+                "mode": "remote",
+                "flow": "advanced",
+            },
+        )
+        start = client.post(
+            "/api/onboarding/wizard/start",
+            json={},
+        )
+        current = client.get("/api/setup/wizard")
+
+    assert saved.status_code == 200
+    saved_payload = saved.json()
+    assert saved_payload["updated_at"] is None
+    assert saved_payload["mode"] == "local"
+    assert saved_payload["flow"] == "quickstart"
+
+    assert start.status_code == 200
+    start_payload = start.json()
+    assert start_payload["done"] is False
+    assert start_payload["status"] == "running"
+    assert start_payload["step"] == {
+        "id": start_payload["step"]["id"],
+        "field": "mode",
+        "type": "select",
+        "title": "Setup Mode",
+        "message": "Choose how you want the gateway wizard to stage setup.",
+        "options": [
+            {
+                "value": "local",
+                "label": "Local",
+                "hint": "Use a local control plane and desktop lane.",
+            },
+            {
+                "value": "remote",
+                "label": "Remote",
+                "hint": "Stage the workspace spine first and bind a lane later.",
+            },
+        ],
+        "initialValue": "local",
+        "executor": "client",
+    }
+
+    assert current.status_code == 200
+    current_payload = current.json()
+    assert current_payload["updated_at"] is None
+    assert current_payload["mode"] == "local"
+    assert current_payload["flow"] == "quickstart"
 
 
 def test_gateway_node_method_call_endpoint_supports_local_wizard_completion_from_saved_draft(
@@ -7719,6 +8864,7 @@ def test_gateway_node_method_call_endpoint_supports_local_wizard_completion_from
     assert start_payload["status"] == "running"
     assert operator_step == {
         "id": operator_step["id"],
+        "field": "operator_name",
         "type": "text",
         "title": "Operator Name",
         "message": "Name the operator who should receive the local bootstrap access.",
@@ -7730,6 +8876,7 @@ def test_gateway_node_method_call_endpoint_supports_local_wizard_completion_from
         "status": "running",
         "step": {
             "id": task_step["id"],
+            "field": "task_name",
             "type": "text",
             "title": "Task Name",
             "message": "Name the recurring setup task.",
@@ -7790,6 +8937,7 @@ def test_onboarding_wizard_start_clears_explicit_blank_optional_remote_identity_
     assert start_payload["status"] == "running"
     assert start_payload["step"] == {
         "id": start_payload["step"]["id"],
+        "field": "operator_email",
         "type": "text",
         "title": "Operator Email",
         "message": "Optionally add an email for the remote API key handoff.",
@@ -7834,6 +8982,110 @@ def test_onboarding_wizard_http_endpoint_cancel_without_persisting_draft(tmp_pat
     assert saved_payload["updated_at"] is None
     assert saved_payload["project_path"] is None
     assert saved_payload["task_name"] is None
+
+
+def test_onboarding_wizard_http_endpoint_status_reports_running_and_stale_session(
+    tmp_path,
+) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        start = client.post(
+            "/api/onboarding/wizard/start",
+            json={},
+        )
+        assert start.status_code == 200
+        session_id = start.json()["sessionId"]
+
+        status = client.get(f"/api/onboarding/wizard/status?sessionId={session_id}")
+        assert status.status_code == 200
+
+        cancel = client.post(
+            "/api/onboarding/wizard/cancel",
+            json={"sessionId": session_id},
+        )
+        stale = client.get(f"/api/onboarding/wizard/status?sessionId={session_id}")
+
+    assert status.json() == {"status": "running"}
+    assert cancel.status_code == 200
+    assert cancel.json() == {"status": "cancelled", "error": "cancelled"}
+    assert stale.status_code == 400
+    assert stale.json() == {"detail": "wizard not found"}
+
+
+def test_onboarding_wizard_http_endpoint_persists_answered_fields_before_cancel(tmp_path) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        start = client.post(
+            "/api/onboarding/wizard/start",
+            json={
+                "mode": "local",
+                "flow": "quickstart",
+                "project_path": str(tmp_path),
+            },
+        )
+        assert start.status_code == 200
+        start_payload = start.json()
+        session_id = start_payload["sessionId"]
+        operator_step = start_payload["step"]
+
+        next_step = client.post(
+            "/api/onboarding/wizard/next",
+            json={
+                "sessionId": session_id,
+                "answer": {
+                    "stepId": operator_step["id"],
+                    "value": "Local Builder",
+                },
+            },
+        )
+        saved_before_cancel = client.get("/api/setup/wizard")
+        cancel = client.post(
+            "/api/onboarding/wizard/cancel",
+            json={"sessionId": session_id},
+        )
+        saved_after_cancel = client.get("/api/setup/wizard")
+
+    assert next_step.status_code == 200
+    next_payload = next_step.json()
+    assert next_payload == {
+        "done": False,
+        "status": "running",
+        "step": {
+            "id": next_payload["step"]["id"],
+            "field": "task_name",
+            "type": "text",
+            "title": "Task Name",
+            "message": "Name the recurring setup task.",
+            "executor": "client",
+        },
+    }
+    assert saved_before_cancel.status_code == 200
+    before_payload = saved_before_cancel.json()
+    assert before_payload["mode"] == "local"
+    assert before_payload["flow"] == "quickstart"
+    assert before_payload["project_path"] == str(tmp_path)
+    assert before_payload["operator_name"] == "Local Builder"
+    assert before_payload["task_name"] is None
+    assert before_payload["updated_at"] is not None
+    assert cancel.status_code == 200
+    assert cancel.json() == {"status": "cancelled", "error": "cancelled"}
+    assert saved_after_cancel.status_code == 200
+    after_payload = saved_after_cancel.json()
+    assert after_payload["project_path"] == str(tmp_path)
+    assert after_payload["operator_name"] == "Local Builder"
+    assert after_payload["task_name"] is None
 
 
 def test_gateway_node_method_call_endpoint_supports_wizard_cancel_without_persisting_draft(
@@ -16939,6 +18191,40 @@ def test_gateway_node_method_call_endpoint_supports_config_open_file(
     assert snapshot["serverVersion"]
 
 
+def test_gateway_node_method_call_endpoint_returns_generic_error_when_config_open_command_fails(
+    tmp_path, monkeypatch
+) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+
+    def fake_open_path(_path: Path) -> None:
+        raise subprocess.CalledProcessError(1, ["xdg-open"])
+
+    monkeypatch.setattr(
+        "openzues.services.gateway_config._open_gateway_config_path",
+        fake_open_path,
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={"method": "config.openFile", "params": {}},
+        )
+
+    expected_path = tmp_path / "data" / "settings" / "control-ui-config.json"
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": False,
+        "path": str(expected_path),
+        "error": "failed to open config file",
+    }
+    assert expected_path.exists()
+
+
 @pytest.mark.parametrize(
     ("method", "params", "expected_detail"),
     [
@@ -18660,9 +19946,19 @@ def test_send_endpoint_delivers_channel_target_message_and_records_outbound_deli
     assert response.status_code == 200
     assert response.json() == {
         "ok": True,
+        "runId": "idem-send",
+        "channel": "slack",
         "messageId": "1",
         "sessionKey": expected_session_key,
         "deliveryId": 1,
+        "transport": {
+            "runtime": "session-backed",
+            "channel": "slack",
+            "target": "channel:C123",
+            "accountId": "default",
+            "threadId": "1710000000.9999",
+            "sessionKey": expected_session_key,
+        },
     }
     assert delivery is not None
     assert delivery["route_kind"] == "announce"
@@ -18676,6 +19972,184 @@ def test_send_endpoint_delivers_channel_target_message_and_records_outbound_deli
     assert messages[0]["id"] == 1
     assert messages[0]["role"] == "assistant"
     assert messages[0]["content"] == "Ship parity."
+
+
+def test_send_endpoint_reuses_idempotent_channel_target_delivery(tmp_path) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+    expected_session_key = resolve_thread_session_keys(
+        base_session_key=build_launch_session_key(
+            mode="workspace_affinity",
+            preferred_instance_id=None,
+            task_id=None,
+            project_id=None,
+            operator_id=None,
+            conversation_target=ConversationTargetView(
+                channel="slack",
+                account_id="default",
+                peer_kind="channel",
+                peer_id="channel:C123",
+            ),
+        ),
+        thread_id="1710000000.9999",
+    ).session_key
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        database = client.app.state.database
+        first_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "send",
+                "params": {
+                    "to": "channel:C123",
+                    "message": "Ship parity.",
+                    "channel": "slack",
+                    "accountId": "default",
+                    "threadId": "1710000000.9999",
+                    "idempotencyKey": "idem-send-retry",
+                },
+            },
+        )
+        second_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "send",
+                "params": {
+                    "to": "channel:C123",
+                    "message": "Ship parity.",
+                    "channel": "slack",
+                    "accountId": "default",
+                    "threadId": "1710000000.9999",
+                    "idempotencyKey": "idem-send-retry",
+                },
+            },
+        )
+        deliveries = asyncio.run(database.list_outbound_deliveries(limit=10))
+        messages = asyncio.run(
+            database.list_control_chat_messages(limit=10, session_key=expected_session_key)
+        )
+
+    expected_payload = {
+        "ok": True,
+        "runId": "idem-send-retry",
+        "channel": "slack",
+        "messageId": "1",
+        "sessionKey": expected_session_key,
+        "deliveryId": 1,
+        "transport": {
+            "runtime": "session-backed",
+            "channel": "slack",
+            "target": "channel:C123",
+            "accountId": "default",
+            "threadId": "1710000000.9999",
+            "sessionKey": expected_session_key,
+        },
+    }
+    assert first_response.status_code == 200
+    assert second_response.status_code == 200
+    assert first_response.json() == expected_payload
+    assert second_response.json() == expected_payload
+    assert len(deliveries) == 1
+    assert deliveries[0]["request_idempotency_key"] == "idem-send-retry"
+    assert deliveries[0]["delivery_message_id"] == "1"
+    assert len(messages) == 1
+    assert messages[0]["id"] == 1
+    assert messages[0]["content"] == "Ship parity."
+
+
+def test_send_endpoint_delivers_channel_target_media_and_records_outbound_delivery(
+    tmp_path,
+) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+    expected_session_key = resolve_thread_session_keys(
+        base_session_key=build_launch_session_key(
+            mode="workspace_affinity",
+            preferred_instance_id=None,
+            task_id=None,
+            project_id=None,
+            operator_id=None,
+            conversation_target=ConversationTargetView(
+                channel="slack",
+                account_id="default",
+                peer_kind="channel",
+                peer_id="channel:C123",
+            ),
+        ),
+        thread_id="1710000000.9999",
+    ).session_key
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        database = client.app.state.database
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "send",
+                "params": {
+                    "to": "channel:C123",
+                    "mediaUrl": " https://example.com/a.png ",
+                    "mediaUrls": ["https://example.com/b.png", "https://example.com/a.png"],
+                    "gifPlayback": True,
+                    "channel": "slack",
+                    "accountId": "default",
+                    "threadId": "1710000000.9999",
+                    "sessionKey": "agent:main:slack:channel:C123",
+                    "idempotencyKey": "idem-send-media",
+                },
+            },
+        )
+        delivery = asyncio.run(database.get_outbound_delivery(1))
+        messages = asyncio.run(
+            database.list_control_chat_messages(limit=10, session_key=expected_session_key)
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True,
+        "runId": "idem-send-media",
+        "channel": "slack",
+        "messageId": "1",
+        "sessionKey": expected_session_key,
+        "deliveryId": 1,
+        "transport": {
+            "runtime": "session-backed",
+            "channel": "slack",
+            "target": "channel:C123",
+            "accountId": "default",
+            "threadId": "1710000000.9999",
+            "sessionKey": expected_session_key,
+        },
+    }
+    assert delivery is not None
+    assert delivery["route_kind"] == "announce"
+    assert delivery["event_type"] == "gateway/send"
+    assert delivery["session_key"] == expected_session_key
+    assert delivery["message_summary"] == "Media delivery (2 items)"
+    assert delivery["route_scope"]["source"] == "gateway.send"
+    assert delivery["route_scope"]["source_session_key"] == "agent:main:slack:channel:C123"
+    assert delivery["route_scope"]["thread_id"] == "1710000000.9999"
+    assert delivery["event_payload"]["mediaUrls"] == [
+        "https://example.com/a.png",
+        "https://example.com/b.png",
+    ]
+    assert delivery["event_payload"]["gifPlayback"] is True
+    assert len(messages) == 1
+    assert messages[0]["id"] == 1
+    assert messages[0]["role"] == "assistant"
+    assert messages[0]["content"] == (
+        "Media:\n"
+        "1. https://example.com/a.png\n"
+        "2. https://example.com/b.png\n\n"
+        "Settings: gifPlayback=true"
+    )
 
 
 def test_send_endpoint_rejects_invalid_whatsapp_target_shape(tmp_path) -> None:
@@ -18793,9 +20267,17 @@ def test_send_endpoint_allows_blank_optional_routing_identifiers(
     assert response.status_code == 200
     assert response.json() == {
         "ok": True,
+        "runId": f"idem-send-blank-{field}",
+        "channel": "slack",
         "messageId": "1",
         "sessionKey": expected_session_key,
         "deliveryId": 1,
+        "transport": {
+            "runtime": "session-backed",
+            "channel": "slack",
+            "target": "channel:C123",
+            "sessionKey": expected_session_key,
+        },
     }
 
 
@@ -18896,15 +20378,34 @@ def test_send_endpoint_rejects_missing_channel_when_multiple_route_channels_conf
     }
 
 
-def test_poll_endpoint_returns_validated_unavailable_contract(tmp_path) -> None:
+def test_poll_endpoint_delivers_channel_target_poll_and_records_outbound_delivery(
+    tmp_path,
+) -> None:
     app_settings = Settings(
         data_dir=tmp_path / "data",
         db_path=tmp_path / "data" / "openzues-test.db",
     )
     app = create_app(app_settings)
+    expected_session_key = resolve_thread_session_keys(
+        base_session_key=build_launch_session_key(
+            mode="workspace_affinity",
+            preferred_instance_id=None,
+            task_id=None,
+            project_id=None,
+            operator_id=None,
+            conversation_target=ConversationTargetView(
+                channel="slack",
+                account_id="default",
+                peer_kind="channel",
+                peer_id="channel:C123",
+            ),
+        ),
+        thread_id="1710000000.9999",
+    ).session_key
 
     with TestClient(app, client=("testclient", 50000)) as client:
         _allow_mutating_api_requests(client)
+        database = client.app.state.database
         response = client.post(
             "/api/gateway/node-methods/call",
             json={
@@ -18917,23 +20418,74 @@ def test_poll_endpoint_returns_validated_unavailable_contract(tmp_path) -> None:
                     "durationSeconds": 3600,
                     "channel": "slack",
                     "accountId": "default",
+                    "threadId": "1710000000.9999",
                     "idempotencyKey": "idem-poll",
                 },
             },
         )
+        delivery = asyncio.run(database.get_outbound_delivery(1))
+        messages = asyncio.run(
+            database.list_control_chat_messages(limit=10, session_key=expected_session_key)
+        )
 
-    assert response.status_code == 503
+    assert response.status_code == 200
     assert response.json() == {
-        "detail": "poll is unavailable until channel-target poll delivery is wired"
+        "ok": True,
+        "runId": "idem-poll",
+        "channel": "slack",
+        "messageId": "1",
+        "sessionKey": expected_session_key,
+        "deliveryId": 1,
+        "transport": {
+            "runtime": "session-backed",
+            "channel": "slack",
+            "target": "channel:C123",
+            "accountId": "default",
+            "threadId": "1710000000.9999",
+            "sessionKey": expected_session_key,
+        },
     }
+    assert delivery is not None
+    assert delivery["route_kind"] == "announce"
+    assert delivery["event_type"] == "gateway/poll"
+    assert delivery["session_key"] == expected_session_key
+    assert delivery["message_summary"] == "Ship it?"
+    assert delivery["route_scope"]["source"] == "gateway.poll"
+    assert delivery["route_scope"]["thread_id"] == "1710000000.9999"
+    assert delivery["event_payload"]["question"] == "Ship it?"
+    assert delivery["event_payload"]["options"] == ["Yes", "No"]
+    assert delivery["event_payload"]["maxSelections"] == 1
+    assert delivery["event_payload"]["durationSeconds"] == 3600
+    assert len(messages) == 1
+    assert messages[0]["id"] == 1
+    assert messages[0]["role"] == "assistant"
+    assert messages[0]["content"] == (
+        "Poll: Ship it?\n1. Yes\n2. No\n\nSettings: maxSelections=1, durationSeconds=3600"
+    )
 
 
-def test_poll_endpoint_allows_thread_id_before_delivery_placeholder(tmp_path) -> None:
+def test_poll_endpoint_allows_thread_id_and_routes_poll_to_thread_session(tmp_path) -> None:
     app_settings = Settings(
         data_dir=tmp_path / "data",
         db_path=tmp_path / "data" / "openzues-test.db",
     )
     app = create_app(app_settings)
+    expected_session_key = resolve_thread_session_keys(
+        base_session_key=build_launch_session_key(
+            mode="workspace_affinity",
+            preferred_instance_id=None,
+            task_id=None,
+            project_id=None,
+            operator_id=None,
+            conversation_target=ConversationTargetView(
+                channel="slack",
+                account_id="default",
+                peer_kind="channel",
+                peer_id="channel:C123",
+            ),
+        ),
+        thread_id="1710000000.9999",
+    ).session_key
 
     with TestClient(app, client=("testclient", 50000)) as client:
         _allow_mutating_api_requests(client)
@@ -18955,13 +20507,26 @@ def test_poll_endpoint_allows_thread_id_before_delivery_placeholder(tmp_path) ->
             },
         )
 
-    assert response.status_code == 503
+    assert response.status_code == 200
     assert response.json() == {
-        "detail": "poll is unavailable until channel-target poll delivery is wired"
+        "ok": True,
+        "runId": "idem-poll-thread",
+        "channel": "slack",
+        "messageId": "1",
+        "sessionKey": expected_session_key,
+        "deliveryId": 1,
+        "transport": {
+            "runtime": "session-backed",
+            "channel": "slack",
+            "target": "channel:C123",
+            "accountId": "default",
+            "threadId": "1710000000.9999",
+            "sessionKey": expected_session_key,
+        },
     }
 
 
-def test_poll_endpoint_allows_duration_hours_and_silent_before_placeholder(tmp_path) -> None:
+def test_poll_endpoint_records_duration_hours_and_silent_settings(tmp_path) -> None:
     app_settings = Settings(
         data_dir=tmp_path / "data",
         db_path=tmp_path / "data" / "openzues-test.db",
@@ -18970,6 +20535,7 @@ def test_poll_endpoint_allows_duration_hours_and_silent_before_placeholder(tmp_p
 
     with TestClient(app, client=("testclient", 50000)) as client:
         _allow_mutating_api_requests(client)
+        database = client.app.state.database
         response = client.post(
             "/api/gateway/node-methods/call",
             json={
@@ -18987,14 +20553,33 @@ def test_poll_endpoint_allows_duration_hours_and_silent_before_placeholder(tmp_p
                 },
             },
         )
+        delivery = asyncio.run(database.get_outbound_delivery(1))
+        messages = asyncio.run(database.list_control_chat_messages(limit=10))
 
-    assert response.status_code == 503
-    assert response.json() == {
-        "detail": "poll is unavailable until channel-target poll delivery is wired"
+    assert response.status_code == 200
+    assert response.json()["ok"] is True
+    assert delivery is not None
+    assert response.json()["runId"] == "idem-poll-duration-hours"
+    assert response.json()["channel"] == "slack"
+    assert response.json()["transport"] == {
+        "runtime": "session-backed",
+        "channel": "slack",
+        "target": "channel:C123",
+        "accountId": "default",
+        "threadId": "1710000000.9999",
+        "sessionKey": delivery["session_key"],
     }
+    assert delivery["event_payload"]["durationHours"] == 24
+    assert delivery["event_payload"]["silent"] is True
+    assert messages[0]["content"] == (
+        "Poll: Ship it?\n"
+        "1. Yes\n"
+        "2. No\n\n"
+        "Settings: durationHours=24, silent=true"
+    )
 
 
-def test_poll_endpoint_allows_is_anonymous_before_placeholder(tmp_path) -> None:
+def test_poll_endpoint_records_is_anonymous_setting(tmp_path) -> None:
     app_settings = Settings(
         data_dir=tmp_path / "data",
         db_path=tmp_path / "data" / "openzues-test.db",
@@ -19003,6 +20588,7 @@ def test_poll_endpoint_allows_is_anonymous_before_placeholder(tmp_path) -> None:
 
     with TestClient(app, client=("testclient", 50000)) as client:
         _allow_mutating_api_requests(client)
+        database = client.app.state.database
         response = client.post(
             "/api/gateway/node-methods/call",
             json={
@@ -19017,14 +20603,23 @@ def test_poll_endpoint_allows_is_anonymous_before_placeholder(tmp_path) -> None:
                 },
             },
         )
+        delivery = asyncio.run(database.get_outbound_delivery(1))
 
-    assert response.status_code == 503
-    assert response.json() == {
-        "detail": "poll is unavailable until channel-target poll delivery is wired"
+    assert response.status_code == 200
+    assert response.json()["ok"] is True
+    assert delivery is not None
+    assert response.json()["runId"] == "idem-poll-anon"
+    assert response.json()["channel"] == "slack"
+    assert response.json()["transport"] == {
+        "runtime": "session-backed",
+        "channel": "slack",
+        "target": "channel:C123",
+        "sessionKey": delivery["session_key"],
     }
+    assert delivery["event_payload"]["isAnonymous"] is False
 
 
-def test_poll_endpoint_allows_large_duration_hours_before_placeholder(tmp_path) -> None:
+def test_poll_endpoint_allows_large_duration_hours(tmp_path) -> None:
     app_settings = Settings(
         data_dir=tmp_path / "data",
         db_path=tmp_path / "data" / "openzues-test.db",
@@ -19033,6 +20628,7 @@ def test_poll_endpoint_allows_large_duration_hours_before_placeholder(tmp_path) 
 
     with TestClient(app, client=("testclient", 50000)) as client:
         _allow_mutating_api_requests(client)
+        database = client.app.state.database
         response = client.post(
             "/api/gateway/node-methods/call",
             json={
@@ -19047,11 +20643,20 @@ def test_poll_endpoint_allows_large_duration_hours_before_placeholder(tmp_path) 
                 },
             },
         )
+        delivery = asyncio.run(database.get_outbound_delivery(1))
 
-    assert response.status_code == 503
-    assert response.json() == {
-        "detail": "poll is unavailable until channel-target poll delivery is wired"
+    assert response.status_code == 200
+    assert response.json()["ok"] is True
+    assert delivery is not None
+    assert response.json()["runId"] == "idem-poll-duration-hours-large"
+    assert response.json()["channel"] == "slack"
+    assert response.json()["transport"] == {
+        "runtime": "session-backed",
+        "channel": "slack",
+        "target": "channel:C123",
+        "sessionKey": delivery["session_key"],
     }
+    assert delivery["event_payload"]["durationHours"] == 100_000
 
 
 def test_poll_endpoint_rejects_invalid_whatsapp_target_shape(tmp_path) -> None:
@@ -19114,6 +20719,18 @@ def test_poll_endpoint_allows_blank_account_id(tmp_path) -> None:
         db_path=tmp_path / "data" / "openzues-test.db",
     )
     app = create_app(app_settings)
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=ConversationTargetView(
+            channel="slack",
+            peer_kind="channel",
+            peer_id="channel:C123",
+        ),
+    )
 
     with TestClient(app, client=("testclient", 50000)) as client:
         _allow_mutating_api_requests(client)
@@ -19132,9 +20749,20 @@ def test_poll_endpoint_allows_blank_account_id(tmp_path) -> None:
             },
         )
 
-    assert response.status_code == 503
+    assert response.status_code == 200
     assert response.json() == {
-        "detail": "poll is unavailable until channel-target poll delivery is wired"
+        "ok": True,
+        "runId": "idem-poll-blank-account",
+        "channel": "slack",
+        "messageId": "1",
+        "sessionKey": expected_session_key,
+        "deliveryId": 1,
+        "transport": {
+            "runtime": "session-backed",
+            "channel": "slack",
+            "target": "channel:C123",
+            "sessionKey": expected_session_key,
+        },
     }
 
 

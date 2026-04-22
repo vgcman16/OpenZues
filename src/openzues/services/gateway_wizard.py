@@ -34,6 +34,7 @@ class _PendingWizardStep:
 class _GatewayWizardSession:
     base: dict[str, object]
     patch: dict[str, object] = field(default_factory=dict)
+    persisted_patch: dict[str, object] = field(default_factory=dict)
     completed_optional_fields: set[str] = field(default_factory=set)
     status: str = "running"
     error: str | None = None
@@ -58,6 +59,7 @@ def _text_step(
     step_id = str(uuid4())
     payload: dict[str, object] = {
         "id": step_id,
+        "field": field,
         "type": "text",
         "title": title,
         "message": message,
@@ -71,7 +73,7 @@ def _text_step(
         payload["inputType"] = input_type
     initial_text = _string_or_none(initial_value)
     if initial_text is not None:
-        payload["initialvalue"] = initial_text
+        payload["initialValue"] = initial_text
     return _PendingWizardStep(field=field, payload=payload, optional=not required)
 
 
@@ -86,6 +88,7 @@ def _select_step(
     step_id = str(uuid4())
     payload: dict[str, object] = {
         "id": step_id,
+        "field": field,
         "type": "select",
         "title": title,
         "message": message,
@@ -94,7 +97,7 @@ def _select_step(
     }
     initial_text = _string_or_none(initial_value)
     if initial_text is not None:
-        payload["initialvalue"] = initial_text
+        payload["initialValue"] = initial_text
     return _PendingWizardStep(field=field, payload=payload)
 
 
@@ -113,16 +116,21 @@ class GatewayWizardService:
         self,
         *,
         mode: str | None = None,
+        flow: str | None = None,
         workspace: str | None = None,
     ) -> dict[str, object]:
         if any(session.status == "running" for session in self._sessions.values()):
             raise ValueError("wizard already running")
         base = await self._load_session()
         session = _GatewayWizardSession(base=dict(base))
-        if mode is not None:
-            session.patch["mode"] = mode
-            if mode == "remote":
+        normalized_mode = _normalized_mode_value(mode)
+        normalized_flow = _normalized_flow_value(flow)
+        if normalized_mode is not None:
+            session.patch["mode"] = normalized_mode
+            if normalized_mode == "remote":
                 session.patch["flow"] = "advanced"
+        if normalized_flow is not None and normalized_mode != "remote":
+            session.patch["flow"] = normalized_flow
         if workspace is not None:
             session.patch["project_path"] = workspace
         session_id = str(uuid4())
@@ -180,6 +188,23 @@ class GatewayWizardService:
             raise ValueError("wizard not found")
         return session
 
+    async def _persist_progress(
+        self,
+        session: _GatewayWizardSession,
+    ) -> dict[str, object] | None:
+        next_patch = dict(session.patch)
+        if next_patch == session.persisted_patch:
+            return None
+        try:
+            await self._save_session(next_patch)
+        except Exception as exc:
+            session.status = "error"
+            session.error = str(exc)
+            session.pending_step = None
+            return {"done": True, **_status_payload(session)}
+        session.persisted_patch = next_patch
+        return None
+
     async def _advance(
         self,
         session_id: str,
@@ -195,6 +220,9 @@ class GatewayWizardService:
             return {"done": True, **_status_payload(session)}
 
         next_step = _build_next_step(session)
+        persist_result = await self._persist_progress(session)
+        if persist_result is not None:
+            return persist_result
         if next_step is not None:
             session.pending_step = next_step
             return {
@@ -202,13 +230,6 @@ class GatewayWizardService:
                 "step": dict(next_step.payload),
                 "status": session.status,
             }
-
-        try:
-            await self._save_session(dict(session.patch))
-        except Exception as exc:
-            session.status = "error"
-            session.error = str(exc)
-            return {"done": True, **_status_payload(session)}
 
         session.status = "done"
         session.error = None

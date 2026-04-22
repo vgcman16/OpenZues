@@ -982,7 +982,7 @@
                   <div id="gateway-bootstrap-profile" class="stack"></div>
 
                   <form id="onboarding-form" class="stack bootstrap-form">
-                    <div class="form-grid">
+                    <div id="onboarding-selection-fields" class="form-grid">
                       <select name="setup_mode" id="onboarding-setup-mode">
                         <option value="local">Local bootstrap</option>
                         <option value="remote">Remote bootstrap</option>
@@ -992,6 +992,7 @@
                         <option value="advanced">Advanced</option>
                       </select>
                     </div>
+                    <p id="onboarding-guided-selection-note" class="small-muted" hidden></p>
 
                     <div class="form-grid">
                       <input
@@ -999,32 +1000,49 @@
                         type="text"
                         placeholder="Workspace path, e.g. C:\path\to\repo"
                         required
+                        data-guided-owned="true"
                       />
                       <input name="project_label" type="text" placeholder="Workspace label" />
-                      <select name="instance_mode" id="onboarding-instance-mode">
+                      <select
+                        name="instance_mode"
+                        id="onboarding-instance-mode"
+                        data-guided-owned="true"
+                      >
                         <option value="quick_connect_desktop">Quick-connect Desktop bridge</option>
                         <option value="create_desktop">Create Desktop lane only</option>
                         <option value="existing">Reuse an existing lane</option>
                       </select>
-                      <select name="instance_id" id="onboarding-instance-select"></select>
+                      <select
+                        name="instance_id"
+                        id="onboarding-instance-select"
+                        data-guided-owned="true"
+                      ></select>
                       <input
                         name="instance_name"
                         type="text"
                         placeholder="Lane name"
                         value="Local Codex Desktop"
+                        data-guided-owned="true"
                       />
                       <input
                         name="operator_name"
                         type="text"
                         placeholder="Remote operator name"
                         required
+                        data-guided-owned="true"
                       />
                       <input
                         name="operator_email"
                         type="email"
                         placeholder="Remote operator email (optional)"
+                        data-guided-owned="true"
                       />
-                      <input name="team_name" type="text" placeholder="Operator team (optional)" />
+                      <input
+                        name="team_name"
+                        type="text"
+                        placeholder="Operator team (optional)"
+                        data-guided-owned="true"
+                      />
                     </div>
 
                     <div class="toggle-row">
@@ -1096,6 +1114,7 @@
                         placeholder="First recurring task name"
                         value="Autonomous Ship Loop"
                         required
+                        data-guided-owned="true"
                       />
                       <input
                         name="cadence_minutes"

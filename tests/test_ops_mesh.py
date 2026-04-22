@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import shutil
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -10,6 +11,7 @@ from fastapi.testclient import TestClient
 from openzues.app import create_app
 from openzues.database import Database
 from openzues.schemas import (
+    ConversationTargetView,
     InstanceView,
     IntegrationView,
     MissionStatus,
@@ -20,6 +22,7 @@ from openzues.schemas import (
 )
 from openzues.services.ecc_catalog import configure_ecc_catalog
 from openzues.services.gateway_cron import build_gateway_cron_task_blueprint
+from openzues.services.gateway_outbound_runtime import GatewayOutboundRuntimeService
 from openzues.services.gateway_wake import GatewayWakeService
 from openzues.services.hermes_skills import configure_hermes_skill_catalog
 from openzues.services.hub import BroadcastHub
@@ -39,10 +42,11 @@ from openzues.services.memory_protocol import (
 from openzues.services.ops_mesh import (
     OUTBOUND_DELIVERY_MAX_RETRIES,
     OpsMeshService,
+    _saved_outbound_delivery_replay_message,
     _serialize_task,
     build_ops_mesh,
 )
-from openzues.services.session_keys import resolve_thread_session_keys
+from openzues.services.session_keys import build_launch_session_key, resolve_thread_session_keys
 from openzues.services.vault import VaultService
 from openzues.settings import Settings
 
@@ -1756,6 +1760,633 @@ async def test_ops_mesh_service_delivers_explicit_cron_failure_to_announce_targe
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_uses_known_channel_default_account(
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-default-account"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Slack Account Inventory",
+        kind="webhook",
+        target="https://example.invalid/slack-account",
+        events=["mission/completed"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token=None,
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "slack",
+            "account_id": "workspace-bot",
+            "peer_kind": "channel",
+            "peer_id": "deploy-room",
+        },
+    )
+
+    session_deliveries: list[tuple[str, str]] = []
+
+    async def fake_session_delivery(session_key: str, message: str) -> dict[str, str]:
+        session_deliveries.append((session_key, message))
+        return {"messageId": "42"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_session_delivery,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="slack",
+        to="channel:C123",
+        message="Ship parity.",
+    )
+
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=ConversationTargetView(
+            channel="slack",
+            account_id="workspace-bot",
+            peer_kind="channel",
+            peer_id="channel:C123",
+        ),
+    )
+    delivery = await database.get_outbound_delivery(1)
+    delivery_views = await service.list_outbound_delivery_views(limit=1)
+
+    assert result == {
+        "ok": True,
+        "channel": "slack",
+        "messageId": "42",
+        "sessionKey": expected_session_key,
+        "deliveryId": 1,
+        "transport": {
+            "runtime": "session-backed",
+            "channel": "slack",
+            "target": "channel:C123",
+            "accountId": "workspace-bot",
+            "sessionKey": expected_session_key,
+        },
+    }
+    assert session_deliveries == [(expected_session_key, "Ship parity.")]
+    assert delivery is not None
+    assert delivery["route_kind"] == "announce"
+    assert delivery["session_key"] == expected_session_key
+    assert delivery["conversation_target"]["account_id"] == "workspace-bot"
+    assert delivery["event_payload"]["accountId"] == "workspace-bot"
+    assert delivery["route_scope"]["resolved_account_id"] == "workspace-bot"
+    assert delivery["delivery_message_id"] == "42"
+    assert delivery_views[0].delivery_message_id == "42"
+    assert delivery_views[0].transport is not None
+    assert delivery_views[0].transport.runtime == "session-backed"
+    assert delivery_views[0].transport.channel == "slack"
+    assert delivery_views[0].transport.target == "channel:C123"
+    assert delivery_views[0].transport.account_id == "workspace-bot"
+    assert delivery_views[0].transport.session_key == expected_session_key
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_uses_shared_outbound_runtime_owner(
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-runtime-owner"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+
+    runtime_calls: list[tuple[str, str]] = []
+
+    async def fake_session_delivery(session_key: str, message: str) -> dict[str, str]:
+        runtime_calls.append((session_key, message))
+        return {"messageId": "runtime-42"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        outbound_runtime_service=GatewayOutboundRuntimeService(
+            session_deliverer=fake_session_delivery
+        ),
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="slack",
+        to="channel:C123",
+        message="Ship parity through the runtime owner.",
+        account_id="default",
+        thread_id="1710000000.9999",
+        idempotency_key="idem-runtime-owner-send",
+    )
+
+    expected_session_key = resolve_thread_session_keys(
+        base_session_key=build_launch_session_key(
+            mode="workspace_affinity",
+            preferred_instance_id=None,
+            task_id=None,
+            project_id=None,
+            operator_id=None,
+            conversation_target=ConversationTargetView(
+                channel="slack",
+                account_id="default",
+                peer_kind="channel",
+                peer_id="channel:C123",
+            ),
+        ),
+        thread_id="1710000000.9999",
+    ).session_key
+    delivery = await database.get_outbound_delivery(1)
+
+    assert result == {
+        "ok": True,
+        "runId": "idem-runtime-owner-send",
+        "channel": "slack",
+        "messageId": "runtime-42",
+        "sessionKey": expected_session_key,
+        "deliveryId": 1,
+        "transport": {
+            "runtime": "session-backed",
+            "channel": "slack",
+            "target": "channel:C123",
+            "accountId": "default",
+            "threadId": "1710000000.9999",
+            "sessionKey": expected_session_key,
+        },
+    }
+    assert runtime_calls == [
+        (expected_session_key, "Ship parity through the runtime owner."),
+    ]
+    assert delivery is not None
+    assert delivery["delivery_message_id"] == "runtime-42"
+    assert delivery["route_scope"]["idempotency_key"] == "idem-runtime-owner-send"
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_dedupes_inflight_idempotent_retries(
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-idempotent"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+
+    session_deliveries: list[tuple[str, str]] = []
+    delivery_started = asyncio.Event()
+    release_delivery = asyncio.Event()
+
+    async def fake_session_delivery(session_key: str, message: str) -> dict[str, str]:
+        session_deliveries.append((session_key, message))
+        delivery_started.set()
+        await release_delivery.wait()
+        return {"messageId": "42"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_session_delivery,
+    )
+
+    first_task = asyncio.create_task(
+        service.send_direct_channel_message(
+            channel="slack",
+            to="channel:C123",
+            message="Ship parity.",
+            account_id="default",
+            idempotency_key="idem-direct-send",
+        )
+    )
+    await delivery_started.wait()
+    second_task = asyncio.create_task(
+        service.send_direct_channel_message(
+            channel="slack",
+            to="channel:C123",
+            message="Ship parity.",
+            account_id="default",
+            idempotency_key="idem-direct-send",
+        )
+    )
+    release_delivery.set()
+    first_result, second_result = await asyncio.gather(first_task, second_task)
+
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=ConversationTargetView(
+            channel="slack",
+            account_id="default",
+            peer_kind="channel",
+            peer_id="channel:C123",
+        ),
+    )
+    deliveries = await database.list_outbound_deliveries(limit=10)
+    delivery_views = await service.list_outbound_delivery_views(limit=10)
+
+    assert first_result == second_result == {
+        "ok": True,
+        "runId": "idem-direct-send",
+        "channel": "slack",
+        "messageId": "42",
+        "sessionKey": expected_session_key,
+        "deliveryId": 1,
+        "transport": {
+            "runtime": "session-backed",
+            "channel": "slack",
+            "target": "channel:C123",
+            "accountId": "default",
+            "sessionKey": expected_session_key,
+        },
+    }
+    assert session_deliveries == [(expected_session_key, "Ship parity.")]
+    assert len(deliveries) == 1
+    assert deliveries[0]["request_idempotency_key"] == "idem-direct-send"
+    assert deliveries[0]["delivery_message_id"] == "42"
+    assert delivery_views[0].request_idempotency_key == "idem-direct-send"
+    assert delivery_views[0].delivery_message_id == "42"
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_records_media_delivery() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-media"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Slack Media Inventory",
+        kind="webhook",
+        target="https://example.invalid/slack-media",
+        events=["mission/completed"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token=None,
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "slack",
+            "account_id": "workspace-bot",
+            "peer_kind": "channel",
+            "peer_id": "deploy-room",
+        },
+    )
+
+    session_deliveries: list[tuple[str, str]] = []
+
+    async def fake_session_delivery(session_key: str, message: str) -> dict[str, str]:
+        session_deliveries.append((session_key, message))
+        return {"messageId": "88"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_session_delivery,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="slack",
+        to="channel:C123",
+        message="",
+        media_urls=["https://example.com/a.png", " https://example.com/b.png ", ""],
+        gif_playback=True,
+        thread_id="1710000000.9999",
+        idempotency_key="idem-direct-media",
+    )
+
+    expected_session_key = resolve_thread_session_keys(
+        base_session_key=build_launch_session_key(
+            mode="workspace_affinity",
+            preferred_instance_id=None,
+            task_id=None,
+            project_id=None,
+            operator_id=None,
+            conversation_target=ConversationTargetView(
+                channel="slack",
+                account_id="workspace-bot",
+                peer_kind="channel",
+                peer_id="channel:C123",
+            ),
+        ),
+        thread_id="1710000000.9999",
+    ).session_key
+    delivery = await database.get_outbound_delivery(1)
+
+    assert result == {
+        "ok": True,
+        "runId": "idem-direct-media",
+        "channel": "slack",
+        "messageId": "88",
+        "sessionKey": expected_session_key,
+        "deliveryId": 1,
+        "transport": {
+            "runtime": "session-backed",
+            "channel": "slack",
+            "target": "channel:C123",
+            "accountId": "workspace-bot",
+            "threadId": "1710000000.9999",
+            "sessionKey": expected_session_key,
+        },
+    }
+    assert session_deliveries == [
+        (
+            expected_session_key,
+            (
+                "Media:\n"
+                "1. https://example.com/a.png\n"
+                "2. https://example.com/b.png\n\n"
+                "Settings: gifPlayback=true"
+            ),
+        )
+    ]
+    assert delivery is not None
+    assert delivery["event_type"] == "gateway/send"
+    assert delivery["message_summary"] == "Media delivery (2 items)"
+    assert delivery["session_key"] == expected_session_key
+    assert delivery["conversation_target"]["account_id"] == "workspace-bot"
+    assert delivery["event_payload"]["accountId"] == "workspace-bot"
+    assert delivery["event_payload"]["mediaUrls"] == [
+        "https://example.com/a.png",
+        "https://example.com/b.png",
+    ]
+    assert delivery["event_payload"]["gifPlayback"] is True
+    assert delivery["route_scope"]["source"] == "gateway.send"
+    assert delivery["route_scope"]["resolved_account_id"] == "workspace-bot"
+    assert delivery["route_scope"]["idempotency_key"] == "idem-direct-media"
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_poll_records_session_backed_delivery() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-poll"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Slack Poll Inventory",
+        kind="webhook",
+        target="https://example.invalid/slack-poll",
+        events=["mission/completed"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token=None,
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "slack",
+            "account_id": "workspace-bot",
+            "peer_kind": "channel",
+            "peer_id": "deploy-room",
+        },
+    )
+
+    session_deliveries: list[tuple[str, str]] = []
+
+    async def fake_session_delivery(session_key: str, message: str) -> dict[str, str]:
+        session_deliveries.append((session_key, message))
+        return {"messageId": "77"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_session_delivery,
+    )
+
+    result = await service.send_direct_channel_poll(
+        channel="slack",
+        to="channel:C123",
+        question="Ship it?",
+        options=["Yes", "No"],
+        max_selections=1,
+        duration_hours=24,
+        silent=True,
+        is_anonymous=False,
+        thread_id="1710000000.9999",
+        idempotency_key="idem-direct-poll",
+    )
+
+    expected_session_key = resolve_thread_session_keys(
+        base_session_key=build_launch_session_key(
+            mode="workspace_affinity",
+            preferred_instance_id=None,
+            task_id=None,
+            project_id=None,
+            operator_id=None,
+            conversation_target=ConversationTargetView(
+                channel="slack",
+                account_id="workspace-bot",
+                peer_kind="channel",
+                peer_id="channel:C123",
+            ),
+        ),
+        thread_id="1710000000.9999",
+    ).session_key
+    delivery = await database.get_outbound_delivery(1)
+
+    assert result == {
+        "ok": True,
+        "runId": "idem-direct-poll",
+        "channel": "slack",
+        "messageId": "77",
+        "sessionKey": expected_session_key,
+        "deliveryId": 1,
+        "transport": {
+            "runtime": "session-backed",
+            "channel": "slack",
+            "target": "channel:C123",
+            "accountId": "workspace-bot",
+            "threadId": "1710000000.9999",
+            "sessionKey": expected_session_key,
+        },
+    }
+    assert session_deliveries == [
+        (
+            expected_session_key,
+            (
+                "Poll: Ship it?\n"
+                "1. Yes\n"
+                "2. No\n\n"
+                "Settings: maxSelections=1, durationHours=24, silent=true, "
+                "isAnonymous=false"
+            ),
+        )
+    ]
+    assert delivery is not None
+    assert delivery["event_type"] == "gateway/poll"
+    assert delivery["route_kind"] == "announce"
+    assert delivery["session_key"] == expected_session_key
+    assert delivery["message_summary"] == "Ship it?"
+    assert delivery["delivery_message_id"] == "77"
+    assert delivery["conversation_target"]["account_id"] == "workspace-bot"
+    assert delivery["event_payload"]["accountId"] == "workspace-bot"
+    assert delivery["event_payload"]["question"] == "Ship it?"
+    assert delivery["event_payload"]["options"] == ["Yes", "No"]
+    assert delivery["event_payload"]["maxSelections"] == 1
+    assert delivery["event_payload"]["durationHours"] == 24
+    assert delivery["event_payload"]["silent"] is True
+    assert delivery["event_payload"]["isAnonymous"] is False
+    assert delivery["route_scope"]["source"] == "gateway.poll"
+    assert delivery["route_scope"]["resolved_account_id"] == "workspace-bot"
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_poll_reuses_completed_idempotent_delivery(
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-poll-idempotent"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+
+    session_deliveries: list[tuple[str, str]] = []
+
+    async def fake_session_delivery(session_key: str, message: str) -> dict[str, str]:
+        session_deliveries.append((session_key, message))
+        return {"messageId": "77"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_session_delivery,
+    )
+
+    first_result = await service.send_direct_channel_poll(
+        channel="slack",
+        to="channel:C123",
+        question="Ship it?",
+        options=["Yes", "No"],
+        max_selections=1,
+        account_id="default",
+        idempotency_key="idem-direct-poll",
+    )
+    second_result = await service.send_direct_channel_poll(
+        channel="slack",
+        to="channel:C123",
+        question="Ship it?",
+        options=["Yes", "No"],
+        max_selections=1,
+        account_id="default",
+        idempotency_key="idem-direct-poll",
+    )
+
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=ConversationTargetView(
+            channel="slack",
+            account_id="default",
+            peer_kind="channel",
+            peer_id="channel:C123",
+        ),
+    )
+    deliveries = await database.list_outbound_deliveries(limit=10)
+
+    assert first_result == second_result == {
+        "ok": True,
+        "runId": "idem-direct-poll",
+        "channel": "slack",
+        "messageId": "77",
+        "sessionKey": expected_session_key,
+        "deliveryId": 1,
+        "transport": {
+            "runtime": "session-backed",
+            "channel": "slack",
+            "target": "channel:C123",
+            "accountId": "default",
+            "sessionKey": expected_session_key,
+        },
+    }
+    assert session_deliveries == [
+        (
+            expected_session_key,
+            "Poll: Ship it?\n1. Yes\n2. No\n\nSettings: maxSelections=1",
+        )
+    ]
+    assert len(deliveries) == 1
+    assert deliveries[0]["request_idempotency_key"] == "idem-direct-poll"
+    assert deliveries[0]["delivery_message_id"] == "77"
+
+
+def test_saved_outbound_delivery_replay_message_formats_gateway_send_media_payload() -> None:
+    replay_message = _saved_outbound_delivery_replay_message(
+        {
+            "event_type": "gateway/send",
+            "event_payload": {
+                "message": "Ship parity.",
+                "mediaUrls": ["https://example.com/a.png"],
+                "gifPlayback": False,
+            },
+            "message_summary": "fallback summary",
+        }
+    )
+
+    assert replay_message == (
+        "Ship parity.\n\n"
+        "Media:\n"
+        "1. https://example.com/a.png\n\n"
+        "Settings: gifPlayback=false"
+    )
+
+
+def test_saved_outbound_delivery_replay_message_formats_gateway_poll_payload() -> None:
+    replay_message = _saved_outbound_delivery_replay_message(
+        {
+            "event_type": "gateway/poll",
+            "event_payload": {
+                "summary": "Ship parity?",
+                "question": "Ship parity?",
+                "options": ["Yes", "No"],
+                "maxSelections": 1,
+                "durationHours": 24,
+                "silent": True,
+                "isAnonymous": False,
+            },
+            "message_summary": "fallback summary",
+        }
+    )
+
+    assert replay_message == (
+        "Poll: Ship parity?\n"
+        "1. Yes\n"
+        "2. No\n\n"
+        "Settings: maxSelections=1, durationHours=24, silent=true, isAnonymous=false"
+    )
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_delivers_explicit_cron_failure_to_announce_thread_target(
     tmp_path: Path,
 ) -> None:
@@ -1867,6 +2498,131 @@ async def test_ops_mesh_service_delivers_explicit_cron_failure_to_announce_threa
     assert deliveries[0].event_payload is not None
     assert deliveries[0].event_payload["sessionKey"] == expected_session_key
     assert deliveries[0].event_payload["threadId"] == 77
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_delivers_explicit_cron_failure_to_known_channel_default_account(
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-cron-default-account"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Telegram Account Inventory",
+        kind="webhook",
+        target="https://example.invalid/telegram-account",
+        events=["mission/completed"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token=None,
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "telegram",
+            "account_id": "coordinator",
+            "peer_kind": "channel",
+            "peer_id": "deploy-room",
+        },
+    )
+
+    session_deliveries: list[tuple[str, str]] = []
+
+    async def fake_session_delivery(session_key: str, message: str) -> None:
+        session_deliveries.append((session_key, message))
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_session_delivery,
+    )
+    task = await service.create_task_blueprint(
+        build_gateway_cron_task_blueprint(
+            {
+                "name": "Explicit Announce Default Account Failure Delivery",
+                "enabled": True,
+                "schedule": {"kind": "every", "everyMs": 3_600_000},
+                "sessionTarget": "isolated",
+                "wakeMode": "next-heartbeat",
+                "payload": {
+                    "kind": "agentTurn",
+                    "message": (
+                        "Deliver the cron failure directly to the explicit announce target."
+                    ),
+                },
+                "delivery": {
+                    "mode": "announce",
+                    "channel": "telegram",
+                    "to": "deploy-room",
+                },
+            }
+        )
+    )
+    mission_id = await database.create_mission(
+        name="Explicit Announce Default Account Failure Delivery",
+        objective="Deliver the cron failure directly to the explicit announce target.",
+        status="failed",
+        instance_id=task.instance_id or 1,
+        project_id=task.project_id,
+        task_blueprint_id=task.id,
+        thread_id="thread_explicit_announce_default_account_failure_delivery",
+        cwd=str(tmp_path),
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=4,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        toolsets=[],
+    )
+    await database.update_mission(
+        mission_id,
+        last_checkpoint="explicit announce default-account delivery failed",
+        last_error="lane timed out",
+        last_activity_at=datetime.now(UTC).isoformat(),
+        session_key="agent:explicit-announce-default-account-failure-route",
+    )
+
+    await service.handle_mission_event(
+        "mission/failed",
+        {"missionId": mission_id},
+    )
+
+    expected_session_key = (
+        "launch:mode:workspace_affinity:channel:telegram:account:coordinator:"
+        "peer:channel:deploy-room"
+    )
+    assert session_deliveries == [
+        (
+            expected_session_key,
+            (
+                '\u26a0\ufe0f Cron job "Explicit Announce Default Account Failure Delivery" '
+                "failed: lane timed out"
+            ),
+        )
+    ]
+    deliveries = await service.list_outbound_delivery_views(limit=10)
+    stored_delivery = await database.get_outbound_delivery(deliveries[0].id)
+    assert len(deliveries) == 1
+    assert deliveries[0].session_key == expected_session_key
+    assert deliveries[0].conversation_target is not None
+    assert deliveries[0].conversation_target.account_id == "coordinator"
+    assert deliveries[0].route_scope.route_match == "explicitTarget"
+    assert stored_delivery is not None
+    assert stored_delivery["route_scope"]["resolved_account_id"] == "coordinator"
+    assert deliveries[0].event_payload is not None
+    assert deliveries[0].event_payload["accountId"] == "coordinator"
 
 
 @pytest.mark.asyncio
@@ -4074,6 +4830,205 @@ async def test_replay_outbound_deliveries_retries_saved_failed_announce_delivery
     assert result.deliveries[0].route.conversation_target is not None
     assert result.deliveries[0].route.conversation_target.channel == "telegram"
     assert result.deliveries[0].route.conversation_target.account_id == "coordinator"
+    assert result.deliveries[0].delivery is not None
+    assert result.deliveries[0].delivery.delivery_state == "delivered"
+    assert refreshed_delivery is not None
+    assert refreshed_delivery["delivery_state"] == "delivered"
+    assert refreshed_delivery["attempt_count"] == 2
+    assert refreshed_delivery["last_error"] is None
+
+
+@pytest.mark.asyncio
+async def test_replay_outbound_deliveries_retries_saved_failed_announce_delivery_via_runtime_owner(
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-replay-announce-runtime-owner"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    session_key = (
+        "launch:mode:workspace_affinity:channel:telegram:account:coordinator:"
+        "peer:channel:deploy-room"
+    )
+    delivery_id = await database.create_outbound_delivery(
+        route_id=None,
+        route_name="Announce delivery for Runtime Owner Replay",
+        route_kind="announce",
+        route_target="telegram coordinator channel deploy-room",
+        event_type="cron/failure",
+        session_key=session_key,
+        conversation_target={
+            "channel": "telegram",
+            "account_id": "coordinator",
+            "peer_kind": "channel",
+            "peer_id": "deploy-room",
+            "summary": "telegram account coordinator channel deploy-room",
+        },
+        route_scope={
+            "route_name": "Announce delivery for Runtime Owner Replay",
+            "route_kind": "announce",
+            "route_target": "telegram coordinator channel deploy-room",
+            "route_match": "explicitTarget",
+        },
+        event_payload={
+            "missionId": 21,
+            "taskId": 5,
+            "jobId": "task-blueprint:5",
+            "jobName": "Runtime Owner Replay",
+            "message": 'Cron job "Runtime Owner Replay" failed: lane timed out',
+            "status": "error",
+            "error": "lane timed out",
+            "sessionKey": session_key,
+            "conversationTarget": {
+                "channel": "telegram",
+                "account_id": "coordinator",
+                "peer_kind": "channel",
+                "peer_id": "deploy-room",
+                "summary": "telegram account coordinator channel deploy-room",
+            },
+        },
+        message_summary='Cron job "Runtime Owner Replay" failed: lane timed out',
+        test_delivery=False,
+        delivery_state="failed",
+        attempt_count=1,
+        last_attempt_at=(datetime.now(UTC) - timedelta(minutes=10)).isoformat(),
+        last_error="temporary delivery timeout",
+    )
+    runtime_calls: list[tuple[str, str]] = []
+
+    async def fake_session_delivery(target_session_key: str, message: str) -> dict[str, str]:
+        runtime_calls.append((target_session_key, message))
+        return {"messageId": "runtime-replay-1"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),
+        FakeMissionService([]),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        outbound_runtime_service=GatewayOutboundRuntimeService(
+            session_deliverer=fake_session_delivery
+        ),
+    )
+
+    result = await service.replay_outbound_deliveries(limit=10)
+    refreshed_delivery = await database.get_outbound_delivery(delivery_id)
+
+    assert result.ok is True
+    assert result.replayed_count == 1
+    assert runtime_calls == [
+        (
+            session_key,
+            '\u26a0\ufe0f Cron job "Runtime Owner Replay" failed: lane timed out',
+        )
+    ]
+    assert refreshed_delivery is not None
+    assert refreshed_delivery["delivery_state"] == "delivered"
+    assert refreshed_delivery["attempt_count"] == 2
+    assert refreshed_delivery["delivery_message_id"] == "runtime-replay-1"
+
+
+@pytest.mark.asyncio
+async def test_replay_outbound_deliveries_retries_saved_failed_gateway_poll_delivery() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-replay-gateway-poll-delivery"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    session_key = (
+        "launch:mode:workspace_affinity:channel:slack:account:workspace-bot:"
+        "peer:channel:deploy-room:thread:1710000000.9999"
+    )
+    conversation_target = {
+        "channel": "slack",
+        "account_id": "workspace-bot",
+        "peer_kind": "channel",
+        "peer_id": "deploy-room",
+        "summary": "slack account workspace-bot channel deploy-room",
+    }
+    delivery_id = await database.create_outbound_delivery(
+        route_id=None,
+        route_name="Gateway poll to Replay Poll Delivery",
+        route_kind="announce",
+        route_target="slack account workspace-bot channel deploy-room",
+        event_type="gateway/poll",
+        session_key=session_key,
+        conversation_target=conversation_target,
+        route_scope={
+            "route_name": "Gateway poll to Replay Poll Delivery",
+            "route_kind": "announce",
+            "route_target": "slack account workspace-bot channel deploy-room",
+            "route_match": "explicitTarget",
+            "source": "gateway.poll",
+            "idempotency_key": "idem-replay-poll",
+        },
+        event_payload={
+            "summary": "Ship parity?",
+            "question": "Ship parity?",
+            "options": ["Yes", "No"],
+            "channel": "slack",
+            "to": "channel:C123",
+            "accountId": "workspace-bot",
+            "maxSelections": 1,
+            "durationHours": 24,
+            "silent": True,
+            "isAnonymous": False,
+            "sessionKey": session_key,
+            "conversationTarget": conversation_target,
+        },
+        message_summary="Ship parity?",
+        test_delivery=False,
+        delivery_state="failed",
+        attempt_count=1,
+        last_attempt_at=(datetime.now(UTC) - timedelta(minutes=10)).isoformat(),
+        last_error="temporary delivery timeout",
+    )
+    session_deliveries: list[tuple[str, str]] = []
+
+    async def fake_session_delivery(target_session_key: str, message: str) -> None:
+        session_deliveries.append((target_session_key, message))
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),
+        FakeMissionService([]),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_session_delivery,
+    )
+
+    result = await service.replay_outbound_deliveries(limit=10)
+    refreshed_delivery = await database.get_outbound_delivery(delivery_id)
+
+    assert result.ok is True
+    assert result.attempted_count == 1
+    assert result.replayed_count == 1
+    assert result.failed_count == 0
+    assert result.deferred_count == 0
+    assert result.skipped_max_retries_count == 0
+    assert session_deliveries == [
+        (
+            session_key,
+            (
+                "Poll: Ship parity?\n"
+                "1. Yes\n"
+                "2. No\n\n"
+                "Settings: maxSelections=1, durationHours=24, silent=true, "
+                "isAnonymous=false"
+            ),
+        )
+    ]
+    assert result.deliveries[0].route.kind == "announce"
+    assert result.deliveries[0].route.name == "Gateway poll to Replay Poll Delivery"
+    assert result.deliveries[0].route.target == "slack account workspace-bot channel deploy-room"
+    assert result.deliveries[0].route.enabled is True
+    assert result.deliveries[0].route.conversation_target is not None
+    assert result.deliveries[0].route.conversation_target.channel == "slack"
+    assert result.deliveries[0].route.conversation_target.account_id == "workspace-bot"
     assert result.deliveries[0].delivery is not None
     assert result.deliveries[0].delivery.delivery_state == "delivered"
     assert refreshed_delivery is not None

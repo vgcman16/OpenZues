@@ -125,7 +125,7 @@ class GatewayNodePendingWorkStore:
                 and int(expires_in_ms) > 0
                 else None
             ),
-            payload=payload or None,
+            payload=dict(payload) if payload is not None else None,
         )
         state.items_by_id[item.id] = item
         state.revision += 1

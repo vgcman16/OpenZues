@@ -170,6 +170,7 @@ from openzues.services.gateway_node_methods import (
 )
 from openzues.services.gateway_node_pairing import GatewayNodePairingService
 from openzues.services.gateway_node_service import GatewayNodeService
+from openzues.services.gateway_outbound_runtime import GatewayOutboundRuntimeService
 from openzues.services.gateway_talk_mode import GatewayTalkModeService
 from openzues.services.gateway_tts import GatewayTtsService
 from openzues.services.gateway_tts_runtime import GatewayTtsRuntimeService
@@ -1764,6 +1765,7 @@ def create_app(
         launch_routing=active_launch_routing_service,
         cron_webhook_url=active_settings.cron_webhook_url,
         cron_webhook_token=active_settings.cron_webhook_token,
+        outbound_runtime_service=GatewayOutboundRuntimeService(),
     )
     active_setup_service = SetupService(
         active_database,
@@ -1914,6 +1916,11 @@ def create_app(
     )
     active_control_chat_service.set_wake_service(active_gateway_wake_service)
     active_ops_mesh_service.wake_service = active_gateway_wake_service
+    if active_ops_mesh_service.outbound_runtime_service is None:
+        active_ops_mesh_service.outbound_runtime_service = GatewayOutboundRuntimeService()
+    active_ops_mesh_service.outbound_runtime_service.bind_session_deliverer(
+        active_control_chat_service.append_session_assistant_message
+    )
     active_ops_mesh_service.session_delivery_service = (
         active_control_chat_service.append_session_assistant_message
     )
@@ -2001,6 +2008,7 @@ def create_app(
             logs_service=active_gateway_logs_service,
             models_service=GatewayModelsService(list_instance_views=active_manager.list_views),
             send_channel_message_service=active_ops_mesh_service.send_direct_channel_message,
+            send_channel_poll_service=active_ops_mesh_service.send_direct_channel_poll,
             chat_send_service=submit_gateway_chat_message,
             chat_abort_service=abort_gateway_chat_run,
             create_task_blueprint=getattr(active_ops_mesh_service, "create_task_blueprint", None),
@@ -3273,6 +3281,7 @@ def create_app(
             await active_setup_service.save_wizard_session(payload)
             return await active_gateway_wizard_service.start(
                 mode=payload.mode,
+                flow=payload.flow,
                 workspace=payload.project_path,
             )
         except (KeyError, ValueError) as exc:
@@ -3288,12 +3297,15 @@ def create_app(
         answer = payload.get("answer")
         if not session_id:
             raise HTTPException(status_code=400, detail="sessionId is required")
-        if not isinstance(answer, dict):
-            raise HTTPException(status_code=400, detail="answer is required")
+        if "answer" in payload and not isinstance(answer, dict):
+            raise HTTPException(
+                status_code=400,
+                detail="answer must be an object when provided",
+            )
         try:
             return await active_gateway_wizard_service.next(
                 session_id=session_id,
-                answer=answer,
+                answer=answer if isinstance(answer, dict) else None,
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -3309,6 +3321,20 @@ def create_app(
             raise HTTPException(status_code=400, detail="sessionId is required")
         try:
             return await active_gateway_wizard_service.cancel(session_id=session_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @fastapi_app.get("/api/onboarding/wizard/status")
+    async def get_onboarding_wizard_status(
+        request: Request,
+        sessionId: str | None = None,
+    ) -> dict[str, Any]:
+        await require_management_access(request, "team.manage")
+        session_id = str(sessionId or "").strip()
+        if not session_id:
+            raise HTTPException(status_code=400, detail="sessionId is required")
+        try:
+            return await active_gateway_wizard_service.status(session_id=session_id)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 

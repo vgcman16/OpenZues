@@ -8,6 +8,7 @@ import os
 import re
 import shutil
 import sqlite3
+import subprocess
 import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -23,6 +24,8 @@ from openzues.schemas import (
     NotificationRouteView,
     TaskBlueprintCreate,
 )
+from openzues.services import gateway_config_schema as gateway_config_schema_module
+from openzues.services.access import AccessService
 from openzues.services.gateway_agent_files import GatewayAgentFilesService
 from openzues.services.gateway_channels import GatewayChannelsService
 from openzues.services.gateway_config import (
@@ -59,6 +62,14 @@ from openzues.services.gateway_wake import GatewayWakeService
 from openzues.services.gateway_wizard import GatewayWizardService
 from openzues.services.hub import BroadcastHub
 from openzues.services.session_keys import build_launch_session_key, resolve_thread_session_keys
+
+
+def test_access_service_extract_api_key_trims_authorization_and_header_tokens() -> None:
+    service = AccessService.__new__(AccessService)
+
+    assert service.extract_api_key({"authorization": "  Bearer remote-key  "}) == "remote-key"
+    assert service.extract_api_key({"X-OpenClaw-Token": "  remote-key  "}) == "remote-key"
+    assert service.extract_api_key({"X-OpenZues-Key": "   "}) is None
 
 
 class FakeNodeConnection:
@@ -513,6 +524,53 @@ async def test_gateway_identity_get_repairs_mismatched_openclaw_device_id(tmp_pa
 
     assert payload == {"id": expected_id, "publicKey": expected_public_key}
     assert stored["deviceId"] == expected_id
+    assert stored["createdAtMs"] == 123
+
+
+@pytest.mark.asyncio
+async def test_gateway_identity_get_repairs_device_id_from_public_key_even_with_invalid_private_pem(
+    tmp_path: Path,
+) -> None:
+    private_key = Ed25519PrivateKey.generate()
+    public_key_pem = private_key.public_key().public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    ).decode("utf-8")
+    public_key_bytes = private_key.public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+    expected_id = hashlib.sha256(public_key_bytes).hexdigest()
+    expected_public_key = base64.urlsafe_b64encode(public_key_bytes).decode("ascii").rstrip("=")
+    identity_path = tmp_path / "settings" / "gateway-identity.json"
+    identity_path.parent.mkdir(parents=True, exist_ok=True)
+    identity_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "deviceId": "stale-device-id",
+                "publicKeyPem": public_key_pem,
+                "privateKeyPem": "not-a-valid-private-key",
+                "createdAtMs": 123,
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        gateway_identity_service=GatewayIdentityService(tmp_path),
+    )
+
+    payload = await service.call("gateway.identity.get", {})
+    stored = json.loads(identity_path.read_text(encoding="utf-8"))
+
+    assert payload == {"id": expected_id, "publicKey": expected_public_key}
+    assert stored["deviceId"] == expected_id
+    assert stored["publicKeyPem"] == public_key_pem
+    assert stored["privateKeyPem"] == "not-a-valid-private-key"
     assert stored["createdAtMs"] == 123
 
 
@@ -1014,36 +1072,7 @@ async def test_config_schema_returns_bounded_control_ui_bootstrap_schema() -> No
 async def test_config_schema_lookup_returns_field_summary_and_children() -> None:
     service = GatewayNodeMethodService(GatewayNodeRegistry())
 
-    root_lookup = await service.call("config.schema.lookup", {"path": ""})
     field_lookup = await service.call("config.schema.lookup", {"path": "assistantName"})
-
-    assert root_lookup["path"] == ""
-    assert root_lookup["children"][0]["key"] == "basePath"
-    assert any(child["key"] == "assistantName" for child in root_lookup["children"])
-    assistant_name_child = next(
-        child for child in root_lookup["children"] if child["key"] == "assistantName"
-    )
-    assert assistant_name_child == {
-        "key": "assistantName",
-        "path": "assistantName",
-        "type": "string",
-        "required": True,
-        "hasChildren": False,
-        "hint": {"label": "Assistant Name"},
-        "hintPath": "assistantName",
-    }
-    local_media_preview_roots_child = next(
-        child for child in root_lookup["children"] if child["key"] == "localMediaPreviewRoots"
-    )
-    assert local_media_preview_roots_child == {
-        "key": "localMediaPreviewRoots",
-        "path": "localMediaPreviewRoots",
-        "type": "array",
-        "required": False,
-        "hasChildren": True,
-        "hint": {"label": "Local Media Preview Roots"},
-        "hintPath": "localMediaPreviewRoots",
-    }
 
     assert field_lookup == {
         "path": "assistantName",
@@ -1054,6 +1083,186 @@ async def test_config_schema_lookup_returns_field_summary_and_children() -> None
         "hint": {"label": "Assistant Name"},
         "hintPath": "assistantName",
         "children": [],
+    }
+
+
+def test_config_schema_lookup_preserves_supported_shallow_schema_keys(monkeypatch) -> None:
+    monkeypatch.setattr(
+        gateway_config_schema_module,
+        "_root_schema",
+        lambda: {
+            "type": "object",
+            "properties": {
+                "constrained": {
+                    "type": ["string", "null"],
+                    "title": "Constrained Field",
+                    "description": "Upstream lookup should keep scalar metadata only.",
+                    "format": "uri",
+                    "pattern": "^https://",
+                    "minLength": 8,
+                    "maxLength": 128,
+                    "deprecated": True,
+                    "readOnly": False,
+                    "writeOnly": True,
+                    "enum": ["https://example.com", None],
+                    "const": "https://example.com",
+                    "default": "https://default.example.com",
+                    "properties": {
+                        "nested": {"type": "string"},
+                    },
+                }
+            },
+            "required": ["constrained"],
+        },
+    )
+    monkeypatch.setattr(gateway_config_schema_module, "_UI_HINTS", {})
+    service = gateway_config_schema_module.GatewayConfigSchemaService()
+
+    lookup = service.lookup("constrained")
+
+    assert lookup is not None
+    assert lookup["schema"] == {
+        "type": ["string", "null"],
+        "title": "Constrained Field",
+        "description": "Upstream lookup should keep scalar metadata only.",
+        "format": "uri",
+        "pattern": "^https://",
+        "minLength": 8,
+        "maxLength": 128,
+        "deprecated": True,
+        "readOnly": False,
+        "writeOnly": True,
+        "enum": ["https://example.com", None],
+        "const": "https://example.com",
+    }
+    assert "default" not in lookup["schema"]
+
+
+def test_config_schema_lookup_marks_branch_schema_children(monkeypatch) -> None:
+    monkeypatch.setattr(
+        gateway_config_schema_module,
+        "_root_schema",
+        lambda: {
+            "type": "object",
+            "properties": {
+                "parent": {
+                    "type": "object",
+                    "properties": {
+                        "branch": {
+                            "title": "Branch Field",
+                            "oneOf": [
+                                {"type": "string"},
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "token": {"type": "string"},
+                                    },
+                                },
+                            ],
+                        }
+                    },
+                }
+            },
+        },
+    )
+    monkeypatch.setattr(gateway_config_schema_module, "_UI_HINTS", {})
+    service = gateway_config_schema_module.GatewayConfigSchemaService()
+
+    lookup = service.lookup("parent")
+
+    assert lookup is not None
+    assert lookup["children"] == [
+        {
+            "key": "branch",
+            "path": "parent.branch",
+            "type": None,
+            "required": False,
+            "hasChildren": True,
+        }
+    ]
+
+
+def test_config_schema_lookup_accepts_scoped_plugin_entry_paths(monkeypatch) -> None:
+    monkeypatch.setattr(
+        gateway_config_schema_module,
+        "_root_schema",
+        lambda: {
+            "type": "object",
+            "properties": {
+                "$schema": {
+                    "type": "string",
+                    "title": "Schema URI",
+                },
+                "plugins": {
+                    "type": "object",
+                    "properties": {
+                        "entries": {
+                            "type": "object",
+                            "properties": {
+                                "@openclaw/voice-call": {
+                                    "type": "object",
+                                    "properties": {
+                                        "config": {
+                                            "type": "object",
+                                            "title": "Voice Call Config",
+                                            "properties": {
+                                                "provider": {
+                                                    "type": "string",
+                                                    "title": "Provider",
+                                                }
+                                            },
+                                        }
+                                    },
+                                }
+                            },
+                        }
+                    },
+                },
+            },
+        },
+    )
+    monkeypatch.setattr(
+        gateway_config_schema_module,
+        "_UI_HINTS",
+        {
+            "$schema": {"label": "Schema URI"},
+            "plugins.entries.@openclaw/voice-call.config": {
+                "label": "Voice Call Config",
+            },
+        },
+    )
+    service = gateway_config_schema_module.GatewayConfigSchemaService()
+
+    schema_lookup = service.lookup("$schema")
+    plugin_lookup = service.lookup("plugins.entries.@openclaw/voice-call.config")
+
+    assert schema_lookup == {
+        "path": "$schema",
+        "schema": {
+            "type": "string",
+            "title": "Schema URI",
+        },
+        "hint": {"label": "Schema URI"},
+        "hintPath": "$schema",
+        "children": [],
+    }
+    assert plugin_lookup == {
+        "path": "plugins.entries.@openclaw/voice-call.config",
+        "schema": {
+            "type": "object",
+            "title": "Voice Call Config",
+        },
+        "hint": {"label": "Voice Call Config"},
+        "hintPath": "plugins.entries.@openclaw/voice-call.config",
+        "children": [
+            {
+                "key": "provider",
+                "path": "plugins.entries.@openclaw/voice-call.config.provider",
+                "type": "string",
+                "required": False,
+                "hasChildren": False,
+            }
+        ],
     }
 
 
@@ -1115,8 +1324,23 @@ async def test_config_schema_lookup_supports_array_paths_and_rejects_invalid_loo
         "hintPath": "localMediaPreviewRoots[]",
         "children": [],
     }
+    embed_lookup = await service.call(
+        "config.schema.lookup",
+        {"path": "embedSandbox"},
+    )
+    assert embed_lookup == {
+        "path": "embedSandbox",
+        "schema": {
+            "type": "string",
+            "title": "Embed Sandbox",
+            "enum": ["strict", "scripts", "trusted"],
+        },
+        "hint": {"label": "Embed Sandbox"},
+        "hintPath": "embedSandbox",
+        "children": [],
+    }
 
-    for path in ["   ", "gateway.auth\nspoof", "gateway." + ("a" * 1020)]:
+    for path in [".", "...", "", "   ", "gateway.auth\nspoof", "gateway." + ("a" * 1020)]:
         with pytest.raises(ValueError, match="config schema path not found"):
             await service.call("config.schema.lookup", {"path": path})
 
@@ -13151,6 +13375,36 @@ async def test_config_open_file_returns_generic_error_when_opener_fails(tmp_path
 
 
 @pytest.mark.asyncio
+async def test_config_open_file_returns_generic_error_when_open_command_exits_nonzero(
+    tmp_path,
+) -> None:
+    def fake_open_path(_path: Path) -> None:
+        raise subprocess.CalledProcessError(1, ["xdg-open"])
+
+    expected_path = tmp_path / "settings" / "control-ui-config.json"
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        config_service=GatewayConfigService(
+            assistant_name="OpenZues",
+            assistant_avatar="/static/favicon.svg",
+            assistant_agent_id="assistant-control-ui",
+            server_version="9.9.9",
+            data_dir=tmp_path,
+            open_path=fake_open_path,
+        ),
+    )
+
+    payload = await service.call("config.openFile", {})
+
+    assert payload == {
+        "ok": False,
+        "path": str(expected_path),
+        "error": "failed to open config file",
+    }
+    assert expected_path.exists()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("method", "params", "expected_message"),
     [
@@ -14186,7 +14440,7 @@ Body
 
 
 @pytest.mark.asyncio
-async def test_node_methods_surface_openclaw_shaped_pair_list_payloads() -> None:
+async def test_node_pair_list_returns_empty_without_pairing_storage() -> None:
     registry = GatewayNodeRegistry()
     _register_ios_node(registry)
     registry.remember(
@@ -14210,34 +14464,7 @@ async def test_node_methods_surface_openclaw_shaped_pair_list_payloads() -> None
 
     assert pairing == {
         "pending": [],
-        "paired": [
-            {
-                "nodeId": "node-2",
-                "displayName": "Offline Tablet",
-                "platform": "ios",
-                "version": "2.0.0",
-                "coreVersion": "2.1.0",
-                "uiVersion": "2.2.0",
-                "remoteIp": "10.0.0.6",
-                "permissions": {"operator.read": True},
-                "createdAtMs": None,
-                "approvedAtMs": 120,
-                "lastConnectedAtMs": None,
-            },
-            {
-                "nodeId": "node-1",
-                "displayName": "Builder Phone",
-                "platform": "ios",
-                "version": "1.2.3",
-                "coreVersion": "2.0.0",
-                "uiVersion": "3.0.0",
-                "remoteIp": "10.0.0.5",
-                "permissions": {"operator.read": True},
-                "createdAtMs": None,
-                "approvedAtMs": 99,
-                "lastConnectedAtMs": 321,
-            },
-        ],
+        "paired": [],
     }
 
 
@@ -14337,9 +14564,12 @@ async def test_node_pair_request_persists_and_refreshes_openclaw_pending_entries
                 "version": "1.2.3",
                 "coreVersion": "2.0.0",
                 "uiVersion": "3.0.0",
+                "deviceFamily": "iphone",
+                "modelIdentifier": "iphone15,3",
+                "caps": ["voice", "canvas"],
+                "commands": ["canvas.present"],
                 "remoteIp": "10.0.0.6",
                 "ts": 2_000,
-                "commands": ["canvas.present"],
                 "requiredApproveScopes": ["operator.pairing", "operator.write"],
             }
         ],
@@ -14445,8 +14675,79 @@ async def test_node_pair_request_refresh_preserves_omitted_fields_and_allows_exp
                 "version": "1.2.3",
                 "coreVersion": "2.0.0",
                 "uiVersion": "3.0.0",
+                "deviceFamily": "iphone",
+                "modelIdentifier": "iphone15,3",
+                "caps": [],
+                "commands": [],
                 "remoteIp": "10.0.0.5",
                 "ts": 3_000,
+                "requiredApproveScopes": ["operator.pairing"],
+            }
+        ],
+        "paired": [],
+    }
+
+
+@pytest.mark.asyncio
+async def test_node_pair_list_preserves_silent_pending_entries(tmp_path) -> None:
+    database = Database(tmp_path / "data" / "openzues-test.db")
+    await database.initialize()
+    pairing_service = GatewayNodePairingService(database)
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        pairing_service=pairing_service,
+    )
+
+    created = await service.call(
+        "node.pair.request",
+        {
+            "nodeId": "pair-node-silent-pending",
+            "displayName": "Silent Phone",
+            "platform": "ios",
+            "silent": True,
+        },
+        now_ms=1_000,
+    )
+    pairing = await service.call("node.pair.list", {})
+
+    request_id = created["request"]["requestId"]
+    assert created == {
+        "status": "pending",
+        "request": {
+            "requestId": request_id,
+            "nodeId": "pair-node-silent-pending",
+            "displayName": "Silent Phone",
+            "platform": "ios",
+            "version": None,
+            "coreVersion": None,
+            "uiVersion": None,
+            "deviceFamily": None,
+            "modelIdentifier": None,
+            "caps": [],
+            "commands": [],
+            "remoteIp": None,
+            "silent": True,
+            "ts": 1_000,
+        },
+        "created": True,
+    }
+    assert pairing == {
+        "pending": [
+            {
+                "requestId": request_id,
+                "nodeId": "pair-node-silent-pending",
+                "displayName": "Silent Phone",
+                "platform": "ios",
+                "version": None,
+                "coreVersion": None,
+                "uiVersion": None,
+                "deviceFamily": None,
+                "modelIdentifier": None,
+                "caps": [],
+                "commands": [],
+                "remoteIp": None,
+                "silent": True,
+                "ts": 1_000,
                 "requiredApproveScopes": ["operator.pairing"],
             }
         ],
@@ -14647,6 +14948,10 @@ async def test_node_pair_approve_verify_and_rename_lifecycle(tmp_path) -> None:
             "version": None,
             "coreVersion": None,
             "uiVersion": None,
+            "deviceFamily": None,
+            "modelIdentifier": None,
+            "caps": [],
+            "commands": ["system.run"],
             "remoteIp": "10.0.0.9",
             "permissions": None,
             "createdAtMs": 2_000,
@@ -14666,6 +14971,10 @@ async def test_node_pair_approve_verify_and_rename_lifecycle(tmp_path) -> None:
             "version": None,
             "coreVersion": None,
             "uiVersion": None,
+            "deviceFamily": None,
+            "modelIdentifier": None,
+            "caps": [],
+            "commands": ["system.run"],
             "remoteIp": "10.0.0.9",
             "permissions": None,
             "createdAtMs": 2_000,
@@ -14682,11 +14991,16 @@ async def test_node_pair_approve_verify_and_rename_lifecycle(tmp_path) -> None:
         "paired": [
             {
                 "nodeId": "pair-node-3",
+                "token": token,
                 "displayName": "Renamed Node",
                 "platform": "macos",
                 "version": None,
                 "coreVersion": None,
                 "uiVersion": None,
+                "deviceFamily": None,
+                "modelIdentifier": None,
+                "caps": [],
+                "commands": ["system.run"],
                 "remoteIp": "10.0.0.9",
                 "permissions": None,
                 "createdAtMs": 2_000,
@@ -14868,7 +15182,7 @@ async def test_node_list_and_describe_keep_empty_live_command_surface_over_paire
         now_ms=1_000,
     )
     request_id = created["request"]["requestId"]
-    await service.call(
+    approved = await service.call(
         "node.pair.approve",
         {"requestId": request_id},
         requester=requester,
@@ -14901,6 +15215,7 @@ async def test_node_list_and_describe_keep_empty_live_command_surface_over_paire
         {"nodeId": "pair-node-live-empty"},
         now_ms=3_000,
     )
+    pairing = await service.call("node.pair.list", {}, now_ms=3_000)
 
     assert listed["nodes"] == [
         {
@@ -14947,6 +15262,411 @@ async def test_node_list_and_describe_keep_empty_live_command_surface_over_paire
         "connectedAtMs": 321,
         "approvedAtMs": 2_000,
     }
+    assert pairing == {
+        "pending": [],
+        "paired": [
+            {
+                "nodeId": "pair-node-live-empty",
+                "token": approved["node"]["token"],
+                "displayName": "Catalog Node",
+                "platform": "linux",
+                "version": "1.0.1",
+                "coreVersion": "2.0.1",
+                "uiVersion": "3.0.1",
+                "deviceFamily": "server",
+                "modelIdentifier": "vm-standard",
+                "caps": ["shell"],
+                "commands": ["system.run"],
+                "remoteIp": "10.0.0.12",
+                "permissions": None,
+                "createdAtMs": 2_000,
+                "approvedAtMs": 2_000,
+                "lastConnectedAtMs": 321,
+            }
+        ],
+    }
+
+
+@pytest.mark.asyncio
+async def test_node_list_and_describe_preserve_empty_live_permissions_map() -> None:
+    registry = GatewayNodeRegistry()
+    registry.remember(
+        KnownNode(
+            node_id="pair-node-empty-permissions",
+            display_name="Runtime Permissions Node",
+            platform="android",
+            client_id="saved-pair-node-empty-permissions",
+            client_mode="node",
+            paired=True,
+            connected=False,
+        )
+    )
+    registry.register(
+        FakeNodeConnection("conn-pair-node-empty-permissions"),
+        GatewayNodeConnect(
+            client_id="live-pair-node-empty-permissions",
+            device_id="pair-node-empty-permissions",
+            client_mode="node",
+            display_name="Runtime Permissions Node",
+            platform="android",
+            permissions={},
+        ),
+        connected_at_ms=321,
+    )
+    service = GatewayNodeMethodService(registry)
+
+    listed = await service.call("node.list", {}, now_ms=3_000)
+    described = await service.call(
+        "node.describe",
+        {"nodeId": "pair-node-empty-permissions"},
+        now_ms=3_000,
+    )
+
+    assert listed["nodes"] == [
+        {
+            "nodeId": "pair-node-empty-permissions",
+            "displayName": "Runtime Permissions Node",
+            "platform": "android",
+            "version": None,
+            "coreVersion": None,
+            "uiVersion": None,
+            "clientId": "live-pair-node-empty-permissions",
+            "clientMode": "node",
+            "remoteIp": None,
+            "deviceFamily": None,
+            "modelIdentifier": None,
+            "pathEnv": None,
+            "caps": [],
+            "commands": [],
+            "permissions": {},
+            "paired": True,
+            "connected": True,
+            "connectedAtMs": 321,
+            "approvedAtMs": None,
+        }
+    ]
+    assert described == {
+        "ts": 3_000,
+        "nodeId": "pair-node-empty-permissions",
+        "displayName": "Runtime Permissions Node",
+        "platform": "android",
+        "version": None,
+        "coreVersion": None,
+        "uiVersion": None,
+        "clientId": "live-pair-node-empty-permissions",
+        "clientMode": "node",
+        "remoteIp": None,
+        "deviceFamily": None,
+        "modelIdentifier": None,
+        "pathEnv": None,
+        "caps": [],
+        "commands": [],
+        "permissions": {},
+        "paired": True,
+        "connected": True,
+        "connectedAtMs": 321,
+        "approvedAtMs": None,
+    }
+
+
+@pytest.mark.asyncio
+async def test_node_list_and_describe_pin_paired_commands_until_repair_request(tmp_path) -> None:
+    database = Database(tmp_path / "data" / "openzues-test.db")
+    await database.initialize()
+    pairing_service = GatewayNodePairingService(database)
+    registry = GatewayNodeRegistry()
+    service = GatewayNodeMethodService(
+        registry,
+        pairing_service=pairing_service,
+    )
+    requester = GatewayNodeMethodRequester(caller_scopes=("operator.pairing", "operator.write"))
+
+    created = await service.call(
+        "node.pair.request",
+        {
+            "nodeId": "pair-node-command-pin",
+            "displayName": "Pinned Node",
+            "platform": "darwin",
+            "commands": ["canvas.snapshot"],
+        },
+        now_ms=1_000,
+    )
+    request_id = created["request"]["requestId"]
+    await service.call(
+        "node.pair.approve",
+        {"requestId": request_id},
+        requester=requester,
+        now_ms=2_000,
+    )
+    registry.register(
+        FakeNodeConnection("conn-pair-node-command-pin"),
+        GatewayNodeConnect(
+            client_id="live-pair-node-command-pin",
+            device_id="pair-node-command-pin",
+            client_mode="node",
+            display_name="Pinned Node",
+            platform="darwin",
+            version="1.0.1",
+            commands=("canvas.snapshot", "system.run"),
+        ),
+        connected_at_ms=321,
+    )
+
+    listed = await service.call("node.list", {}, now_ms=3_000)
+    described = await service.call(
+        "node.describe",
+        {"nodeId": "pair-node-command-pin"},
+        now_ms=3_000,
+    )
+
+    assert listed["nodes"] == [
+        {
+            "nodeId": "pair-node-command-pin",
+            "displayName": "Pinned Node",
+            "platform": "darwin",
+            "version": "1.0.1",
+            "coreVersion": None,
+            "uiVersion": None,
+            "clientId": "live-pair-node-command-pin",
+            "clientMode": "node",
+            "remoteIp": None,
+            "deviceFamily": None,
+            "modelIdentifier": None,
+            "pathEnv": None,
+            "caps": [],
+            "commands": ["canvas.snapshot"],
+            "permissions": None,
+            "paired": True,
+            "connected": True,
+            "connectedAtMs": 321,
+            "approvedAtMs": 2_000,
+        }
+    ]
+    assert described == {
+        "ts": 3_000,
+        "nodeId": "pair-node-command-pin",
+        "displayName": "Pinned Node",
+        "platform": "darwin",
+        "version": "1.0.1",
+        "coreVersion": None,
+        "uiVersion": None,
+        "clientId": "live-pair-node-command-pin",
+        "clientMode": "node",
+        "remoteIp": None,
+        "deviceFamily": None,
+        "modelIdentifier": None,
+        "pathEnv": None,
+        "caps": [],
+        "commands": ["canvas.snapshot"],
+        "permissions": None,
+        "paired": True,
+        "connected": True,
+        "connectedAtMs": 321,
+        "approvedAtMs": 2_000,
+    }
+
+
+@pytest.mark.asyncio
+async def test_node_pair_list_stages_silent_scope_upgrade_request_for_paired_command_expansion(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "data" / "openzues-test.db")
+    await database.initialize()
+    pairing_service = GatewayNodePairingService(database)
+    registry = GatewayNodeRegistry()
+    service = GatewayNodeMethodService(
+        registry,
+        pairing_service=pairing_service,
+    )
+    requester = GatewayNodeMethodRequester(caller_scopes=("operator.pairing", "operator.write"))
+
+    created = await service.call(
+        "node.pair.request",
+        {
+            "nodeId": "pair-node-scope-upgrade",
+            "displayName": "Pinned Node",
+            "platform": "darwin",
+            "commands": ["canvas.snapshot"],
+        },
+        now_ms=1_000,
+    )
+    initial_request_id = created["request"]["requestId"]
+    await service.call(
+        "node.pair.approve",
+        {"requestId": initial_request_id},
+        requester=requester,
+        now_ms=2_000,
+    )
+    registry.register(
+        FakeNodeConnection("conn-pair-node-scope-upgrade"),
+        GatewayNodeConnect(
+            client_id="live-pair-node-scope-upgrade",
+            device_id="pair-node-scope-upgrade",
+            client_mode="node",
+            display_name="Pinned Node",
+            platform="darwin",
+            version="1.0.1",
+            commands=("canvas.snapshot", "system.run"),
+        ),
+        connected_at_ms=321,
+    )
+
+    pairing = await service.call("node.pair.list", {}, now_ms=3_000)
+    listed = await service.call("node.list", {}, now_ms=3_000)
+
+    pending_request_id = pairing["pending"][0]["requestId"]
+    assert pending_request_id != initial_request_id
+    assert listed["nodes"] == [
+        {
+            "nodeId": "pair-node-scope-upgrade",
+            "displayName": "Pinned Node",
+            "platform": "darwin",
+            "version": "1.0.1",
+            "coreVersion": None,
+            "uiVersion": None,
+            "clientId": "live-pair-node-scope-upgrade",
+            "clientMode": "node",
+            "remoteIp": None,
+            "deviceFamily": None,
+            "modelIdentifier": None,
+            "pathEnv": None,
+            "caps": [],
+            "commands": ["canvas.snapshot"],
+            "permissions": None,
+            "paired": True,
+            "connected": True,
+            "connectedAtMs": 321,
+            "approvedAtMs": 2_000,
+        }
+    ]
+    assert pairing == {
+        "pending": [
+            {
+                "requestId": pending_request_id,
+                "nodeId": "pair-node-scope-upgrade",
+                "displayName": "Pinned Node",
+                "platform": "darwin",
+                "version": "1.0.1",
+                "coreVersion": None,
+                "uiVersion": None,
+                "deviceFamily": None,
+                "modelIdentifier": None,
+                "caps": [],
+                "commands": ["canvas.snapshot", "system.run"],
+                "remoteIp": None,
+                "silent": True,
+                "ts": 3_000,
+                "requiredApproveScopes": ["operator.pairing", "operator.admin"],
+            }
+        ],
+        "paired": [
+            {
+                "nodeId": "pair-node-scope-upgrade",
+                "token": pairing["paired"][0]["token"],
+                "displayName": "Pinned Node",
+                "platform": "darwin",
+                "version": "1.0.1",
+                "coreVersion": None,
+                "uiVersion": None,
+                "deviceFamily": None,
+                "modelIdentifier": None,
+                "caps": [],
+                "commands": ["canvas.snapshot"],
+                "remoteIp": None,
+                "permissions": None,
+                "createdAtMs": 2_000,
+                "approvedAtMs": 2_000,
+                "lastConnectedAtMs": 321,
+            }
+        ],
+    }
+
+
+@pytest.mark.asyncio
+async def test_node_invoke_raises_scope_upgrade_pending_approval_for_unapproved_live_command(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "data" / "openzues-test.db")
+    await database.initialize()
+    pairing_service = GatewayNodePairingService(database)
+    registry = GatewayNodeRegistry()
+    service = GatewayNodeMethodService(
+        registry,
+        pairing_service=pairing_service,
+    )
+    requester = GatewayNodeMethodRequester(caller_scopes=("operator.pairing", "operator.write"))
+
+    created = await service.call(
+        "node.pair.request",
+        {
+            "nodeId": "pair-node-scope-upgrade-invoke",
+            "displayName": "Pinned Node",
+            "platform": "darwin",
+            "commands": ["canvas.snapshot"],
+        },
+        now_ms=1_000,
+    )
+    await service.call(
+        "node.pair.approve",
+        {"requestId": created["request"]["requestId"]},
+        requester=requester,
+        now_ms=2_000,
+    )
+    registry.register(
+        FakeNodeConnection("conn-pair-node-scope-upgrade-invoke"),
+        GatewayNodeConnect(
+            client_id="live-pair-node-scope-upgrade-invoke",
+            device_id="pair-node-scope-upgrade-invoke",
+            client_mode="node",
+            display_name="Pinned Node",
+            platform="darwin",
+            version="1.0.1",
+            commands=("canvas.snapshot", "system.run"),
+        ),
+        connected_at_ms=321,
+    )
+
+    with pytest.raises(
+        GatewayNodeMethodError,
+        match=r"scope upgrade pending approval \(requestId: .+\)",
+    ) as exc_info:
+        await service.call(
+            "node.invoke",
+            {
+                "nodeId": "pair-node-scope-upgrade-invoke",
+                "command": "system.run",
+                "params": {"command": "whoami"},
+                "idempotencyKey": "idem-system-run",
+            },
+            now_ms=3_000,
+        )
+
+    pairing = await service.call("node.pair.list", {})
+    pending_request_id = pairing["pending"][0]["requestId"]
+
+    assert exc_info.value.status_code == 409
+    assert str(exc_info.value) == (
+        f"scope upgrade pending approval (requestId: {pending_request_id})"
+    )
+    assert pairing["pending"] == [
+        {
+            "requestId": pending_request_id,
+            "nodeId": "pair-node-scope-upgrade-invoke",
+            "displayName": "Pinned Node",
+            "platform": "darwin",
+            "version": "1.0.1",
+            "coreVersion": None,
+            "uiVersion": None,
+            "deviceFamily": None,
+            "modelIdentifier": None,
+            "caps": [],
+            "commands": ["canvas.snapshot", "system.run"],
+            "remoteIp": None,
+            "silent": True,
+            "ts": 3_000,
+            "requiredApproveScopes": ["operator.pairing", "operator.admin"],
+        }
+    ]
 
 
 @pytest.mark.asyncio
@@ -15207,6 +15927,48 @@ async def test_node_pending_enqueue_attempts_saved_lane_wake_when_requested() ->
 
     assert wake_calls == ["node-1"]
     assert queued["wakeTriggered"] is True
+
+
+@pytest.mark.asyncio
+async def test_node_pending_enqueue_keeps_wake_triggered_false_when_wake_is_unavailable() -> None:
+    registry = GatewayNodeRegistry()
+    registry.remember(
+        KnownNode(
+            node_id="node-1",
+            display_name="Offline Builder",
+            platform="desktop",
+            client_id="node-1",
+            client_mode="desktop",
+            paired=True,
+            connected=False,
+        )
+    )
+    wake_calls: list[str] = []
+
+    async def fake_wake(node_id: str) -> dict[str, object]:
+        wake_calls.append(node_id)
+        return {
+            "attempted": True,
+            "available": False,
+            "connected": False,
+            "path": "connect-error",
+            "durationMs": 37,
+        }
+
+    service = GatewayNodeMethodService(registry, wake_node=fake_wake)
+
+    queued = await service.call(
+        "node.pending.enqueue",
+        {
+            "nodeId": "node-1",
+            "type": "location.request",
+            "priority": "high",
+            "wake": True,
+        },
+    )
+
+    assert wake_calls == ["node-1"]
+    assert queued["wakeTriggered"] is False
 
 
 @pytest.mark.asyncio
@@ -16078,6 +16840,84 @@ async def test_send_uses_channel_message_runtime_and_derives_thread_from_session
 
 
 @pytest.mark.asyncio
+async def test_send_uses_channel_message_runtime_for_media_payloads() -> None:
+    calls: list[dict[str, object | None]] = []
+
+    async def fake_send_channel_message_service(
+        *,
+        channel: str,
+        to: str,
+        message: str,
+        account_id: str | None,
+        agent_id: str | None,
+        thread_id: str | None,
+        session_key: str | None,
+        idempotency_key: str,
+        media_urls: list[str] | None = None,
+        gif_playback: bool | None = None,
+    ) -> dict[str, object]:
+        calls.append(
+            {
+                "channel": channel,
+                "to": to,
+                "message": message,
+                "account_id": account_id,
+                "agent_id": agent_id,
+                "thread_id": thread_id,
+                "session_key": session_key,
+                "idempotency_key": idempotency_key,
+                "media_urls": media_urls,
+                "gif_playback": gif_playback,
+            }
+        )
+        return {
+            "ok": True,
+            "messageId": "77",
+            "sessionKey": "launch:mode:workspace_affinity:channel:slack:peer:channel:channel:c123",
+            "deliveryId": 9,
+        }
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        send_channel_message_service=fake_send_channel_message_service,
+    )
+
+    payload = await service.call(
+        "send",
+        {
+            "to": " channel:C123 ",
+            "mediaUrl": " https://example.com/a.png ",
+            "mediaUrls": ["https://example.com/b.png", " https://example.com/a.png "],
+            "gifPlayback": True,
+            "channel": "slack",
+            "threadId": "1710000000.9999",
+            "idempotencyKey": "idem-send-media-runtime",
+        },
+    )
+
+    assert calls == [
+        {
+            "channel": "slack",
+            "to": "channel:C123",
+            "message": "",
+            "account_id": None,
+            "agent_id": None,
+            "thread_id": "1710000000.9999",
+            "session_key": None,
+            "idempotency_key": "idem-send-media-runtime",
+            "media_urls": ["https://example.com/a.png", "https://example.com/b.png"],
+            "gif_playback": True,
+        }
+    ]
+    assert payload == {
+        "ok": True,
+        "messageId": "77",
+        "sessionKey": "launch:mode:workspace_affinity:channel:slack:peer:channel:channel:c123",
+        "deliveryId": 9,
+    }
+
+
+@pytest.mark.asyncio
 async def test_send_accepts_valid_whatsapp_target_shape_before_delivery_placeholder() -> None:
     service = GatewayNodeMethodService(GatewayNodeRegistry())
 
@@ -16323,6 +17163,110 @@ async def test_poll_returns_validated_unavailable_contract() -> None:
 
     assert exc_info.value.code == "UNAVAILABLE"
     assert exc_info.value.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_poll_uses_channel_poll_runtime() -> None:
+    expected_session_key = resolve_thread_session_keys(
+        base_session_key=build_launch_session_key(
+            mode="workspace_affinity",
+            preferred_instance_id=None,
+            task_id=None,
+            project_id=None,
+            operator_id=None,
+            conversation_target=ConversationTargetView(
+                channel="slack",
+                account_id="default",
+                peer_kind="channel",
+                peer_id="channel:C123",
+            ),
+        ),
+        thread_id="1710000000.9999",
+    ).session_key
+    calls: list[dict[str, object | None]] = []
+
+    async def fake_send_channel_poll_service(
+        *,
+        channel: str,
+        to: str,
+        question: str,
+        options: list[str],
+        max_selections: int | None,
+        duration_seconds: int | None,
+        duration_hours: int | None,
+        silent: bool | None,
+        is_anonymous: bool | None,
+        account_id: str | None,
+        thread_id: str | None,
+        idempotency_key: str,
+    ) -> dict[str, object]:
+        calls.append(
+            {
+                "channel": channel,
+                "to": to,
+                "question": question,
+                "options": options,
+                "max_selections": max_selections,
+                "duration_seconds": duration_seconds,
+                "duration_hours": duration_hours,
+                "silent": silent,
+                "is_anonymous": is_anonymous,
+                "account_id": account_id,
+                "thread_id": thread_id,
+                "idempotency_key": idempotency_key,
+            }
+        )
+        return {
+            "ok": True,
+            "messageId": "84",
+            "sessionKey": expected_session_key,
+            "deliveryId": 9,
+        }
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        send_channel_poll_service=fake_send_channel_poll_service,
+    )
+
+    payload = await service.call(
+        "poll",
+        {
+            "to": " channel:C123 ",
+            "question": " Ship it? ",
+            "options": [" Yes ", " No "],
+            "maxSelections": 1,
+            "durationHours": 24,
+            "silent": True,
+            "isAnonymous": False,
+            "channel": "slack",
+            "accountId": " default ",
+            "threadId": " 1710000000.9999 ",
+            "idempotencyKey": "idem-poll-runtime",
+        },
+    )
+
+    assert calls == [
+        {
+            "channel": "slack",
+            "to": "channel:C123",
+            "question": "Ship it?",
+            "options": ["Yes", "No"],
+            "max_selections": 1,
+            "duration_seconds": None,
+            "duration_hours": 24,
+            "silent": True,
+            "is_anonymous": False,
+            "account_id": "default",
+            "thread_id": "1710000000.9999",
+            "idempotency_key": "idem-poll-runtime",
+        }
+    ]
+    assert payload == {
+        "ok": True,
+        "messageId": "84",
+        "sessionKey": expected_session_key,
+        "deliveryId": 9,
+    }
 
 
 @pytest.mark.asyncio
@@ -16873,6 +17817,118 @@ async def test_node_invoke_waits_for_woken_node_to_reconnect_before_invoking() -
         "command": "system.run",
         "payload": {"status": "done"},
         "payloadJSON": '{"status":"done"}',
+    }
+
+
+@pytest.mark.asyncio
+async def test_node_invoke_surfaces_not_connected_wake_metadata_when_saved_lane_wake_fails() -> None:
+    registry = GatewayNodeRegistry()
+    registry.remember(
+        KnownNode(
+            node_id="node-1",
+            display_name="Wakeable Builder",
+            platform="windows",
+            client_id="node-1",
+            client_mode="desktop",
+            commands=("system.run",),
+            paired=True,
+            connected=False,
+        )
+    )
+    wake_calls: list[str] = []
+
+    async def fake_wake(node_id: str) -> dict[str, object]:
+        wake_calls.append(node_id)
+        return {
+            "attempted": True,
+            "available": False,
+            "connected": False,
+            "path": "connect-error",
+            "durationMs": 37,
+        }
+
+    service = GatewayNodeMethodService(registry, wake_node=fake_wake)
+
+    with pytest.raises(GatewayNodeMethodError, match="node not connected") as exc_info:
+        await service.call(
+            "node.invoke",
+            {
+                "nodeId": "node-1",
+                "command": "system.run",
+                "params": {"command": "whoami"},
+                "timeoutMs": 250,
+                "idempotencyKey": "idem-system-run",
+            },
+        )
+
+    assert wake_calls == ["node-1"]
+    assert exc_info.value.code == "NOT_CONNECTED"
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.details == {
+        "code": "NOT_CONNECTED",
+        "wake": {
+            "attempted": True,
+            "available": False,
+            "connected": False,
+            "path": "connect-error",
+            "durationMs": 37,
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_node_invoke_keeps_not_connected_boundary_for_offline_managed_lane() -> None:
+    registry = GatewayNodeRegistry()
+    registry.remember(
+        KnownNode(
+            node_id="node-stdio",
+            display_name="Managed Offline Node",
+            platform="stdio",
+            client_id="node-stdio",
+            client_mode="stdio",
+            commands=("system.run",),
+            paired=True,
+            connected=False,
+        )
+    )
+    wake_calls: list[str] = []
+
+    async def fake_wake(node_id: str) -> dict[str, object]:
+        wake_calls.append(node_id)
+        return {
+            "attempted": True,
+            "available": False,
+            "connected": False,
+            "path": "connect-error",
+            "durationMs": 37,
+        }
+
+    service = GatewayNodeMethodService(registry, wake_node=fake_wake)
+
+    with pytest.raises(GatewayNodeMethodError, match="node not connected") as exc_info:
+        await service.call(
+            "node.invoke",
+            {
+                "nodeId": "node-stdio",
+                "command": "system.run",
+                "params": {"command": "whoami"},
+                "timeoutMs": 250,
+                "idempotencyKey": "idem-managed-offline-node",
+            },
+        )
+
+    assert wake_calls == ["node-stdio"]
+    assert exc_info.value.code == "NOT_CONNECTED"
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.details == {
+        "code": "NOT_CONNECTED",
+        "wake": {
+            "attempted": True,
+            "available": False,
+            "connected": False,
+            "path": "connect-error",
+            "durationMs": 37,
+        },
     }
 
 

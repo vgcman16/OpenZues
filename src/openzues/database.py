@@ -391,6 +391,8 @@ class Database:
                     conversation_target_json TEXT,
                     route_scope_json TEXT NOT NULL,
                     event_payload_json TEXT,
+                    request_idempotency_key TEXT,
+                    delivery_message_id TEXT,
                     message_summary TEXT NOT NULL,
                     test_delivery INTEGER NOT NULL DEFAULT 0,
                     delivery_state TEXT NOT NULL,
@@ -599,6 +601,10 @@ class Database:
             await self._ensure_column(db, "notification_routes", "vault_secret_id", "INTEGER")
             await self._ensure_column(db, "notification_routes", "conversation_target_json", "TEXT")
             await self._ensure_column(db, "outbound_deliveries", "event_payload_json", "TEXT")
+            await self._ensure_column(
+                db, "outbound_deliveries", "request_idempotency_key", "TEXT"
+            )
+            await self._ensure_column(db, "outbound_deliveries", "delivery_message_id", "TEXT")
             await self._ensure_column(db, "integrations", "vault_secret_id", "INTEGER")
             await self._ensure_column(db, "gateway_wake_requests", "reason", "TEXT")
             await self._ensure_column(db, "gateway_wake_requests", "agent_id", "TEXT")
@@ -647,6 +653,12 @@ class Database:
                 """
                 CREATE INDEX IF NOT EXISTS idx_outbound_deliveries_session
                 ON outbound_deliveries(session_key, id DESC)
+                """
+            )
+            await db.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_outbound_deliveries_idempotency
+                ON outbound_deliveries(event_type, request_idempotency_key, id DESC)
                 """
             )
             await db.execute(
@@ -1363,7 +1375,7 @@ class Database:
             for row in rows:
                 item = dict(row)
                 payload = json.loads(item.pop("payload_json"))
-                output.append({**item, **payload})
+                output.append({**payload, **item})
             return output
 
     async def list_task_blueprint_records(self) -> list[dict[str, Any]]:
@@ -1389,7 +1401,7 @@ class Database:
                 return None
             item = dict(row)
             payload = json.loads(item.pop("payload_json"))
-            return {**item, **payload}
+            return {**payload, **item}
 
     async def create_task_blueprint(
         self,
@@ -1935,6 +1947,15 @@ class Database:
             await db.execute("DELETE FROM notification_routes WHERE id = ?", (route_id,))
             await db.commit()
 
+    def _decode_outbound_delivery_row(self, row: aiosqlite.Row | dict[str, Any]) -> dict[str, Any]:
+        item = dict(row)
+        item["conversation_target"] = self._decode_json_object(
+            item.pop("conversation_target_json", None)
+        )
+        item["route_scope"] = self._decode_json_object(item.pop("route_scope_json", None))
+        item["event_payload"] = self._decode_json_object(item.pop("event_payload_json", None))
+        return item
+
     async def list_outbound_deliveries(
         self,
         *,
@@ -1958,20 +1979,7 @@ class Database:
             cursor = await db.execute(query, params)
             try:
                 rows = await cursor.fetchall()
-                output: list[dict[str, Any]] = []
-                for row in rows:
-                    item = dict(row)
-                    item["conversation_target"] = self._decode_json_object(
-                        item.pop("conversation_target_json", None)
-                    )
-                    item["route_scope"] = self._decode_json_object(
-                        item.pop("route_scope_json", None)
-                    )
-                    item["event_payload"] = self._decode_json_object(
-                        item.pop("event_payload_json", None)
-                    )
-                    output.append(item)
-                return output
+                return [self._decode_outbound_delivery_row(row) for row in rows]
             finally:
                 await cursor.close()
 
@@ -1986,15 +1994,33 @@ class Database:
                 row = await cursor.fetchone()
                 if row is None:
                     return None
-                item = dict(row)
-                item["conversation_target"] = self._decode_json_object(
-                    item.pop("conversation_target_json", None)
-                )
-                item["route_scope"] = self._decode_json_object(item.pop("route_scope_json", None))
-                item["event_payload"] = self._decode_json_object(
-                    item.pop("event_payload_json", None)
-                )
-                return item
+                return self._decode_outbound_delivery_row(row)
+            finally:
+                await cursor.close()
+
+    async def find_outbound_delivery_by_request_idempotency_key(
+        self,
+        *,
+        event_type: str,
+        request_idempotency_key: str,
+    ) -> dict[str, Any] | None:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                """
+                SELECT *
+                FROM outbound_deliveries
+                WHERE event_type = ? AND request_idempotency_key = ?
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (event_type, request_idempotency_key),
+            )
+            try:
+                row = await cursor.fetchone()
+                if row is None:
+                    return None
+                return self._decode_outbound_delivery_row(row)
             finally:
                 await cursor.close()
 
@@ -2010,6 +2036,8 @@ class Database:
         conversation_target: dict[str, Any] | None,
         route_scope: dict[str, Any],
         event_payload: dict[str, Any] | None,
+        request_idempotency_key: str | None = None,
+        delivery_message_id: str | None = None,
         message_summary: str,
         test_delivery: bool,
         delivery_state: str,
@@ -2032,6 +2060,8 @@ class Database:
                     conversation_target_json,
                     route_scope_json,
                     event_payload_json,
+                    request_idempotency_key,
+                    delivery_message_id,
                     message_summary,
                     test_delivery,
                     delivery_state,
@@ -2042,7 +2072,7 @@ class Database:
                     created_at,
                     updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     route_id,
@@ -2054,6 +2084,8 @@ class Database:
                     json.dumps(conversation_target) if conversation_target is not None else None,
                     json.dumps(route_scope),
                     json.dumps(event_payload) if event_payload is not None else None,
+                    request_idempotency_key,
+                    delivery_message_id,
                     message_summary,
                     int(test_delivery),
                     delivery_state,

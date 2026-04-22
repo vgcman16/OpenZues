@@ -561,6 +561,306 @@ async def test_get_view_marks_local_bootstrap_staged_when_saved_operator_is_disa
 
 
 @pytest.mark.asyncio
+async def test_get_view_marks_bootstrap_degraded_when_saved_team_is_missing(
+    tmp_path: Path,
+) -> None:
+    workspace_dir = tmp_path / "workspace"
+    connected_instance = SimpleNamespace(
+        id=41,
+        name="Local Lane",
+        transport="desktop",
+        cwd=str(workspace_dir.resolve()),
+        connected=True,
+        error=None,
+    )
+    service, _, _manager = await _build_service(
+        tmp_path,
+        manager=FakeManager(list_views_result=[connected_instance]),
+        save_bootstrap=False,
+    )
+
+    project_id = await service.database.create_project(
+        path=str(workspace_dir.resolve()),
+        label="Local Workspace",
+    )
+    task_id = await service.database.create_task_blueprint(
+        name="Local Loop",
+        summary="Keep the local workspace moving.",
+        project_id=project_id,
+        instance_id=connected_instance.id,
+        cadence_minutes=60,
+        enabled=True,
+        payload={
+            "objective_template": "Ship the next verified local slice.",
+            "conversation_target": None,
+            "instance_id": connected_instance.id,
+            "project_id": project_id,
+            "cadence_minutes": 60,
+            "run_until_complete": False,
+            "continuation_cooldown_minutes": 10,
+            "completion_marker": None,
+            "cwd": str(workspace_dir.resolve()),
+            "model": "gpt-5.4",
+            "reasoning_effort": None,
+            "collaboration_mode": None,
+            "max_turns": 4,
+            "use_builtin_agents": True,
+            "run_verification": True,
+            "auto_commit": False,
+            "pause_on_approval": True,
+            "allow_auto_reflexes": True,
+            "auto_recover": True,
+            "auto_recover_limit": 2,
+            "reflex_cooldown_seconds": 900,
+            "allow_failover": True,
+            "toolsets": ["hermes-cli"],
+            "enabled": True,
+        },
+    )
+    bootstrap_roles, bootstrap_scopes = default_device_bootstrap_profile()
+    await service.database.upsert_gateway_bootstrap(
+        setup_mode="local",
+        setup_flow="quickstart",
+        route_binding_mode="saved_lane",
+        preferred_instance_id=connected_instance.id,
+        preferred_project_id=project_id,
+        team_id=1,
+        operator_id=1,
+        task_blueprint_id=task_id,
+        last_route_instance_id=None,
+        last_route_resolved_at=None,
+        default_cwd=str(workspace_dir.resolve()),
+        bootstrap_roles=bootstrap_roles,
+        bootstrap_scopes=bootstrap_scopes,
+        model="gpt-5.4",
+        max_turns=4,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        toolsets=["hermes-cli"],
+    )
+    await service.database.delete_team(1)
+
+    view = await service.get_view()
+
+    assert view.status == "degraded"
+    assert view.headline == "Gateway bootstrap needs repair"
+    assert view.team is None
+    assert view.operator is not None
+    assert "local-only" in view.operator.detail
+    assert "The saved default team no longer exists." in view.warnings
+
+
+@pytest.mark.asyncio
+async def test_get_view_marks_bootstrap_degraded_when_saved_operator_moves_to_different_team(
+    tmp_path: Path,
+) -> None:
+    workspace_dir = tmp_path / "workspace"
+    connected_instance = SimpleNamespace(
+        id=41,
+        name="Local Lane",
+        transport="desktop",
+        cwd=str(workspace_dir.resolve()),
+        connected=True,
+        error=None,
+    )
+    service, _, _manager = await _build_service(
+        tmp_path,
+        manager=FakeManager(list_views_result=[connected_instance]),
+        save_bootstrap=False,
+    )
+
+    project_id = await service.database.create_project(
+        path=str(workspace_dir.resolve()),
+        label="Local Workspace",
+    )
+    task_id = await service.database.create_task_blueprint(
+        name="Local Loop",
+        summary="Keep the local workspace moving.",
+        project_id=project_id,
+        instance_id=connected_instance.id,
+        cadence_minutes=60,
+        enabled=True,
+        payload={
+            "objective_template": "Ship the next verified local slice.",
+            "conversation_target": None,
+            "instance_id": connected_instance.id,
+            "project_id": project_id,
+            "cadence_minutes": 60,
+            "run_until_complete": False,
+            "continuation_cooldown_minutes": 10,
+            "completion_marker": None,
+            "cwd": str(workspace_dir.resolve()),
+            "model": "gpt-5.4",
+            "reasoning_effort": None,
+            "collaboration_mode": None,
+            "max_turns": 4,
+            "use_builtin_agents": True,
+            "run_verification": True,
+            "auto_commit": False,
+            "pause_on_approval": True,
+            "allow_auto_reflexes": True,
+            "auto_recover": True,
+            "auto_recover_limit": 2,
+            "reflex_cooldown_seconds": 900,
+            "allow_failover": True,
+            "toolsets": ["hermes-cli"],
+            "enabled": True,
+        },
+    )
+    bootstrap_roles, bootstrap_scopes = default_device_bootstrap_profile()
+    await service.database.upsert_gateway_bootstrap(
+        setup_mode="local",
+        setup_flow="quickstart",
+        route_binding_mode="saved_lane",
+        preferred_instance_id=connected_instance.id,
+        preferred_project_id=project_id,
+        team_id=1,
+        operator_id=1,
+        task_blueprint_id=task_id,
+        last_route_instance_id=None,
+        last_route_resolved_at=None,
+        default_cwd=str(workspace_dir.resolve()),
+        bootstrap_roles=bootstrap_roles,
+        bootstrap_scopes=bootstrap_scopes,
+        model="gpt-5.4",
+        max_turns=4,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        toolsets=["hermes-cli"],
+    )
+    reassigned_team_id = await service.database.create_team(
+        name="Field Operators",
+        slug="field-operators",
+        description="Alternate bootstrap team.",
+    )
+    await service.database.update_operator(1, team_id=reassigned_team_id)
+
+    view = await service.get_view()
+
+    assert view.status == "degraded"
+    assert view.headline == "Gateway bootstrap needs repair"
+    assert view.team is not None
+    assert view.team.label == "Local Control"
+    assert view.operator is not None
+    assert "Field Operators" in view.operator.detail
+    assert "local-only" in view.operator.detail
+    assert (
+        "The saved default operator no longer belongs to the saved team."
+        in view.warnings
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_view_marks_local_bootstrap_staged_when_saved_task_is_disabled(
+    tmp_path: Path,
+) -> None:
+    workspace_dir = tmp_path / "workspace"
+    connected_instance = SimpleNamespace(
+        id=41,
+        name="Local Lane",
+        transport="desktop",
+        cwd=str(workspace_dir.resolve()),
+        connected=True,
+        error=None,
+    )
+    service, _, _manager = await _build_service(
+        tmp_path,
+        manager=FakeManager(list_views_result=[connected_instance]),
+        save_bootstrap=False,
+    )
+
+    project_id = await service.database.create_project(
+        path=str(workspace_dir.resolve()),
+        label="Local Workspace",
+    )
+    task_id = await service.database.create_task_blueprint(
+        name="Local Loop",
+        summary="Keep the local workspace moving.",
+        project_id=project_id,
+        instance_id=connected_instance.id,
+        cadence_minutes=60,
+        enabled=True,
+        payload={
+            "objective_template": "Ship the next verified local slice.",
+            "conversation_target": None,
+            "instance_id": connected_instance.id,
+            "project_id": project_id,
+            "cadence_minutes": 60,
+            "run_until_complete": False,
+            "continuation_cooldown_minutes": 10,
+            "completion_marker": None,
+            "cwd": str(workspace_dir.resolve()),
+            "model": "gpt-5.4",
+            "reasoning_effort": None,
+            "collaboration_mode": None,
+            "max_turns": 4,
+            "use_builtin_agents": True,
+            "run_verification": True,
+            "auto_commit": False,
+            "pause_on_approval": True,
+            "allow_auto_reflexes": True,
+            "auto_recover": True,
+            "auto_recover_limit": 2,
+            "reflex_cooldown_seconds": 900,
+            "allow_failover": True,
+            "toolsets": ["hermes-cli"],
+            "enabled": True,
+        },
+    )
+    await service.database.update_task_blueprint(task_id, enabled=False)
+    bootstrap_roles, bootstrap_scopes = default_device_bootstrap_profile()
+    await service.database.upsert_gateway_bootstrap(
+        setup_mode="local",
+        setup_flow="quickstart",
+        route_binding_mode="saved_lane",
+        preferred_instance_id=connected_instance.id,
+        preferred_project_id=project_id,
+        team_id=1,
+        operator_id=1,
+        task_blueprint_id=task_id,
+        last_route_instance_id=None,
+        last_route_resolved_at=None,
+        default_cwd=str(workspace_dir.resolve()),
+        bootstrap_roles=bootstrap_roles,
+        bootstrap_scopes=bootstrap_scopes,
+        model="gpt-5.4",
+        max_turns=4,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        toolsets=["hermes-cli"],
+    )
+
+    view = await service.get_view()
+
+    assert view.status == "staged"
+    assert view.headline == "Gateway bootstrap is staged"
+    assert view.task_blueprint is not None
+    assert "disabled" in view.task_blueprint.detail
+    assert "The saved default recurring task is disabled." in view.warnings
+
+
+@pytest.mark.asyncio
 async def test_get_view_surfaces_live_plugin_published_gateway_methods_in_runtime_inventory(
     tmp_path: Path,
 ) -> None:
@@ -1078,6 +1378,7 @@ async def test_get_view_surfaces_saved_workspace_integration(tmp_path: Path) -> 
         notes="Remote ingress",
         enabled=True,
     )
+    await service.access.issue_api_key(1)
     bootstrap_roles, bootstrap_scopes = default_device_bootstrap_profile()
     await service.database.upsert_gateway_bootstrap(
         setup_mode="remote",
@@ -1109,6 +1410,8 @@ async def test_get_view_surfaces_saved_workspace_integration(tmp_path: Path) -> 
 
     view = await service.get_view()
 
+    assert view.status == "ready"
+    assert view.headline == "Remote gateway bootstrap is launch-ready"
     assert view.integration is not None
     assert view.integration.label == "OpenClaw Gateway"
     assert view.integration.detail == (
@@ -1427,6 +1730,7 @@ async def test_get_view_does_not_claim_secret_ready_for_label_only_integration(
         notes="Ingress with a label but no usable secret",
         enabled=True,
     )
+    await service.access.issue_api_key(1)
     bootstrap_roles, bootstrap_scopes = default_device_bootstrap_profile()
     await service.database.upsert_gateway_bootstrap(
         setup_mode="remote",
@@ -1458,11 +1762,110 @@ async def test_get_view_does_not_claim_secret_ready_for_label_only_integration(
 
     view = await service.get_view()
 
+    assert view.status == "staged"
+    assert view.headline == "Remote gateway bootstrap is staged"
     assert view.integration is not None
     assert view.integration.label == "Label Only Gateway"
     assert view.integration.detail == (
         "openclaw · https://label-only.example.test · token"
     )
+    assert "The saved remote ingress is missing usable auth material." in view.warnings
+
+
+@pytest.mark.asyncio
+async def test_get_view_marks_remote_bootstrap_staged_without_enabled_ingress(
+    tmp_path: Path,
+) -> None:
+    workspace_dir = tmp_path / "workspace"
+    connected_instance = SimpleNamespace(
+        id=41,
+        name="Remote Lane",
+        transport="desktop",
+        cwd=str(workspace_dir.resolve()),
+        connected=True,
+        error=None,
+    )
+    service, _, _manager = await _build_service(
+        tmp_path,
+        manager=FakeManager(list_views_result=[connected_instance]),
+        save_bootstrap=False,
+    )
+
+    project_id = await service.database.create_project(
+        path=str(workspace_dir.resolve()),
+        label="Remote Workspace",
+    )
+    task_id = await service.database.create_task_blueprint(
+        name="Remote Loop",
+        summary="Keep the remote workspace moving.",
+        project_id=project_id,
+        instance_id=connected_instance.id,
+        cadence_minutes=60,
+        enabled=True,
+        payload={
+            "objective_template": "Ship the next verified remote slice.",
+            "conversation_target": None,
+            "instance_id": connected_instance.id,
+            "project_id": project_id,
+            "cadence_minutes": 60,
+            "run_until_complete": False,
+            "continuation_cooldown_minutes": 10,
+            "completion_marker": None,
+            "cwd": str(workspace_dir.resolve()),
+            "model": "gpt-5.4",
+            "reasoning_effort": None,
+            "collaboration_mode": None,
+            "max_turns": 4,
+            "use_builtin_agents": True,
+            "run_verification": True,
+            "auto_commit": False,
+            "pause_on_approval": True,
+            "allow_auto_reflexes": True,
+            "auto_recover": True,
+            "auto_recover_limit": 2,
+            "reflex_cooldown_seconds": 900,
+            "allow_failover": True,
+            "toolsets": ["hermes-cli"],
+            "enabled": True,
+        },
+    )
+    await service.access.issue_api_key(1)
+    bootstrap_roles, bootstrap_scopes = default_device_bootstrap_profile()
+    await service.database.upsert_gateway_bootstrap(
+        setup_mode="remote",
+        setup_flow="advanced",
+        route_binding_mode="workspace_affinity",
+        preferred_instance_id=connected_instance.id,
+        preferred_project_id=project_id,
+        team_id=1,
+        operator_id=1,
+        task_blueprint_id=task_id,
+        last_route_instance_id=None,
+        last_route_resolved_at=None,
+        default_cwd=str(workspace_dir.resolve()),
+        bootstrap_roles=bootstrap_roles,
+        bootstrap_scopes=bootstrap_scopes,
+        model="gpt-5.4",
+        max_turns=4,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        toolsets=["hermes-cli"],
+    )
+
+    view = await service.get_view()
+
+    assert view.status == "staged"
+    assert view.headline == "Remote gateway bootstrap is staged"
+    assert view.integration is None
+    assert "The saved workspace does not have an enabled remote ingress yet." in view.warnings
+    assert not any("active API key" in warning for warning in view.warnings)
 
 
 @pytest.mark.asyncio
@@ -1573,6 +1976,347 @@ async def test_get_view_marks_remote_bootstrap_staged_when_saved_operator_is_dis
     assert "remote key ready" in view.operator.detail
     assert "disabled" in view.operator.detail
     assert "The saved default operator is disabled." in view.warnings
+    assert not any("active API key" in warning for warning in view.warnings)
+
+
+@pytest.mark.asyncio
+async def test_get_view_marks_remote_bootstrap_degraded_when_saved_team_is_missing(
+    tmp_path: Path,
+) -> None:
+    workspace_dir = tmp_path / "workspace"
+    connected_instance = SimpleNamespace(
+        id=41,
+        name="Remote Lane",
+        transport="desktop",
+        cwd=str(workspace_dir.resolve()),
+        connected=True,
+        error=None,
+    )
+    service, _, _manager = await _build_service(
+        tmp_path,
+        manager=FakeManager(list_views_result=[connected_instance]),
+        save_bootstrap=False,
+    )
+
+    project_id = await service.database.create_project(
+        path=str(workspace_dir.resolve()),
+        label="Remote Workspace",
+    )
+    task_id = await service.database.create_task_blueprint(
+        name="Remote Loop",
+        summary="Keep the remote workspace moving.",
+        project_id=project_id,
+        instance_id=connected_instance.id,
+        cadence_minutes=60,
+        enabled=True,
+        payload={
+            "objective_template": "Ship the next verified remote slice.",
+            "conversation_target": None,
+            "instance_id": connected_instance.id,
+            "project_id": project_id,
+            "cadence_minutes": 60,
+            "run_until_complete": False,
+            "continuation_cooldown_minutes": 10,
+            "completion_marker": None,
+            "cwd": str(workspace_dir.resolve()),
+            "model": "gpt-5.4",
+            "reasoning_effort": None,
+            "collaboration_mode": None,
+            "max_turns": 4,
+            "use_builtin_agents": True,
+            "run_verification": True,
+            "auto_commit": False,
+            "pause_on_approval": True,
+            "allow_auto_reflexes": True,
+            "auto_recover": True,
+            "auto_recover_limit": 2,
+            "reflex_cooldown_seconds": 900,
+            "allow_failover": True,
+            "toolsets": ["hermes-cli"],
+            "enabled": True,
+        },
+    )
+    await service.database.create_integration(
+        name="Remote Gateway",
+        kind="openclaw",
+        project_id=project_id,
+        base_url="https://remote.example.test",
+        auth_scheme="token",
+        vault_secret_id=12,
+        secret_label="REMOTE_GATEWAY_TOKEN",
+        secret_value=None,
+        notes="Remote ingress",
+        enabled=True,
+    )
+    await service.access.issue_api_key(1)
+    bootstrap_roles, bootstrap_scopes = default_device_bootstrap_profile()
+    await service.database.upsert_gateway_bootstrap(
+        setup_mode="remote",
+        setup_flow="advanced",
+        route_binding_mode="workspace_affinity",
+        preferred_instance_id=connected_instance.id,
+        preferred_project_id=project_id,
+        team_id=1,
+        operator_id=1,
+        task_blueprint_id=task_id,
+        last_route_instance_id=None,
+        last_route_resolved_at=None,
+        default_cwd=str(workspace_dir.resolve()),
+        bootstrap_roles=bootstrap_roles,
+        bootstrap_scopes=bootstrap_scopes,
+        model="gpt-5.4",
+        max_turns=4,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        toolsets=["hermes-cli"],
+    )
+    await service.database.delete_team(1)
+
+    view = await service.get_view()
+
+    assert view.status == "degraded"
+    assert view.headline == "Gateway bootstrap needs repair"
+    assert view.team is None
+    assert view.operator is not None
+    assert "remote key ready" in view.operator.detail
+    assert "The saved default team no longer exists." in view.warnings
+
+
+@pytest.mark.asyncio
+async def test_get_view_marks_remote_bootstrap_degraded_when_saved_operator_moves_to_different_team(
+    tmp_path: Path,
+) -> None:
+    workspace_dir = tmp_path / "workspace"
+    connected_instance = SimpleNamespace(
+        id=41,
+        name="Remote Lane",
+        transport="desktop",
+        cwd=str(workspace_dir.resolve()),
+        connected=True,
+        error=None,
+    )
+    service, _, _manager = await _build_service(
+        tmp_path,
+        manager=FakeManager(list_views_result=[connected_instance]),
+        save_bootstrap=False,
+    )
+
+    project_id = await service.database.create_project(
+        path=str(workspace_dir.resolve()),
+        label="Remote Workspace",
+    )
+    task_id = await service.database.create_task_blueprint(
+        name="Remote Loop",
+        summary="Keep the remote workspace moving.",
+        project_id=project_id,
+        instance_id=connected_instance.id,
+        cadence_minutes=60,
+        enabled=True,
+        payload={
+            "objective_template": "Ship the next verified remote slice.",
+            "conversation_target": None,
+            "instance_id": connected_instance.id,
+            "project_id": project_id,
+            "cadence_minutes": 60,
+            "run_until_complete": False,
+            "continuation_cooldown_minutes": 10,
+            "completion_marker": None,
+            "cwd": str(workspace_dir.resolve()),
+            "model": "gpt-5.4",
+            "reasoning_effort": None,
+            "collaboration_mode": None,
+            "max_turns": 4,
+            "use_builtin_agents": True,
+            "run_verification": True,
+            "auto_commit": False,
+            "pause_on_approval": True,
+            "allow_auto_reflexes": True,
+            "auto_recover": True,
+            "auto_recover_limit": 2,
+            "reflex_cooldown_seconds": 900,
+            "allow_failover": True,
+            "toolsets": ["hermes-cli"],
+            "enabled": True,
+        },
+    )
+    await service.database.create_integration(
+        name="Remote Gateway",
+        kind="openclaw",
+        project_id=project_id,
+        base_url="https://remote.example.test",
+        auth_scheme="token",
+        vault_secret_id=12,
+        secret_label="REMOTE_GATEWAY_TOKEN",
+        secret_value=None,
+        notes="Remote ingress",
+        enabled=True,
+    )
+    await service.access.issue_api_key(1)
+    bootstrap_roles, bootstrap_scopes = default_device_bootstrap_profile()
+    await service.database.upsert_gateway_bootstrap(
+        setup_mode="remote",
+        setup_flow="advanced",
+        route_binding_mode="workspace_affinity",
+        preferred_instance_id=connected_instance.id,
+        preferred_project_id=project_id,
+        team_id=1,
+        operator_id=1,
+        task_blueprint_id=task_id,
+        last_route_instance_id=None,
+        last_route_resolved_at=None,
+        default_cwd=str(workspace_dir.resolve()),
+        bootstrap_roles=bootstrap_roles,
+        bootstrap_scopes=bootstrap_scopes,
+        model="gpt-5.4",
+        max_turns=4,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        toolsets=["hermes-cli"],
+    )
+    reassigned_team_id = await service.database.create_team(
+        name="Field Operators",
+        slug="field-operators",
+        description="Alternate bootstrap team.",
+    )
+    await service.database.update_operator(1, team_id=reassigned_team_id)
+
+    view = await service.get_view()
+
+    assert view.status == "degraded"
+    assert view.headline == "Gateway bootstrap needs repair"
+    assert view.team is not None
+    assert view.team.label == "Local Control"
+    assert view.integration is not None
+    assert view.operator is not None
+    assert "Field Operators" in view.operator.detail
+    assert "remote key ready" in view.operator.detail
+    assert (
+        "The saved default operator no longer belongs to the saved team."
+        in view.warnings
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_view_marks_remote_bootstrap_staged_when_saved_task_is_disabled(
+    tmp_path: Path,
+) -> None:
+    workspace_dir = tmp_path / "workspace"
+    connected_instance = SimpleNamespace(
+        id=41,
+        name="Remote Lane",
+        transport="desktop",
+        cwd=str(workspace_dir.resolve()),
+        connected=True,
+        error=None,
+    )
+    service, _, _manager = await _build_service(
+        tmp_path,
+        manager=FakeManager(list_views_result=[connected_instance]),
+        save_bootstrap=False,
+    )
+
+    project_id = await service.database.create_project(
+        path=str(workspace_dir.resolve()),
+        label="Remote Workspace",
+    )
+    task_id = await service.database.create_task_blueprint(
+        name="Remote Loop",
+        summary="Keep the remote workspace moving.",
+        project_id=project_id,
+        instance_id=connected_instance.id,
+        cadence_minutes=60,
+        enabled=True,
+        payload={
+            "objective_template": "Ship the next verified remote slice.",
+            "conversation_target": None,
+            "instance_id": connected_instance.id,
+            "project_id": project_id,
+            "cadence_minutes": 60,
+            "run_until_complete": False,
+            "continuation_cooldown_minutes": 10,
+            "completion_marker": None,
+            "cwd": str(workspace_dir.resolve()),
+            "model": "gpt-5.4",
+            "reasoning_effort": None,
+            "collaboration_mode": None,
+            "max_turns": 4,
+            "use_builtin_agents": True,
+            "run_verification": True,
+            "auto_commit": False,
+            "pause_on_approval": True,
+            "allow_auto_reflexes": True,
+            "auto_recover": True,
+            "auto_recover_limit": 2,
+            "reflex_cooldown_seconds": 900,
+            "allow_failover": True,
+            "toolsets": ["hermes-cli"],
+            "enabled": True,
+        },
+    )
+    await service.database.create_integration(
+        name="Remote Gateway",
+        kind="openclaw",
+        project_id=project_id,
+        base_url="https://remote.example.test",
+        auth_scheme="token",
+        vault_secret_id=12,
+        secret_label="REMOTE_GATEWAY_TOKEN",
+        secret_value=None,
+        notes="Remote ingress",
+        enabled=True,
+    )
+    await service.access.issue_api_key(1)
+    await service.database.update_task_blueprint(task_id, enabled=False)
+    bootstrap_roles, bootstrap_scopes = default_device_bootstrap_profile()
+    await service.database.upsert_gateway_bootstrap(
+        setup_mode="remote",
+        setup_flow="advanced",
+        route_binding_mode="workspace_affinity",
+        preferred_instance_id=connected_instance.id,
+        preferred_project_id=project_id,
+        team_id=1,
+        operator_id=1,
+        task_blueprint_id=task_id,
+        last_route_instance_id=None,
+        last_route_resolved_at=None,
+        default_cwd=str(workspace_dir.resolve()),
+        bootstrap_roles=bootstrap_roles,
+        bootstrap_scopes=bootstrap_scopes,
+        model="gpt-5.4",
+        max_turns=4,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        toolsets=["hermes-cli"],
+    )
+
+    view = await service.get_view()
+
+    assert view.status == "staged"
+    assert view.headline == "Remote gateway bootstrap is staged"
+    assert view.task_blueprint is not None
+    assert "disabled" in view.task_blueprint.detail
+    assert "The saved default recurring task is disabled." in view.warnings
     assert not any("active API key" in warning for warning in view.warnings)
 
 

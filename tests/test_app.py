@@ -4130,6 +4130,66 @@ def test_setup_wizard_endpoint_updates_saved_mode_and_flow(tmp_path) -> None:
     assert setup["wizard_session"]["task_name"] == "Draft Loop"
 
 
+def test_onboarding_wizard_status_endpoint_reports_running_session(tmp_path) -> None:
+    with make_client(tmp_path) as client:
+        start_response = client.post(
+            "/api/onboarding/wizard/start",
+            json={
+                "mode": "remote",
+                "project_path": str(tmp_path),
+            },
+        )
+        session_id = start_response.json()["sessionId"]
+        status_response = client.get(f"/api/onboarding/wizard/status?sessionId={session_id}")
+
+    assert start_response.status_code == 200
+    assert start_response.json()["done"] is False
+    assert start_response.json()["step"]["field"] == "operator_name"
+    assert status_response.status_code == 200
+    assert status_response.json() == {"status": "running"}
+
+
+def test_onboarding_wizard_status_endpoint_rejects_cancelled_session(tmp_path) -> None:
+    with make_client(tmp_path) as client:
+        start_response = client.post(
+            "/api/onboarding/wizard/start",
+            json={
+                "mode": "remote",
+                "project_path": str(tmp_path),
+            },
+        )
+        session_id = start_response.json()["sessionId"]
+        cancel_response = client.post(
+            "/api/onboarding/wizard/cancel",
+            json={"sessionId": session_id},
+        )
+        status_response = client.get(f"/api/onboarding/wizard/status?sessionId={session_id}")
+
+    assert start_response.status_code == 200
+    assert cancel_response.status_code == 200
+    assert cancel_response.json() == {"status": "cancelled", "error": "cancelled"}
+    assert status_response.status_code == 400
+    assert status_response.json()["detail"] == "wizard not found"
+
+
+def test_onboarding_wizard_start_honors_selection_only_local_advanced_flow(tmp_path) -> None:
+    with make_client(tmp_path) as client:
+        start_response = client.post(
+            "/api/onboarding/wizard/start",
+            json={
+                "mode": "local",
+                "flow": "advanced",
+            },
+        )
+
+    assert start_response.status_code == 200
+    payload = start_response.json()
+    assert payload["done"] is False
+    assert payload["status"] == "running"
+    assert payload["step"]["field"] == "project_path"
+    assert payload["step"]["type"] == "text"
+
+
 def test_setup_wizard_endpoint_persists_mempalace_toggle(tmp_path) -> None:
     with make_client(tmp_path) as client:
         update_response = client.put(
@@ -4143,6 +4203,27 @@ def test_setup_wizard_endpoint_persists_mempalace_toggle(tmp_path) -> None:
     assert payload["use_mempalace"] is True
     setup = setup_response.json()
     assert setup["wizard_session"]["use_mempalace"] is True
+
+
+def test_setup_wizard_endpoint_ignores_selection_only_updates_without_saved_draft(tmp_path) -> None:
+    with make_client(tmp_path) as client:
+        initial_setup = client.get("/api/setup").json()
+        update_response = client.put(
+            "/api/setup/wizard",
+            json={"mode": "remote", "flow": "advanced"},
+        )
+        setup_response = client.get("/api/setup")
+
+    assert update_response.status_code == 200
+    payload = update_response.json()
+    assert payload["mode"] == initial_setup["wizard_session"]["mode"]
+    assert payload["flow"] == initial_setup["wizard_session"]["flow"]
+
+    setup = setup_response.json()
+    assert setup["wizard_session"]["mode"] == initial_setup["wizard_session"]["mode"]
+    assert setup["wizard_session"]["flow"] == initial_setup["wizard_session"]["flow"]
+    assert setup["wizard_session"]["project_path"] is None
+    assert setup["wizard_session"]["task_name"] is None
 
 
 def test_setup_launch_endpoint_reports_saved_remote_handoff_gap(tmp_path) -> None:

@@ -3,17 +3,18 @@ from __future__ import annotations
 import hmac
 import secrets
 from dataclasses import dataclass
-from typing import cast
+from typing import TYPE_CHECKING, cast
 from uuid import uuid4
 
-from openzues.database import Database
-from openzues.services.gateway_method_policy import (
-    ADMIN_GATEWAY_METHOD_SCOPE,
-    PAIRING_GATEWAY_METHOD_SCOPE,
-    WRITE_GATEWAY_METHOD_SCOPE,
-)
+if TYPE_CHECKING:
+    from openzues.database import Database
 
 _NODE_SYSTEM_RUN_COMMANDS = ("system.run.prepare", "system.run")
+# Keep these literals local so pairing tests can import this module without
+# pulling the schema-heavy gateway method policy dependency tree at runtime.
+PAIRING_GATEWAY_METHOD_SCOPE = "operator.pairing"
+WRITE_GATEWAY_METHOD_SCOPE = "operator.write"
+ADMIN_GATEWAY_METHOD_SCOPE = "operator.admin"
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,8 +91,8 @@ class GatewayNodePairingService:
             resolved_ui_version = ui_version
             resolved_device_family = device_family
             resolved_model_identifier = model_identifier
-            resolved_caps = list(caps or [])
-            resolved_commands = list(commands or [])
+            resolved_caps = _string_list(caps)
+            resolved_commands = _string_list(commands)
             resolved_remote_ip = remote_ip
         else:
             persisted_silent = bool(existing_request.silent) and bool(silent)
@@ -116,13 +117,23 @@ class GatewayNodePairingService:
                 if model_identifier is not None
                 else existing_request.model_identifier
             )
-            resolved_caps = list(caps) if caps is not None else list(existing_request.caps)
+            resolved_caps = (
+                _string_list(caps) if caps is not None else list(existing_request.caps)
+            )
             resolved_commands = (
-                list(commands) if commands is not None else list(existing_request.commands)
+                _string_list(commands)
+                if commands is not None
+                else list(existing_request.commands)
             )
             resolved_remote_ip = (
                 remote_ip if remote_ip is not None else existing_request.remote_ip
             )
+            if silent is None:
+                persisted_silent = existing_request.silent
+            elif silent:
+                persisted_silent = True
+            else:
+                persisted_silent = None
 
         row, created = await self.database.upsert_gateway_node_pairing_request(
             request_id=str(uuid4()),
@@ -172,6 +183,88 @@ class GatewayNodePairingService:
     async def get_paired_node(self, node_id: str) -> GatewayPairedNode | None:
         row = await self.database.get_gateway_node_paired_node(node_id)
         return _paired_node_from_row(row) if row is not None else None
+
+    async def update_paired_node_metadata(
+        self,
+        node_id: str,
+        *,
+        display_name: str | None = None,
+        platform: str | None = None,
+        version: str | None = None,
+        core_version: str | None = None,
+        ui_version: str | None = None,
+        device_family: str | None = None,
+        model_identifier: str | None = None,
+        caps: list[str] | None = None,
+        commands: list[str] | None = None,
+        permissions: dict[str, bool] | None = None,
+        remote_ip: str | None = None,
+        last_connected_at_ms: int | None = None,
+    ) -> GatewayPairedNode | None:
+        existing_row = await self.database.get_gateway_node_paired_node(node_id)
+        if existing_row is None:
+            return None
+        existing = _paired_node_from_row(existing_row)
+        resolved_display_name = (
+            display_name if display_name is not None else existing.display_name
+        )
+        resolved_platform = platform if platform is not None else existing.platform
+        resolved_version = version if version is not None else existing.version
+        resolved_core_version = (
+            core_version if core_version is not None else existing.core_version
+        )
+        resolved_ui_version = ui_version if ui_version is not None else existing.ui_version
+        resolved_device_family = (
+            device_family if device_family is not None else existing.device_family
+        )
+        resolved_model_identifier = (
+            model_identifier if model_identifier is not None else existing.model_identifier
+        )
+        resolved_caps = _string_list(caps) if caps is not None else list(existing.caps)
+        resolved_commands = (
+            _string_list(commands) if commands is not None else list(existing.commands)
+        )
+        resolved_permissions = permissions if permissions is not None else existing.permissions
+        resolved_remote_ip = remote_ip if remote_ip is not None else existing.remote_ip
+        resolved_last_connected_at_ms = (
+            last_connected_at_ms
+            if last_connected_at_ms is not None
+            else existing.last_connected_at_ms
+        )
+        if (
+            resolved_display_name == existing.display_name
+            and resolved_platform == existing.platform
+            and resolved_version == existing.version
+            and resolved_core_version == existing.core_version
+            and resolved_ui_version == existing.ui_version
+            and resolved_device_family == existing.device_family
+            and resolved_model_identifier == existing.model_identifier
+            and resolved_caps == list(existing.caps)
+            and resolved_commands == list(existing.commands)
+            and resolved_permissions == existing.permissions
+            and resolved_remote_ip == existing.remote_ip
+            and resolved_last_connected_at_ms == existing.last_connected_at_ms
+        ):
+            return existing
+        updated_row = await self.database.upsert_gateway_node_paired_node(
+            node_id=existing.node_id,
+            token=existing.token,
+            display_name=resolved_display_name,
+            platform=resolved_platform,
+            version=resolved_version,
+            core_version=resolved_core_version,
+            ui_version=resolved_ui_version,
+            device_family=resolved_device_family,
+            model_identifier=resolved_model_identifier,
+            caps=resolved_caps,
+            commands=resolved_commands,
+            permissions=resolved_permissions,
+            remote_ip=resolved_remote_ip,
+            created_at_ms=existing.created_at_ms,
+            approved_at_ms=existing.approved_at_ms,
+            last_connected_at_ms=resolved_last_connected_at_ms,
+        )
+        return _paired_node_from_row(updated_row)
 
     async def approve(
         self,
@@ -327,23 +420,32 @@ def _pending_payload(request: GatewayNodePairingRequest) -> dict[str, object]:
         "version": request.version,
         "coreVersion": request.core_version,
         "uiVersion": request.ui_version,
+        "deviceFamily": request.device_family,
+        "modelIdentifier": request.model_identifier,
+        "caps": list(request.caps),
+        "commands": list(request.commands),
         "remoteIp": request.remote_ip,
         "ts": request.ts,
         "requiredApproveScopes": list(_required_approve_scopes(request.commands)),
     }
-    if request.commands:
-        payload["commands"] = list(request.commands)
+    if request.silent is not None:
+        payload["silent"] = request.silent
     return payload
 
 
 def _paired_list_payload(node: GatewayPairedNode) -> dict[str, object]:
     return {
         "nodeId": node.node_id,
+        "token": node.token,
         "displayName": node.display_name,
         "platform": node.platform,
         "version": node.version,
         "coreVersion": node.core_version,
         "uiVersion": node.ui_version,
+        "deviceFamily": node.device_family,
+        "modelIdentifier": node.model_identifier,
+        "caps": list(node.caps),
+        "commands": list(node.commands),
         "remoteIp": node.remote_ip,
         "permissions": node.permissions,
         "createdAtMs": node.created_at_ms,
@@ -361,6 +463,10 @@ def _paired_detail_payload(node: GatewayPairedNode) -> dict[str, object]:
         "version": node.version,
         "coreVersion": node.core_version,
         "uiVersion": node.ui_version,
+        "deviceFamily": node.device_family,
+        "modelIdentifier": node.model_identifier,
+        "caps": list(node.caps),
+        "commands": list(node.commands),
         "remoteIp": node.remote_ip,
         "permissions": node.permissions,
         "createdAtMs": node.created_at_ms,
@@ -396,6 +502,16 @@ def _optional_string(value: object) -> str | None:
 
 
 def _string_list(value: object) -> list[str]:
-    if not isinstance(value, list):
+    if not isinstance(value, (list, tuple)):
         return []
-    return [item for item in value if isinstance(item, str)]
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        if not isinstance(item, str):
+            continue
+        trimmed = item.strip()
+        if not trimmed or trimmed in seen:
+            continue
+        seen.add(trimmed)
+        normalized.append(trimmed)
+    return normalized

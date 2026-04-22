@@ -9,10 +9,46 @@ from openzues.database import utcnow
 
 _SCHEMA_VERSION = "openzues-control-ui-bootstrap-v1"
 _PATH_INDEX_RE = re.compile(r"\[(\*|\d*)\]")
-_LOOKUP_PATH_PATTERN = re.compile(r"^[A-Za-z0-9_./\[\]\-*]+$")
+_LOOKUP_PATH_PATTERN = re.compile(r"^[A-Za-z0-9_./\[\]\-*@$]+$")
 _LOOKUP_PATH_MAX_LENGTH = 1024
 _LOOKUP_PATH_MAX_SEGMENTS = 32
 _FORBIDDEN_LOOKUP_SEGMENTS = frozenset({"__proto__", "constructor", "prototype"})
+_LOOKUP_SCHEMA_STRING_KEYS = frozenset(
+    {
+        "$id",
+        "$schema",
+        "title",
+        "description",
+        "format",
+        "pattern",
+        "contentEncoding",
+        "contentMediaType",
+    }
+)
+_LOOKUP_SCHEMA_NUMBER_KEYS = frozenset(
+    {
+        "minimum",
+        "maximum",
+        "exclusiveMinimum",
+        "exclusiveMaximum",
+        "multipleOf",
+        "minLength",
+        "maxLength",
+        "minItems",
+        "maxItems",
+        "minProperties",
+        "maxProperties",
+    }
+)
+_LOOKUP_SCHEMA_BOOLEAN_KEYS = frozenset(
+    {
+        "additionalProperties",
+        "uniqueItems",
+        "deprecated",
+        "readOnly",
+        "writeOnly",
+    }
+)
 _ROOT_REQUIRED = ("assistantName", "assistantAvatar", "assistantAgentId")
 _ROOT_PROPERTIES: dict[str, dict[str, Any]] = {
     "basePath": {
@@ -126,9 +162,6 @@ def _normalize_generated_at(value: str) -> str:
 
 
 def _normalize_lookup_path(path: str) -> str | None:
-    if path == "":
-        return ""
-
     normalized = path.strip()
     if not normalized:
         return None
@@ -139,6 +172,8 @@ def _normalize_lookup_path(path: str) -> str | None:
 
     normalized = _PATH_INDEX_RE.sub(lambda match: f".{match.group(1) or '*'}", normalized)
     normalized = re.sub(r"\.+", ".", normalized.strip("."))
+    if not normalized:
+        return None
     return normalized
 
 
@@ -207,12 +242,37 @@ def _lookup_schema_node(path: str) -> dict[str, Any] | None:
 
 def _lookup_schema_view(schema: dict[str, Any]) -> dict[str, Any]:
     view: dict[str, Any] = {}
-    for key in ("type", "title", "description", "enum", "default"):
-        value = schema.get(key)
-        if value is None:
+    for key, value in schema.items():
+        if key in _LOOKUP_SCHEMA_STRING_KEYS and isinstance(value, str):
+            view[key] = value
             continue
-        view[key] = deepcopy(value)
+        if key in _LOOKUP_SCHEMA_NUMBER_KEYS and _is_lookup_number(value):
+            view[key] = value
+            continue
+        if key in _LOOKUP_SCHEMA_BOOLEAN_KEYS and isinstance(value, bool):
+            view[key] = value
+            continue
+        if key == "type":
+            if isinstance(value, str):
+                view[key] = value
+            elif isinstance(value, list) and all(isinstance(entry, str) for entry in value):
+                view[key] = list(value)
+            continue
+        if key == "enum" and isinstance(value, list):
+            if all(_is_lookup_scalar(entry) for entry in value):
+                view[key] = deepcopy(value)
+            continue
+        if key == "const" and _is_lookup_scalar(value):
+            view[key] = deepcopy(value)
     return view
+
+
+def _is_lookup_number(value: Any) -> bool:
+    return isinstance(value, int | float) and not isinstance(value, bool)
+
+
+def _is_lookup_scalar(value: Any) -> bool:
+    return value is None or isinstance(value, str | bool) or _is_lookup_number(value)
 
 
 def _build_lookup_children(path: str, schema: dict[str, Any]) -> list[dict[str, Any]]:
@@ -267,7 +327,16 @@ def _schema_has_children(schema: dict[str, Any]) -> bool:
     items = schema.get("items")
     if isinstance(items, dict):
         return True
-    return isinstance(items, list) and any(isinstance(item, dict) for item in items)
+    if isinstance(items, list) and any(isinstance(item, dict) for item in items):
+        return True
+    for branch_key in ("oneOf", "anyOf", "allOf"):
+        branch = schema.get(branch_key)
+        if not isinstance(branch, list):
+            continue
+        for entry in branch:
+            if isinstance(entry, dict) and _schema_has_children(entry):
+                return True
+    return False
 
 
 def _resolve_hint_match(path: str) -> dict[str, Any] | None:

@@ -41,8 +41,9 @@ def resolve_gateway_config_open_command(
 
 def _open_gateway_config_path(path: Path) -> None:
     command, args = resolve_gateway_config_open_command(path)
-    subprocess.Popen(  # noqa: S603
+    subprocess.run(  # noqa: S603
         [command, *args],
+        check=True,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
@@ -102,7 +103,7 @@ class GatewayConfigService:
         )
         try:
             self._open_path(self._config_path)
-        except OSError:
+        except Exception:
             return {
                 "ok": False,
                 "path": str(self._config_path),

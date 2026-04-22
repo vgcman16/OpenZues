@@ -103,3 +103,32 @@ async def test_summary_compaction_checkpoint_falls_back_to_thread_suffix_session
     assert checkpoint["sessionId"] == "summary-thread"
     assert checkpoint["preCompaction"]["sessionId"] == "summary-thread"
     assert checkpoint["postCompaction"]["sessionId"] == "summary-thread"
+
+
+@pytest.mark.asyncio
+async def test_compaction_keeps_only_latest_25_checkpoints_like_openclaw(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "gateway-session-compaction.db")
+    await database.initialize()
+
+    session_key = "openzues:thread:checkpoint-cap"
+    service = GatewaySessionCompactionService(database)
+    base_now_ms = 1_700_000_100_000
+
+    for index in range(27):
+        await _append_compactable_messages(database, session_key=session_key)
+        compacted = await service.compact(
+            session_key=session_key,
+            max_lines=2,
+            now_ms=base_now_ms + index,
+        )
+        assert compacted["compacted"] is True
+
+    checkpoints_payload = await service.list_checkpoints(session_key=session_key)
+    checkpoints = checkpoints_payload["checkpoints"]
+
+    assert len(checkpoints) == 25
+    assert await database.count_control_chat_compaction_checkpoints(session_key=session_key) == 25
+    assert checkpoints[0]["createdAt"] == base_now_ms + 26
+    assert checkpoints[-1]["createdAt"] == base_now_ms + 2

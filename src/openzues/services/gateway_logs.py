@@ -8,6 +8,10 @@ DEFAULT_LIMIT = 500
 DEFAULT_MAX_BYTES = 250_000
 MAX_LIMIT = 5_000
 MAX_BYTES = 1_000_000
+_REDACT_MIN_LENGTH = 18
+_REDACT_KEEP_START = 6
+_REDACT_KEEP_END = 4
+_ROLLING_LOG_FILE_RE = re.compile(r"^openzues-\d{4}-\d{2}-\d{2}\.log$", re.IGNORECASE)
 _PREFERRED_LOG_PATTERNS: tuple[tuple[int, re.Pattern[str]], ...] = (
     (0, re.compile(r"^openzues-\d{4}-\d{2}-\d{2}\.log$", re.IGNORECASE)),
     (
@@ -44,9 +48,21 @@ _ENV_SECRET_RE = re.compile(
     r'(?P<secret>[^\s"\'\\]+)',
     re.IGNORECASE,
 )
-_BEARER_TOKEN_RE = re.compile(
-    r"(?P<prefix>\b(?:Authorization\s*[:=]\s*)?Bearer\s+)(?P<secret>[A-Za-z0-9._\-+=]+)",
+_AUTHORIZATION_BEARER_TOKEN_RE = re.compile(
+    r"(?P<prefix>\bAuthorization\s*[:=]\s*Bearer\s+)(?P<secret>[A-Za-z0-9._\-+=]+)",
     re.IGNORECASE,
+)
+_BARE_BEARER_TOKEN_RE = re.compile(
+    r"(?P<prefix>\bBearer\s+)(?P<secret>[A-Za-z0-9._\-+=]{18,})",
+    re.IGNORECASE,
+)
+_TELEGRAM_BOT_PREFIXED_TOKEN_RE = re.compile(
+    r"(?P<prefix>\bbot)(?P<secret>\d{6,}:[A-Za-z0-9_-]{20,})\b",
+    re.IGNORECASE,
+)
+_TELEGRAM_BOT_TOKEN_RE = re.compile(r"\b(?P<secret>\d{6,}:[A-Za-z0-9_-]{20,})\b")
+_PRIVATE_KEY_BLOCK_RE = re.compile(
+    r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]+?-----END [A-Z ]*PRIVATE KEY-----"
 )
 _COMMON_TOKEN_RE = re.compile(
     r"\b(?:sk-[A-Za-z0-9_-]{8,}|ghp_[A-Za-z0-9]{20,}|"
@@ -97,12 +113,15 @@ class GatewayLogsService:
             "file": str(log_file),
             "cursor": slice_payload["cursor"],
             "size": slice_payload["size"],
-            "lines": [_redact_sensitive_tokens(line) for line in slice_payload["lines"]],
+            "lines": _redact_sensitive_lines(slice_payload["lines"]),
             "truncated": slice_payload["truncated"],
             "reset": slice_payload["reset"],
         }
 
     def _resolve_latest_log_file(self) -> Path:
+        configured_file = self._resolve_configured_log_file()
+        if configured_file is not None:
+            return configured_file
         try:
             candidates: list[tuple[Path, int]] = []
             for path in self._logs_root.rglob("*.log"):
@@ -126,6 +145,36 @@ class GatewayLogsService:
             ),
         )[0]
 
+    def _resolve_configured_log_file(self) -> Path | None:
+        if not _looks_like_log_file_path(self._logs_root):
+            return None
+        try:
+            if self._logs_root.is_file():
+                return self._logs_root
+        except OSError:
+            return self._logs_root
+        if not _ROLLING_LOG_FILE_RE.fullmatch(self._logs_root.name):
+            return self._logs_root
+        try:
+            candidates: list[tuple[Path, int]] = []
+            for path in self._logs_root.parent.iterdir():
+                try:
+                    if not path.is_file():
+                        continue
+                    if not _ROLLING_LOG_FILE_RE.fullmatch(path.name):
+                        continue
+                    candidates.append((path, path.stat().st_mtime_ns))
+                except OSError:
+                    continue
+        except OSError:
+            return self._logs_root
+        if not candidates:
+            return self._logs_root
+        return max(
+            candidates,
+            key=lambda item: (item[1], item[0].name.lower(), str(item[0]).lower()),
+        )[0]
+
     def _read_log_slice(
         self,
         file_path: Path,
@@ -136,6 +185,14 @@ class GatewayLogsService:
     ) -> _LogSlicePayload:
         try:
             size = file_path.stat().st_size
+        except FileNotFoundError:
+            return {
+                "cursor": 0,
+                "size": 0,
+                "lines": [],
+                "truncated": False,
+                "reset": False,
+            }
         except OSError as exc:
             raise GatewayLogsUnavailableError(f"log read failed: {exc}") from exc
 
@@ -207,12 +264,26 @@ def _log_candidate_priority(path: Path) -> int:
     return len(_PREFERRED_LOG_PATTERNS)
 
 
+def _looks_like_log_file_path(path: Path) -> bool:
+    return bool(re.search(r"\.log(?:\.\d+)?$", path.name, re.IGNORECASE))
+
+
 def _redact_sensitive_tokens(text: str) -> str:
-    redacted = _CLI_SECRET_RE.sub(_replace_cli_secret, text)
+    redacted = _PRIVATE_KEY_BLOCK_RE.sub(_replace_private_key_block, text)
+    redacted = _CLI_SECRET_RE.sub(_replace_cli_secret, redacted)
     redacted = _JSON_SECRET_RE.sub(_replace_json_secret, redacted)
     redacted = _ENV_SECRET_RE.sub(_replace_env_secret, redacted)
-    redacted = _BEARER_TOKEN_RE.sub(_replace_bearer_secret, redacted)
+    redacted = _AUTHORIZATION_BEARER_TOKEN_RE.sub(_replace_bearer_secret, redacted)
+    redacted = _BARE_BEARER_TOKEN_RE.sub(_replace_bearer_secret, redacted)
+    redacted = _TELEGRAM_BOT_PREFIXED_TOKEN_RE.sub(_replace_prefixed_secret, redacted)
+    redacted = _TELEGRAM_BOT_TOKEN_RE.sub(_replace_full_secret, redacted)
     return _COMMON_TOKEN_RE.sub(lambda match: _shorten_secret(match.group(0)), redacted)
+
+
+def _redact_sensitive_lines(lines: list[str]) -> list[str]:
+    if not lines:
+        return lines
+    return _redact_sensitive_tokens("\n".join(lines)).split("\n")
 
 
 def _replace_cli_secret(match: re.Match[str]) -> str:
@@ -241,7 +312,24 @@ def _replace_bearer_secret(match: re.Match[str]) -> str:
     return f"{prefix}{_shorten_secret(secret)}"
 
 
+def _replace_prefixed_secret(match: re.Match[str]) -> str:
+    prefix = match.group("prefix")
+    secret = match.group("secret")
+    return f"{prefix}{_shorten_secret(secret)}"
+
+
+def _replace_full_secret(match: re.Match[str]) -> str:
+    return _shorten_secret(match.group("secret"))
+
+
+def _replace_private_key_block(match: re.Match[str]) -> str:
+    lines = [line for line in match.group(0).splitlines() if line]
+    if len(lines) < 2:
+        return "***"
+    return f"{lines[0]}\n...redacted...\n{lines[-1]}"
+
+
 def _shorten_secret(secret: str) -> str:
-    if len(secret) <= 8:
-        return "********"
-    return f"{secret[:6]}...{secret[-4:]}"
+    if len(secret) < _REDACT_MIN_LENGTH:
+        return "***"
+    return f"{secret[:_REDACT_KEEP_START]}...{secret[-_REDACT_KEEP_END:]}"

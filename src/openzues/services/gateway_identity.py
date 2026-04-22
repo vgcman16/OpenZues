@@ -9,7 +9,10 @@ from pathlib import Path
 from typing import Any
 
 from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+    Ed25519PrivateKey,
+    Ed25519PublicKey,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,26 +44,25 @@ class GatewayIdentityService:
         return self._load_legacy_identity(payload)
 
     def _load_openclaw_identity(self, payload: dict[str, Any]) -> GatewayIdentity | None:
+        if payload.get("version") != 1:
+            return None
+        stored_device_id = payload.get("deviceId")
+        public_key_pem = payload.get("publicKeyPem")
         private_key_pem = payload.get("privateKeyPem")
-        if not isinstance(private_key_pem, str) or not private_key_pem.strip():
+        if not isinstance(stored_device_id, str):
             return None
-        try:
-            private_key = serialization.load_pem_private_key(
-                private_key_pem.encode("utf-8"),
-                password=None,
-            )
-        except (TypeError, ValueError):
+        if not isinstance(public_key_pem, str) or not isinstance(private_key_pem, str):
             return None
-        if not isinstance(private_key, Ed25519PrivateKey):
+        public_key_bytes = self._public_key_bytes_from_pem(public_key_pem)
+        if public_key_bytes is None:
             return None
-        public_key_bytes = self._public_key_bytes(private_key)
         public_key = self._public_key_string(public_key_bytes)
         derived_device_id = self._identity_id(public_key_bytes)
-        stored_device_id = str(payload.get("deviceId") or "").strip()
         if stored_device_id != derived_device_id:
-            self._write_identity_file(
-                private_key,
+            self._write_openclaw_identity_file(
                 device_id=derived_device_id,
+                public_key_pem=public_key_pem,
+                private_key_pem=private_key_pem,
                 created_at_ms=payload.get("createdAtMs"),
             )
         return GatewayIdentity(id=derived_device_id, public_key=public_key)
@@ -74,7 +76,7 @@ class GatewayIdentityService:
             private_key = Ed25519PrivateKey.from_private_bytes(private_key_bytes)
         except (ValueError, UnicodeEncodeError):
             return None
-        public_key_bytes = self._public_key_bytes(private_key)
+        public_key_bytes = self._public_key_bytes_from_private_key(private_key)
         public_key = self._public_key_string(public_key_bytes)
         identity_id = (
             str(payload.get("deviceId") or payload.get("id") or "").strip()
@@ -84,7 +86,7 @@ class GatewayIdentityService:
 
     def _create_identity(self) -> GatewayIdentity:
         private_key = Ed25519PrivateKey.generate()
-        public_key_bytes = self._public_key_bytes(private_key)
+        public_key_bytes = self._public_key_bytes_from_private_key(private_key)
         public_key = self._public_key_string(public_key_bytes)
         identity = GatewayIdentity(
             id=self._identity_id(public_key_bytes),
@@ -96,6 +98,30 @@ class GatewayIdentityService:
             created_at_ms=int(time.time() * 1000),
         )
         return identity
+
+    def _write_openclaw_identity_file(
+        self,
+        *,
+        device_id: str,
+        public_key_pem: str,
+        private_key_pem: str,
+        created_at_ms: object | None,
+    ) -> None:
+        self._identity_path.parent.mkdir(parents=True, exist_ok=True)
+        self._identity_path.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "deviceId": device_id,
+                    "publicKeyPem": public_key_pem,
+                    "privateKeyPem": private_key_pem,
+                    "createdAtMs": created_at_ms,
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
 
     def _write_identity_file(
         self,
@@ -134,8 +160,20 @@ class GatewayIdentityService:
             encoding="utf-8",
         )
 
-    def _public_key_bytes(self, private_key: Ed25519PrivateKey) -> bytes:
-        return private_key.public_key().public_bytes(
+    def _public_key_bytes_from_pem(self, public_key_pem: str) -> bytes | None:
+        try:
+            public_key = serialization.load_pem_public_key(public_key_pem.encode("utf-8"))
+        except (TypeError, ValueError):
+            return None
+        if not isinstance(public_key, Ed25519PublicKey):
+            return None
+        return self._public_key_bytes_from_public_key(public_key)
+
+    def _public_key_bytes_from_private_key(self, private_key: Ed25519PrivateKey) -> bytes:
+        return self._public_key_bytes_from_public_key(private_key.public_key())
+
+    def _public_key_bytes_from_public_key(self, public_key: Ed25519PublicKey) -> bytes:
+        return public_key.public_bytes(
             encoding=serialization.Encoding.Raw,
             format=serialization.PublicFormat.Raw,
         )

@@ -239,6 +239,33 @@ async def test_database_round_trip(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_task_blueprint_reads_prefer_row_enabled_over_stale_payload_enabled(tmp_path) -> None:
+    database = Database(tmp_path / "test.db")
+    await database.initialize()
+
+    task_id = await database.create_task_blueprint(
+        name="Nightly loop",
+        summary="Keep shipping.",
+        project_id=None,
+        instance_id=None,
+        cadence_minutes=180,
+        enabled=True,
+        payload={
+            "objective_template": "Ship the next slice.",
+            "enabled": True,
+        },
+    )
+    await database.update_task_blueprint(task_id, enabled=False)
+
+    task = await database.get_task_blueprint(task_id)
+    tasks = await database.list_task_blueprints()
+
+    assert task is not None
+    assert task["enabled"] == 0
+    assert tasks[0]["enabled"] == 0
+
+
+@pytest.mark.asyncio
 async def test_thread_event_metrics_capture_recent_activity(tmp_path) -> None:
     database = Database(tmp_path / "test.db")
     await database.initialize()

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from dataclasses import asdict, dataclass
 from datetime import datetime
 
@@ -10,6 +11,10 @@ from openzues.schemas import (
     GatewayNodePendingActionPullView,
     GatewayNodePendingWorkDrainView,
     GatewayNodePendingWorkEnqueueView,
+)
+from openzues.services.gateway_node_command_policy import (
+    normalize_declared_node_commands,
+    resolve_node_command_allowlist,
 )
 from openzues.services.gateway_node_pairing import (
     GatewayNodePairingService,
@@ -35,6 +40,33 @@ class _GatewayNodeServiceConnection:
 
     def send_gateway_event(self, event: str, payload: object) -> None:
         return None
+
+
+def _build_wake_result(
+    *,
+    attempted: bool,
+    available: bool,
+    connected: bool,
+    path: str,
+    started_at: float,
+) -> dict[str, object]:
+    return {
+        "attempted": attempted,
+        "available": available,
+        "connected": connected,
+        "path": path,
+        "durationMs": max(0, int((time.monotonic() - started_at) * 1000)),
+    }
+
+
+def _wake_result_available(result: object) -> bool:
+    if isinstance(result, dict):
+        return bool(result.get("available"))
+    return bool(result)
+
+
+def _now_ms() -> int:
+    return int(time.time() * 1000)
 
 
 def _instance_connected_at_ms(last_event_at: str | None) -> int:
@@ -137,6 +169,7 @@ class GatewayNodeService:
         for instance in instances:
             node_id = _node_id_for_instance(instance.id)
             previous = self.registry.describe_known_node(node_id)
+            connected_at_ms = _instance_connected_at_ms(instance.last_event_at)
             self.registry.remember(
                 _remembered_instance_node(
                     node_id=node_id,
@@ -167,8 +200,34 @@ class GatewayNodeService:
                     permissions=previous.permissions if previous is not None else None,
                     path_env=instance.cwd,
                 ),
-                connected_at_ms=_instance_connected_at_ms(instance.last_event_at),
+                connected_at_ms=connected_at_ms,
             )
+            if self.pairing_service is not None:
+                await self.pairing_service.update_paired_node_metadata(
+                    node_id,
+                    display_name=instance.name,
+                    platform=instance.transport,
+                    version=previous.version if previous is not None else None,
+                    core_version=previous.core_version if previous is not None else None,
+                    ui_version=previous.ui_version if previous is not None else None,
+                    device_family=previous.device_family if previous is not None else None,
+                    model_identifier=(
+                        previous.model_identifier if previous is not None else None
+                    ),
+                    caps=(
+                        list(previous.caps)
+                        if previous is not None and previous.caps
+                        else None
+                    ),
+                    commands=(
+                        list(previous.commands)
+                        if previous is not None and previous.commands
+                        else None
+                    ),
+                    permissions=previous.permissions if previous is not None else None,
+                    remote_ip=previous.remote_ip if previous is not None else None,
+                    last_connected_at_ms=connected_at_ms,
+                )
             if fresh_connection and self._voicewake_service is not None:
                 self.registry.send_event(
                     node_id,
@@ -187,35 +246,117 @@ class GatewayNodeService:
     async def sync(self) -> None:
         await self._sync()
 
-    async def wake_node(self, node_id: str) -> bool:
+    async def _stage_scope_upgrade_request(
+        self,
+        node: KnownNode,
+        *,
+        paired_node: GatewayPairedNode,
+    ) -> dict[str, object] | None:
+        if self.pairing_service is None or not node.connected:
+            return None
+        allowlist = resolve_node_command_allowlist(
+            platform=node.platform or paired_node.platform,
+            device_family=node.device_family or paired_node.device_family,
+        )
+        live_commands = list(
+            normalize_declared_node_commands(
+                node.commands,
+                allowlist=allowlist,
+            )
+        )
+        approved_commands = set(
+            normalize_declared_node_commands(
+                paired_node.commands,
+                allowlist=allowlist,
+            )
+        )
+        if not live_commands or not any(command not in approved_commands for command in live_commands):
+            return None
+        return await self.pairing_service.request(
+            node_id=node.node_id,
+            display_name=node.display_name or paired_node.display_name,
+            platform=node.platform or paired_node.platform,
+            version=node.version or paired_node.version,
+            core_version=node.core_version or paired_node.core_version,
+            ui_version=node.ui_version or paired_node.ui_version,
+            device_family=node.device_family or paired_node.device_family,
+            model_identifier=node.model_identifier or paired_node.model_identifier,
+            caps=list(node.caps) if node.caps else list(paired_node.caps),
+            commands=live_commands,
+            remote_ip=node.remote_ip or paired_node.remote_ip,
+            silent=True,
+            now_ms=_now_ms(),
+        )
+
+    async def wake_node(self, node_id: str) -> dict[str, object]:
+        started_at = time.monotonic()
         await self._sync()
         if self.registry.get(node_id) is not None:
-            return True
+            return _build_wake_result(
+                attempted=False,
+                available=True,
+                connected=True,
+                path="already-connected",
+                started_at=started_at,
+            )
 
         try:
             instance_id = int(str(node_id).strip())
         except (TypeError, ValueError):
-            return False
+            return _build_wake_result(
+                attempted=False,
+                available=False,
+                connected=False,
+                path="invalid-node-id",
+                started_at=started_at,
+            )
 
         if instance_id not in self.manager.instances:
-            return False
+            return _build_wake_result(
+                attempted=False,
+                available=False,
+                connected=False,
+                path="unknown-managed-node",
+                started_at=started_at,
+            )
 
         try:
             await self.manager.connect_instance(instance_id)
         except Exception:
             await self._sync()
-            return False
+            return _build_wake_result(
+                attempted=True,
+                available=False,
+                connected=self.registry.get(node_id) is not None,
+                path="connect-error",
+                started_at=started_at,
+            )
 
         await self._sync()
-        return self.registry.get(node_id) is not None
+        connected = self.registry.get(node_id) is not None
+        return _build_wake_result(
+            attempted=True,
+            available=True,
+            connected=connected,
+            path="connected" if connected else "not-connected",
+            started_at=started_at,
+        )
 
     async def get_catalog_view(self) -> GatewayCapabilityNodeCatalogView:
         await self._sync()
+        known_nodes = self.registry.list_known_nodes()
+        known_nodes_by_id = {node.node_id: node for node in known_nodes}
         node_payloads: dict[str, dict[str, object | None]] = {
-            node.node_id: asdict(node) for node in self.registry.list_known_nodes()
+            node_id: asdict(node) for node_id, node in known_nodes_by_id.items()
         }
         if self.pairing_service is not None:
             for paired_node in await self.pairing_service.list_paired_nodes():
+                existing_node = known_nodes_by_id.get(paired_node.node_id)
+                if existing_node is not None:
+                    await self._stage_scope_upgrade_request(
+                        existing_node,
+                        paired_node=paired_node,
+                    )
                 paired_payload = _catalog_paired_node_payload(paired_node)
                 existing = node_payloads.get(paired_node.node_id)
                 node_payloads[paired_node.node_id] = (
@@ -237,6 +378,10 @@ class GatewayNodeService:
             if self.pairing_service is not None:
                 paired_node = await self.pairing_service.get_paired_node(node_id)
                 if paired_node is not None:
+                    await self._stage_scope_upgrade_request(
+                        node,
+                        paired_node=paired_node,
+                    )
                     payload = _merge_catalog_node_payload(
                         _catalog_paired_node_payload(paired_node),
                         payload,
@@ -331,7 +476,7 @@ class GatewayNodeService:
         )
         wake_triggered = False
         if wake is not False and not queued.deduped and self.registry.get(node_id) is None:
-            wake_triggered = await self.wake_node(node_id)
+            wake_triggered = _wake_result_available(await self.wake_node(node_id))
         return GatewayNodePendingWorkEnqueueView.model_validate(
             {
                 "nodeId": node_id,
@@ -379,6 +524,10 @@ def _merge_catalog_node_payload(
 ) -> dict[str, object | None]:
     observed_caps = observed.get("caps")
     observed_commands = observed.get("commands")
+    visible_commands = _visible_paired_commands(
+        persisted.get("commands"),
+        observed_commands,
+    )
     return {
         "node_id": observed["node_id"],
         "display_name": observed.get("display_name") or persisted.get("display_name"),
@@ -393,11 +542,7 @@ def _merge_catalog_node_payload(
         "model_identifier": observed.get("model_identifier") or persisted.get("model_identifier"),
         "path_env": observed.get("path_env"),
         "caps": observed_caps if observed_caps is not None else persisted.get("caps") or [],
-        "commands": (
-            observed_commands
-            if observed_commands is not None
-            else persisted.get("commands") or []
-        ),
+        "commands": visible_commands if visible_commands is not None else [],
         "permissions": (
             observed.get("permissions")
             if observed.get("permissions") is not None
@@ -421,3 +566,25 @@ def _merge_catalog_node_payload(
 def _catalog_node_sort_key(payload: dict[str, object | None]) -> tuple[int, str, str]:
     display_name = str(payload.get("display_name") or payload.get("node_id") or "").strip().lower()
     return (0 if payload.get("connected") else 1, display_name, str(payload.get("node_id") or ""))
+
+
+def _visible_paired_commands(
+    persisted_commands: object,
+    observed_commands: object,
+) -> list[str] | None:
+    approved = (
+        [command for command in persisted_commands if isinstance(command, str)]
+        if isinstance(persisted_commands, list)
+        else None
+    )
+    live = (
+        [command for command in observed_commands if isinstance(command, str)]
+        if isinstance(observed_commands, list)
+        else None
+    )
+    if live is None:
+        return approved
+    if approved is None:
+        return live
+    approved_set = set(approved)
+    return [command for command in live if command in approved_set]

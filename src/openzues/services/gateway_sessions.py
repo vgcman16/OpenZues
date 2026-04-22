@@ -8,7 +8,10 @@ from openzues.database import Database
 from openzues.services.session_keys import (
     build_launch_session_key,
     canonicalize_session_key,
+    is_cron_run_session_key,
+    parse_agent_session_key,
     parse_thread_session_suffix,
+    session_key_lookup_aliases,
     to_agent_request_session_key,
 )
 
@@ -19,6 +22,7 @@ _CONTROL_CHAT_THREAD_DISPLAY_NAME = "OpenZues Control Chat Thread"
 _CONTROL_CHAT_SUBJECT_FALLBACK = "Operator control chat"
 _DERIVED_TITLE_MAX_LEN = 60
 _DERIVED_TITLE_ELLIPSIS = "\u2026"
+_SESSION_LABEL_MAX_LENGTH = 512
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,8 +63,14 @@ class GatewaySessionsService:
         include_last_message: bool,
         now_ms: int,
     ) -> dict[str, Any]:
-        if agent_id is not None and agent_id != "main":
-            raise ValueError(f'unknown agent id "{agent_id}"')
+        normalized_label = (
+            _parse_session_label(label) if _string_or_none(label) is not None else None
+        )
+        normalized_spawned_by = _string_or_none(spawned_by)
+        normalized_agent_id = _normalize_lookup_token(agent_id)
+        normalized_search = _string_or_none(search)
+        if normalized_agent_id is not None and normalized_agent_id != "main":
+            raise ValueError(f'unknown agent id "{normalized_agent_id}"')
         sessions: list[dict[str, Any]] = []
         session = await self._current_control_chat_session()
         seen_session_keys: set[str] = set()
@@ -71,7 +81,7 @@ class GatewaySessionsService:
             known_session: _CurrentControlChatSession | None = None,
         ) -> None:
             raw_session_key = _string_or_none(candidate_session_key)
-            if raw_session_key is None:
+            if raw_session_key is None or is_cron_run_session_key(raw_session_key):
                 return
             canonical_key = canonicalize_session_key(raw_session_key) or raw_session_key.lower()
             if canonical_key in seen_session_keys:
@@ -89,13 +99,13 @@ class GatewaySessionsService:
                 return
             if not self._session_matches_agent(
                 resolved_session.current_session_key,
-                agent_id=agent_id,
+                agent_id=normalized_agent_id,
             ):
                 return
             if not await self._session_matches_filters(
                 resolved_session.current_session_key,
-                label=label,
-                spawned_by=spawned_by,
+                label=normalized_label,
+                spawned_by=normalized_spawned_by,
             ):
                 return
             sessions.append(
@@ -130,8 +140,8 @@ class GatewaySessionsService:
                 and int(session_payload["updatedAt"]) >= cutoff
             ]
 
-        if search is not None:
-            normalized_search = search.lower()
+        if normalized_search is not None:
+            normalized_search = normalized_search.lower()
             sessions = [
                 session_payload
                 for session_payload in sessions
@@ -291,6 +301,9 @@ class GatewaySessionsService:
         latest_compaction_checkpoint = session_payload.get("latestCompactionCheckpoint")
         if isinstance(latest_compaction_checkpoint, dict):
             payload["latestCompactionCheckpoint"] = latest_compaction_checkpoint
+        child_sessions = _session_child_sessions_or_none(session_payload)
+        if child_sessions is not None:
+            payload["childSessions"] = child_sessions
         return payload
 
     async def build_message_event_payload(
@@ -340,6 +353,9 @@ class GatewaySessionsService:
         latest_compaction_checkpoint = session_payload.get("latestCompactionCheckpoint")
         if isinstance(latest_compaction_checkpoint, dict):
             payload["latestCompactionCheckpoint"] = latest_compaction_checkpoint
+        child_sessions = _session_child_sessions_or_none(session_payload)
+        if child_sessions is not None:
+            payload["childSessions"] = child_sessions
         if message_id is not None:
             payload["messageId"] = message_id
         if message_seq is not None:
@@ -390,6 +406,9 @@ class GatewaySessionsService:
         latest_compaction_checkpoint = session_payload.get("latestCompactionCheckpoint")
         if isinstance(latest_compaction_checkpoint, dict):
             payload["latestCompactionCheckpoint"] = latest_compaction_checkpoint
+        child_sessions = _session_child_sessions_or_none(session_payload)
+        if child_sessions is not None:
+            payload["childSessions"] = child_sessions
         if message_id is not None:
             payload["messageId"] = message_id
         if message_seq is not None:
@@ -407,59 +426,100 @@ class GatewaySessionsService:
         include_global: bool,
         include_unknown: bool,
     ) -> dict[str, Any]:
+        normalized_key = _string_or_none(key)
+        normalized_session_id = _string_or_none(session_id)
+        normalized_label = (
+            _parse_session_label(label) if _string_or_none(label) is not None else None
+        )
+        normalized_agent_id = _normalize_lookup_token(agent_id)
+        normalized_spawned_by = _string_or_none(spawned_by)
+        selection_count = sum(
+            value is not None
+            for value in (normalized_key, normalized_session_id, normalized_label)
+        )
+        if selection_count > 1:
+            raise ValueError("Provide either key, sessionId, or label (not multiple)")
+        if selection_count == 0:
+            raise ValueError("Either key, sessionId, or label is required")
+        if normalized_agent_id is not None and normalized_agent_id != "main":
+            raise ValueError(f'unknown agent id "{normalized_agent_id}"')
         session = await self._current_control_chat_session()
-        if (label is not None or spawned_by is not None) and key is None and session_id is None:
-            matched_session_key = await self._metadata_lookup_session_key(
-                label=label,
-                spawned_by=spawned_by,
+        if (
+            normalized_label is not None or normalized_spawned_by is not None
+        ) and normalized_key is None and normalized_session_id is None:
+            matched_session_keys = await self._metadata_lookup_session_keys(
+                label=normalized_label,
+                spawned_by=normalized_spawned_by,
+                agent_id=normalized_agent_id,
+                include_global=include_global,
+                include_unknown=include_unknown,
+                default_session=session,
             )
-            if matched_session_key is None:
-                if label is not None:
+            if not matched_session_keys:
+                if normalized_label is not None:
                     raise ValueError("unknown session label")
                 raise ValueError("unknown spawnedBy")
-            session = await self._session_for_key(matched_session_key, default_session=session)
-        if agent_id is not None and agent_id != "main":
-            raise ValueError(f'unknown agent id "{agent_id}"')
-        if key is not None:
-            matched_session = await self._known_session_for_lookup(key, default_session=session)
+            if len(matched_session_keys) > 1:
+                joined_keys = ", ".join(matched_session_keys)
+                if normalized_label is not None:
+                    raise ValueError(
+                        f"multiple sessions found with label: {normalized_label} ({joined_keys})"
+                    )
+                raise ValueError(
+                    "multiple sessions found with spawnedBy: "
+                    f"{normalized_spawned_by} ({joined_keys})"
+                )
+            session = await self._session_for_key(
+                matched_session_keys[0],
+                default_session=session,
+            )
+        if normalized_key is not None:
+            matched_session = await self._known_session_for_lookup(
+                normalized_key,
+                default_session=session,
+            )
             if matched_session is None:
                 raise ValueError("unknown session key")
             session = matched_session
-        if session_id is not None:
+        if normalized_session_id is not None:
             matched_session = await self._known_session_for_session_id(
-                session_id,
+                normalized_session_id,
                 default_session=session,
+                agent_id=normalized_agent_id,
+                spawned_by=normalized_spawned_by,
+                include_global=include_global,
+                include_unknown=include_unknown,
             )
             if matched_session is None:
                 raise ValueError("unknown sessionId")
             if (
-                (key is not None or label is not None or spawned_by is not None)
+                normalized_key is not None or normalized_label is not None
                 and matched_session.current_session_key != session.current_session_key
             ):
                 raise ValueError("unknown sessionId")
             session = matched_session
         if not await self._session_matches_filters(
             session.current_session_key,
-            label=label,
-            spawned_by=spawned_by,
+            label=normalized_label,
+            spawned_by=normalized_spawned_by,
         ):
-            if key is not None:
+            if normalized_key is not None:
                 raise ValueError("unknown session key")
-            if session_id is not None:
+            if normalized_session_id is not None:
                 raise ValueError("unknown sessionId")
-            if label is not None:
+            if normalized_label is not None:
                 raise ValueError("unknown session label")
             raise ValueError("unknown spawnedBy")
-        if key is None and not self._session_matches_visibility(
+        if normalized_key is None and not self._session_matches_visibility(
             session,
             include_global=include_global,
             include_unknown=include_unknown,
         ):
-            if session_id is not None:
+            if normalized_session_id is not None:
                 raise ValueError("unknown sessionId")
-            if label is not None:
+            if normalized_label is not None:
                 raise ValueError("unknown session label")
-            if spawned_by is not None:
+            if normalized_spawned_by is not None:
                 raise ValueError("unknown spawnedBy")
 
         return {"ok": True, "key": session.current_session_key}
@@ -472,6 +532,7 @@ class GatewaySessionsService:
     ) -> dict[str, Any]:
         is_global_session = session.current_session_key == session.main_session_key
         metadata = await self._session_metadata(session.current_session_key)
+        latest_owner_session_key = _latest_owner_session_key(metadata)
         model_override = _string_or_none(metadata.get("model"))
         updated_at_ms = await self._updated_at_ms(
             current_mission=session.current_mission,
@@ -512,6 +573,9 @@ class GatewaySessionsService:
         fast_mode = _bool_or_none(metadata.get("fastMode"))
         if fast_mode is not None:
             payload["fastMode"] = fast_mode
+        if latest_owner_session_key is not None:
+            payload["spawnedBy"] = latest_owner_session_key
+            payload["parentSessionKey"] = latest_owner_session_key
         for field in (
             "label",
             "responseUsage",
@@ -529,12 +593,17 @@ class GatewaySessionsService:
             "groupActivation",
             "parentSessionKey",
         ):
+            if latest_owner_session_key is not None and field in {"spawnedBy", "parentSessionKey"}:
+                continue
             value = _string_or_none(metadata.get(field))
             if value is not None:
                 payload[field] = value
         spawn_depth = _int_or_none(metadata.get("spawnDepth"))
         if spawn_depth is not None:
             payload["spawnDepth"] = spawn_depth
+        child_sessions = await self._child_session_keys(session.current_session_key)
+        if child_sessions:
+            payload["childSessions"] = child_sessions
         compaction_checkpoint_count = (
             await self._database.count_control_chat_compaction_checkpoints(
                 session_key=session.current_session_key
@@ -629,13 +698,15 @@ class GatewaySessionsService:
                 stored_session_key,
                 require_thread=False,
             )
-            parsed_session_key = parse_thread_session_suffix(stored_session_key)
+            main_session_key, parsed_thread_id = _resolved_stored_session_scope(
+                stored_session_key,
+                fallback_main_session_key=session.main_session_key,
+            )
             return _CurrentControlChatSession(
-                main_session_key=_string_or_none(parsed_session_key.base_session_key)
-                or session.main_session_key,
+                main_session_key=main_session_key,
                 current_session_key=stored_session_key,
                 current_session_id=_string_or_none(mission.get("thread_id") if mission else None)
-                or _string_or_none(parsed_session_key.thread_id),
+                or parsed_thread_id,
                 current_mission=mission,
                 model=_string_or_none(mission.get("model") if mission else None) or session.model,
             )
@@ -694,13 +765,15 @@ class GatewaySessionsService:
             session_key,
             require_thread=False,
         )
-        parsed_session_key = parse_thread_session_suffix(session_key)
+        main_session_key, parsed_thread_id = _resolved_stored_session_scope(
+            session_key,
+            fallback_main_session_key=default_session.main_session_key,
+        )
         return _CurrentControlChatSession(
-            main_session_key=_string_or_none(parsed_session_key.base_session_key)
-            or default_session.main_session_key,
+            main_session_key=main_session_key,
             current_session_key=session_key,
             current_session_id=_string_or_none(mission.get("thread_id") if mission else None)
-            or _string_or_none(parsed_session_key.thread_id),
+            or parsed_thread_id,
             current_mission=mission,
             model=_string_or_none(mission.get("model") if mission else None)
             or default_session.model,
@@ -743,15 +816,49 @@ class GatewaySessionsService:
         metadata = row.get("metadata")
         return metadata if isinstance(metadata, dict) else {}
 
+    async def _child_session_keys(self, session_key: str) -> list[str]:
+        rows = await self._database.list_gateway_session_metadata_rows()
+        child_session_keys: list[str] = []
+        seen_session_keys: set[str] = set()
+        for row in rows:
+            child_session_key = _string_or_none(row.get("session_key"))
+            metadata = row.get("metadata")
+            if (
+                child_session_key is None
+                or child_session_key == session_key
+                or not isinstance(metadata, dict)
+            ):
+                continue
+            latest_owner_session_key = _latest_owner_session_key(metadata)
+            if latest_owner_session_key is not None:
+                if latest_owner_session_key != session_key:
+                    continue
+            elif not _metadata_matches_spawned_by(metadata, spawned_by=session_key):
+                continue
+            dedupe_key = canonicalize_session_key(child_session_key) or child_session_key.lower()
+            if dedupe_key in seen_session_keys:
+                continue
+            seen_session_keys.add(dedupe_key)
+            child_session_keys.append(child_session_key)
+        return child_session_keys
+
     async def _known_session_for_session_id(
         self,
         session_id: str,
         *,
         default_session: _CurrentControlChatSession,
+        agent_id: str | None,
+        spawned_by: str | None,
+        include_global: bool,
+        include_unknown: bool,
     ) -> _CurrentControlChatSession | None:
         matches = await self._session_id_match_candidates(
             session_id,
             default_session=default_session,
+            agent_id=agent_id,
+            spawned_by=spawned_by,
+            include_global=include_global,
+            include_unknown=include_unknown,
         )
         if not matches:
             return None
@@ -777,6 +884,10 @@ class GatewaySessionsService:
         session_id: str,
         *,
         default_session: _CurrentControlChatSession,
+        agent_id: str | None,
+        spawned_by: str | None,
+        include_global: bool,
+        include_unknown: bool,
     ) -> list[_SessionIdMatchCandidate]:
         normalized_session_id = _normalize_lookup_token(session_id)
         if normalized_session_id is None:
@@ -798,9 +909,26 @@ class GatewaySessionsService:
                 raw_session_key,
                 default_session=default_session,
             )
-            if (
-                _normalize_lookup_token(resolved_session.current_session_id)
-                != normalized_session_id
+            if not self._session_matches_visibility(
+                resolved_session,
+                include_global=include_global,
+                include_unknown=include_unknown,
+            ):
+                return
+            if not self._session_matches_agent(
+                resolved_session.current_session_key,
+                agent_id=agent_id,
+            ):
+                return
+            if not await self._session_matches_filters(
+                resolved_session.current_session_key,
+                label=None,
+                spawned_by=spawned_by,
+            ):
+                return
+            if not _session_id_selector_matches(
+                session=resolved_session,
+                normalized_session_id=normalized_session_id,
             ):
                 return
             matches.append(
@@ -863,13 +991,19 @@ class GatewaySessionsService:
             return None
         return _iso8601_to_timestamp_ms(latest_messages[-1].get("created_at"))
 
-    async def _metadata_lookup_session_key(
+    async def _metadata_lookup_session_keys(
         self,
         *,
         label: str | None,
         spawned_by: str | None,
-    ) -> str | None:
+        agent_id: str | None,
+        include_global: bool,
+        include_unknown: bool,
+        default_session: _CurrentControlChatSession,
+    ) -> list[str]:
         rows = await self._database.list_gateway_session_metadata_rows()
+        matched_session_keys: list[str] = []
+        seen_session_keys: set[str] = set()
         for row in rows:
             session_key = _string_or_none(row.get("session_key"))
             metadata = row.get("metadata")
@@ -877,10 +1011,32 @@ class GatewaySessionsService:
                 continue
             if label is not None and _string_or_none(metadata.get("label")) != label:
                 continue
-            if spawned_by is not None and _string_or_none(metadata.get("spawnedBy")) != spawned_by:
+            if not _metadata_matches_spawned_by(metadata, spawned_by=spawned_by):
                 continue
-            return session_key
-        return None
+            resolved_session = await self._session_for_key(
+                session_key,
+                default_session=default_session,
+            )
+            if not self._session_matches_visibility(
+                resolved_session,
+                include_global=include_global,
+                include_unknown=include_unknown,
+            ):
+                continue
+            if not self._session_matches_agent(
+                resolved_session.current_session_key,
+                agent_id=agent_id,
+            ):
+                continue
+            dedupe_key = (
+                canonicalize_session_key(resolved_session.current_session_key)
+                or resolved_session.current_session_key.lower()
+            )
+            if dedupe_key in seen_session_keys:
+                continue
+            seen_session_keys.add(dedupe_key)
+            matched_session_keys.append(resolved_session.current_session_key)
+        return matched_session_keys
 
     async def _session_matches_filters(
         self,
@@ -894,7 +1050,7 @@ class GatewaySessionsService:
         metadata = await self._session_metadata(session_key)
         if label is not None and _string_or_none(metadata.get("label")) != label:
             return False
-        if spawned_by is not None and _string_or_none(metadata.get("spawnedBy")) != spawned_by:
+        if not _metadata_matches_spawned_by(metadata, spawned_by=spawned_by):
             return False
         return True
 
@@ -914,7 +1070,10 @@ class GatewaySessionsService:
     def _session_matches_agent(self, session_key: str, *, agent_id: str | None) -> bool:
         if agent_id is None:
             return True
-        return session_key != "unknown"
+        parsed_session_key = parse_agent_session_key(session_key)
+        if parsed_session_key is None:
+            return False
+        return parsed_session_key.agent_id == agent_id
 
 
 def _main_session_key_from_gateway(gateway: dict[str, Any] | None) -> str:
@@ -1068,6 +1227,72 @@ def _normalize_lookup_token(value: object) -> str | None:
     return text.lower()
 
 
+def _parse_session_label(value: object) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError("invalid label: must be a string")
+    trimmed = value.strip()
+    if not trimmed:
+        raise ValueError("invalid label: empty")
+    if len(trimmed) > _SESSION_LABEL_MAX_LENGTH:
+        raise ValueError(f"invalid label: too long (max {_SESSION_LABEL_MAX_LENGTH})")
+    return trimmed
+
+
+def _metadata_matches_spawned_by(
+    metadata: dict[str, Any],
+    *,
+    spawned_by: str | None,
+) -> bool:
+    if spawned_by is None:
+        return True
+    latest_owner_session_key = _latest_owner_session_key(metadata)
+    if latest_owner_session_key is not None:
+        return latest_owner_session_key == spawned_by
+    return (
+        _string_or_none(metadata.get("spawnedBy")) == spawned_by
+        or _string_or_none(metadata.get("parentSessionKey")) == spawned_by
+    )
+
+
+def _latest_owner_session_key(metadata: dict[str, Any]) -> str | None:
+    return _string_or_none(metadata.get("controllerSessionKey")) or _string_or_none(
+        metadata.get("requesterSessionKey")
+    )
+
+
+def _session_child_sessions_or_none(session_payload: dict[str, Any]) -> list[str] | None:
+    child_sessions = session_payload.get("childSessions")
+    if not isinstance(child_sessions, list):
+        return None
+    normalized_child_sessions: list[str] = []
+    seen_child_sessions: set[str] = set()
+    for child_session in child_sessions:
+        normalized_child_session = _string_or_none(child_session)
+        if normalized_child_session is None or normalized_child_session in seen_child_sessions:
+            continue
+        seen_child_sessions.add(normalized_child_session)
+        normalized_child_sessions.append(normalized_child_session)
+    return normalized_child_sessions or None
+
+
+def _session_id_selector_matches(
+    *,
+    session: _CurrentControlChatSession,
+    normalized_session_id: str,
+) -> bool:
+    if _normalize_lookup_token(session.current_session_id) == normalized_session_id:
+        return True
+    if any(
+        _normalize_lookup_token(alias) == normalized_session_id
+        for alias in session_key_lookup_aliases(session.current_session_key)
+    ):
+        return True
+    request_key = to_agent_request_session_key(session.current_session_key)
+    return _normalize_lookup_token(request_key) == normalized_session_id
+
+
 def _build_session_id_match_candidate(
     *,
     session: _CurrentControlChatSession,
@@ -1136,3 +1361,18 @@ def _select_unique_freshest_session_id_match(
 
 def _updated_at_sort_value(value: int | None) -> int:
     return value if value is not None else 0
+
+
+def _resolved_stored_session_scope(
+    session_key: str,
+    *,
+    fallback_main_session_key: str,
+) -> tuple[str, str | None]:
+    parsed_session_key = parse_thread_session_suffix(session_key)
+    parsed_thread_id = _string_or_none(parsed_session_key.thread_id)
+    if parsed_thread_id is None:
+        return fallback_main_session_key, None
+    return (
+        _string_or_none(parsed_session_key.base_session_key) or fallback_main_session_key,
+        parsed_thread_id,
+    )

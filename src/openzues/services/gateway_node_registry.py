@@ -142,7 +142,9 @@ def _normalize_permissions(value: object) -> dict[str, bool] | None:
     for key, allowed in value.items():
         if isinstance(key, str) and isinstance(allowed, bool):
             normalized[key] = allowed
-    return normalized or None
+    if normalized:
+        return normalized
+    return {} if not value else None
 
 
 def _normalize_optional_string(value: object) -> str | None:

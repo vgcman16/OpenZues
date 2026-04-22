@@ -1312,6 +1312,15 @@ class OutboundRouteScopeView(BaseModel):
     route_match: str | None = None
 
 
+class OutboundDeliveryTransportView(BaseModel):
+    runtime: str
+    channel: str | None = None
+    target: str | None = None
+    account_id: str | None = None
+    thread_id: str | None = None
+    session_key: str | None = None
+
+
 class OutboundDeliveryView(BaseModel):
     id: int
     route_id: int | None = None
@@ -1323,6 +1332,9 @@ class OutboundDeliveryView(BaseModel):
     conversation_target: ConversationTargetView | None = None
     route_scope: OutboundRouteScopeView
     event_payload: dict[str, Any] | None = None
+    request_idempotency_key: str | None = None
+    delivery_message_id: str | None = None
+    transport: OutboundDeliveryTransportView | None = None
     message_summary: str
     test_delivery: bool = False
     delivery_state: Literal["pending", "delivered", "failed"]
