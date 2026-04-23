@@ -104,6 +104,7 @@ _KNOWN_GATEWAY_CHAT_CHANNEL_ORDER = ("discord", "slack", "telegram", "whatsapp")
 _KNOWN_GATEWAY_CHAT_CHANNEL_IDS = set(_KNOWN_GATEWAY_CHAT_CHANNEL_ORDER)
 _YYYY_MM_DD_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _UTC_OFFSET_RE = re.compile(r"^UTC[+-]\d{1,2}(?::[0-5]\d)?$")
+_BROWSER_PROXY_PROFILE_DELETE_RE = re.compile(r"^/profiles/[^/]+$")
 _NODE_ONLY_METHODS = {
     "node.canvas.capability.refresh",
     "node.event",
@@ -239,6 +240,53 @@ def _wake_attempt_with_connection(
     if not connected and path == "already-connected":
         path = "not-connected"
     return replace(attempt, connected=connected, path=path)
+
+
+def _normalize_browser_proxy_path(value: str) -> str:
+    trimmed = value.strip()
+    if not trimmed:
+        return trimmed
+    with_leading_slash = trimmed if trimmed.startswith("/") else f"/{trimmed}"
+    if len(with_leading_slash) <= 1:
+        return with_leading_slash
+    return with_leading_slash.rstrip("/")
+
+
+def _is_persistent_browser_proxy_mutation(method: str, path: str) -> bool:
+    normalized_path = _normalize_browser_proxy_path(path)
+    if method == "POST" and normalized_path in {"/profiles/create", "/reset-profile"}:
+        return True
+    return method == "DELETE" and _BROWSER_PROXY_PROFILE_DELETE_RE.fullmatch(
+        normalized_path
+    ) is not None
+
+
+def _is_forbidden_browser_proxy_mutation(params: object) -> bool:
+    if not isinstance(params, dict):
+        return False
+    method = (
+        params["method"].strip().upper()
+        if isinstance(params.get("method"), str)
+        else ""
+    )
+    path = params["path"].strip() if isinstance(params.get("path"), str) else ""
+    return bool(method and path and _is_persistent_browser_proxy_mutation(method, path))
+
+
+def _validate_node_invoke_command(command: str, params: object) -> None:
+    if command.startswith("system.execApprovals."):
+        raise ValueError(
+            "node.invoke does not allow system.execApprovals.*; "
+            "use exec.approvals.node.*"
+        )
+    if command == "browser.proxy" and _is_forbidden_browser_proxy_mutation(params):
+        raise ValueError(
+            "node.invoke cannot mutate persistent browser profiles via browser.proxy"
+        )
+
+
+_NODE_PENDING_WAKE_RECONNECT_WAIT_MS = 3_000
+_NODE_PENDING_WAKE_RETRY_WAIT_MS = 12_000
 
 
 class GatewayNodeMethodService:
@@ -392,6 +440,27 @@ class GatewayNodeMethodService:
             if remaining_seconds <= 0:
                 return self.registry.get(node_id) is not None
             await self._sleep(min(0.05, remaining_seconds))
+
+    async def _wake_pending_node_until_connected(self, node_id: str) -> bool:
+        if self._wake_node is None or self.registry.get(node_id) is not None:
+            return False
+        wake_attempt = _coerce_wake_attempt(await self._wake_node(node_id))
+        wake_triggered = _wake_attempt_available(wake_attempt)
+        if not wake_triggered or self.registry.get(node_id) is not None:
+            return wake_triggered
+        if await self._wait_for_node_connection(
+            node_id,
+            timeout_ms=_NODE_PENDING_WAKE_RECONNECT_WAIT_MS,
+        ):
+            return True
+        retry_attempt = _coerce_wake_attempt(await self._wake_node(node_id))
+        retry_triggered = _wake_attempt_available(retry_attempt)
+        if retry_triggered and self.registry.get(node_id) is None:
+            await self._wait_for_node_connection(
+                node_id,
+                timeout_ms=_NODE_PENDING_WAKE_RETRY_WAIT_MS,
+            )
+        return wake_triggered or retry_triggered
 
     async def _request_node_pairing(
         self,
@@ -4305,11 +4374,13 @@ class GatewayNodeMethodService:
                         )
                 return {"ts": timestamp_ms, **payload_node}
             if self._pairing_service is not None:
-                stored_paired_node = await self._pairing_service.get_paired_node(wanted_node_id)
-                if stored_paired_node is not None:
+                fallback_paired_node: GatewayPairedNode | None = (
+                    await self._pairing_service.get_paired_node(wanted_node_id)
+                )
+                if fallback_paired_node is not None:
                     return {
                         "ts": timestamp_ms,
-                        **_known_paired_node_payload(stored_paired_node),
+                        **_known_paired_node_payload(fallback_paired_node),
                     }
             raise ValueError("unknown nodeId")
 
@@ -4407,6 +4478,7 @@ class GatewayNodeMethodService:
             )
             target_node_id = _require_non_empty_string(payload.get("nodeId"), label="nodeId")
             command = _require_non_empty_string(payload.get("command"), label="command")
+            _validate_node_invoke_command(command, payload.get("params"))
             idempotency_key = _require_non_empty_string(
                 payload.get("idempotencyKey"),
                 label="idempotencyKey",
@@ -4677,14 +4749,8 @@ class GatewayNodeMethodService:
                 payload=pending_payload,
             )
             wake_triggered = False
-            if (
-                wake is not False
-                and not queued.deduped
-                and self.registry.get(target_node_id) is None
-                and self._wake_node is not None
-            ):
-                wake_attempt = _coerce_wake_attempt(await self._wake_node(target_node_id))
-                wake_triggered = _wake_attempt_available(wake_attempt)
+            if wake is not False and not queued.deduped:
+                wake_triggered = await self._wake_pending_node_until_connected(target_node_id)
             return GatewayNodePendingWorkEnqueueView.model_validate(
                 {
                     "nodeId": target_node_id,

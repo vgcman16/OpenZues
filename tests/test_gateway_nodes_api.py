@@ -566,6 +566,61 @@ def test_gateway_node_pending_work_endpoint_can_request_wake_for_managed_lane(
     assert enqueue_payload["wakeTriggered"] is True
 
 
+def test_gateway_node_pending_work_endpoint_waits_for_managed_lane_reconnect_after_wake(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+    manager = app.state.manager
+    manager.instances[7] = InstanceRuntime(
+        instance_id=7,
+        name="Managed Pending Node",
+        transport="stdio",
+        command="codex",
+        args="app-server",
+        websocket_url=None,
+        cwd=str(tmp_path),
+        auto_connect=False,
+    )
+    connect_calls = 0
+
+    async def fake_connect_instance(instance_id: int) -> InstanceRuntime:
+        nonlocal connect_calls
+        assert instance_id == 7
+        connect_calls += 1
+        runtime = manager.instances[instance_id]
+        asyncio.get_running_loop().call_soon(
+            lambda: setattr(runtime, "connected", True)
+        )
+        return runtime
+
+    monkeypatch.setattr(manager, "connect_instance", fake_connect_instance)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        enqueue_response = client.post(
+            "/api/gateway/nodes/7/pending-work",
+            json={
+                "type": "location.request",
+                "priority": "high",
+                "expiresInMs": 5_000,
+                "wake": True,
+            },
+        )
+
+    assert enqueue_response.status_code == 200
+    enqueue_payload = enqueue_response.json()
+    assert enqueue_payload["nodeId"] == "7"
+    assert enqueue_payload["queued"]["type"] == "location.request"
+    assert enqueue_payload["wakeTriggered"] is True
+    assert connect_calls == 1
+    assert app.state.gateway_node_service.registry.get("7") is not None
+
+
 def test_gateway_node_pending_work_endpoint_keeps_wake_triggered_false_when_managed_wake_fails(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
@@ -2124,6 +2179,150 @@ def test_gateway_nodes_endpoints_stage_silent_scope_upgrade_request_for_paired_c
     ]
 
 
+def test_gateway_nodes_endpoints_stage_silent_scope_upgrade_request_for_commandless_paired_node_reconnect(
+    tmp_path,
+) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        request_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "node.pair.request",
+                "params": {
+                    "nodeId": "pair-node-command-empty",
+                    "displayName": "Pinned Node",
+                    "platform": "darwin",
+                },
+            },
+        )
+        initial_request_id = request_response.json()["request"]["requestId"]
+        approve_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={"method": "node.pair.approve", "params": {"requestId": initial_request_id}},
+        )
+        assert approve_response.status_code == 200
+
+        registry = client.app.state.gateway_node_service.registry
+        registry.register(
+            _AutoReplyNodeConnection(registry, "conn-pair-node-command-empty"),
+            GatewayNodeConnect(
+                client_id="live-pair-node-command-empty",
+                device_id="pair-node-command-empty",
+                client_mode="node",
+                display_name="Pinned Node",
+                platform="darwin",
+                version="1.0.1",
+                commands=("canvas.snapshot", "system.run"),
+            ),
+            connected_at_ms=321,
+        )
+
+        nodes_response = client.get("/api/gateway/nodes")
+        node_response = client.get("/api/gateway/nodes/pair-node-command-empty")
+        pair_list_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={"method": "node.pair.list", "params": {}},
+        )
+
+    assert nodes_response.status_code == 200
+    nodes_payload = nodes_response.json()
+    assert nodes_payload["nodes"] == [
+        {
+            "node_id": "pair-node-command-empty",
+            "display_name": "Pinned Node",
+            "platform": "darwin",
+            "version": "1.0.1",
+            "core_version": None,
+            "ui_version": None,
+            "client_id": "live-pair-node-command-empty",
+            "client_mode": "node",
+            "remote_ip": None,
+            "device_family": None,
+            "model_identifier": None,
+            "path_env": None,
+            "caps": [],
+            "commands": [],
+            "permissions": None,
+            "paired": True,
+            "connected": True,
+            "connected_at_ms": 321,
+            "approved_at_ms": nodes_payload["nodes"][0]["approved_at_ms"],
+        }
+    ]
+    assert node_response.status_code == 200
+    assert node_response.json() == {
+        "node_id": "pair-node-command-empty",
+        "display_name": "Pinned Node",
+        "platform": "darwin",
+        "version": "1.0.1",
+        "core_version": None,
+        "ui_version": None,
+        "client_id": "live-pair-node-command-empty",
+        "client_mode": "node",
+        "remote_ip": None,
+        "device_family": None,
+        "model_identifier": None,
+        "path_env": None,
+        "caps": [],
+        "commands": [],
+        "permissions": None,
+        "paired": True,
+        "connected": True,
+        "connected_at_ms": 321,
+        "approved_at_ms": nodes_payload["nodes"][0]["approved_at_ms"],
+    }
+
+    assert pair_list_response.status_code == 200
+    pair_list_payload = pair_list_response.json()
+    pending_request_id = pair_list_payload["pending"][0]["requestId"]
+    assert pending_request_id != initial_request_id
+    assert pair_list_payload["pending"] == [
+        {
+            "requestId": pending_request_id,
+            "nodeId": "pair-node-command-empty",
+            "displayName": "Pinned Node",
+            "platform": "darwin",
+            "version": "1.0.1",
+            "coreVersion": None,
+            "uiVersion": None,
+            "deviceFamily": None,
+            "modelIdentifier": None,
+            "caps": [],
+            "commands": ["canvas.snapshot", "system.run"],
+            "remoteIp": None,
+            "silent": True,
+            "ts": pair_list_payload["pending"][0]["ts"],
+            "requiredApproveScopes": ["operator.pairing", "operator.admin"],
+        }
+    ]
+    assert pair_list_payload["paired"] == [
+        {
+            "nodeId": "pair-node-command-empty",
+            "token": approve_response.json()["node"]["token"],
+            "displayName": "Pinned Node",
+            "platform": "darwin",
+            "version": "1.0.1",
+            "coreVersion": None,
+            "uiVersion": None,
+            "deviceFamily": None,
+            "modelIdentifier": None,
+            "caps": [],
+            "commands": [],
+            "remoteIp": None,
+            "permissions": None,
+            "createdAtMs": approve_response.json()["node"]["createdAtMs"],
+            "approvedAtMs": approve_response.json()["node"]["approvedAtMs"],
+            "lastConnectedAtMs": 321,
+        }
+    ]
+
+
 def test_gateway_node_method_call_endpoint_blocks_scope_upgrade_until_repair_request_is_approved(
     tmp_path,
 ) -> None:
@@ -2283,6 +2482,75 @@ def test_gateway_node_method_call_endpoint_supports_node_invoke(tmp_path) -> Non
         "payload": {"status": "done"},
         "payloadJSON": '{"status":"done"}',
     }
+
+
+def test_gateway_node_method_call_endpoint_rejects_system_exec_approvals_node_invoke(
+    tmp_path,
+) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "node.invoke",
+                "params": {
+                    "nodeId": "node-1",
+                    "command": "system.execApprovals.list",
+                    "params": {"file": "/tmp/policy.json"},
+                    "idempotencyKey": "idem-system-exec-approvals",
+                },
+            },
+        )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == (
+        "node.invoke does not allow system.execApprovals.*; use exec.approvals.node.*"
+    )
+
+
+@pytest.mark.parametrize(
+    "proxy_params",
+    [
+        pytest.param({"method": "POST", "path": "profiles/create/"}, id="create-profile"),
+        pytest.param({"method": "POST", "path": " /reset-profile/ "}, id="reset-profile"),
+        pytest.param({"method": "DELETE", "path": "profiles/default/"}, id="delete-profile"),
+    ],
+)
+def test_gateway_node_method_call_endpoint_rejects_persistent_browser_proxy_mutations(
+    tmp_path,
+    proxy_params: dict[str, str],
+) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "node.invoke",
+                "params": {
+                    "nodeId": "node-1",
+                    "command": "browser.proxy",
+                    "params": proxy_params,
+                    "idempotencyKey": "idem-browser-proxy-mutation",
+                },
+            },
+        )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == (
+        "node.invoke cannot mutate persistent browser profiles via browser.proxy"
+    )
 
 
 def test_gateway_node_method_call_endpoint_supports_voicewake_get_and_set(tmp_path) -> None:
@@ -3883,6 +4151,51 @@ def test_gateway_node_method_call_endpoint_marks_branch_schema_children(
     }
 
 
+def test_gateway_node_method_call_endpoint_uses_indexed_tuple_item_schema(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        gateway_config_schema_module,
+        "_root_schema",
+        lambda: {
+            "type": "object",
+            "properties": {
+                "pair": {
+                    "type": "array",
+                    "items": [
+                        {"type": "string", "title": "First Item"},
+                        {"type": "number", "title": "Second Item"},
+                    ],
+                }
+            },
+        },
+    )
+    monkeypatch.setattr(gateway_config_schema_module, "_UI_HINTS", {})
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={"method": "config.schema.lookup", "params": {"path": "pair.1"}},
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "path": "pair.1",
+        "schema": {
+            "type": "number",
+            "title": "Second Item",
+        },
+        "children": [],
+    }
+
+
 def test_gateway_node_method_call_endpoint_supports_scoped_plugin_config_lookup(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
@@ -3964,6 +4277,92 @@ def test_gateway_node_method_call_endpoint_supports_scoped_plugin_config_lookup(
             {
                 "key": "provider",
                 "path": "plugins.entries.@openclaw/voice-call.config.provider",
+                "type": "string",
+                "required": False,
+                "hasChildren": False,
+            }
+        ],
+    }
+
+
+def test_gateway_node_method_call_endpoint_accepts_punctuation_rich_lookup_paths(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plugin_id = "@openclaw/voice-call+beta:v2"
+    plugin_path = f"plugins.entries.{plugin_id}.config"
+    monkeypatch.setattr(
+        gateway_config_schema_module,
+        "_root_schema",
+        lambda: {
+            "type": "object",
+            "properties": {
+                "plugins": {
+                    "type": "object",
+                    "properties": {
+                        "entries": {
+                            "type": "object",
+                            "properties": {
+                                plugin_id: {
+                                    "type": "object",
+                                    "properties": {
+                                        "config": {
+                                            "type": "object",
+                                            "title": "Voice Call Beta Config",
+                                            "properties": {
+                                                "provider": {
+                                                    "type": "string",
+                                                    "title": "Provider",
+                                                }
+                                            },
+                                        }
+                                    },
+                                }
+                            },
+                        }
+                    },
+                }
+            },
+        },
+    )
+    monkeypatch.setattr(
+        gateway_config_schema_module,
+        "_UI_HINTS",
+        {
+            plugin_path: {
+                "label": "Voice Call Beta Config",
+            },
+        },
+    )
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "config.schema.lookup",
+                "params": {"path": plugin_path},
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "path": plugin_path,
+        "schema": {
+            "type": "object",
+            "title": "Voice Call Beta Config",
+        },
+        "hint": {"label": "Voice Call Beta Config"},
+        "hintPath": plugin_path,
+        "children": [
+            {
+                "key": "provider",
+                "path": f"{plugin_path}.provider",
                 "type": "string",
                 "required": False,
                 "hasChildren": False,

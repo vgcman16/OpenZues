@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal, cast
@@ -13,6 +14,7 @@ from openzues.services.session_keys import (
     parse_thread_session_suffix,
     session_key_lookup_aliases,
     to_agent_request_session_key,
+    to_agent_store_session_key,
 )
 
 _CONTROL_CHAT_PATH = "/api/control-chat"
@@ -66,6 +68,8 @@ class GatewaySessionsService:
         normalized_label = (
             _parse_session_label(label) if _string_or_none(label) is not None else None
         )
+        normalized_limit = _normalize_positive_numeric_filter(limit)
+        normalized_active_minutes = _normalize_positive_numeric_filter(active_minutes)
         normalized_spawned_by = _string_or_none(spawned_by)
         normalized_agent_id = _normalize_lookup_token(agent_id)
         normalized_search = _string_or_none(search)
@@ -131,8 +135,8 @@ class GatewaySessionsService:
         for transcript_session_key in transcript_session_keys:
             await append_snapshot_session(transcript_session_key)
 
-        if active_minutes is not None:
-            cutoff = now_ms - active_minutes * 60_000
+        if normalized_active_minutes is not None:
+            cutoff = now_ms - normalized_active_minutes * 60_000
             sessions = [
                 session_payload
                 for session_payload in sessions
@@ -159,8 +163,8 @@ class GatewaySessionsService:
 
         sessions.sort(key=_snapshot_sort_key)
 
-        if limit is not None:
-            sessions = sessions[:limit]
+        if normalized_limit is not None:
+            sessions = sessions[:normalized_limit]
 
         return {
             "ts": now_ms,
@@ -532,7 +536,10 @@ class GatewaySessionsService:
     ) -> dict[str, Any]:
         is_global_session = session.current_session_key == session.main_session_key
         metadata = await self._session_metadata(session.current_session_key)
-        latest_owner_session_key = _latest_owner_session_key(metadata)
+        latest_owner_session_key = _latest_owner_session_key(
+            metadata,
+            owner_session_key=session.current_session_key,
+        )
         model_override = _string_or_none(metadata.get("model"))
         updated_at_ms = await self._updated_at_ms(
             current_mission=session.current_mission,
@@ -595,7 +602,14 @@ class GatewaySessionsService:
         ):
             if latest_owner_session_key is not None and field in {"spawnedBy", "parentSessionKey"}:
                 continue
-            value = _string_or_none(metadata.get(field))
+            value = (
+                _canonicalize_owner_session_key(
+                    metadata.get(field),
+                    owner_session_key=session.current_session_key,
+                )
+                if field in {"spawnedBy", "parentSessionKey"}
+                else _string_or_none(metadata.get(field))
+            )
             if value is not None:
                 payload[field] = value
         spawn_depth = _int_or_none(metadata.get("spawnDepth"))
@@ -790,6 +804,34 @@ class GatewaySessionsService:
         if requested_canonical is not None and requested_canonical == current_canonical:
             return default_session
 
+        direct_match = await self._known_session_for_lookup_candidate(
+            session_key,
+            default_session=default_session,
+        )
+        if direct_match is not None:
+            return direct_match
+
+        agent_store_lookup_key = _default_agent_store_lookup_key(session_key)
+        agent_store_canonical = canonicalize_session_key(agent_store_lookup_key)
+        if (
+            agent_store_lookup_key is None
+            or requested_canonical is not None
+            and requested_canonical == agent_store_canonical
+        ):
+            return None
+        if agent_store_canonical is not None and agent_store_canonical == current_canonical:
+            return default_session
+        return await self._known_session_for_lookup_candidate(
+            agent_store_lookup_key,
+            default_session=default_session,
+        )
+
+    async def _known_session_for_lookup_candidate(
+        self,
+        session_key: str,
+        *,
+        default_session: _CurrentControlChatSession,
+    ) -> _CurrentControlChatSession | None:
         metadata_row = await self._database.get_gateway_session_metadata(session_key)
         if metadata_row is not None:
             stored_session_key = _string_or_none(metadata_row.get("session_key")) or session_key
@@ -829,9 +871,12 @@ class GatewaySessionsService:
                 or not isinstance(metadata, dict)
             ):
                 continue
-            latest_owner_session_key = _latest_owner_session_key(metadata)
+            latest_owner_session_key = _latest_owner_session_key(
+                metadata,
+                owner_session_key=child_session_key,
+            )
             if latest_owner_session_key is not None:
-                if latest_owner_session_key != session_key:
+                if not _session_keys_match(latest_owner_session_key, session_key):
                     continue
             elif not _metadata_matches_spawned_by(metadata, spawned_by=session_key):
                 continue
@@ -1183,6 +1228,15 @@ def _bool_or_none(value: object) -> bool | None:
     return None
 
 
+def _normalize_positive_numeric_filter(value: object) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    numeric_value = float(value)
+    if not math.isfinite(numeric_value):
+        return None
+    return max(1, math.floor(numeric_value))
+
+
 def _snapshot_sort_key(session_payload: dict[str, Any]) -> tuple[int, str]:
     updated_at = _int_or_none(session_payload.get("updatedAt"))
     return (
@@ -1249,16 +1303,44 @@ def _metadata_matches_spawned_by(
         return True
     latest_owner_session_key = _latest_owner_session_key(metadata)
     if latest_owner_session_key is not None:
-        return latest_owner_session_key == spawned_by
+        return _session_keys_match(latest_owner_session_key, spawned_by)
     return (
-        _string_or_none(metadata.get("spawnedBy")) == spawned_by
-        or _string_or_none(metadata.get("parentSessionKey")) == spawned_by
+        _session_keys_match(metadata.get("spawnedBy"), spawned_by)
+        or _session_keys_match(metadata.get("parentSessionKey"), spawned_by)
     )
 
 
-def _latest_owner_session_key(metadata: dict[str, Any]) -> str | None:
-    return _string_or_none(metadata.get("controllerSessionKey")) or _string_or_none(
-        metadata.get("requesterSessionKey")
+def _canonicalize_owner_session_key(
+    value: object,
+    *,
+    owner_session_key: str | None,
+) -> str | None:
+    text = _string_or_none(value)
+    if text is None:
+        return None
+    lowered = text.lower()
+    if lowered.startswith("agent:"):
+        return canonicalize_session_key(text) or lowered
+    owner_agent_session = parse_agent_session_key(owner_session_key)
+    if owner_agent_session is not None:
+        prefixed = f"agent:{owner_agent_session.agent_id}:{text}"
+        canonical_prefixed = canonicalize_session_key(prefixed)
+        if canonical_prefixed is not None:
+            return canonical_prefixed
+    return canonicalize_session_key(text) or lowered
+
+
+def _latest_owner_session_key(
+    metadata: dict[str, Any],
+    *,
+    owner_session_key: str | None = None,
+) -> str | None:
+    return _canonicalize_owner_session_key(
+        metadata.get("controllerSessionKey"),
+        owner_session_key=owner_session_key,
+    ) or _canonicalize_owner_session_key(
+        metadata.get("requesterSessionKey"),
+        owner_session_key=owner_session_key,
     )
 
 
@@ -1275,6 +1357,43 @@ def _session_child_sessions_or_none(session_payload: dict[str, Any]) -> list[str
         seen_child_sessions.add(normalized_child_session)
         normalized_child_sessions.append(normalized_child_session)
     return normalized_child_sessions or None
+
+
+def _session_key_match_candidates(value: object) -> set[str]:
+    text = _string_or_none(value)
+    if text is None:
+        return set()
+    candidates = {
+        canonicalize_session_key(text) or text.lower(),
+    }
+    for alias in session_key_lookup_aliases(text):
+        normalized_alias = canonicalize_session_key(alias) or alias.lower()
+        candidates.add(normalized_alias)
+    if parse_agent_session_key(text) is not None:
+        request_key = _string_or_none(to_agent_request_session_key(text))
+        if request_key is not None:
+            candidates.add(request_key.lower())
+    return candidates
+
+
+def _session_keys_match(left: object, right: object) -> bool:
+    left_candidates = _session_key_match_candidates(left)
+    if not left_candidates:
+        return False
+    right_candidates = _session_key_match_candidates(right)
+    if not right_candidates:
+        return False
+    return bool(left_candidates.intersection(right_candidates))
+
+
+def _default_agent_store_lookup_key(value: object) -> str | None:
+    text = _string_or_none(value)
+    if text is None:
+        return None
+    lowered = text.lower()
+    if lowered in {"global", "unknown"}:
+        return lowered
+    return _string_or_none(to_agent_store_session_key(agent_id="main", request_key=text))
 
 
 def _session_id_selector_matches(

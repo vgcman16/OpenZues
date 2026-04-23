@@ -72,6 +72,25 @@ def test_access_service_extract_api_key_trims_authorization_and_header_tokens() 
     assert service.extract_api_key({"X-OpenZues-Key": "   "}) is None
 
 
+def test_access_service_extract_api_key_prefers_bearer_over_header_fallback() -> None:
+    service = AccessService.__new__(AccessService)
+
+    assert service.extract_api_key(
+        {
+            "authorization": "Bearer bearer-token",
+            "X-OpenClaw-Token": "header-token",
+        }
+    ) == "bearer-token"
+    assert service.extract_api_key(
+        {
+            "authorization": "Basic ignored",
+            "X-OpenClaw-Token": "header-token",
+        }
+    ) == "header-token"
+    assert service.extract_api_key({"X-OpenClaw-Token": "header-token"}) == "header-token"
+    assert service.extract_api_key({}) is None
+
+
 class FakeNodeConnection:
     def __init__(self, conn_id: str) -> None:
         self.conn_id = conn_id
@@ -1182,6 +1201,38 @@ def test_config_schema_lookup_marks_branch_schema_children(monkeypatch) -> None:
     ]
 
 
+def test_config_schema_lookup_uses_indexed_tuple_item_schema(monkeypatch) -> None:
+    monkeypatch.setattr(
+        gateway_config_schema_module,
+        "_root_schema",
+        lambda: {
+            "type": "object",
+            "properties": {
+                "pair": {
+                    "type": "array",
+                    "items": [
+                        {"type": "string", "title": "First Item"},
+                        {"type": "number", "title": "Second Item"},
+                    ],
+                }
+            },
+        },
+    )
+    monkeypatch.setattr(gateway_config_schema_module, "_UI_HINTS", {})
+    service = gateway_config_schema_module.GatewayConfigSchemaService()
+
+    lookup = service.lookup("pair.1")
+
+    assert lookup == {
+        "path": "pair.1",
+        "schema": {
+            "type": "number",
+            "title": "Second Item",
+        },
+        "children": [],
+    }
+
+
 def test_config_schema_lookup_accepts_scoped_plugin_entry_paths(monkeypatch) -> None:
     monkeypatch.setattr(
         gateway_config_schema_module,
@@ -1258,6 +1309,76 @@ def test_config_schema_lookup_accepts_scoped_plugin_entry_paths(monkeypatch) -> 
             {
                 "key": "provider",
                 "path": "plugins.entries.@openclaw/voice-call.config.provider",
+                "type": "string",
+                "required": False,
+                "hasChildren": False,
+            }
+        ],
+    }
+
+
+def test_config_schema_lookup_accepts_punctuation_rich_path_segments(monkeypatch) -> None:
+    plugin_id = "@openclaw/voice-call+beta:v2"
+    plugin_path = f"plugins.entries.{plugin_id}.config"
+    monkeypatch.setattr(
+        gateway_config_schema_module,
+        "_root_schema",
+        lambda: {
+            "type": "object",
+            "properties": {
+                "plugins": {
+                    "type": "object",
+                    "properties": {
+                        "entries": {
+                            "type": "object",
+                            "properties": {
+                                plugin_id: {
+                                    "type": "object",
+                                    "properties": {
+                                        "config": {
+                                            "type": "object",
+                                            "title": "Voice Call Beta Config",
+                                            "properties": {
+                                                "provider": {
+                                                    "type": "string",
+                                                    "title": "Provider",
+                                                }
+                                            },
+                                        }
+                                    },
+                                }
+                            },
+                        }
+                    },
+                }
+            },
+        },
+    )
+    monkeypatch.setattr(
+        gateway_config_schema_module,
+        "_UI_HINTS",
+        {
+            plugin_path: {
+                "label": "Voice Call Beta Config",
+            },
+        },
+    )
+    service = gateway_config_schema_module.GatewayConfigSchemaService()
+
+    plugin_lookup = service.lookup(plugin_path)
+
+    assert plugin_lookup == {
+        "path": plugin_path,
+        "schema": {
+            "type": "object",
+            "title": "Voice Call Beta Config",
+        },
+        "hint": {"label": "Voice Call Beta Config"},
+        "hintPath": plugin_path,
+        "children": [
+            {
+                "key": "provider",
+                "path": f"{plugin_path}.provider",
                 "type": "string",
                 "required": False,
                 "hasChildren": False,
@@ -15583,6 +15704,148 @@ async def test_node_pair_list_stages_silent_scope_upgrade_request_for_paired_com
 
 
 @pytest.mark.asyncio
+async def test_node_pair_list_stages_silent_scope_upgrade_request_for_commandless_paired_node_reconnect(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "data" / "openzues-test.db")
+    await database.initialize()
+    pairing_service = GatewayNodePairingService(database)
+    registry = GatewayNodeRegistry()
+    service = GatewayNodeMethodService(
+        registry,
+        pairing_service=pairing_service,
+    )
+    requester = GatewayNodeMethodRequester(caller_scopes=("operator.pairing",))
+
+    created = await service.call(
+        "node.pair.request",
+        {
+            "nodeId": "pair-node-command-empty",
+            "displayName": "Pinned Node",
+            "platform": "darwin",
+        },
+        now_ms=1_000,
+    )
+    initial_request_id = created["request"]["requestId"]
+    approved = await service.call(
+        "node.pair.approve",
+        {"requestId": initial_request_id},
+        requester=requester,
+        now_ms=2_000,
+    )
+    registry.register(
+        FakeNodeConnection("conn-pair-node-command-empty"),
+        GatewayNodeConnect(
+            client_id="live-pair-node-command-empty",
+            device_id="pair-node-command-empty",
+            client_mode="node",
+            display_name="Pinned Node",
+            platform="darwin",
+            version="1.0.1",
+            commands=("canvas.snapshot", "system.run"),
+        ),
+        connected_at_ms=321,
+    )
+
+    listed = await service.call("node.list", {}, now_ms=3_000)
+    described = await service.call(
+        "node.describe",
+        {"nodeId": "pair-node-command-empty"},
+        now_ms=3_000,
+    )
+    pairing = await service.call("node.pair.list", {}, now_ms=3_000)
+
+    pending_request_id = pairing["pending"][0]["requestId"]
+    assert pending_request_id != initial_request_id
+    assert listed["nodes"] == [
+        {
+            "nodeId": "pair-node-command-empty",
+            "displayName": "Pinned Node",
+            "platform": "darwin",
+            "version": "1.0.1",
+            "coreVersion": None,
+            "uiVersion": None,
+            "clientId": "live-pair-node-command-empty",
+            "clientMode": "node",
+            "remoteIp": None,
+            "deviceFamily": None,
+            "modelIdentifier": None,
+            "pathEnv": None,
+            "caps": [],
+            "commands": [],
+            "permissions": None,
+            "paired": True,
+            "connected": True,
+            "connectedAtMs": 321,
+            "approvedAtMs": 2_000,
+        }
+    ]
+    assert described == {
+        "ts": 3_000,
+        "nodeId": "pair-node-command-empty",
+        "displayName": "Pinned Node",
+        "platform": "darwin",
+        "version": "1.0.1",
+        "coreVersion": None,
+        "uiVersion": None,
+        "clientId": "live-pair-node-command-empty",
+        "clientMode": "node",
+        "remoteIp": None,
+        "deviceFamily": None,
+        "modelIdentifier": None,
+        "pathEnv": None,
+        "caps": [],
+        "commands": [],
+        "permissions": None,
+        "paired": True,
+        "connected": True,
+        "connectedAtMs": 321,
+        "approvedAtMs": 2_000,
+    }
+    assert pairing == {
+        "pending": [
+            {
+                "requestId": pending_request_id,
+                "nodeId": "pair-node-command-empty",
+                "displayName": "Pinned Node",
+                "platform": "darwin",
+                "version": "1.0.1",
+                "coreVersion": None,
+                "uiVersion": None,
+                "deviceFamily": None,
+                "modelIdentifier": None,
+                "caps": [],
+                "commands": ["canvas.snapshot", "system.run"],
+                "remoteIp": None,
+                "silent": True,
+                "ts": 3_000,
+                "requiredApproveScopes": ["operator.pairing", "operator.admin"],
+            }
+        ],
+        "paired": [
+            {
+                "nodeId": "pair-node-command-empty",
+                "token": approved["node"]["token"],
+                "displayName": "Pinned Node",
+                "platform": "darwin",
+                "version": "1.0.1",
+                "coreVersion": None,
+                "uiVersion": None,
+                "deviceFamily": None,
+                "modelIdentifier": None,
+                "caps": [],
+                "commands": [],
+                "remoteIp": None,
+                "permissions": None,
+                "createdAtMs": 2_000,
+                "approvedAtMs": 2_000,
+                "lastConnectedAtMs": 321,
+            }
+        ],
+    }
+
+
+@pytest.mark.asyncio
 async def test_node_invoke_raises_scope_upgrade_pending_approval_for_unapproved_live_command(
     tmp_path,
 ) -> None:
@@ -15911,6 +16174,16 @@ async def test_node_pending_enqueue_attempts_saved_lane_wake_when_requested() ->
 
     async def fake_wake(node_id: str) -> bool:
         wake_calls.append(node_id)
+        registry.register(
+            AutoReplyNodeConnection(registry, "conn-node-1"),
+            GatewayNodeConnect(
+                client_id="node-1",
+                device_id=node_id,
+                client_mode="desktop",
+                display_name="Offline Builder",
+                platform="desktop",
+            ),
+        )
         return True
 
     service = GatewayNodeMethodService(registry, wake_node=fake_wake)
@@ -15927,6 +16200,55 @@ async def test_node_pending_enqueue_attempts_saved_lane_wake_when_requested() ->
 
     assert wake_calls == ["node-1"]
     assert queued["wakeTriggered"] is True
+
+
+@pytest.mark.asyncio
+async def test_node_pending_enqueue_waits_for_woken_node_to_reconnect_before_returning() -> None:
+    registry = GatewayNodeRegistry()
+    registry.remember(
+        KnownNode(
+            node_id="node-1",
+            display_name="Offline Builder",
+            platform="desktop",
+            client_id="node-1",
+            client_mode="desktop",
+            paired=True,
+            connected=False,
+        )
+    )
+    wake_calls: list[str] = []
+
+    async def fake_wake(node_id: str) -> bool:
+        wake_calls.append(node_id)
+        asyncio.get_running_loop().call_soon(
+            lambda: registry.register(
+                AutoReplyNodeConnection(registry, "conn-node-1"),
+                GatewayNodeConnect(
+                    client_id="node-1",
+                    device_id=node_id,
+                    client_mode="desktop",
+                    display_name="Offline Builder",
+                    platform="desktop",
+                ),
+            )
+        )
+        return True
+
+    service = GatewayNodeMethodService(registry, wake_node=fake_wake)
+
+    queued = await service.call(
+        "node.pending.enqueue",
+        {
+            "nodeId": "node-1",
+            "type": "location.request",
+            "priority": "high",
+            "wake": True,
+        },
+    )
+
+    assert wake_calls == ["node-1"]
+    assert queued["wakeTriggered"] is True
+    assert registry.get("node-1") is not None
 
 
 @pytest.mark.asyncio
@@ -18035,3 +18357,72 @@ async def test_node_invoke_rejects_commands_the_node_did_not_declare() -> None:
                 "idempotencyKey": "idem-system-run",
             },
         )
+
+
+@pytest.mark.asyncio
+async def test_node_invoke_rejects_system_exec_approvals_namespace_before_wake_attempt() -> None:
+    wake_calls: list[str] = []
+
+    async def fake_wake(node_id: str) -> bool:
+        wake_calls.append(node_id)
+        return True
+
+    service = GatewayNodeMethodService(GatewayNodeRegistry(), wake_node=fake_wake)
+
+    with pytest.raises(
+        ValueError,
+        match=re.escape(
+            "node.invoke does not allow system.execApprovals.*; "
+            "use exec.approvals.node.*"
+        ),
+    ):
+        await service.call(
+            "node.invoke",
+            {
+                "nodeId": "node-1",
+                "command": "system.execApprovals.list",
+                "params": {"file": "/tmp/policy.json"},
+                "idempotencyKey": "idem-system-exec-approvals",
+            },
+        )
+
+    assert wake_calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "proxy_params",
+    [
+        pytest.param({"method": "POST", "path": "profiles/create/"}, id="create-profile"),
+        pytest.param({"method": "POST", "path": " /reset-profile/ "}, id="reset-profile"),
+        pytest.param({"method": "DELETE", "path": "profiles/default/"}, id="delete-profile"),
+    ],
+)
+async def test_node_invoke_rejects_persistent_browser_proxy_mutations_before_wake_attempt(
+    proxy_params: dict[str, str],
+) -> None:
+    wake_calls: list[str] = []
+
+    async def fake_wake(node_id: str) -> bool:
+        wake_calls.append(node_id)
+        return True
+
+    service = GatewayNodeMethodService(GatewayNodeRegistry(), wake_node=fake_wake)
+
+    with pytest.raises(
+        ValueError,
+        match=re.escape(
+            "node.invoke cannot mutate persistent browser profiles via browser.proxy"
+        ),
+    ):
+        await service.call(
+            "node.invoke",
+            {
+                "nodeId": "node-1",
+                "command": "browser.proxy",
+                "params": proxy_params,
+                "idempotencyKey": "idem-browser-proxy-mutation",
+            },
+        )
+
+    assert wake_calls == []

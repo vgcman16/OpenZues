@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import time
 from dataclasses import asdict, dataclass
 from datetime import datetime
@@ -63,6 +64,10 @@ def _wake_result_available(result: object) -> bool:
     if isinstance(result, dict):
         return bool(result.get("available"))
     return bool(result)
+
+
+_NODE_PENDING_WAKE_RECONNECT_WAIT_MS = 3_000
+_NODE_PENDING_WAKE_RETRY_WAIT_MS = 12_000
 
 
 def _now_ms() -> int:
@@ -246,6 +251,22 @@ class GatewayNodeService:
     async def sync(self) -> None:
         await self._sync()
 
+    async def _wait_for_node_connection(
+        self,
+        node_id: str,
+        *,
+        timeout_ms: int,
+    ) -> bool:
+        deadline = time.monotonic() + (max(timeout_ms, 0) / 1000)
+        while True:
+            await self._sync()
+            if self.registry.get(node_id) is not None:
+                return True
+            remaining_seconds = deadline - time.monotonic()
+            if remaining_seconds <= 0:
+                return False
+            await asyncio.sleep(min(0.05, remaining_seconds))
+
     async def _stage_scope_upgrade_request(
         self,
         node: KnownNode,
@@ -341,6 +362,27 @@ class GatewayNodeService:
             path="connected" if connected else "not-connected",
             started_at=started_at,
         )
+
+    async def _attempt_pending_work_wake(self, node_id: str) -> bool:
+        if self.registry.get(node_id) is not None:
+            return False
+        wake_result = await self.wake_node(node_id)
+        wake_triggered = _wake_result_available(wake_result)
+        if not wake_triggered or self.registry.get(node_id) is not None:
+            return wake_triggered
+        if await self._wait_for_node_connection(
+            node_id,
+            timeout_ms=_NODE_PENDING_WAKE_RECONNECT_WAIT_MS,
+        ):
+            return True
+        retry_result = await self.wake_node(node_id)
+        retry_triggered = _wake_result_available(retry_result)
+        if retry_triggered and self.registry.get(node_id) is None:
+            await self._wait_for_node_connection(
+                node_id,
+                timeout_ms=_NODE_PENDING_WAKE_RETRY_WAIT_MS,
+            )
+        return wake_triggered or retry_triggered
 
     async def get_catalog_view(self) -> GatewayCapabilityNodeCatalogView:
         await self._sync()
@@ -476,7 +518,7 @@ class GatewayNodeService:
         )
         wake_triggered = False
         if wake is not False and not queued.deduped and self.registry.get(node_id) is None:
-            wake_triggered = _wake_result_available(await self.wake_node(node_id))
+            wake_triggered = await self._attempt_pending_work_wake(node_id)
         return GatewayNodePendingWorkEnqueueView.model_validate(
             {
                 "nodeId": node_id,

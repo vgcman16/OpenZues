@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass
 from typing import Any
 
 from openzues.schemas import InstanceView
@@ -45,6 +46,14 @@ _FALLBACK_MODELS: tuple[dict[str, Any], ...] = tuple(
 )
 
 
+@dataclass(frozen=True, slots=True)
+class _ConfiguredModelMetadata:
+    configured_by_key: dict[tuple[str | None, str], dict[str, Any]]
+    alias_by_key: dict[tuple[str | None, str], str]
+    alias_ref_by_alias_key: dict[str, str]
+    known_models: list[dict[str, Any]]
+
+
 class GatewayModelsService:
     def __init__(
         self,
@@ -60,20 +69,31 @@ class GatewayModelsService:
 
         if self._list_instance_views is not None:
             for instance in await self._list_instance_views():
+                configured_metadata = _build_configured_model_metadata(instance.config)
                 for raw_entry in instance.models:
-                    normalized = _normalize_model_entry(raw_entry)
+                    normalized = _normalize_model_entry(
+                        raw_entry,
+                        configured_metadata=configured_metadata,
+                    )
                     if normalized is None:
                         continue
                     _upsert_model(entries, indexes, normalized)
                     if normalized.get("isDefault") is True:
                         has_explicit_default = True
-                configured_model = _normalize_configured_model_entry(
+                configured_models = _normalize_configured_model_entries(
                     instance.config,
-                    known_models=[*instance.models, *entries, *_DEFAULT_MODELS],
+                    known_models=[
+                        *instance.models,
+                        *configured_metadata.known_models,
+                        *entries,
+                        *_DEFAULT_MODELS,
+                    ],
+                    configured_metadata=configured_metadata,
                 )
-                if configured_model is not None:
+                for configured_model in configured_models:
                     _upsert_model(entries, indexes, configured_model)
-                    has_explicit_default = True
+                    if configured_model.get("isDefault") is True:
+                        has_explicit_default = True
 
         for raw_entry in (_FALLBACK_MODELS if has_explicit_default else _DEFAULT_MODELS):
             _upsert_model(entries, indexes, dict(raw_entry))
@@ -103,7 +123,11 @@ def _upsert_model(
     entries[index] = _merge_model_entries(entries[index], entry)
 
 
-def _normalize_model_entry(value: object) -> dict[str, Any] | None:
+def _normalize_model_entry(
+    value: object,
+    *,
+    configured_metadata: _ConfiguredModelMetadata | None = None,
+) -> dict[str, Any] | None:
     identity = _extract_model_identity(value)
     if identity is None:
         return None
@@ -154,21 +178,64 @@ def _normalize_model_entry(value: object) -> dict[str, Any] | None:
     if isinstance(is_default, bool):
         normalized["isDefault"] = is_default
 
-    return normalized
+    return _apply_configured_model_metadata(
+        normalized,
+        configured_metadata=configured_metadata,
+    )
 
 
-def _normalize_configured_model_entry(
+def _normalize_configured_model_entries(
     value: object,
     *,
     known_models: list[object],
-) -> dict[str, Any] | None:
+    configured_metadata: _ConfiguredModelMetadata | None = None,
+) -> list[dict[str, Any]]:
     if not isinstance(value, Mapping):
-        return None
+        return []
 
-    configured_model = _optional_non_empty_string(value.get("model"))
-    if configured_model is None:
-        return None
+    configured_entries: list[dict[str, Any]] = []
+    model_config = value.get("model")
 
+    configured_model = _resolve_configured_primary_model(
+        model_config,
+        configured_metadata=configured_metadata,
+    )
+    if configured_model is not None:
+        configured_entries.append(
+            _build_configured_model_entry(
+                configured_model,
+                config=value,
+                known_models=known_models,
+                is_default=True,
+                configured_metadata=configured_metadata,
+            )
+        )
+
+    for fallback_model in _resolve_configured_fallback_models(
+        model_config,
+        configured_metadata=configured_metadata,
+    ):
+        configured_entries.append(
+            _build_configured_model_entry(
+                fallback_model,
+                config=value,
+                known_models=known_models,
+                is_default=False,
+                configured_metadata=configured_metadata,
+            )
+        )
+
+    return configured_entries
+
+
+def _build_configured_model_entry(
+    configured_model: str,
+    *,
+    config: Mapping[str, object],
+    known_models: list[object],
+    is_default: bool,
+    configured_metadata: _ConfiguredModelMetadata | None = None,
+) -> dict[str, Any]:
     parsed_provider, parsed_model_id = _split_provider_prefixed_model(configured_model)
     model_id = parsed_model_id or configured_model
     provider = _normalize_provider_id(parsed_provider)
@@ -186,19 +253,74 @@ def _normalize_configured_model_entry(
     normalized: dict[str, Any] = {
         "id": model_id,
         "name": name,
-        "isDefault": True,
     }
     if provider is not None:
         normalized["provider"] = provider
+    if is_default:
+        normalized["isDefault"] = True
 
-    default_reasoning_effort = _first_non_empty_string(
-        value.get("model_reasoning_effort"),
-        value.get("modelReasoningEffort"),
+        default_reasoning_effort = _first_non_empty_string(
+            config.get("model_reasoning_effort"),
+            config.get("modelReasoningEffort"),
+        )
+        if default_reasoning_effort is not None:
+            normalized["defaultReasoningEffort"] = default_reasoning_effort
+
+    return _apply_configured_model_metadata(
+        normalized,
+        configured_metadata=configured_metadata,
     )
-    if default_reasoning_effort is not None:
-        normalized["defaultReasoningEffort"] = default_reasoning_effort
 
-    return normalized
+
+def _resolve_configured_primary_model(
+    value: object,
+    *,
+    configured_metadata: _ConfiguredModelMetadata | None = None,
+) -> str | None:
+    configured_model = _optional_non_empty_string(value)
+    if configured_model is not None:
+        return _resolve_configured_model_alias(
+            configured_model,
+            configured_metadata=configured_metadata,
+        )
+    if not isinstance(value, Mapping):
+        return None
+    primary = _optional_non_empty_string(value.get("primary"))
+    if primary is None:
+        return None
+    return _resolve_configured_model_alias(
+        primary,
+        configured_metadata=configured_metadata,
+    )
+
+
+def _resolve_configured_fallback_models(
+    value: object,
+    *,
+    configured_metadata: _ConfiguredModelMetadata | None = None,
+) -> list[str]:
+    if not isinstance(value, Mapping):
+        return []
+    raw_fallbacks = value.get("fallbacks")
+    if not isinstance(raw_fallbacks, list):
+        return []
+
+    fallbacks: list[str] = []
+    seen: set[str] = set()
+    for raw_fallback in raw_fallbacks:
+        fallback = _optional_non_empty_string(raw_fallback)
+        if fallback is None:
+            continue
+        fallback = _resolve_configured_model_alias(
+            fallback,
+            configured_metadata=configured_metadata,
+        )
+        fallback_key = fallback.casefold()
+        if fallback_key in seen:
+            continue
+        seen.add(fallback_key)
+        fallbacks.append(fallback)
+    return fallbacks
 
 
 def _split_provider_prefixed_model(identifier: str) -> tuple[str | None, str]:
@@ -326,6 +448,151 @@ def _resolve_known_model_name(
             return candidate_name
         fallback_name = fallback_name or candidate_name
     return fallback_name
+
+
+def _build_configured_model_metadata(value: object) -> _ConfiguredModelMetadata:
+    empty = _ConfiguredModelMetadata(
+        configured_by_key={},
+        alias_by_key={},
+        alias_ref_by_alias_key={},
+        known_models=[],
+    )
+    if not isinstance(value, Mapping):
+        return empty
+
+    configured_by_key: dict[tuple[str | None, str], dict[str, Any]] = {}
+    alias_by_key: dict[tuple[str | None, str], str] = {}
+    alias_ref_by_alias_key: dict[str, str] = {}
+    known_models: list[dict[str, Any]] = []
+
+    raw_models = value.get("models")
+    if isinstance(raw_models, Mapping):
+        raw_providers = raw_models.get("providers")
+        if isinstance(raw_providers, Mapping):
+            for raw_provider, raw_provider_config in raw_providers.items():
+                provider = _normalize_provider_id(_optional_non_empty_string(raw_provider))
+                if provider is None or not isinstance(raw_provider_config, Mapping):
+                    continue
+                raw_provider_models = raw_provider_config.get("models")
+                if not isinstance(raw_provider_models, list):
+                    continue
+                for raw_model in raw_provider_models:
+                    if not isinstance(raw_model, Mapping):
+                        continue
+                    model_id = _optional_non_empty_string(raw_model.get("id"))
+                    if model_id is None:
+                        continue
+                    configured_model: dict[str, Any] = {
+                        "id": model_id,
+                        "name": _first_non_empty_string(
+                            raw_model.get("name"),
+                            raw_model.get("displayName"),
+                            model_id,
+                        )
+                        or model_id,
+                        "provider": provider,
+                    }
+                    context_window = _optional_positive_int(raw_model.get("contextWindow"))
+                    if context_window is not None:
+                        configured_model["contextWindow"] = context_window
+                    reasoning = raw_model.get("reasoning")
+                    if isinstance(reasoning, bool):
+                        configured_model["reasoning"] = reasoning
+                    input_types = _normalize_string_list(raw_model.get("input"))
+                    if input_types is None:
+                        input_types = _normalize_string_list(raw_model.get("inputs"))
+                    if input_types is not None:
+                        configured_model["input"] = input_types
+                    key = _model_key(configured_model)
+                    if key is None:
+                        continue
+                    configured_by_key[key] = configured_model
+                    known_models.append(configured_model)
+
+    raw_agents = value.get("agents")
+    if isinstance(raw_agents, Mapping):
+        raw_defaults = raw_agents.get("defaults")
+        if isinstance(raw_defaults, Mapping):
+            raw_default_models = raw_defaults.get("models")
+            if isinstance(raw_default_models, Mapping):
+                known_model_candidates = [*known_models, *_DEFAULT_MODELS]
+                for raw_identifier, raw_entry in raw_default_models.items():
+                    identifier = _optional_non_empty_string(raw_identifier)
+                    if identifier is None:
+                        continue
+                    parsed_provider, parsed_model_id = _split_provider_prefixed_model(identifier)
+                    provider = _normalize_provider_id(parsed_provider)
+                    if provider is None:
+                        provider = _infer_unique_provider_for_model(
+                            parsed_model_id,
+                            known_model_candidates,
+                        )
+                    alias_target = (
+                        f"{provider}/{parsed_model_id}"
+                        if provider is not None
+                        else parsed_model_id
+                    )
+                    key = (provider, parsed_model_id.casefold())
+                    if not isinstance(raw_entry, Mapping):
+                        continue
+                    alias = _optional_non_empty_string(raw_entry.get("alias"))
+                    if alias is None:
+                        continue
+                    alias_by_key[key] = alias
+                    alias_ref_by_alias_key.setdefault(alias.casefold(), alias_target)
+
+    return _ConfiguredModelMetadata(
+        configured_by_key=configured_by_key,
+        alias_by_key=alias_by_key,
+        alias_ref_by_alias_key=alias_ref_by_alias_key,
+        known_models=known_models,
+    )
+
+
+def _resolve_configured_model_alias(
+    value: str,
+    *,
+    configured_metadata: _ConfiguredModelMetadata | None = None,
+) -> str:
+    configured_model = value.strip()
+    if not configured_model or configured_metadata is None:
+        return configured_model
+    return configured_metadata.alias_ref_by_alias_key.get(
+        configured_model.casefold(),
+        configured_model,
+    )
+
+
+def _apply_configured_model_metadata(
+    entry: dict[str, Any],
+    *,
+    configured_metadata: _ConfiguredModelMetadata | None = None,
+) -> dict[str, Any]:
+    if configured_metadata is None:
+        return entry
+    key = _model_key(entry)
+    if key is None:
+        return entry
+
+    configured_entry = configured_metadata.configured_by_key.get(key)
+    alias = configured_metadata.alias_by_key.get(key)
+    if configured_entry is None and alias is None:
+        return entry
+
+    merged = dict(entry)
+    if configured_entry is not None:
+        provider = _optional_non_empty_string(configured_entry.get("provider"))
+        if provider is not None and "provider" not in merged:
+            merged["provider"] = provider
+        name = _optional_non_empty_string(configured_entry.get("name"))
+        if name is not None:
+            merged["name"] = name
+        for field in ("contextWindow", "reasoning", "input"):
+            if field in configured_entry:
+                merged[field] = configured_entry[field]
+    if alias is not None:
+        merged["alias"] = alias
+    return merged
 
 
 def _model_key(entry: dict[str, Any]) -> tuple[str | None, str] | None:

@@ -3,10 +3,100 @@
 ## Current Rollup (through 2026-04-22 addenda)
 
 - Estimated parity progress: roughly `25-35%` of the full OpenClaw product surface is now covered, with gateway/control-plane seams materially further along than whole-product parity. Registry, routing/session-key, large parts of gateway session/usage/cron compatibility, and operator-control seams have moved forward; channels, nodes, browser-control, canvas, voice, packaging, and companion apps still dominate the remaining gap.
-- Active feature family progress: the live queue is the gateway/cron/session-delivery family, and it is roughly `75-85%` complete along the current bounded local parity path. The latest addenda moved that family from session-target normalization into delivery metadata, runtime delivery ownership, webhook/session fallback behavior, preserved `sessionKey` wake routing, shared session-backed direct poll delivery, saved direct poll replay reconstruction, locked the hot session inventory/compaction surfacing shard, idempotent retry collapse on the shared direct send/poll owner, honest direct transport metadata on fresh responses plus saved outbound delivery views, one shared outbound runtime owner spanning direct send/poll, explicit announce, and saved session-like replays, and now one hot control-plane regression fix that keeps wrapped live MCP tool catalogs classified instead of dropping bare string plugin methods from the gateway capability scope summary.
-- Latest completed seams: the freshest landed seams are `capability inventory classification for wrapped live MCP tool catalogs`, `shared outbound runtime owner for direct send/poll plus explicit announce and saved session-like replays`, `gateway session discovery truth under compaction inventory surfacing`, `task blueprint enabled-state read-model truth under bootstrap/setup`, `shared direct channel-target send owner`, `shared direct channel-target poll owner`, `direct send/poll idempotent retry collapse`, `direct send/poll session-backed transport metadata surfacing`, `saved direct poll replay message reconstruction`, `saved direct replay transport identity surfacing`, `cron runtime delivery-status`, `cron announce fallback and delivery.threadId`, `cron session delivery fallback`, and `cron system-event sessionKey wake` parity, layered on top of the already-locked gateway method registry seam and the `usage.cost` / `usage.status` bridge. This run also integrated the hot node/pairing shard: paired catalogs now pin approved commands until a silent scope-upgrade request is staged, failed managed wakes keep the truthful `NOT_CONNECTED` boundary instead of leaking a platform allowlist error, and the adjacent capability/bootstrap/logs/wizard shard stayed green after the new callable-method classification fix.
+- Active feature family progress: the live queue is the gateway/cron/session-delivery family, and it is roughly `75-85%` complete along the current bounded local parity path. The latest addenda moved that family from session-target normalization into delivery metadata, runtime delivery ownership, webhook/session fallback behavior, preserved `sessionKey` wake routing, shared session-backed direct poll delivery, saved direct poll replay reconstruction, locked the hot session inventory/compaction surfacing shard, idempotent retry collapse on the shared direct send/poll owner, honest direct transport metadata on fresh responses plus saved outbound delivery views, one shared outbound runtime owner spanning direct send/poll, explicit announce, and saved session-like replays, one hot control-plane regression fix that keeps wrapped live MCP tool catalogs classified instead of dropping bare string plugin methods from the gateway capability scope summary, one adjacent gateway/session/node/wizard cleanup that locks remote saved-lane wizard progression, owner-session alias canonicalization, configured fallback model synthesis, and wake-triggered pending-work reconnect waits, and now one adjacent bootstrap/node/config-schema pass that locks bootstrap repair degradation for broken saved defaults plus `node.invoke` guard rails for `system.execApprovals.*` and persistent browser-profile `browser.proxy` mutations without changing the provider-runtime queue head.
+- Latest completed seams: the freshest landed seams are `bootstrap degraded-state repair for broken saved lane/workspace references`, `node.invoke guard rails for system.execApprovals and persistent browser.proxy mutations`, `punctuation-rich config.schema.lookup path support`, `remote wizard optional saved-lane staging and skip progression`, `gateway session owner-alias canonicalization`, `pending node-work wake reconnect wait`, `object-shaped configured model fallback synthesis`, `capability inventory classification for wrapped live MCP tool catalogs`, `shared outbound runtime owner for direct send/poll plus explicit announce and saved session-like replays`, `gateway session discovery truth under compaction inventory surfacing`, `task blueprint enabled-state read-model truth under bootstrap/setup`, `shared direct channel-target send owner`, `shared direct channel-target poll owner`, `direct send/poll idempotent retry collapse`, `direct send/poll session-backed transport metadata surfacing`, `saved direct poll replay message reconstruction`, `saved direct replay transport identity surfacing`, `cron runtime delivery-status`, `cron announce fallback and delivery.threadId`, `cron session delivery fallback`, and `cron system-event sessionKey wake` parity, layered on top of the already-locked gateway method registry seam and the `usage.cost` / `usage.status` bridge. This run also integrated the hot node/pairing, setup, bootstrap, and config-schema shards: paired catalogs now pin approved commands until a silent scope-upgrade request is staged, pending-work wakes wait through reconnect before returning, failed managed wakes keep the truthful `NOT_CONNECTED` boundary instead of leaking a platform allowlist error, broken saved lane/workspace defaults keep bootstrap on the truthful `degraded` state, punctuation-rich plugin ids still resolve through config lookup, and remote setup/bootstrap keeps workspace-affinity routing honest while the optional saved-lane wizard step advances cleanly after answer or skip.
 - Current queue head: provider-native outbound implementation behind the shared direct/announce runtime owner remains the next honest seam. OpenZues now covers webhook delivery, notification-route delivery, `sessionKey` / `channel="last"` fallback, shared explicit-target text send, shared explicit-target poll delivery, explicit announce plus saved session-like replay delivery through that same owner, and honest `runId` / `channel` / session-backed transport metadata on fresh and saved direct-delivery surfaces, but it still does not match OpenClaw's real outbound provider runtime for `channel` / `to` / `accountId`. This run reverified that the local generic node/runtime seams still do not advertise a provider-owned outbound `send` / `poll` / `announce` command, so the honest next move is to wire that provider-native implementation behind the new owner rather than land another session-backed detour.
 - How to read this checkpoint: treat the dated checkpoint sections near the top as seam locks and re-anchors, then use the newest `Recovery addendum` entries later in the file for the live edge. The final addendum's "Next exact seam" callout is the current queue head unless a newer dated section overrides it.
+
+## 2026-04-22 Bootstrap Repair and Node Invoke Guard Rails Addendum
+
+- Stayed off the blocked provider-runtime queue head and integrated the adjacent hot gateway bootstrap/node/config-schema shard already living in the dirty tree.
+- Re-read the local OpenClaw source-of-truth files:
+  - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods\send.ts`
+  - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\infra\outbound\outbound-send-service.ts`
+  - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\cli\send-runtime\channel-outbound-send.ts`
+  - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods\nodes.ts`
+- Key findings:
+  - the provider-runtime queue head is still structurally blocked because OpenZues still has no provider-owned outbound `send` / `poll` / `announce` surface to wire behind `GatewayOutboundRuntimeService`
+  - upstream OpenClaw rejects `system.execApprovals.*` and persistent browser-profile mutations through `browser.proxy` at the `node.invoke` boundary before any wake or dispatch
+  - the adjacent dirty OpenZues shard also widened honest parity on bootstrap repair posture and config-schema lookup breadth
+- Landed or reverified the hot shard:
+  - `src/openzues/services/gateway_bootstrap.py` now marks broken saved lane/workspace references as `degraded` even when no other launch prerequisite is currently ready, so missing saved defaults no longer under-report as merely staged
+  - `src/openzues/services/gateway_config_schema.py` now accepts punctuation-rich plugin entry ids through `config.schema.lookup` while preserving indexed tuple-item lookups such as `pair.1`
+  - `src/openzues/services/gateway_node_methods.py` now rejects `system.execApprovals.*` and persistent browser-profile mutations through `browser.proxy` before any wake attempt, matching the upstream OpenClaw boundary
+  - the adjacent node/control-plane shard stayed green: bearer auth still wins over the legacy header fallback, pending-work wakes plus `node.invoke` still wait through reconnect, and commandless paired-node reconnects still stage silent scope-upgrade requests while approved commands stay pinned
+- Primary files carrying the change:
+  - `src/openzues/services/gateway_bootstrap.py`
+  - `src/openzues/services/gateway_config_schema.py`
+  - `src/openzues/services/gateway_node_methods.py`
+  - `tests/test_gateway_bootstrap.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Verified with:
+  - direct exact-function execution against repo-local proof roots for 20 focused proofs covering bootstrap degraded-state repair, bearer precedence, indexed tuple and punctuation-rich config lookup paths, pending-work reconnect waits, commandless paired-node reconnect staging, `node.invoke` `system.execApprovals.*` rejection, and three method plus three HTTP persistent `browser.proxy` mutation rejection cases
+  - `.\.venv\Scripts\ruff.exe check --extend-ignore E501 src/openzues/services/gateway_bootstrap.py src/openzues/services/gateway_config_schema.py src/openzues/services/gateway_node_methods.py tests/test_gateway_bootstrap.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`
+  - `PYTHONPATH=src;.venv\Lib\site-packages C:\Users\skull\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m mypy src/openzues/services/gateway_bootstrap.py src/openzues/services/gateway_config_schema.py src/openzues/services/gateway_node_methods.py`
+- Result:
+  - the focused direct proof sweep passed cleanly without a product-code regression left to patch
+  - Ruff stayed clean on the touched Python files and tests
+  - mypy stayed clean on the touched production files
+- Next exact seam:
+  - queue head unchanged: provider-native outbound implementation behind the shared direct/announce runtime owner
+  - this hot bootstrap/node/config-schema shard is now ledgered and does not create a shorter cross-cutting detour ahead of that owner gap
+
+## 2026-04-22 Remote Saved Lane and Pending Wake Reconnect Addendum
+
+- Stayed off the blocked provider-runtime queue head and integrated the adjacent hot gateway/session/node/wizard shard already living in the dirty tree.
+- Re-read the local OpenClaw source-of-truth files:
+  - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\sessions-resolve.ts`
+  - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\client-bootstrap.ts`
+  - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\infra\pairing-pending.ts`
+  - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods\send.ts`
+  - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\infra\outbound\outbound-send-service.ts`
+- Key findings:
+  - the provider-runtime queue head is still structurally blocked because OpenZues still has no provider-owned outbound `send` / `poll` / `announce` surface to wire behind `GatewayOutboundRuntimeService`
+  - one real regression had landed under the new remote wizard shard: answering the optional saved-lane step did not mark the optional field complete, so the wizard re-emitted `instance_id` instead of advancing to `task_name`
+  - the same hot dirty shard also widened honest parity on object-shaped configured model fallbacks, owner-session alias canonicalization, and wake-triggered pending-work reconnect behavior
+- Landed the smallest honest fix in `src/openzues/services/gateway_wizard.py`:
+  - answered optional saved-lane selections now mark completion and the next wizard step advances after either answer or skip
+- Integrated and reverified the hot shard:
+  - `src/openzues/services/gateway_models.py` now synthesizes object-shaped `config.model = { primary, fallbacks }` entries into the gateway catalog, dedupes repeated fallback ids, and preserves default reasoning effort on the primary entry
+  - `src/openzues/services/gateway_sessions.py` now clamps `limit` / `activeMinutes` to a positive integer floor and canonicalizes `controllerSessionKey` / `requesterSessionKey` / `spawnedBy` / `parentSessionKey` aliases across filters, payloads, and child-session discovery
+  - `src/openzues/services/gateway_node_methods.py` and `src/openzues/services/gateway_node_service.py` now wait through wake-triggered reconnect before returning pending-work enqueue results on both saved-lane and managed-lane paths
+  - `src/openzues/services/gateway_wizard.py`, `src/openzues/services/setup.py`, and `src/openzues/web/static/app.js` now keep remote setup honest: remote sessions pin `instance_mode="existing"`, expose an optional saved-lane selector with live lane labels, clear stale local lane hints on local-to-remote switches, and advance cleanly after saved-lane answer or skip
+  - the adjacent node control-plane shard still pins approved commands while commandless paired-node reconnects stage silent scope-upgrade requests, indexed tuple-item config schema lookups work on both method and HTTP surfaces, and bearer auth wins over the legacy header fallback when both are present
+- Primary files carrying the change:
+  - `src/openzues/services/gateway_models.py`
+  - `src/openzues/services/gateway_node_methods.py`
+  - `src/openzues/services/gateway_node_service.py`
+  - `src/openzues/services/gateway_sessions.py`
+  - `src/openzues/services/gateway_wizard.py`
+  - `src/openzues/services/setup.py`
+  - `src/openzues/web/static/app.js`
+  - `tests/test_app.py`
+  - `tests/test_gateway_models.py`
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+  - `tests/test_gateway_sessions.py`
+  - `tests/test_gateway_wizard.py`
+  - `tests/test_onboarding_wizard_reload.test.js`
+- Verified with:
+  - `PYTHONPATH=src;.venv\Lib\site-packages C:\Users\skull\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m pytest tests/test_gateway_models.py -q`
+  - direct exact-function execution against repo-local proof roots for:
+    - the six session filter clamp cases plus owner-alias canonicalization across filters, payloads, and child-session discovery
+    - method plus HTTP pending-work reconnect waits, commandless paired-node reconnect staging, bearer precedence, and indexed tuple-item config schema lookup
+    - the full gateway wizard mode/local/remote/saved-lane progression
+    - the remote-switch bootstrap and setup handoff proof
+  - `node tests/test_onboarding_wizard_reload.test.js`
+  - `.\.venv\Scripts\ruff.exe check --extend-ignore E501 src/openzues/services/gateway_models.py src/openzues/services/gateway_node_methods.py src/openzues/services/gateway_node_service.py src/openzues/services/gateway_sessions.py src/openzues/services/gateway_wizard.py src/openzues/services/setup.py tests/test_app.py tests/test_gateway_models.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py tests/test_gateway_sessions.py tests/test_gateway_wizard.py`
+  - `PYTHONPATH=src;.venv\Lib\site-packages C:\Users\skull\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m mypy src/openzues/services/gateway_models.py src/openzues/services/gateway_node_methods.py src/openzues/services/gateway_node_service.py src/openzues/services/gateway_sessions.py src/openzues/services/gateway_wizard.py src/openzues/services/setup.py`
+- Result:
+  - the direct proof sweep passed cleanly after fixing the saved-lane step regression
+  - Ruff stayed clean on the touched Python files and tests
+  - mypy stayed clean on the touched production files
+- Next exact seam:
+  - queue head unchanged: provider-native outbound implementation behind the shared direct/announce runtime owner
+  - the hot gateway/session/node/wizard shard is now ledgered and does not create a shorter cross-cutting detour ahead of that owner gap
 
 ## 2026-04-22 Capability Catalog Wrapped-Tool Classification Addendum
 
@@ -14580,4 +14670,50 @@ Next best slice:
   - the old session-backed `send` media breadth seam is now closed.
   - the queue head remains true outbound provider/runtime delivery for direct channel/account send plus announce.
   - the next honest follow-on in this lane is the real provider/runtime and native upload/result surface rather than another gateway-only placeholder.
+
+### Recovery addendum 2026-04-22 hot gateway setup-session-model-node shard ledger pass America/Chicago
+
+- Re-read the still-open provider-runtime queue head against:
+  - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods\send.ts`
+  - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\infra\outbound\outbound-send-service.ts`
+  - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\cli\send-runtime\channel-outbound-send.ts`
+  - `C:\Users\skull\OneDrive\Documents\OpenZues\src\openzues\services\gateway_outbound_runtime.py`
+- Queue-head finding before touching the dirty shard:
+  - upstream OpenClaw still terminates gateway send/poll behind channel outbound adapters and provider-owned send services.
+  - local OpenZues still ends at `GatewayOutboundRuntimeService(runtime="session-backed")`, and neither the local node/runtime surfaces nor the checked upstream gateway protocols expose a provider-owned outbound command or runtime-manager target to bridge to.
+- Integrated the adjacent hot dirty shard instead of faking that provider-runtime cutover.
+- Landed or reverified the next bounded OpenZues slices:
+  - `GatewayModelsService` now resolves object-shaped `config.model.primary` values and synthesizes the configured default model plus reasoning effort from them instead of silently dropping that configuration shape.
+  - `GatewaySessionsService.build_snapshot(...)` now normalizes raw `limit` and `active_minutes` inputs to a positive integer floor, so `0`, negatives, and fractional values behave like OpenClaw rather than diverging across session-list filters.
+  - `SetupService.update_wizard_session(...)` plus `src/openzues/web/static/app.js` now clear stale pinned local lane selection when a saved draft switches to remote mode, so bootstrap and launch handoff stay on honest workspace-affinity routing with no carried-over `instance_id`.
+  - the hot gateway node/control-plane shard is now locked by proofs already living in the dirty tree:
+    - commandless paired-node reconnects stage silent scope-upgrade requests while `node.list`, `node.describe`, and `node.pair.list` keep approved commands pinned until approval.
+    - `config.schema.lookup` resolves indexed tuple-item schemas on both the method and HTTP API surfaces.
+    - bearer `Authorization` takes precedence over the legacy `X-OpenClaw-Token` fallback when both are present.
+- Product effect:
+  - gateway catalogs now surface configured object-style default models honestly.
+  - gateway session list filters match OpenClaw's positive-integer normalization instead of accepting raw numeric edge cases.
+  - setup/onboarding no longer leaks a stale local lane into remote bootstrap/handoff.
+  - paired-node reconnect and control-plane surfaces stay honest while the provider-runtime outbound seam remains blocked for a real ownership reason.
+- Verified this continuation with:
+  - `PYTHONPATH=src;.venv\Lib\site-packages C:\Users\skull\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m pytest tests/test_gateway_models.py -q`: `8 passed`
+  - direct exact-function execution against repo-local proof roots using the Codex runtime interpreter with `src` plus `.venv\Lib\site-packages` on `PYTHONPATH`:
+    - `test_build_snapshot_clamps_limit_to_positive_integer_like_openclaw` for `0`, `-3`, and `1.9`
+    - `test_build_snapshot_clamps_active_minutes_to_positive_integer_like_openclaw` for `0`, `-2`, and `1.9`
+    - `test_setup_wizard_remote_switch_clears_stale_local_lane_before_bootstrap`
+    - `test_access_service_extract_api_key_prefers_bearer_over_header_fallback`
+    - `test_config_schema_lookup_uses_indexed_tuple_item_schema`
+    - `test_node_pair_list_stages_silent_scope_upgrade_request_for_commandless_paired_node_reconnect`
+    - `test_gateway_nodes_endpoints_stage_silent_scope_upgrade_request_for_commandless_paired_node_reconnect`
+    - `test_gateway_node_method_call_endpoint_uses_indexed_tuple_item_schema`
+  - `node tests/test_onboarding_wizard_reload.test.js`: all six reload/onboarding proofs passed, including `switching a local draft to remote clears the stale lane hint`
+  - `.\.venv\Scripts\ruff.exe check --extend-ignore E501 src/openzues/services/gateway_models.py src/openzues/services/gateway_sessions.py src/openzues/services/setup.py tests/test_app.py tests/test_gateway_models.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py tests/test_gateway_sessions.py`: clean
+  - `PYTHONPATH=src;.venv\Lib\site-packages C:\Users\skull\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m mypy src/openzues/services/gateway_models.py src/openzues/services/gateway_sessions.py src/openzues/services/setup.py`: clean
+- Result:
+  - the blocked provider-runtime seam is still honest and unchanged.
+  - the adjacent dirty gateway/setup/session/model/node shard now has focused verification and shared-ledger coverage.
+  - temp-path-heavy Python proofs still avoid normal pytest session cleanup in this Windows/OneDrive environment because `WinError 5` persists during teardown, so those exact functions were invoked directly instead.
+- Queue effect from this run:
+  - provider-native outbound implementation behind the shared direct/announce runtime owner remains the queue head.
+  - there is no shorter cross-cutting detour ahead of it after ledgering the adjacent gateway/setup/session/model/node shard.
 

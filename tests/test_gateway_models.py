@@ -227,6 +227,101 @@ async def test_gateway_models_build_catalog_synthesizes_configured_primary_model
 
 
 @pytest.mark.asyncio
+async def test_gateway_models_build_catalog_synthesizes_object_configured_primary_model(
+) -> None:
+    async def list_instance_views() -> list[InstanceView]:
+        return [
+            _instance_view(
+                [],
+                config={
+                    "model": {
+                        "primary": "anthropic/claude-3.7-sonnet",
+                        "fallbacks": ["openai/gpt-5.4"],
+                    },
+                    "modelReasoningEffort": "high",
+                },
+            )
+        ]
+
+    payload = await GatewayModelsService(
+        list_instance_views=list_instance_views
+    ).build_catalog()
+
+    assert next(
+        model for model in payload["models"] if model["id"] == "claude-3.7-sonnet"
+    ) == {
+        "id": "claude-3.7-sonnet",
+        "name": "claude-3.7-sonnet",
+        "provider": "anthropic",
+        "isDefault": True,
+        "defaultReasoningEffort": "high",
+    }
+    assert [model["id"] for model in payload["models"] if model.get("isDefault")] == [
+        "claude-3.7-sonnet"
+    ]
+    assert next(model for model in payload["models"] if model["id"] == "gpt-5.4") == {
+        "id": "gpt-5.4",
+        "name": "gpt-5.4",
+        "provider": "openai",
+    }
+
+
+@pytest.mark.asyncio
+async def test_gateway_models_build_catalog_synthesizes_object_configured_fallback_models(
+) -> None:
+    async def list_instance_views() -> list[InstanceView]:
+        return [
+            _instance_view(
+                [],
+                config={
+                    "model": {
+                        "primary": "anthropic/claude-3.7-sonnet",
+                        "fallbacks": [
+                            " openrouter/deepseek-chat ",
+                            "openrouter/deepseek-chat",
+                            " ",
+                            "anthropic/claude-3.5-haiku",
+                        ],
+                    },
+                    "modelReasoningEffort": "high",
+                },
+            )
+        ]
+
+    payload = await GatewayModelsService(
+        list_instance_views=list_instance_views
+    ).build_catalog()
+
+    assert next(
+        model for model in payload["models"] if model["id"] == "claude-3.7-sonnet"
+    ) == {
+        "id": "claude-3.7-sonnet",
+        "name": "claude-3.7-sonnet",
+        "provider": "anthropic",
+        "isDefault": True,
+        "defaultReasoningEffort": "high",
+    }
+    assert next(model for model in payload["models"] if model["id"] == "deepseek-chat") == {
+        "id": "deepseek-chat",
+        "name": "deepseek-chat",
+        "provider": "openrouter",
+    }
+    assert next(
+        model for model in payload["models"] if model["id"] == "claude-3.5-haiku"
+    ) == {
+        "id": "claude-3.5-haiku",
+        "name": "claude-3.5-haiku",
+        "provider": "anthropic",
+    }
+    assert [model["id"] for model in payload["models"] if model["id"] == "deepseek-chat"] == [
+        "deepseek-chat"
+    ]
+    assert [model["id"] for model in payload["models"] if model.get("isDefault")] == [
+        "claude-3.7-sonnet"
+    ]
+
+
+@pytest.mark.asyncio
 async def test_gateway_models_build_catalog_infers_provider_for_unprefixed_configured_model(
 ) -> None:
     async def list_instance_views() -> list[InstanceView]:
@@ -258,6 +353,176 @@ async def test_gateway_models_build_catalog_infers_provider_for_unprefixed_confi
         "isDefault": True,
         "defaultReasoningEffort": "medium",
     }
+
+
+@pytest.mark.asyncio
+async def test_gateway_models_build_catalog_infers_provider_for_unprefixed_object_configured_primary(
+) -> None:
+    async def list_instance_views() -> list[InstanceView]:
+        return [
+            _instance_view(
+                [
+                    {
+                        "id": "openai/gpt-5.4-mini",
+                        "displayName": "GPT 5.4 Mini",
+                        "contextWindow": 128_000,
+                    }
+                ],
+                config={
+                    "model": {
+                        "primary": "gpt-5.4-mini",
+                        "fallbacks": ["anthropic/claude-3.7-sonnet"],
+                    },
+                    "model_reasoning_effort": "medium",
+                },
+            )
+        ]
+
+    payload = await GatewayModelsService(
+        list_instance_views=list_instance_views
+    ).build_catalog()
+
+    assert next(model for model in payload["models"] if model["id"] == "gpt-5.4-mini") == {
+        "id": "gpt-5.4-mini",
+        "name": "GPT 5.4 Mini",
+        "provider": "openai",
+        "contextWindow": 128_000,
+        "isDefault": True,
+        "defaultReasoningEffort": "medium",
+    }
     assert [model["id"] for model in payload["models"] if model.get("isDefault")] == [
         "gpt-5.4-mini"
     ]
+
+
+@pytest.mark.asyncio
+async def test_gateway_models_build_catalog_resolves_configured_aliases_for_primary_and_fallbacks(
+) -> None:
+    async def list_instance_views() -> list[InstanceView]:
+        return [
+            _instance_view(
+                [],
+                config={
+                    "model": {
+                        "primary": "sonnet",
+                        "fallbacks": ["fast", "fast"],
+                    },
+                    "modelReasoningEffort": "high",
+                    "agents": {
+                        "defaults": {
+                            "models": {
+                                "anthropic/claude-3.7-sonnet": {"alias": "sonnet"},
+                                "openai/gpt-5.4-mini": {"alias": "fast"},
+                            }
+                        }
+                    },
+                    "models": {
+                        "providers": {
+                            "anthropic": {
+                                "models": [
+                                    {
+                                        "id": "claude-3.7-sonnet",
+                                        "name": "Claude 3.7 Sonnet",
+                                        "contextWindow": 200_000,
+                                        "reasoning": True,
+                                        "input": ["text", "image"],
+                                    }
+                                ]
+                            },
+                            "openai": {
+                                "models": [
+                                    {
+                                        "id": "gpt-5.4-mini",
+                                        "name": "GPT 5.4 Mini",
+                                        "contextWindow": 128_000,
+                                        "reasoning": False,
+                                        "input": ["text"],
+                                    }
+                                ]
+                            },
+                        }
+                    },
+                },
+            )
+        ]
+
+    payload = await GatewayModelsService(
+        list_instance_views=list_instance_views
+    ).build_catalog()
+
+    assert next(
+        model for model in payload["models"] if model["id"] == "claude-3.7-sonnet"
+    ) == {
+        "id": "claude-3.7-sonnet",
+        "name": "Claude 3.7 Sonnet",
+        "provider": "anthropic",
+        "alias": "sonnet",
+        "contextWindow": 200_000,
+        "reasoning": True,
+        "input": ["text", "image"],
+        "isDefault": True,
+        "defaultReasoningEffort": "high",
+    }
+    assert next(model for model in payload["models"] if model["id"] == "gpt-5.4-mini") == {
+        "id": "gpt-5.4-mini",
+        "name": "GPT 5.4 Mini",
+        "provider": "openai",
+        "alias": "fast",
+        "contextWindow": 128_000,
+        "reasoning": False,
+        "input": ["text"],
+    }
+    assert [model["id"] for model in payload["models"] if model["id"] == "gpt-5.4-mini"] == [
+        "gpt-5.4-mini"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_gateway_models_build_catalog_overlays_configured_provider_metadata_on_discovered_models(
+) -> None:
+    async def list_instance_views() -> list[InstanceView]:
+        return [
+            _instance_view(
+                [{"id": "anthropic/claude-3.7-sonnet"}],
+                config={
+                    "agents": {
+                        "defaults": {
+                            "models": {
+                                "anthropic/claude-3.7-sonnet": {"alias": "sonnet"}
+                            }
+                        }
+                    },
+                    "models": {
+                        "providers": {
+                            "anthropic": {
+                                "models": [
+                                    {
+                                        "id": "claude-3.7-sonnet",
+                                        "name": "Claude 3.7 Sonnet",
+                                        "contextWindow": 200_000,
+                                        "reasoning": True,
+                                        "input": ["text", "image"],
+                                    }
+                                ]
+                            }
+                        }
+                    },
+                },
+            )
+        ]
+
+    payload = await GatewayModelsService(
+        list_instance_views=list_instance_views
+    ).build_catalog()
+
+    assert next(
+        model for model in payload["models"] if model["id"] == "claude-3.7-sonnet"
+    ) == {
+        "id": "claude-3.7-sonnet",
+        "name": "Claude 3.7 Sonnet",
+        "provider": "anthropic",
+        "alias": "sonnet",
+        "contextWindow": 200_000,
+        "reasoning": True,
+        "input": ["text", "image"],
+    }

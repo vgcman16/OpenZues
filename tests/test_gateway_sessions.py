@@ -292,6 +292,97 @@ async def test_build_snapshot_sorts_discovered_sessions_by_updated_at_desc(tmp_p
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("raw_limit", [0, -3, 1.9])
+async def test_build_snapshot_clamps_limit_to_positive_integer_like_openclaw(
+    tmp_path: Path,
+    raw_limit: object,
+) -> None:
+    database = Database(tmp_path / "gateway-sessions.db")
+    await database.initialize()
+
+    newer_key = "launch:mode:workspace_affinity:task:6:operator:1:thread:newer"
+    older_key = "launch:mode:workspace_affinity:task:6:operator:1:thread:older"
+
+    await database.append_control_chat_message(
+        role="assistant",
+        content="Newer transcript payload",
+        mission_id=None,
+        session_key=newer_key,
+        created_at="2025-05-02T00:00:00Z",
+    )
+    await database.append_control_chat_message(
+        role="assistant",
+        content="Older transcript payload",
+        mission_id=None,
+        session_key=older_key,
+        created_at="2024-05-02T00:00:00Z",
+    )
+
+    snapshot = await GatewaySessionsService(database).build_snapshot(
+        include_global=False,
+        include_unknown=False,
+        limit=raw_limit,  # type: ignore[arg-type]
+        active_minutes=None,
+        label=None,
+        spawned_by=None,
+        agent_id=None,
+        search=None,
+        include_derived_titles=False,
+        include_last_message=False,
+        now_ms=1_700_000_000_567,
+    )
+
+    assert snapshot["count"] == 1
+    assert [session["key"] for session in snapshot["sessions"]] == [newer_key]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("raw_active_minutes", [0, -2, 1.9])
+async def test_build_snapshot_clamps_active_minutes_to_positive_integer_like_openclaw(
+    tmp_path: Path,
+    raw_active_minutes: object,
+) -> None:
+    database = Database(tmp_path / "gateway-sessions.db")
+    await database.initialize()
+
+    now_ms = 1_700_000_120_000
+    fresh_key = "launch:mode:workspace_affinity:task:7:operator:1:thread:fresh"
+    stale_key = "launch:mode:workspace_affinity:task:7:operator:1:thread:stale"
+
+    await database.append_control_chat_message(
+        role="assistant",
+        content="Fresh transcript payload",
+        mission_id=None,
+        session_key=fresh_key,
+        created_at="2023-11-14T22:14:50Z",
+    )
+    await database.append_control_chat_message(
+        role="assistant",
+        content="Stale transcript payload",
+        mission_id=None,
+        session_key=stale_key,
+        created_at="2023-11-14T22:14:19Z",
+    )
+
+    snapshot = await GatewaySessionsService(database).build_snapshot(
+        include_global=False,
+        include_unknown=False,
+        limit=None,
+        active_minutes=raw_active_minutes,  # type: ignore[arg-type]
+        label=None,
+        spawned_by=None,
+        agent_id=None,
+        search=None,
+        include_derived_titles=False,
+        include_last_message=False,
+        now_ms=now_ms,
+    )
+
+    assert snapshot["count"] == 1
+    assert [session["key"] for session in snapshot["sessions"]] == [fresh_key]
+
+
+@pytest.mark.asyncio
 async def test_resolve_key_prefers_structural_session_id_match_over_fresher_fuzzy_duplicate(
     tmp_path: Path,
 ) -> None:
@@ -632,6 +723,113 @@ async def test_resolve_key_by_key_prefers_latest_controller_owner_over_stale_spa
 
 
 @pytest.mark.asyncio
+async def test_owner_alias_metadata_is_canonicalized_for_filters_snapshot_and_child_sessions(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "gateway-sessions.db")
+    await database.initialize()
+
+    parent_key = "agent:main:main"
+    latest_owner_child_key = "agent:main:subagent:latest-owner-alias"
+    fallback_owner_child_key = "agent:main:subagent:fallback-owner-alias"
+
+    for session_key, content in (
+        (parent_key, "Parent transcript payload"),
+        (latest_owner_child_key, "Latest-owner child transcript payload"),
+        (fallback_owner_child_key, "Fallback-owner child transcript payload"),
+    ):
+        await database.append_control_chat_message(
+            role="assistant",
+            content=content,
+            mission_id=None,
+            session_key=session_key,
+            created_at="2026-01-02T03:04:05Z",
+        )
+
+    await database.upsert_gateway_session_metadata(
+        session_key=parent_key,
+        metadata={},
+    )
+    await database.upsert_gateway_session_metadata(
+        session_key=latest_owner_child_key,
+        metadata={
+            "controllerSessionKey": " MAIN ",
+            "requesterSessionKey": "main",
+        },
+    )
+    await database.upsert_gateway_session_metadata(
+        session_key=fallback_owner_child_key,
+        metadata={
+            "spawnedBy": " main ",
+            "parentSessionKey": " MAIN ",
+        },
+    )
+
+    service = GatewaySessionsService(database)
+
+    assert await service.resolve_key(
+        key=latest_owner_child_key,
+        session_id=None,
+        label=None,
+        agent_id=None,
+        spawned_by=parent_key,
+        include_global=True,
+        include_unknown=True,
+    ) == {"ok": True, "key": latest_owner_child_key}
+    assert await service.resolve_key(
+        key=fallback_owner_child_key,
+        session_id=None,
+        label=None,
+        agent_id=None,
+        spawned_by=parent_key,
+        include_global=True,
+        include_unknown=True,
+    ) == {"ok": True, "key": fallback_owner_child_key}
+
+    snapshot = await service.build_snapshot(
+        include_global=True,
+        include_unknown=True,
+        limit=None,
+        active_minutes=None,
+        label=None,
+        spawned_by=parent_key,
+        agent_id=None,
+        search=None,
+        include_derived_titles=False,
+        include_last_message=False,
+        now_ms=1_700_000_002_345,
+    )
+    latest_owner_payload = await service.build_session_payload_for_key(
+        session_key=latest_owner_child_key,
+        now_ms=1_700_000_002_345,
+    )
+    fallback_owner_payload = await service.build_session_payload_for_key(
+        session_key=fallback_owner_child_key,
+        now_ms=1_700_000_002_345,
+    )
+    parent_payload = await service.build_session_payload_for_key(
+        session_key=parent_key,
+        now_ms=1_700_000_002_345,
+    )
+
+    assert {session["key"] for session in snapshot["sessions"]} == {
+        latest_owner_child_key,
+        fallback_owner_child_key,
+    }
+    assert latest_owner_payload is not None
+    assert fallback_owner_payload is not None
+    assert parent_payload is not None
+    assert latest_owner_payload["spawnedBy"] == parent_key
+    assert latest_owner_payload["parentSessionKey"] == parent_key
+    assert fallback_owner_payload["spawnedBy"] == parent_key
+    assert fallback_owner_payload["parentSessionKey"] == parent_key
+    assert set(parent_payload["childSessions"]) == {
+        latest_owner_child_key,
+        fallback_owner_child_key,
+    }
+
+
+@pytest.mark.asyncio
 async def test_resolve_key_session_id_prefilters_visibility_before_duplicate_preference(
     tmp_path: Path,
 ) -> None:
@@ -882,6 +1080,43 @@ async def test_resolve_key_key_lookup_allows_legacy_launch_session_with_agent_fi
     )
 
     assert payload == {"ok": True, "key": session_key}
+
+
+@pytest.mark.asyncio
+async def test_key_lookup_accepts_default_agent_request_key_alias_like_openclaw(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "gateway-sessions.db")
+    await database.initialize()
+
+    stored_key = "agent:main:thread:worker-123"
+    await database.append_control_chat_message(
+        role="assistant",
+        content="Agent thread transcript",
+        mission_id=None,
+        session_key=stored_key,
+        created_at="2026-01-02T03:04:05Z",
+    )
+
+    service = GatewaySessionsService(database)
+    payload = await service.resolve_key(
+        key="thread:worker-123",
+        session_id=None,
+        label=None,
+        agent_id=None,
+        spawned_by=None,
+        include_global=True,
+        include_unknown=True,
+    )
+    session_payload = await service.build_session_payload_for_key(
+        session_key="thread:worker-123",
+        now_ms=1_700_000_000_987,
+    )
+
+    assert payload == {"ok": True, "key": stored_key}
+    assert session_payload is not None
+    assert session_payload["key"] == stored_key
+    assert session_payload["sessionId"] == "worker-123"
 
 
 @pytest.mark.asyncio
