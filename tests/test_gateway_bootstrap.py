@@ -561,6 +561,53 @@ async def test_get_view_marks_local_bootstrap_staged_when_saved_operator_is_disa
 
 
 @pytest.mark.asyncio
+async def test_get_view_marks_bootstrap_degraded_when_saved_lane_is_missing(
+    tmp_path: Path,
+) -> None:
+    service, workspace_dir, _manager = await _build_service(
+        tmp_path,
+        manager=FakeManager(list_views_result=[]),
+        save_bootstrap=False,
+    )
+
+    bootstrap_roles, bootstrap_scopes = default_device_bootstrap_profile()
+    await service.database.upsert_gateway_bootstrap(
+        setup_mode="local",
+        setup_flow="quickstart",
+        route_binding_mode="saved_lane",
+        preferred_instance_id=41,
+        preferred_project_id=None,
+        team_id=None,
+        operator_id=None,
+        task_blueprint_id=None,
+        last_route_instance_id=None,
+        last_route_resolved_at=None,
+        default_cwd=str(workspace_dir.resolve()),
+        bootstrap_roles=bootstrap_roles,
+        bootstrap_scopes=bootstrap_scopes,
+        model="gpt-5.4",
+        max_turns=4,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        toolsets=["hermes-cli"],
+    )
+
+    view = await service.get_view()
+
+    assert view.status == "degraded"
+    assert view.headline == "Gateway bootstrap needs repair"
+    assert view.instance is None
+    assert "The saved default lane no longer exists." in view.warnings
+
+
+@pytest.mark.asyncio
 async def test_get_view_marks_bootstrap_degraded_when_saved_team_is_missing(
     tmp_path: Path,
 ) -> None:
@@ -1977,6 +2024,53 @@ async def test_get_view_marks_remote_bootstrap_staged_when_saved_operator_is_dis
     assert "disabled" in view.operator.detail
     assert "The saved default operator is disabled." in view.warnings
     assert not any("active API key" in warning for warning in view.warnings)
+
+
+@pytest.mark.asyncio
+async def test_get_view_marks_remote_bootstrap_degraded_when_saved_workspace_is_missing(
+    tmp_path: Path,
+) -> None:
+    service, workspace_dir, _manager = await _build_service(
+        tmp_path,
+        manager=FakeManager(list_views_result=[]),
+        save_bootstrap=False,
+    )
+
+    bootstrap_roles, bootstrap_scopes = default_device_bootstrap_profile()
+    await service.database.upsert_gateway_bootstrap(
+        setup_mode="remote",
+        setup_flow="advanced",
+        route_binding_mode="workspace_affinity",
+        preferred_instance_id=None,
+        preferred_project_id=999,
+        team_id=None,
+        operator_id=None,
+        task_blueprint_id=None,
+        last_route_instance_id=None,
+        last_route_resolved_at=None,
+        default_cwd=str(workspace_dir.resolve()),
+        bootstrap_roles=bootstrap_roles,
+        bootstrap_scopes=bootstrap_scopes,
+        model="gpt-5.4",
+        max_turns=4,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        toolsets=["hermes-cli"],
+    )
+
+    view = await service.get_view()
+
+    assert view.status == "degraded"
+    assert view.headline == "Gateway bootstrap needs repair"
+    assert view.project is None
+    assert "The saved default workspace no longer exists." in view.warnings
 
 
 @pytest.mark.asyncio

@@ -532,6 +532,14 @@ function sanitizeOnboardingWizardDraft(value) {
       draft[field] = normalized;
     }
   }
+  if (draft.mode === "remote") {
+    draft.flow = "advanced";
+    draft.instance_mode = "existing";
+    if (!normalizeOptionalText(draft.instance_id)) {
+      draft.instance_id = null;
+      draft.instance_name = "Local Codex Desktop";
+    }
+  }
   return draft;
 }
 
@@ -600,6 +608,14 @@ function getOnboardingStepField(step) {
   return field && ONBOARDING_WIZARD_DRAFT_FIELDS.has(field) ? field : null;
 }
 
+function findOnboardingStepOption(step, value) {
+  const selected = normalizeOptionalText(value);
+  if (!selected || !Array.isArray(step?.options)) {
+    return null;
+  }
+  return step.options.find((option) => normalizeOptionalText(option?.value) === selected) || null;
+}
+
 function mergeOnboardingWizardDraft(currentDraft, step, rawValue) {
   const field = getOnboardingStepField(step);
   const draft = sanitizeOnboardingWizardDraft(currentDraft);
@@ -614,13 +630,31 @@ function mergeOnboardingWizardDraft(currentDraft, step, rawValue) {
   if (field === "mode") {
     if (normalized === "remote") {
       draft.flow = "advanced";
+      draft.instance_mode = "existing";
+      draft.instance_id = null;
+      draft.instance_name = "Local Codex Desktop";
     } else {
       delete draft.flow;
+    }
+  } else if (field === "instance_id") {
+    draft.instance_mode = "existing";
+    if (normalized) {
+      const selectedOption = findOnboardingStepOption(step, normalized);
+      draft.instance_name =
+        normalizeOptionalText(selectedOption?.instanceName) || "Local Codex Desktop";
+    } else {
+      draft.instance_id = null;
+      draft.instance_name = "Local Codex Desktop";
     }
   } else if (field === "flow" && draft.mode === "remote") {
     draft.flow = "advanced";
   }
   return draft;
+}
+
+function clearOnboardingLaneSelection() {
+  setOnboardingFormValue("instance_id", "");
+  setOnboardingFormValue("instance_name", "Local Codex Desktop");
 }
 
 function setOnboardingFormValue(name, value) {
@@ -2932,10 +2966,15 @@ function renderOnboardingWizardStep() {
   if (!wizard || !step) {
     return "";
   }
+  const isNoteStep = step.type === "note";
   const initialValue = String(step.initialValue ?? step.initialvalue ?? "");
   const isRequired = step.required !== false;
   const inputType = step.inputType === "email" ? "email" : "text";
-  const submitLabel = isRequired ? "Save Guided Answer" : "Save or Skip";
+  const submitLabel = isNoteStep
+    ? "Continue Guided Setup"
+    : isRequired
+      ? "Save Guided Answer"
+      : "Save or Skip";
   const hints = Array.isArray(step.options)
     ? step.options
         .filter((option) => option && option.hint)
@@ -2945,11 +2984,15 @@ function renderOnboardingWizardStep() {
         )
         .join("")
     : "";
-  const optionalHint = isRequired
+  const optionalHint = isNoteStep
     ? ""
-    : `<div class="small-muted">Optional. Leave blank to skip this step.</div>`;
+    : isRequired
+      ? ""
+      : `<div class="small-muted">Optional. Leave blank to skip this step.</div>`;
   const control =
-    step.type === "select"
+    isNoteStep
+      ? ""
+      : step.type === "select"
       ? `
         <select name="value"${isRequired ? " required" : ""}>
           ${(Array.isArray(step.options) ? step.options : [])
@@ -4959,9 +5002,14 @@ function syncOnboardingMode() {
   const selection = getEffectiveOnboardingSelection();
   const guidedActive = Boolean(state.onboardingWizard?.sessionId);
   const isRemote = selection.mode === "remote";
+  const previousMode = onboardingSetupModeEl?.dataset.lastMode || selection.mode;
+  if (isRemote && previousMode !== "remote") {
+    clearOnboardingLaneSelection();
+  }
   if (onboardingSetupModeEl) {
     onboardingSetupModeEl.value = selection.mode;
     onboardingSetupModeEl.disabled = guidedActive;
+    onboardingSetupModeEl.dataset.lastMode = selection.mode;
   }
   if (onboardingSetupFlowEl) {
     onboardingSetupFlowEl.value = selection.flow;
@@ -7672,6 +7720,7 @@ function exposeOpenZuesTestHooks() {
     mergeOnboardingWizardDraft,
     persistSetupWizardSelection,
     reconcileOnboardingWizardState,
+    renderOnboardingWizardStep,
     renderOnboardingSelectionOwnership,
     restartLostOnboardingWizard,
     setOnboardingSelectionDraftState,

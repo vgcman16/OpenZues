@@ -327,7 +327,7 @@ class SetupService:
                 for key in payload.model_fields_set
             }
         else:
-            update_payload = {key: value for key, value in payload.items() if value is not None}
+            update_payload = dict(payload)
         update_payload = _filter_lightweight_setup_wizard_update(current, update_payload)
         if not update_payload:
             return await self.get_wizard_session()
@@ -339,9 +339,15 @@ class SetupService:
         flow = str(merged.get("flow") or ("advanced" if mode == "remote" else "quickstart"))
         if flow not in {"quickstart", "advanced"}:
             flow = "advanced" if mode == "remote" else "quickstart"
+        previous_mode = _text_or_none(current.get("mode")) or "local"
+        mode_changed_to_remote = mode == "remote" and previous_mode != "remote"
         if mode == "remote":
             flow = "advanced"
             merged["instance_mode"] = "existing"
+            if mode_changed_to_remote and "instance_id" not in update_payload:
+                merged["instance_id"] = None
+            if mode_changed_to_remote and "instance_name" not in update_payload:
+                merged["instance_name"] = _DEFAULT_SETUP_INSTANCE_NAME
         merged["flow"] = flow
         merged["project_path"] = _normalize_path(
             merged.get("project_path") if isinstance(merged.get("project_path"), str) else None

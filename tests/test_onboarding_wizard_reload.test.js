@@ -836,6 +836,120 @@ test("selection-only guided restart carries the active mode and flow into wizard
   });
 });
 
+test("guided remote lane selection updates and clears the draft lane binding", () => {
+  const { hooks } = createHarness();
+  const step = {
+    id: "step-instance-id",
+    field: "instance_id",
+    type: "select",
+    title: "Saved Lane",
+    options: [
+      {
+        value: "",
+        label: "Bind at launch time",
+        instanceName: "Local Codex Desktop",
+      },
+      {
+        value: "7",
+        label: "Pinned Lane (connected)",
+        instanceName: "Pinned Lane",
+      },
+    ],
+  };
+
+  const selected = hooks.mergeOnboardingWizardDraft(
+    {
+      mode: "remote",
+      flow: "advanced",
+      project_path: "C:/workspace/OpenZues",
+      operator_name: "Skull",
+    },
+    step,
+    "7",
+  );
+  assert.equal(selected.instance_mode, "existing");
+  assert.equal(selected.instance_id, "7");
+  assert.equal(selected.instance_name, "Pinned Lane");
+
+  const cleared = hooks.mergeOnboardingWizardDraft(selected, step, "");
+  assert.equal(cleared.instance_mode, "existing");
+  assert.equal(cleared.instance_id, null);
+  assert.equal(cleared.instance_name, "Local Codex Desktop");
+});
+
+test("guided onboarding note steps render a continue-only card", () => {
+  const { hooks } = createHarness();
+  hooks.setOnboardingWizardState({
+    sessionId: "wizard-note",
+    step: {
+      id: "step-remote-lane-note",
+      field: "remote_lane_note",
+      type: "note",
+      title: "Lane Binding Can Wait",
+      message:
+        "No saved lane is staged yet. Remote setup can still save the workspace, operator access, and recurring task now, then bind a lane when the first launch is ready.",
+    },
+    draft: {
+      mode: "remote",
+      flow: "advanced",
+      project_path: "C:/workspace/OpenZues",
+    },
+  });
+
+  const markup = hooks.renderOnboardingWizardStep();
+
+  assert.match(markup, /Lane Binding Can Wait/);
+  assert.match(markup, /Continue Guided Setup/);
+  assert.doesNotMatch(markup, /name="value"/);
+});
+
+test("switching a local draft to remote clears the stale lane hint", () => {
+  const { hooks, elements } = createHarness();
+  hooks.state.setup = {
+    wizard_session: makeWizardSession({
+      mode: "local",
+      flow: "quickstart",
+      instance_mode: "existing",
+      instance_id: 7,
+      instance_name: "Pinned Local Lane",
+      project_path: "C:/workspace/OpenZues",
+      operator_name: "Skull",
+      task_name: "Parity Loop",
+      objective_template: "Ship the next verified slice.",
+    }),
+  };
+
+  hooks.applyWizardSessionToForm();
+  hooks.syncOnboardingMode();
+
+  assert.equal(elements.instanceId.value, "7");
+  assert.equal(elements.instanceName.value, "Pinned Local Lane");
+
+  elements.setupMode.value = "remote";
+  elements.setupFlow.value = "advanced";
+  hooks.syncOnboardingMode();
+
+  const draft = hooks.collectOnboardingDraftValues({
+    get(name) {
+      const field = elements[name] || null;
+      if (!field) {
+        return null;
+      }
+      if (field.type === "checkbox") {
+        return field.checked ? "on" : null;
+      }
+      return field.value;
+    },
+  });
+
+  assert.equal(elements.instanceId.value, "");
+  assert.equal(elements.instanceName.value, "Local Codex Desktop");
+  assert.equal(draft.mode, "remote");
+  assert.equal(draft.instance_mode, "existing");
+  assert.equal(draft.instance_id, null);
+  assert.equal(draft.instance_name, "Local Codex Desktop");
+});
+
 async function main() {
   let failed = false;
   for (const { name, fn } of tests) {

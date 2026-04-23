@@ -1985,6 +1985,7 @@ def create_app(
     active_gateway_wizard_service = GatewayWizardService(
         load_session=load_setup_wizard_session,
         save_session=save_setup_wizard_session,
+        list_instances=active_manager.list_views,
     )
 
     if active_gateway_node_method_service is None:

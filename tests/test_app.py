@@ -4130,6 +4130,96 @@ def test_setup_wizard_endpoint_updates_saved_mode_and_flow(tmp_path) -> None:
     assert setup["wizard_session"]["task_name"] == "Draft Loop"
 
 
+def test_setup_wizard_remote_switch_clears_stale_local_lane_before_bootstrap(tmp_path) -> None:
+    workspace_path = tmp_path / "workspace"
+    workspace_path.mkdir()
+
+    with make_client(tmp_path) as client:
+        instance_response = client.post(
+            "/api/instances",
+            json={
+                "name": "Pinned Local Lane",
+                "transport": "desktop",
+                "cwd": str(workspace_path),
+                "auto_connect": False,
+            },
+        )
+        assert instance_response.status_code == 200
+        instance = instance_response.json()
+
+        local_draft_response = client.put(
+            "/api/setup/wizard",
+            json={
+                "mode": "local",
+                "flow": "quickstart",
+                "instance_mode": "existing",
+                "instance_id": instance["id"],
+                "instance_name": instance["name"],
+                "project_path": str(workspace_path),
+                "project_label": "Remote Workspace",
+                "operator_name": "Remote Builder",
+                "task_name": "Remote Ship Loop",
+                "objective_template": "Keep the remote workspace moving.",
+            },
+        )
+        remote_selection_response = client.put(
+            "/api/setup/wizard",
+            json={
+                "mode": "remote",
+                "flow": "quickstart",
+            },
+        )
+        wizard_response = client.get("/api/setup/wizard")
+        assert local_draft_response.status_code == 200
+        assert remote_selection_response.status_code == 200
+        assert wizard_response.status_code == 200
+
+        wizard = wizard_response.json()
+        bootstrap_response = client.post(
+            "/api/onboarding/bootstrap",
+            json={
+                "setup_mode": wizard["mode"],
+                "setup_flow": wizard["flow"],
+                "use_mempalace": wizard["use_mempalace"],
+                "instance_mode": wizard["instance_mode"],
+                "instance_id": wizard["instance_id"],
+                "instance_name": wizard["instance_name"],
+                "project_path": wizard["project_path"],
+                "project_label": wizard["project_label"],
+                "team_name": wizard["team_name"],
+                "operator_name": wizard["operator_name"],
+                "operator_email": wizard["operator_email"],
+                "task_name": wizard["task_name"],
+                "objective_template": wizard["objective_template"],
+                "cadence_minutes": wizard["cadence_minutes"],
+                "model": wizard["model"],
+                "max_turns": wizard["max_turns"],
+                "toolsets": wizard["toolsets"],
+            },
+        )
+        setup_response = client.get("/api/setup")
+
+    assert remote_selection_response.json()["mode"] == "remote"
+    assert remote_selection_response.json()["flow"] == "advanced"
+    assert remote_selection_response.json()["instance_mode"] == "existing"
+    assert remote_selection_response.json()["instance_id"] is None
+
+    assert bootstrap_response.status_code == 200
+    payload = bootstrap_response.json()
+    assert payload["instance"] is None
+    assert payload["launch_route"]["mode"] == "workspace_affinity"
+    assert payload["launch_route"]["resolved_instance"] is None
+
+    assert setup_response.status_code == 200
+    setup = setup_response.json()
+    assert setup["wizard_session"]["mode"] == "remote"
+    assert setup["wizard_session"]["instance_mode"] == "existing"
+    assert setup["wizard_session"]["instance_id"] is None
+    assert setup["launch_handoff"]["recommended_action"] == "connect_lane"
+    assert setup["launch_handoff"]["launch_route"]["mode"] == "workspace_affinity"
+    assert setup["launch_handoff"]["launch_route"]["resolved_instance"] is None
+
+
 def test_onboarding_wizard_status_endpoint_reports_running_session(tmp_path) -> None:
     with make_client(tmp_path) as client:
         start_response = client.post(
@@ -4188,6 +4278,122 @@ def test_onboarding_wizard_start_honors_selection_only_local_advanced_flow(tmp_p
     assert payload["status"] == "running"
     assert payload["step"]["field"] == "project_path"
     assert payload["step"]["type"] == "text"
+
+
+def test_onboarding_wizard_skip_saved_lane_clears_remote_lane_selection(tmp_path) -> None:
+    workspace_path = tmp_path / "workspace"
+    workspace_path.mkdir()
+
+    with make_client(tmp_path) as client:
+        instance_response = client.post(
+            "/api/instances",
+            json={
+                "name": "Pinned Lane",
+                "transport": "desktop",
+                "cwd": str(workspace_path),
+                "auto_connect": False,
+            },
+        )
+        assert instance_response.status_code == 200
+        instance_id = instance_response.json()["id"]
+
+        seed_response = client.put(
+            "/api/setup/wizard",
+            json={
+                "mode": "remote",
+                "flow": "advanced",
+                "instance_mode": "existing",
+                "instance_id": instance_id,
+                "instance_name": "Pinned Lane",
+                "project_path": str(workspace_path),
+                "operator_name": "Remote Builder",
+                "operator_email": "remote.builder@example.com",
+                "team_name": "Platform Ops",
+            },
+        )
+        start_response = client.post(
+            "/api/onboarding/wizard/start",
+            json={
+                "mode": "remote",
+                "project_path": str(workspace_path),
+            },
+        )
+        session_id = start_response.json()["sessionId"]
+        next_response = client.post(
+            "/api/onboarding/wizard/next",
+            json={
+                "sessionId": session_id,
+                "answer": {
+                    "stepId": start_response.json()["step"]["id"],
+                    "value": "",
+                },
+            },
+        )
+        setup_response = client.get("/api/setup/wizard")
+
+    assert seed_response.status_code == 200
+    assert start_response.status_code == 200
+    assert start_response.json()["step"]["field"] == "instance_id"
+
+    assert next_response.status_code == 200
+    assert next_response.json()["done"] is False
+    assert next_response.json()["step"]["field"] == "task_name"
+
+    assert setup_response.status_code == 200
+    wizard = setup_response.json()
+    assert wizard["mode"] == "remote"
+    assert wizard["instance_mode"] == "existing"
+    assert wizard["instance_id"] is None
+    assert wizard["instance_name"] == "Local Codex Desktop"
+
+
+def test_onboarding_wizard_surfaces_remote_lane_note_when_no_lane_is_saved(tmp_path) -> None:
+    workspace_path = tmp_path / "workspace"
+    workspace_path.mkdir()
+
+    with make_client(tmp_path) as client:
+        seed_response = client.put(
+            "/api/setup/wizard",
+            json={
+                "mode": "remote",
+                "flow": "advanced",
+                "instance_mode": "existing",
+                "instance_name": "Local Codex Desktop",
+                "project_path": str(workspace_path),
+                "operator_name": "Remote Builder",
+                "operator_email": "remote.builder@example.com",
+                "team_name": "Platform Ops",
+            },
+        )
+        start_response = client.post(
+            "/api/onboarding/wizard/start",
+            json={
+                "mode": "remote",
+                "project_path": str(workspace_path),
+            },
+        )
+        session_id = start_response.json()["sessionId"]
+        next_response = client.post(
+            "/api/onboarding/wizard/next",
+            json={
+                "sessionId": session_id,
+                "answer": {
+                    "stepId": start_response.json()["step"]["id"],
+                },
+            },
+        )
+
+    assert seed_response.status_code == 200
+    assert start_response.status_code == 200
+    payload = start_response.json()
+    assert payload["step"]["field"] == "remote_lane_note"
+    assert payload["step"]["type"] == "note"
+    assert payload["step"]["title"] == "Lane Binding Can Wait"
+    assert "bind a lane when the first launch is ready" in payload["step"]["message"]
+
+    assert next_response.status_code == 200
+    assert next_response.json()["done"] is False
+    assert next_response.json()["step"]["field"] == "task_name"
 
 
 def test_setup_wizard_endpoint_persists_mempalace_toggle(tmp_path) -> None:

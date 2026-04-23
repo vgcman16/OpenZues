@@ -996,7 +996,7 @@ class GatewayBootstrapService:
                 and instance.connected
             )
         status: GatewayBootstrapStatus
-        if broken_references and any(required_ready):
+        if broken_references:
             status = "degraded"
             headline = "Gateway bootstrap needs repair"
             summary = (
