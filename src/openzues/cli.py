@@ -34,6 +34,7 @@ from openzues.schemas import (
     HermesRuntimeProfileUpdate,
     HermesUpdateView,
     MissionCreate,
+    NotificationRouteCreate,
     OnboardingBootstrapCreate,
     ProjectView,
     SetupWizardSessionUpdate,
@@ -2886,6 +2887,42 @@ async def _build_operator_dashboard(services: CliServices) -> DashboardView | Si
     )
 
 
+def _build_cli_conversation_target(
+    *,
+    conversation_channel: str | None,
+    conversation_account_id: str | None,
+    conversation_peer_kind: str | None,
+    conversation_peer_id: str | None,
+) -> ConversationTargetView | None:
+    channel = str(conversation_channel or "").strip()
+    account_id = str(conversation_account_id or "").strip() or None
+    peer_kind = str(conversation_peer_kind or "").strip().lower() or None
+    peer_id = str(conversation_peer_id or "").strip() or None
+    if not channel and not account_id and not peer_kind and not peer_id:
+        return None
+    if not channel:
+        raise ValueError(
+            "Provide --conversation-channel when saving a conversation route target."
+        )
+    if bool(peer_kind) != bool(peer_id):
+        raise ValueError(
+            "Provide both --conversation-peer-kind and --conversation-peer-id together."
+        )
+    if peer_kind not in {None, "direct", "group", "channel"}:
+        raise ValueError("--conversation-peer-kind must be one of: direct, group, channel.")
+    resolved_peer_kind = cast(Literal["direct", "group", "channel"] | None, peer_kind)
+    return ConversationTargetView(
+        channel=channel,
+        account_id=account_id,
+        peer_kind=resolved_peer_kind,
+        peer_id=peer_id,
+    )
+
+
+def _parse_cli_csv_list(value: str | None) -> list[str]:
+    return [item.strip() for item in str(value or "").split(",") if item.strip()]
+
+
 def _build_bootstrap_payload(
     *,
     setup_mode: str,
@@ -2922,32 +2959,12 @@ def _build_bootstrap_payload(
     conversation_peer_id: str | None = None,
 ) -> OnboardingBootstrapCreate:
     bootstrap_roles, bootstrap_scopes = default_device_bootstrap_profile()
-    channel = str(conversation_channel or "").strip()
-    account_id = str(conversation_account_id or "").strip() or None
-    peer_kind = str(conversation_peer_kind or "").strip().lower() or None
-    peer_id = str(conversation_peer_id or "").strip() or None
-    if not channel and not account_id and not peer_kind and not peer_id:
-        conversation_target = None
-    else:
-        if not channel:
-            raise ValueError(
-                "Provide --conversation-channel when saving a conversation route target."
-            )
-        if bool(peer_kind) != bool(peer_id):
-            raise ValueError(
-                "Provide both --conversation-peer-kind and --conversation-peer-id together."
-            )
-        if peer_kind not in {None, "direct", "group", "channel"}:
-            raise ValueError(
-                "--conversation-peer-kind must be one of: direct, group, channel."
-            )
-        resolved_peer_kind = cast(Literal["direct", "group", "channel"] | None, peer_kind)
-        conversation_target = ConversationTargetView(
-            channel=channel,
-            account_id=account_id,
-            peer_kind=resolved_peer_kind,
-            peer_id=peer_id,
-        )
+    conversation_target = _build_cli_conversation_target(
+        conversation_channel=conversation_channel,
+        conversation_account_id=conversation_account_id,
+        conversation_peer_kind=conversation_peer_kind,
+        conversation_peer_id=conversation_peer_id,
+    )
     return OnboardingBootstrapCreate(
         setup_mode=setup_mode,  # type: ignore[arg-type]
         setup_flow=setup_flow,  # type: ignore[arg-type]
@@ -3810,6 +3827,103 @@ def routes_test_command(
 
     payload = _run(_run_with_services(_action))
     _emit_route_test(payload, json_output=json_output)
+
+
+@routes_app.command("create")
+def routes_create_command(
+    name: str = typer.Option(..., "--name", help="Notification route label."),
+    kind: str = typer.Option(
+        "webhook",
+        "--kind",
+        help="Route kind: webhook, slack, telegram, discord, or whatsapp.",
+    ),
+    target: str = typer.Option(
+        ...,
+        "--target",
+        help="Webhook URL or provider API target/base endpoint.",
+    ),
+    events: str | None = typer.Option(
+        None,
+        "--events",
+        help="Comma-separated events such as gateway/send,gateway/poll.",
+    ),
+    conversation_channel: str | None = typer.Option(
+        None,
+        "--conversation-channel",
+        help="Conversation channel for route matching, e.g. slack or whatsapp.",
+    ),
+    conversation_account_id: str | None = typer.Option(
+        None,
+        "--conversation-account",
+        help="Account, workspace, bot, or business identity for route matching.",
+    ),
+    conversation_peer_kind: str | None = typer.Option(
+        None,
+        "--conversation-peer-kind",
+        help="Peer kind for the route target: direct, group, or channel.",
+    ),
+    conversation_peer_id: str | None = typer.Option(
+        None,
+        "--conversation-peer-id",
+        help="Peer identifier such as channel:C123 or direct:+15551234567.",
+    ),
+    secret_header_name: str | None = typer.Option(
+        None,
+        "--secret-header",
+        help="Secret header for generic webhook routes.",
+    ),
+    secret_token: str | None = typer.Option(
+        None,
+        "--secret-token",
+        help="Inline route secret token; prefer --vault-secret-id for durable use.",
+    ),
+    vault_secret_id: int | None = typer.Option(
+        None,
+        "--vault-secret-id",
+        help="Vault secret id to attach to this route.",
+    ),
+    enabled: bool = typer.Option(True, "--enabled/--disabled", help="Enable the route."),
+    json_output: bool = typer.Option(False, "--json", help="Emit the route as JSON."),
+) -> None:
+    route_kind = str(kind or "").strip().lower()
+    if route_kind not in {"webhook", "slack", "telegram", "discord", "whatsapp"}:
+        raise typer.BadParameter(
+            "--kind must be one of: webhook, slack, telegram, discord, whatsapp."
+        )
+    route_events = _parse_cli_csv_list(events)
+    if not route_events:
+        route_events = (
+            ["gateway/send", "gateway/poll"]
+            if route_kind in {"slack", "telegram", "discord", "whatsapp"}
+            else ["mission/completed", "mission/failed"]
+        )
+    payload = NotificationRouteCreate(
+        name=name,
+        kind=cast(
+            Literal["webhook", "slack", "telegram", "discord", "whatsapp"],
+            route_kind,
+        ),
+        target=target,
+        events=route_events,
+        conversation_target=_build_cli_conversation_target(
+            conversation_channel=conversation_channel,
+            conversation_account_id=conversation_account_id,
+            conversation_peer_kind=conversation_peer_kind,
+            conversation_peer_id=conversation_peer_id,
+        ),
+        enabled=enabled,
+        secret_header_name=secret_header_name,
+        secret_token=secret_token,
+        vault_secret_id=vault_secret_id,
+    )
+
+    async def _action(services: CliServices) -> dict[str, object]:
+        return (
+            await services.ops_mesh.create_notification_route(payload)
+        ).model_dump(mode="json")
+
+    result = _run(_run_with_services(_action))
+    _emit_payload(result, json_output=json_output)
 
 
 @routes_app.command("list")

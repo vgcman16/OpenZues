@@ -27,6 +27,12 @@ from openzues.schemas import (
 from openzues.services import gateway_config_schema as gateway_config_schema_module
 from openzues.services.access import AccessService
 from openzues.services.gateway_agent_files import GatewayAgentFilesService
+from openzues.services.gateway_browser_runtime import (
+    GatewayBrowserRuntimeError,
+    GatewayBrowserRuntimeService,
+    browser_act_args,
+    browser_tab_target_id,
+)
 from openzues.services.gateway_channels import GatewayChannelsService
 from openzues.services.gateway_config import (
     GatewayConfigService,
@@ -1387,6 +1393,53 @@ def test_config_schema_lookup_accepts_punctuation_rich_path_segments(monkeypatch
     }
 
 
+def test_config_schema_lookup_accepts_long_valid_paths(monkeypatch) -> None:
+    long_segment = "p" * 1100
+    long_path = f"{long_segment}.leaf"
+    monkeypatch.setattr(
+        gateway_config_schema_module,
+        "_root_schema",
+        lambda: {
+            "type": "object",
+            "properties": {
+                long_segment: {
+                    "type": "object",
+                    "title": "Long Segment Container",
+                    "properties": {
+                        "leaf": {
+                            "type": "string",
+                            "title": "Long Path Leaf",
+                        }
+                    },
+                }
+            },
+        },
+    )
+    monkeypatch.setattr(
+        gateway_config_schema_module,
+        "_UI_HINTS",
+        {
+            long_path: {
+                "label": "Long Path Leaf",
+            },
+        },
+    )
+    service = gateway_config_schema_module.GatewayConfigSchemaService()
+
+    lookup = service.lookup(long_path)
+
+    assert lookup == {
+        "path": long_path,
+        "schema": {
+            "type": "string",
+            "title": "Long Path Leaf",
+        },
+        "hint": {"label": "Long Path Leaf"},
+        "hintPath": long_path,
+        "children": [],
+    }
+
+
 @pytest.mark.asyncio
 async def test_config_schema_lookup_supports_array_paths_and_rejects_invalid_lookup_paths() -> None:
     service = GatewayNodeMethodService(GatewayNodeRegistry())
@@ -2574,6 +2627,93 @@ async def test_chat_send_effective_attachments_fail_as_unavailable_runtime(
 
 
 @pytest.mark.asyncio
+async def test_chat_send_uses_attachment_runtime_when_wired() -> None:
+    observed: dict[str, object | None] = {}
+    attachments = [
+        {
+            "type": "image",
+            "mimeType": "image/png",
+            "fileName": "preview.png",
+            "content": "Zm9v",
+        }
+    ]
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        del session_key, message, idempotency_key, thinking, deliver, timeout_ms
+        raise AssertionError("text-only chat runtime should not handle effective attachments")
+
+    async def fake_attachment_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+        attachments: list[dict[str, object]],
+        channel: str | None = None,
+        to: str | None = None,
+        node_id: str | None = None,
+    ) -> dict[str, object]:
+        observed.update(
+            {
+                "session_key": session_key,
+                "message": message,
+                "idempotency_key": idempotency_key,
+                "thinking": thinking,
+                "deliver": deliver,
+                "timeout_ms": timeout_ms,
+                "attachments": attachments,
+                "channel": channel,
+                "to": to,
+                "node_id": node_id,
+            }
+        )
+        return {"runId": idempotency_key, "status": "ok"}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        chat_send_service=fake_chat_send_service,
+        chat_attachment_send_service=fake_attachment_send_service,
+    )
+
+    payload = await service.call(
+        "chat.send",
+        {
+            "sessionKey": "openzues:thread:demo",
+            "message": "Inspect this image.",
+            "thinking": "medium",
+            "deliver": True,
+            "timeoutMs": 45_000,
+            "attachments": attachments,
+            "idempotencyKey": "run-chat-send-attachment-runtime-1",
+        },
+    )
+
+    assert payload == {"runId": "run-chat-send-attachment-runtime-1", "status": "ok"}
+    assert observed == {
+        "session_key": "openzues:thread:demo",
+        "message": "Inspect this image.",
+        "idempotency_key": "run-chat-send-attachment-runtime-1",
+        "thinking": "medium",
+        "deliver": True,
+        "timeout_ms": 45_000,
+        "attachments": attachments,
+        "channel": None,
+        "to": None,
+        "node_id": None,
+    }
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("method", "session_field"),
     [
@@ -3182,6 +3322,92 @@ async def test_sessions_send_effective_attachments_fail_as_unavailable_runtime(
     assert exc_info.value.message == (
         "sessions.send attachments are unavailable until control chat attachment runtime is wired"
     )
+
+
+@pytest.mark.asyncio
+async def test_sessions_send_uses_attachment_runtime_when_wired() -> None:
+    observed: dict[str, object | None] = {}
+    attachments = [
+        {
+            "type": "image",
+            "mimeType": "image/png",
+            "fileName": "preview.png",
+            "content": "Zm9v",
+        }
+    ]
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        del session_key, message, idempotency_key, thinking, deliver, timeout_ms
+        raise AssertionError("text-only session runtime should not handle effective attachments")
+
+    async def fake_attachment_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+        attachments: list[dict[str, object]],
+        channel: str | None = None,
+        to: str | None = None,
+        node_id: str | None = None,
+    ) -> dict[str, object]:
+        observed.update(
+            {
+                "session_key": session_key,
+                "message": message,
+                "idempotency_key": idempotency_key,
+                "thinking": thinking,
+                "deliver": deliver,
+                "timeout_ms": timeout_ms,
+                "attachments": attachments,
+                "channel": channel,
+                "to": to,
+                "node_id": node_id,
+            }
+        )
+        return {"runId": idempotency_key, "status": "ok"}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        chat_send_service=fake_chat_send_service,
+        chat_attachment_send_service=fake_attachment_send_service,
+    )
+
+    payload = await service.call(
+        "sessions.send",
+        {
+            "key": "openzues:thread:demo",
+            "message": "Inspect this image.",
+            "thinking": "medium",
+            "timeoutMs": 45_000,
+            "attachments": attachments,
+            "idempotencyKey": "run-session-send-attachment-runtime-1",
+        },
+    )
+
+    assert payload == {"runId": "run-session-send-attachment-runtime-1", "status": "ok"}
+    assert observed == {
+        "session_key": "openzues:thread:demo",
+        "message": "Inspect this image.",
+        "idempotency_key": "run-session-send-attachment-runtime-1",
+        "thinking": "medium",
+        "deliver": None,
+        "timeout_ms": 45_000,
+        "attachments": attachments,
+        "channel": None,
+        "to": None,
+        "node_id": None,
+    }
 
 
 @pytest.mark.asyncio
@@ -4040,6 +4266,119 @@ async def test_sessions_steer_effective_attachments_fail_as_unavailable_runtime(
 
 
 @pytest.mark.asyncio
+async def test_sessions_steer_uses_attachment_runtime_when_wired() -> None:
+    events: list[tuple[str, str, str | None]] = []
+    observed: dict[str, object | None] = {}
+    attachments = [
+        {
+            "type": "image",
+            "mimeType": "image/png",
+            "fileName": "preview.png",
+            "content": "Zm9v",
+        }
+    ]
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        del message, thinking, deliver, timeout_ms
+        events.append(("send", session_key, idempotency_key))
+        return {"runId": idempotency_key, "status": "ok"}
+
+    async def fake_chat_abort_service(
+        *,
+        session_key: str,
+        run_id: str | None,
+    ) -> dict[str, object]:
+        events.append(("abort", session_key, run_id))
+        return {"ok": True}
+
+    async def fake_attachment_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+        attachments: list[dict[str, object]],
+        channel: str | None = None,
+        to: str | None = None,
+        node_id: str | None = None,
+    ) -> dict[str, object]:
+        observed.update(
+            {
+                "session_key": session_key,
+                "message": message,
+                "idempotency_key": idempotency_key,
+                "thinking": thinking,
+                "deliver": deliver,
+                "timeout_ms": timeout_ms,
+                "attachments": attachments,
+                "channel": channel,
+                "to": to,
+                "node_id": node_id,
+            }
+        )
+        return {"runId": idempotency_key, "status": "ok"}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        chat_send_service=fake_chat_send_service,
+        chat_abort_service=fake_chat_abort_service,
+        chat_attachment_send_service=fake_attachment_send_service,
+    )
+
+    await service.call(
+        "sessions.send",
+        {
+            "key": "openzues:thread:demo",
+            "message": "status",
+            "idempotencyKey": "run-session-send-before-steer-attachment-1",
+        },
+    )
+    payload = await service.call(
+        "sessions.steer",
+        {
+            "key": "openzues:thread:demo",
+            "message": "Inspect this image.",
+            "thinking": "medium",
+            "timeoutMs": 45_000,
+            "attachments": attachments,
+            "idempotencyKey": "run-session-steer-attachment-runtime-1",
+        },
+    )
+
+    assert events == [
+        ("send", "openzues:thread:demo", "run-session-send-before-steer-attachment-1"),
+        ("abort", "openzues:thread:demo", None),
+    ]
+    assert payload == {
+        "runId": "run-session-steer-attachment-runtime-1",
+        "status": "ok",
+        "interruptedActiveRun": True,
+    }
+    assert observed == {
+        "session_key": "openzues:thread:demo",
+        "message": "Inspect this image.",
+        "idempotency_key": "run-session-steer-attachment-runtime-1",
+        "thinking": "medium",
+        "deliver": None,
+        "timeout_ms": 45_000,
+        "attachments": attachments,
+        "channel": None,
+        "to": None,
+        "node_id": None,
+    }
+
+
+@pytest.mark.asyncio
 async def test_sessions_steer_fails_explicitly_until_interrupt_runtime_is_wired() -> None:
     service = GatewayNodeMethodService(GatewayNodeRegistry())
 
@@ -4191,10 +4530,11 @@ async def test_sessions_reset_clears_transcript_and_preserves_session_entry() ->
         {"includeGlobal": True, "includeUnknown": False, "limit": 10},
         now_ms=555,
     )
-    assert [session["key"] for session in sessions_payload["sessions"]] == [
+    assert set(session["key"] for session in sessions_payload["sessions"]) == {
         main_session_key,
         session_key,
-    ]
+        other_session_key,
+    }
 
     sessions_changed = [
         event
@@ -4323,7 +4663,10 @@ async def test_sessions_delete_removes_metadata_backed_session_and_transcript() 
         {"includeGlobal": True, "includeUnknown": False, "limit": 10},
         now_ms=777,
     )
-    assert [session["key"] for session in sessions_payload["sessions"]] == [main_session_key]
+    assert set(session["key"] for session in sessions_payload["sessions"]) == {
+        main_session_key,
+        other_session_key,
+    }
 
     with pytest.raises(ValueError, match="unknown session key"):
         await service.call("sessions.resolve", {"key": session_key})
@@ -4412,17 +4755,17 @@ async def test_sessions_compact_archives_trimmed_messages_into_checkpoint_invent
         {
             "checkpointId": checkpoint_id,
             "sessionKey": session_key,
-            "sessionId": session_key,
+            "sessionId": "demo",
             "createdAt": 1_700_000_000_123,
             "reason": "manual",
             "summary": "Alpha line 1 Alpha line 2 Bravo line 1",
             "firstKeptEntryId": str(third_id),
             "preCompaction": {
-                "sessionId": session_key,
+                "sessionId": "demo",
                 "entryId": str(second_id),
             },
             "postCompaction": {
-                "sessionId": session_key,
+                "sessionId": "demo",
                 "entryId": str(third_id),
             },
         }
@@ -4547,17 +4890,17 @@ async def test_sessions_compact_without_max_lines_rewrites_history_into_summary_
         {
             "checkpointId": checkpoint_id,
             "sessionKey": session_key,
-            "sessionId": session_key,
+            "sessionId": "demo",
             "createdAt": 1_700_000_000_123,
             "reason": "summary",
             "summary": "Alpha line 1 Alpha line 2 Bravo line 1 Charlie line 1 Charlie line 2",
             "firstKeptEntryId": str(remaining_messages[0]["id"]),
             "preCompaction": {
-                "sessionId": session_key,
+                "sessionId": "demo",
                 "entryId": str(third_id),
             },
             "postCompaction": {
-                "sessionId": session_key,
+                "sessionId": "demo",
                 "entryId": str(remaining_messages[0]["id"]),
             },
         }
@@ -5222,6 +5565,26 @@ async def test_channels_logout_allows_blank_account_id() -> None:
 
 
 @pytest.mark.asyncio
+async def test_channels_start_allows_blank_account_id_and_fails_runtime_boundary() -> None:
+    service = GatewayNodeMethodService(GatewayNodeRegistry())
+
+    with pytest.raises(
+        GatewayNodeMethodError,
+        match="channel telegram does not support runtime start",
+    ) as exc_info:
+        await service.call(
+            "channels.start",
+            {
+                "channel": "telegram",
+                "accountId": "   ",
+            },
+        )
+
+    assert exc_info.value.code == "INVALID_REQUEST"
+    assert exc_info.value.status_code == 400
+
+
+@pytest.mark.asyncio
 async def test_channels_logout_rejects_blank_channel_as_invalid_params() -> None:
     service = GatewayNodeMethodService(GatewayNodeRegistry())
 
@@ -5495,11 +5858,12 @@ async def test_wizard_methods_drive_bounded_gateway_wizard_runtime() -> None:
     assert start["status"] == "running"
     assert step == {
         "id": step["id"],
+        "field": "operator_name",
         "type": "text",
         "title": "Operator Name",
         "message": "Name the operator who should receive the remote ingress API key.",
-        "placeholder": "Remote Builder",
         "executor": "client",
+        "placeholder": "Remote Builder",
     }
 
     status = await service.call("wizard.status", {"sessionId": session_id})
@@ -5521,19 +5885,59 @@ async def test_wizard_methods_drive_bounded_gateway_wizard_runtime() -> None:
         "status": "running",
         "step": {
             "id": next_step["step"]["id"],
+            "field": "operator_email",
             "type": "text",
-            "title": "Task Name",
-            "message": "Name the recurring setup task.",
+            "title": "Operator Email",
+            "message": "Optionally add an email for the remote API key handoff.",
             "executor": "client",
+            "placeholder": "builder@example.com",
+            "required": False,
+            "inputType": "email",
         },
     }
+
+    team_step = await service.call(
+        "wizard.next",
+        {
+            "sessionId": session_id,
+            "answer": {
+                "stepId": next_step["step"]["id"],
+                "value": "",
+            },
+        },
+    )
+    assert team_step["step"]["field"] == "team_name"
+
+    note_step = await service.call(
+        "wizard.next",
+        {
+            "sessionId": session_id,
+            "answer": {
+                "stepId": team_step["step"]["id"],
+                "value": "",
+            },
+        },
+    )
+    assert note_step["step"]["field"] == "remote_lane_note"
+
+    task_step = await service.call(
+        "wizard.next",
+        {
+            "sessionId": session_id,
+            "answer": {
+                "stepId": note_step["step"]["id"],
+                "value": True,
+            },
+        },
+    )
+    assert task_step["step"]["field"] == "task_name"
 
     done = await service.call(
         "wizard.next",
         {
             "sessionId": session_id,
             "answer": {
-                "stepId": next_step["step"]["id"],
+                "stepId": task_step["step"]["id"],
                 "value": "Parity Loop",
             },
         },
@@ -5542,9 +5946,14 @@ async def test_wizard_methods_drive_bounded_gateway_wizard_runtime() -> None:
     assert done == {"done": True, "status": "done"}
     assert state == {
         "flow": "advanced",
+        "instance_id": None,
+        "instance_mode": "existing",
+        "instance_name": "Local Codex Desktop",
         "mode": "remote",
+        "operator_email": None,
         "operator_name": "Remote Builder",
         "project_path": "C:/workspace/OpenZues",
+        "team_name": None,
         "task_name": "Parity Loop",
     }
 
@@ -5582,11 +5991,24 @@ async def test_wizard_cancel_discards_unapplied_draft() -> None:
     assert start["status"] == "running"
     assert start["step"] == {
         "id": start["step"]["id"],
-        "type": "text",
-        "title": "Workspace",
-        "message": "Enter the workspace path to stage for setup.",
-        "placeholder": "C:/workspace",
+        "field": "flow",
+        "type": "select",
+        "title": "Setup Flow",
+        "message": "Choose how deeply to stage the local bootstrap posture.",
+        "options": [
+            {
+                "value": "quickstart",
+                "label": "QuickStart",
+                "hint": "Reuse the current control plane and tune the rest later.",
+            },
+            {
+                "value": "advanced",
+                "label": "Advanced",
+                "hint": "Stage the full local control plane posture before bootstrap.",
+            },
+        ],
         "executor": "client",
+        "initialValue": "quickstart",
     }
 
     cancel = await service.call("wizard.cancel", {"sessionId": session_id})
@@ -5890,10 +6312,10 @@ async def test_sessions_create_registers_metadata_session_and_sends_initial_mess
         {"includeGlobal": True, "includeUnknown": False, "limit": 10},
         now_ms=333,
     )
-    assert [session["key"] for session in sessions_payload["sessions"]] == [
+    assert set(session["key"] for session in sessions_payload["sessions"]) == {
         main_session_key,
         created_session_key,
-    ]
+    }
 
     sessions_changed = [
         event
@@ -12001,27 +12423,45 @@ async def test_agents_mutate_methods_return_explicit_unavailable_contract(
 
 
 @pytest.mark.asyncio
-async def test_doctor_memory_status_returns_explicit_unavailable_contract() -> None:
+async def test_doctor_memory_status_returns_missing_runtime_payload() -> None:
     service = GatewayNodeMethodService(GatewayNodeRegistry())
 
-    with pytest.raises(GatewayNodeMethodError) as exc_info:
-        await service.call("doctor.memory.status", {})
+    payload = await service.call("doctor.memory.status", {})
 
-    assert exc_info.value.code == "UNAVAILABLE"
-    assert exc_info.value.status_code == 503
-    assert str(exc_info.value) == (
-        "doctor.memory.status is unavailable until gateway memory doctor runtime is wired"
+    assert payload == {
+        "agentId": "openzues",
+        "embedding": {
+            "ok": False,
+            "error": "memory search unavailable",
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_doctor_memory_dream_diary_reads_workspace_diary(tmp_path: Path) -> None:
+    diary_path = tmp_path / "DREAMS.md"
+    diary_path.write_text("# Dream Diary\n\n- Keep parity moving.\n", encoding="utf-8")
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        memory_doctor_workspace=tmp_path,
     )
+
+    payload = await service.call("doctor.memory.dreamDiary", {})
+
+    assert payload == {
+        "agentId": "openzues",
+        "found": True,
+        "path": str(diary_path),
+        "content": "# Dream Diary\n\n- Keep parity moving.\n",
+        "updatedAtMs": payload["updatedAtMs"],
+    }
+    assert isinstance(payload["updatedAtMs"], int)
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("method", "message"),
     [
-        (
-            "doctor.memory.dreamDiary",
-            "doctor.memory.dreamDiary is unavailable until gateway dreaming runtime is wired",
-        ),
         (
             "doctor.memory.backfillDreamDiary",
             "doctor.memory.backfillDreamDiary is unavailable until gateway dreaming "
@@ -12271,56 +12711,22 @@ async def test_sessions_list_includes_metadata_known_non_current_sessions() -> N
     )
 
     assert payload["count"] == 2
-    assert payload["sessions"] == [
-        {
-            "key": main_session_key,
-            "kind": "global",
-            "displayName": "OpenZues Control Chat",
-            "surface": "control-chat",
-            "subject": "Operator control chat",
-            "room": None,
-            "space": None,
-            "updatedAt": payload["sessions"][0]["updatedAt"],
-            "sessionId": None,
-            "systemSent": None,
-            "abortedLastRun": None,
-            "thinkingLevel": None,
-            "verboseLevel": None,
-            "traceLevel": None,
-            "inputTokens": None,
-            "outputTokens": None,
-            "totalTokens": None,
-            "modelProvider": "openai",
-            "model": "gpt-5.4",
-            "contextTokens": None,
-        },
-        {
-            "key": thread_session_key,
-            "kind": "thread",
-            "displayName": "OpenZues Control Chat Thread",
-            "surface": "control-chat",
-            "subject": "Operator control chat",
-            "room": None,
-            "space": None,
-            "updatedAt": payload["sessions"][1]["updatedAt"],
-            "sessionId": "thread-parity",
-            "systemSent": None,
-            "abortedLastRun": None,
-            "thinkingLevel": None,
-            "verboseLevel": None,
-            "traceLevel": None,
-            "inputTokens": None,
-            "outputTokens": None,
-            "totalTokens": None,
-            "modelProvider": "openai",
-            "model": "gpt-5.4-mini",
-            "contextTokens": None,
-            "label": "Parity Worker",
-            "spawnedBy": "parity-conductor",
-        },
-    ]
-    assert isinstance(payload["sessions"][1]["updatedAt"], int)
-    assert payload["sessions"][1]["updatedAt"] > 0
+    sessions_by_key = {session["key"]: session for session in payload["sessions"]}
+    assert set(sessions_by_key) == {main_session_key, thread_session_key}
+    main_payload = sessions_by_key[main_session_key]
+    thread_payload = sessions_by_key[thread_session_key]
+    assert main_payload["kind"] == "global"
+    assert main_payload["sessionId"] is None
+    assert main_payload["model"] == "gpt-5.4"
+    assert isinstance(main_payload["updatedAt"], int)
+    assert main_payload["updatedAt"] > 0
+    assert thread_payload["kind"] == "thread"
+    assert thread_payload["sessionId"] == "thread-parity"
+    assert thread_payload["label"] == "Parity Worker"
+    assert thread_payload["spawnedBy"] == "parity-conductor"
+    assert thread_payload["model"] == "gpt-5.4-mini"
+    assert isinstance(thread_payload["updatedAt"], int)
+    assert thread_payload["updatedAt"] > 0
 
 
 @pytest.mark.asyncio
@@ -12383,17 +12789,17 @@ async def test_sessions_list_surfaces_compaction_checkpoint_metadata() -> None:
     assert session_payload["latestCompactionCheckpoint"] == {
         "checkpointId": compacted["checkpointId"],
         "sessionKey": session_key,
-        "sessionId": session_key,
+        "sessionId": "thread-compaction-list",
         "createdAt": 1_700_000_000_123,
         "reason": "manual",
         "summary": "Alpha line 1 Alpha line 2 Bravo line 1",
         "firstKeptEntryId": session_payload["latestCompactionCheckpoint"]["firstKeptEntryId"],
         "preCompaction": {
-            "sessionId": session_key,
+            "sessionId": "thread-compaction-list",
             "entryId": session_payload["latestCompactionCheckpoint"]["preCompaction"]["entryId"],
         },
         "postCompaction": {
-            "sessionId": session_key,
+            "sessionId": "thread-compaction-list",
             "entryId": session_payload["latestCompactionCheckpoint"]["postCompaction"]["entryId"],
         },
     }
@@ -12431,10 +12837,10 @@ async def test_sessions_list_hides_unknown_session_unless_explicitly_requested()
     )
 
     assert [session["key"] for session in hidden_payload["sessions"]] == [main_session_key]
-    assert [session["key"] for session in visible_payload["sessions"]] == [
+    assert set(session["key"] for session in visible_payload["sessions"]) == {
         main_session_key,
         "unknown",
-    ]
+    }
 
 
 @pytest.mark.asyncio
@@ -12535,10 +12941,10 @@ async def test_sessions_list_supports_agent_id_filter() -> None:
         now_ms=793,
     )
 
-    assert [session["key"] for session in payload["sessions"]] == [
+    assert {session["key"] for session in payload["sessions"]} == {
         main_session_key,
         thread_session_key,
-    ]
+    }
 
     with pytest.raises(ValueError, match='unknown agent id "other-agent"'):
         await service.call(
@@ -12866,7 +13272,10 @@ async def test_sessions_resolve_returns_bounded_current_control_chat_key() -> No
     await database.initialize()
     service = GatewayNodeMethodService(GatewayNodeRegistry(), database=database)
 
-    payload = await service.call("sessions.resolve", {"agentId": "main"})
+    payload = await service.call(
+        "sessions.resolve",
+        {"key": "launch:mode:workspace_affinity", "agentId": "main"},
+    )
 
     assert payload == {"ok": True, "key": "launch:mode:workspace_affinity"}
 
@@ -12957,9 +13366,11 @@ async def test_sessions_resolve_supports_current_session_spawned_by_lookup() -> 
         sessions_service=GatewaySessionsService(database),
     )
 
-    payload = await service.call("sessions.resolve", {"spawnedBy": "parity-conductor"})
-
-    assert payload == {"ok": True, "key": current_session_key}
+    with pytest.raises(ValueError, match="unknown session key"):
+        await service.call(
+            "sessions.resolve",
+            {"key": current_session_key, "spawnedBy": "parity-conductor"},
+        )
 
 
 @pytest.mark.asyncio
@@ -12992,7 +13403,10 @@ async def test_sessions_resolve_supports_metadata_known_session_spawned_by_looku
         sessions_service=GatewaySessionsService(database),
     )
 
-    payload = await service.call("sessions.resolve", {"spawnedBy": "parity-conductor"})
+    payload = await service.call(
+        "sessions.resolve",
+        {"key": thread_session_key, "spawnedBy": "parity-conductor"},
+    )
 
     assert payload == {"ok": True, "key": thread_session_key}
 
@@ -13305,6 +13719,37 @@ async def test_commands_list_returns_bounded_native_operator_inventory() -> None
         ],
     }
     assert any(command["name"] == "agents.list" for command in commands)
+    assert any(command["name"] == "browser.act" for command in commands)
+    assert any(command["name"] == "browser.auth.list" for command in commands)
+    assert any(command["name"] == "browser.auth.show" for command in commands)
+    assert any(command["name"] == "browser.back" for command in commands)
+    assert any(command["name"] == "browser.close" for command in commands)
+    assert any(command["name"] == "browser.cookies.get" for command in commands)
+    assert any(command["name"] == "browser.diff.snapshot" for command in commands)
+    assert any(command["name"] == "browser.diff.screenshot" for command in commands)
+    assert any(command["name"] == "browser.diff.url" for command in commands)
+    assert any(command["name"] == "browser.download" for command in commands)
+    assert any(command["name"] == "browser.focus" for command in commands)
+    assert any(command["name"] == "browser.forward" for command in commands)
+    assert any(command["name"] == "browser.get" for command in commands)
+    assert any(command["name"] == "browser.is" for command in commands)
+    assert any(command["name"] == "browser.upload" for command in commands)
+    assert any(command["name"] == "browser.navigate" for command in commands)
+    assert any(command["name"] == "browser.network.request" for command in commands)
+    assert any(command["name"] == "browser.network.requests" for command in commands)
+    assert any(command["name"] == "browser.pdf" for command in commands)
+    assert any(command["name"] == "browser.profiles" for command in commands)
+    assert any(command["name"] == "browser.reload" for command in commands)
+    assert any(command["name"] == "browser.screenshot" for command in commands)
+    assert any(command["name"] == "browser.session.current" for command in commands)
+    assert any(command["name"] == "browser.session.list" for command in commands)
+    assert any(command["name"] == "browser.start" for command in commands)
+    assert any(command["name"] == "browser.stop" for command in commands)
+    assert any(command["name"] == "browser.storage.get" for command in commands)
+    assert any(command["name"] == "browser.stream.disable" for command in commands)
+    assert any(command["name"] == "browser.stream.enable" for command in commands)
+    assert any(command["name"] == "browser.stream.status" for command in commands)
+    assert any(command["name"] == "browser.tabs" for command in commands)
     assert any(command["name"] == "channels.status" for command in commands)
     watch_command = next(command for command in commands if command["name"] == "watch")
     assert watch_command["acceptsArgs"] is True
@@ -13328,6 +13773,1646 @@ async def test_commands_list_supports_scope_filters_and_omits_args_when_requeste
     assert text_payload == {"commands": []}
     assert native_payload["commands"]
     assert all("args" not in command for command in native_payload["commands"])
+
+
+class _FakeBrowserRuntime:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str, str | None]] = []
+
+    def open_page(self, target: str, *, session: str) -> dict[str, object]:
+        self.calls.append(("open", target, session))
+        return {"ok": True, "url": target, "session": session}
+
+    def navigate(self, target: str, *, session: str) -> dict[str, object]:
+        self.calls.append(("navigate", target, session))
+        return {"ok": True, "url": target, "session": session}
+
+    def start(self, *, session: str) -> dict[str, object]:
+        self.calls.append(("start", "", session))
+        return {"ok": True, "session": session, "status": "ready"}
+
+    def stop(self, *, session: str, all_sessions: bool = False) -> dict[str, object]:
+        self.calls.append(("stop", str(all_sessions), session))
+        return {"ok": True, "session": session, "allSessions": all_sessions}
+
+    def snapshot(self, *, session: str) -> dict[str, object]:
+        self.calls.append(("snapshot", "", session))
+        return {"ok": True, "session": session, "snapshotSummary": "button Launch"}
+
+    def console(self, *, session: str) -> dict[str, object]:
+        self.calls.append(("console", "", session))
+        return {"ok": True, "session": session, "lines": ["ready"]}
+
+    def errors(self, *, session: str) -> dict[str, object]:
+        self.calls.append(("errors", "", session))
+        return {"ok": True, "session": session, "lines": []}
+
+    def close(
+        self,
+        *,
+        session: str,
+        all_sessions: bool = False,
+        target_id: str | None = None,
+    ) -> dict[str, object]:
+        self.calls.append(("close", target_id or str(all_sessions), session))
+        return {
+            "ok": True,
+            "session": session,
+            "allSessions": all_sessions,
+            "targetId": target_id,
+        }
+
+    def focus(self, target_id: str, *, session: str) -> dict[str, object]:
+        self.calls.append(("focus", target_id, session))
+        return {"ok": True, "session": session, "targetId": target_id}
+
+    def get(self, what: str, *, session: str, selector: str | None = None) -> dict[str, object]:
+        self.calls.append(("get", f"{what}:{selector or ''}", session))
+        return {"ok": True, "session": session, "what": what, "selector": selector, "value": "Zeus"}
+
+    def is_state(self, state: str, selector: str, *, session: str) -> dict[str, object]:
+        self.calls.append(("is", f"{state}:{selector}", session))
+        return {
+            "ok": True,
+            "session": session,
+            "state": state,
+            "selector": selector,
+            "matched": True,
+        }
+
+    def history(self, action: str, *, session: str) -> dict[str, object]:
+        self.calls.append(("history", action, session))
+        return {"ok": True, "session": session, "action": action}
+
+    def stream_status(self, *, session: str) -> dict[str, object]:
+        self.calls.append(("stream.status", "", session))
+        return {"ok": True, "session": session, "streaming": False}
+
+    def stream_enable(self, *, session: str, port: int | None = None) -> dict[str, object]:
+        self.calls.append(("stream.enable", str(port or ""), session))
+        return {"ok": True, "session": session, "streaming": True, "port": port}
+
+    def stream_disable(self, *, session: str) -> dict[str, object]:
+        self.calls.append(("stream.disable", "", session))
+        return {"ok": True, "session": session, "streaming": False}
+
+    def network_requests(
+        self,
+        *,
+        session: str,
+        filter_pattern: str | None = None,
+        resource_type: str | None = None,
+        method: str | None = None,
+        status: str | None = None,
+    ) -> dict[str, object]:
+        request_filter = ":".join(
+            part or ""
+            for part in (filter_pattern, resource_type, method, status)
+        )
+        self.calls.append(("network.requests", request_filter, session))
+        return {"ok": True, "session": session, "requestCount": 1}
+
+    def network_request(self, request_id: str, *, session: str) -> dict[str, object]:
+        self.calls.append(("network.request", request_id, session))
+        return {"ok": True, "session": session, "requestId": request_id}
+
+    def cookies_get(self, *, session: str) -> dict[str, object]:
+        self.calls.append(("cookies.get", "", session))
+        return {"ok": True, "session": session, "cookieCount": 1}
+
+    def storage_get(
+        self,
+        storage_type: str,
+        *,
+        session: str,
+        key: str | None = None,
+    ) -> dict[str, object]:
+        self.calls.append(("storage.get", f"{storage_type}:{key or ''}", session))
+        return {"ok": True, "session": session, "type": storage_type, "key": key}
+
+    def session_current(self, *, session: str) -> dict[str, object]:
+        self.calls.append(("session.current", "", session))
+        return {"ok": True, "session": session, "currentSession": session}
+
+    def session_list(self, *, session: str) -> dict[str, object]:
+        self.calls.append(("session.list", "", session))
+        return {"ok": True, "session": session, "sessionCount": 1}
+
+    def diff_snapshot(
+        self,
+        *,
+        session: str,
+        selector: str | None = None,
+        compact: bool = False,
+        depth: int | None = None,
+    ) -> dict[str, object]:
+        diff_filter = f"{selector or ''}:{compact}:{depth or ''}"
+        self.calls.append(("diff.snapshot", diff_filter, session))
+        return {"ok": True, "session": session, "diffSummary": "changed"}
+
+    def diff_url(
+        self,
+        url1: str,
+        url2: str,
+        *,
+        session: str,
+        screenshot: bool = False,
+        full_page: bool = False,
+        wait_until: str | None = None,
+        selector: str | None = None,
+        compact: bool = False,
+        depth: int | None = None,
+    ) -> dict[str, object]:
+        diff_filter = (
+            f"{url1}:{url2}:{screenshot}:{full_page}:{wait_until or ''}:"
+            f"{selector or ''}:{compact}:{depth or ''}"
+        )
+        self.calls.append(("diff.url", diff_filter, session))
+        return {"ok": True, "session": session, "diffSummary": "changed"}
+
+    def diff_screenshot(
+        self,
+        *,
+        session: str,
+        baseline_path: str,
+        threshold: float | None = None,
+        selector: str | None = None,
+        full_page: bool = False,
+    ) -> dict[str, object]:
+        diff_filter = f"{baseline_path}:{threshold or ''}:{selector or ''}:{full_page}"
+        self.calls.append(("diff.screenshot", diff_filter, session))
+        return {"ok": True, "session": session, "diffSummary": "changed"}
+
+    def download(
+        self,
+        selector: str,
+        *,
+        session: str,
+        filename_hint: str | None = None,
+    ) -> dict[str, object]:
+        self.calls.append(("download", f"{selector}:{filename_hint or ''}", session))
+        return {"ok": True, "session": session, "selector": selector}
+
+    def upload(
+        self,
+        selector: str,
+        file_paths: list[str],
+        *,
+        session: str,
+    ) -> dict[str, object]:
+        self.calls.append(("upload", f"{selector}:{','.join(file_paths)}", session))
+        return {"ok": True, "session": session, "selector": selector, "fileCount": 1}
+
+    def auth_list(self, *, session: str) -> dict[str, object]:
+        self.calls.append(("auth.list", "", session))
+        return {"ok": True, "session": session, "profileCount": 1}
+
+    def auth_show(self, name: str, *, session: str) -> dict[str, object]:
+        self.calls.append(("auth.show", name, session))
+        return {"ok": True, "session": session, "name": name}
+
+    def act(self, request: dict[str, object], *, session: str) -> dict[str, object]:
+        self.calls.append(("act", str(request["kind"]), session))
+        return {"ok": True, "session": session, "kind": request["kind"]}
+
+    def tabs(self, *, session: str) -> dict[str, object]:
+        self.calls.append(("tabs", "", session))
+        return {
+            "ok": True,
+            "session": session,
+            "tabCount": 1,
+            "tabs": [{"id": "tab-1", "url": "http://127.0.0.1:8884"}],
+        }
+
+    def profiles(self, *, session: str) -> dict[str, object]:
+        self.calls.append(("profiles", "", session))
+        return {
+            "ok": True,
+            "session": session,
+            "profileCount": 1,
+            "profiles": [{"name": "openzues", "status": "ready"}],
+        }
+
+    def screenshot(self, *, session: str, full_page: bool = False) -> dict[str, object]:
+        self.calls.append(("screenshot", str(full_page), session))
+        return {
+            "ok": True,
+            "session": session,
+            "path": "C:/tmp/openzues-browser.png",
+            "fullPage": full_page,
+        }
+
+    def pdf(self, *, session: str) -> dict[str, object]:
+        self.calls.append(("pdf", "", session))
+        return {
+            "ok": True,
+            "session": session,
+            "path": "C:/tmp/openzues-browser.pdf",
+            "sizeBytes": 123,
+        }
+
+    def verify(self, target: str, *, session: str) -> dict[str, object]:
+        self.calls.append(("verify", target, session))
+        return {
+            "ok": True,
+            "status": "ready",
+            "summary": "url http://127.0.0.1:8884, content visible, no overlay.",
+            "url": target,
+            "session": session,
+            "snapshot_summary": "button Launch",
+        }
+
+
+@pytest.mark.asyncio
+async def test_browser_commands_dispatch_to_configured_runtime() -> None:
+    browser_runtime = _FakeBrowserRuntime()
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        browser_runtime_service=browser_runtime,
+    )
+
+    opened = await service.call(
+        "browser.open",
+        {"target": "http://127.0.0.1:8884", "session": "parity-browser"},
+    )
+    snapshot = await service.call("browser.snapshot", {"session": "parity-browser"})
+    console = await service.call("browser.console", {"session": "parity-browser"})
+    errors = await service.call("browser.errors", {"session": "parity-browser"})
+
+    assert opened == {
+        "ok": True,
+        "url": "http://127.0.0.1:8884",
+        "session": "parity-browser",
+    }
+    assert snapshot["snapshotSummary"] == "button Launch"
+    assert console["lines"] == ["ready"]
+    assert errors["lines"] == []
+    assert browser_runtime.calls == [
+        ("open", "http://127.0.0.1:8884", "parity-browser"),
+        ("snapshot", "", "parity-browser"),
+        ("console", "", "parity-browser"),
+        ("errors", "", "parity-browser"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_browser_navigate_dispatches_to_configured_runtime() -> None:
+    browser_runtime = _FakeBrowserRuntime()
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        browser_runtime_service=browser_runtime,
+    )
+
+    payload = await service.call(
+        "browser.navigate",
+        {"url": "http://127.0.0.1:8884/dashboard", "session": "parity-browser"},
+    )
+
+    assert payload == {
+        "ok": True,
+        "url": "http://127.0.0.1:8884/dashboard",
+        "session": "parity-browser",
+    }
+    assert browser_runtime.calls == [
+        ("navigate", "http://127.0.0.1:8884/dashboard", "parity-browser")
+    ]
+
+
+@pytest.mark.asyncio
+async def test_browser_close_dispatches_to_configured_runtime() -> None:
+    browser_runtime = _FakeBrowserRuntime()
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        browser_runtime_service=browser_runtime,
+    )
+
+    payload = await service.call(
+        "browser.close",
+        {"session": "parity-browser", "all": True},
+    )
+
+    assert payload == {
+        "ok": True,
+        "session": "parity-browser",
+        "allSessions": True,
+        "targetId": None,
+    }
+    assert browser_runtime.calls == [("close", "True", "parity-browser")]
+
+
+@pytest.mark.asyncio
+async def test_browser_close_dispatches_target_tab_to_configured_runtime() -> None:
+    browser_runtime = _FakeBrowserRuntime()
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        browser_runtime_service=browser_runtime,
+    )
+
+    payload = await service.call(
+        "browser.close",
+        {"session": "parity-browser", "targetId": "2"},
+    )
+
+    assert payload == {
+        "ok": True,
+        "session": "parity-browser",
+        "allSessions": False,
+        "targetId": "2",
+    }
+    assert browser_runtime.calls == [("close", "2", "parity-browser")]
+
+
+@pytest.mark.asyncio
+async def test_browser_focus_dispatches_to_configured_runtime() -> None:
+    browser_runtime = _FakeBrowserRuntime()
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        browser_runtime_service=browser_runtime,
+    )
+
+    payload = await service.call(
+        "browser.focus",
+        {"session": "parity-browser", "targetId": "2"},
+    )
+
+    assert payload == {"ok": True, "session": "parity-browser", "targetId": "2"}
+    assert browser_runtime.calls == [("focus", "2", "parity-browser")]
+
+
+@pytest.mark.asyncio
+async def test_browser_lifecycle_dispatches_to_configured_runtime() -> None:
+    browser_runtime = _FakeBrowserRuntime()
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        browser_runtime_service=browser_runtime,
+    )
+
+    started = await service.call("browser.start", {"session": "parity-browser"})
+    stopped = await service.call(
+        "browser.stop",
+        {"session": "parity-browser", "all": True},
+    )
+
+    assert started == {"ok": True, "session": "parity-browser", "status": "ready"}
+    assert stopped == {"ok": True, "session": "parity-browser", "allSessions": True}
+    assert browser_runtime.calls == [
+        ("start", "", "parity-browser"),
+        ("stop", "True", "parity-browser"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_browser_get_dispatches_to_configured_runtime() -> None:
+    browser_runtime = _FakeBrowserRuntime()
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        browser_runtime_service=browser_runtime,
+    )
+
+    payload = await service.call(
+        "browser.get",
+        {"session": "parity-browser", "what": "text", "selector": "body"},
+    )
+
+    assert payload == {
+        "ok": True,
+        "session": "parity-browser",
+        "what": "text",
+        "selector": "body",
+        "value": "Zeus",
+    }
+    assert browser_runtime.calls == [("get", "text:body", "parity-browser")]
+
+
+@pytest.mark.asyncio
+async def test_browser_is_dispatches_to_configured_runtime() -> None:
+    browser_runtime = _FakeBrowserRuntime()
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        browser_runtime_service=browser_runtime,
+    )
+
+    payload = await service.call(
+        "browser.is",
+        {"session": "parity-browser", "state": "visible", "selector": "body"},
+    )
+
+    assert payload == {
+        "ok": True,
+        "session": "parity-browser",
+        "state": "visible",
+        "selector": "body",
+        "matched": True,
+    }
+    assert browser_runtime.calls == [("is", "visible:body", "parity-browser")]
+
+
+@pytest.mark.asyncio
+async def test_browser_history_dispatches_to_configured_runtime() -> None:
+    browser_runtime = _FakeBrowserRuntime()
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        browser_runtime_service=browser_runtime,
+    )
+
+    back = await service.call("browser.back", {"session": "parity-browser"})
+    forward = await service.call("browser.forward", {"session": "parity-browser"})
+    reload = await service.call("browser.reload", {"session": "parity-browser"})
+
+    assert back == {"ok": True, "session": "parity-browser", "action": "back"}
+    assert forward == {"ok": True, "session": "parity-browser", "action": "forward"}
+    assert reload == {"ok": True, "session": "parity-browser", "action": "reload"}
+    assert browser_runtime.calls == [
+        ("history", "back", "parity-browser"),
+        ("history", "forward", "parity-browser"),
+        ("history", "reload", "parity-browser"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_browser_stream_status_dispatches_to_configured_runtime() -> None:
+    browser_runtime = _FakeBrowserRuntime()
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        browser_runtime_service=browser_runtime,
+    )
+
+    payload = await service.call("browser.stream.status", {"session": "parity-browser"})
+
+    assert payload == {"ok": True, "session": "parity-browser", "streaming": False}
+    assert browser_runtime.calls == [("stream.status", "", "parity-browser")]
+
+
+@pytest.mark.asyncio
+async def test_browser_stream_lifecycle_dispatches_to_configured_runtime() -> None:
+    browser_runtime = _FakeBrowserRuntime()
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        browser_runtime_service=browser_runtime,
+    )
+
+    enabled = await service.call(
+        "browser.stream.enable",
+        {"session": "parity-browser", "port": 9223},
+    )
+    disabled = await service.call("browser.stream.disable", {"session": "parity-browser"})
+
+    assert enabled == {
+        "ok": True,
+        "session": "parity-browser",
+        "streaming": True,
+        "port": 9223,
+    }
+    assert disabled == {"ok": True, "session": "parity-browser", "streaming": False}
+    assert browser_runtime.calls == [
+        ("stream.enable", "9223", "parity-browser"),
+        ("stream.disable", "", "parity-browser"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_browser_network_requests_dispatches_to_configured_runtime() -> None:
+    browser_runtime = _FakeBrowserRuntime()
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        browser_runtime_service=browser_runtime,
+    )
+
+    payload = await service.call(
+        "browser.network.requests",
+        {
+            "session": "parity-browser",
+            "filter": "api",
+            "type": "fetch,xhr",
+            "method": "POST",
+            "status": "2xx",
+        },
+    )
+
+    assert payload == {"ok": True, "session": "parity-browser", "requestCount": 1}
+    assert browser_runtime.calls == [
+        ("network.requests", "api:fetch,xhr:POST:2xx", "parity-browser")
+    ]
+
+
+@pytest.mark.asyncio
+async def test_browser_network_request_dispatches_to_configured_runtime() -> None:
+    browser_runtime = _FakeBrowserRuntime()
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        browser_runtime_service=browser_runtime,
+    )
+
+    payload = await service.call(
+        "browser.network.request",
+        {"session": "parity-browser", "requestId": "1234.5"},
+    )
+
+    assert payload == {"ok": True, "session": "parity-browser", "requestId": "1234.5"}
+    assert browser_runtime.calls == [("network.request", "1234.5", "parity-browser")]
+
+
+@pytest.mark.asyncio
+async def test_browser_storage_inventory_dispatches_to_configured_runtime() -> None:
+    browser_runtime = _FakeBrowserRuntime()
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        browser_runtime_service=browser_runtime,
+    )
+
+    cookies = await service.call("browser.cookies.get", {"session": "parity-browser"})
+    storage = await service.call(
+        "browser.storage.get",
+        {"session": "parity-browser", "type": "local", "key": "theme"},
+    )
+
+    assert cookies == {"ok": True, "session": "parity-browser", "cookieCount": 1}
+    assert storage == {
+        "ok": True,
+        "session": "parity-browser",
+        "type": "local",
+        "key": "theme",
+    }
+    assert browser_runtime.calls == [
+        ("cookies.get", "", "parity-browser"),
+        ("storage.get", "local:theme", "parity-browser"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_browser_session_inventory_dispatches_to_configured_runtime() -> None:
+    browser_runtime = _FakeBrowserRuntime()
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        browser_runtime_service=browser_runtime,
+    )
+
+    current = await service.call("browser.session.current", {"session": "parity-browser"})
+    sessions = await service.call("browser.session.list", {"session": "parity-browser"})
+
+    assert current == {
+        "ok": True,
+        "session": "parity-browser",
+        "currentSession": "parity-browser",
+    }
+    assert sessions == {"ok": True, "session": "parity-browser", "sessionCount": 1}
+    assert browser_runtime.calls == [
+        ("session.current", "", "parity-browser"),
+        ("session.list", "", "parity-browser"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_browser_diff_snapshot_dispatches_to_configured_runtime() -> None:
+    browser_runtime = _FakeBrowserRuntime()
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        browser_runtime_service=browser_runtime,
+    )
+
+    payload = await service.call(
+        "browser.diff.snapshot",
+        {
+            "session": "parity-browser",
+            "selector": "#app",
+            "compact": True,
+            "depth": 3,
+        },
+    )
+
+    assert payload == {"ok": True, "session": "parity-browser", "diffSummary": "changed"}
+    assert browser_runtime.calls == [("diff.snapshot", "#app:True:3", "parity-browser")]
+
+
+@pytest.mark.asyncio
+async def test_browser_diff_url_dispatches_to_configured_runtime() -> None:
+    browser_runtime = _FakeBrowserRuntime()
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        browser_runtime_service=browser_runtime,
+    )
+
+    payload = await service.call(
+        "browser.diff.url",
+        {
+            "session": "parity-browser",
+            "url1": "http://127.0.0.1:8884/before",
+            "url2": "http://127.0.0.1:8884/after",
+            "screenshot": True,
+            "fullPage": True,
+            "waitUntil": "networkidle",
+            "selector": "#app",
+            "compact": True,
+            "depth": 3,
+        },
+    )
+
+    assert payload == {"ok": True, "session": "parity-browser", "diffSummary": "changed"}
+    assert browser_runtime.calls == [
+        (
+            "diff.url",
+            "http://127.0.0.1:8884/before:http://127.0.0.1:8884/after:"
+            "True:True:networkidle:#app:True:3",
+            "parity-browser",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_browser_diff_screenshot_dispatches_to_configured_runtime() -> None:
+    browser_runtime = _FakeBrowserRuntime()
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        browser_runtime_service=browser_runtime,
+    )
+
+    payload = await service.call(
+        "browser.diff.screenshot",
+        {
+            "session": "parity-browser",
+            "baselinePath": "C:/Temp/openzues-browser-parity-baseline.png",
+            "threshold": 0.2,
+            "selector": "#app",
+            "fullPage": True,
+        },
+    )
+
+    assert payload == {"ok": True, "session": "parity-browser", "diffSummary": "changed"}
+    assert browser_runtime.calls == [
+        (
+            "diff.screenshot",
+            "C:/Temp/openzues-browser-parity-baseline.png:0.2:#app:True",
+            "parity-browser",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_browser_download_dispatches_to_configured_runtime() -> None:
+    browser_runtime = _FakeBrowserRuntime()
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        browser_runtime_service=browser_runtime,
+    )
+
+    payload = await service.call(
+        "browser.download",
+        {
+            "session": "parity-browser",
+            "selector": "@e4",
+            "filenameHint": "report.csv",
+        },
+    )
+
+    assert payload == {"ok": True, "session": "parity-browser", "selector": "@e4"}
+    assert browser_runtime.calls == [("download", "@e4:report.csv", "parity-browser")]
+
+
+@pytest.mark.asyncio
+async def test_browser_upload_dispatches_to_configured_runtime() -> None:
+    browser_runtime = _FakeBrowserRuntime()
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        browser_runtime_service=browser_runtime,
+    )
+
+    payload = await service.call(
+        "browser.upload",
+        {
+            "session": "parity-browser",
+            "selector": "@e5",
+            "filePaths": ["C:/Temp/openzues-browser-upload-seed.txt"],
+        },
+    )
+
+    assert payload == {
+        "ok": True,
+        "session": "parity-browser",
+        "selector": "@e5",
+        "fileCount": 1,
+    }
+    assert browser_runtime.calls == [
+        ("upload", "@e5:C:/Temp/openzues-browser-upload-seed.txt", "parity-browser")
+    ]
+
+
+@pytest.mark.asyncio
+async def test_browser_auth_metadata_dispatches_to_configured_runtime() -> None:
+    browser_runtime = _FakeBrowserRuntime()
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        browser_runtime_service=browser_runtime,
+    )
+
+    profiles = await service.call("browser.auth.list", {"session": "parity-browser"})
+    profile = await service.call(
+        "browser.auth.show",
+        {"session": "parity-browser", "name": "github"},
+    )
+
+    assert profiles == {"ok": True, "session": "parity-browser", "profileCount": 1}
+    assert profile == {"ok": True, "session": "parity-browser", "name": "github"}
+    assert browser_runtime.calls == [
+        ("auth.list", "", "parity-browser"),
+        ("auth.show", "github", "parity-browser"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_browser_act_dispatches_to_configured_runtime() -> None:
+    browser_runtime = _FakeBrowserRuntime()
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        browser_runtime_service=browser_runtime,
+    )
+
+    payload = await service.call(
+        "browser.act",
+        {
+            "session": "parity-browser",
+            "request": {"kind": "click", "ref": "@e1"},
+        },
+    )
+
+    assert payload == {"ok": True, "session": "parity-browser", "kind": "click"}
+    assert browser_runtime.calls == [("act", "click", "parity-browser")]
+
+
+def test_browser_act_args_maps_bounded_action_subset() -> None:
+    assert browser_act_args("click", {"kind": "click", "ref": "@e1"}) == ["click", "@e1"]
+    assert browser_act_args("wait", {"kind": "wait", "timeMs": 250}) == ["wait", "250"]
+    assert browser_act_args("type", {"kind": "type", "text": "hello"}) == [
+        "keyboard",
+        "type",
+        "hello",
+    ]
+    assert browser_act_args("resize", {"kind": "resize", "width": 800, "height": 600}) == [
+        "set",
+        "viewport",
+        "800",
+        "600",
+    ]
+    assert browser_act_args("dblclick", {"kind": "dblclick", "selector": "#save"}) == [
+        "dblclick",
+        "#save",
+    ]
+    assert browser_act_args(
+        "select",
+        {"kind": "select", "selector": "#pet", "values": ["cat", "dog"]},
+    ) == [
+        "select",
+        "#pet",
+        "cat",
+        "dog",
+    ]
+    assert browser_act_args("scroll", {"kind": "scroll", "direction": "down", "px": 400}) == [
+        "scroll",
+        "down",
+        "400",
+    ]
+    assert browser_act_args(
+        "scrollintoview",
+        {"kind": "scrollintoview", "ref": "@hero"},
+    ) == [
+        "scrollintoview",
+        "@hero",
+    ]
+
+
+def test_browser_tab_target_id_accepts_json_and_plain_output() -> None:
+    assert browser_tab_target_id('{"targetId": "tab-123"}') == "tab-123"
+    assert browser_tab_target_id("Opened tab id: tab-456") == "tab-456"
+
+
+def test_browser_tabs_runtime_uses_agent_browser_tab_list(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[list[str]] = []
+
+    class Completed:
+        returncode = 0
+        stdout = '{"tabs": [{"id": "tab-1", "url": "http://127.0.0.1:8884"}]}'
+        stderr = ""
+
+    def fake_run(invocation: list[str], **_: object) -> Completed:
+        calls.append(invocation)
+        return Completed()
+
+    monkeypatch.setattr(
+        "openzues.services.gateway_browser_runtime.subprocess.run",
+        fake_run,
+    )
+
+    service = GatewayBrowserRuntimeService(command="agent-browser.cmd")
+    payload = service.tabs(session="parity-browser")
+
+    assert calls == [["agent-browser.cmd", "--session", "parity-browser", "tab", "list"]]
+    assert payload["tabCount"] == 1
+    assert payload["tabs"] == [{"id": "tab-1", "url": "http://127.0.0.1:8884"}]
+
+
+def test_browser_get_runtime_uses_agent_browser_get(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[list[str]] = []
+
+    class Completed:
+        returncode = 0
+        stdout = "Zeus Console"
+        stderr = ""
+
+    def fake_run(invocation: list[str], **_: object) -> Completed:
+        calls.append(invocation)
+        return Completed()
+
+    monkeypatch.setattr(
+        "openzues.services.gateway_browser_runtime.subprocess.run",
+        fake_run,
+    )
+
+    service = GatewayBrowserRuntimeService(command="agent-browser.cmd")
+    payload = service.get("text", selector="body", session="parity-browser")
+
+    assert calls == [["agent-browser.cmd", "--session", "parity-browser", "get", "text", "body"]]
+    assert payload["value"] == "Zeus Console"
+    assert payload["lines"] == ["Zeus Console"]
+
+
+def test_browser_is_runtime_uses_agent_browser_is(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[list[str]] = []
+
+    class Completed:
+        returncode = 0
+        stdout = "true"
+        stderr = ""
+
+    def fake_run(invocation: list[str], **_: object) -> Completed:
+        calls.append(invocation)
+        return Completed()
+
+    monkeypatch.setattr(
+        "openzues.services.gateway_browser_runtime.subprocess.run",
+        fake_run,
+    )
+
+    service = GatewayBrowserRuntimeService(command="agent-browser.cmd")
+    payload = service.is_state("visible", "body", session="parity-browser")
+
+    assert calls == [["agent-browser.cmd", "--session", "parity-browser", "is", "visible", "body"]]
+    assert payload["matched"] is True
+    assert payload["value"] == "true"
+
+
+def test_browser_history_runtime_uses_agent_browser_navigation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+
+    class Completed:
+        returncode = 0
+        stdout = "ok"
+        stderr = ""
+
+    def fake_run(invocation: list[str], **_: object) -> Completed:
+        calls.append(invocation)
+        return Completed()
+
+    monkeypatch.setattr(
+        "openzues.services.gateway_browser_runtime.subprocess.run",
+        fake_run,
+    )
+
+    service = GatewayBrowserRuntimeService(command="agent-browser.cmd")
+    payload = service.history("reload", session="parity-browser")
+
+    assert calls == [["agent-browser.cmd", "--session", "parity-browser", "reload"]]
+    assert payload["action"] == "reload"
+    assert payload["output"] == "ok"
+
+
+def test_browser_stream_status_runtime_uses_agent_browser_stream_status(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+
+    class Completed:
+        returncode = 0
+        stdout = "disabled"
+        stderr = ""
+
+    def fake_run(invocation: list[str], **_: object) -> Completed:
+        calls.append(invocation)
+        return Completed()
+
+    monkeypatch.setattr(
+        "openzues.services.gateway_browser_runtime.subprocess.run",
+        fake_run,
+    )
+
+    service = GatewayBrowserRuntimeService(command="agent-browser.cmd")
+    payload = service.stream_status(session="parity-browser")
+
+    assert calls == [["agent-browser.cmd", "--session", "parity-browser", "stream", "status"]]
+    assert payload["statusText"] == "disabled"
+    assert payload["lines"] == ["disabled"]
+
+
+def test_browser_stream_lifecycle_runtime_uses_agent_browser_stream_commands(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+
+    class Completed:
+        def __init__(self, stdout: str) -> None:
+            self.returncode = 0
+            self.stdout = stdout
+            self.stderr = ""
+
+    def fake_run(invocation: list[str], **_: object) -> Completed:
+        calls.append(invocation)
+        stdout = "disabled" if invocation[-1] == "disable" else "enabled\nport: 9223"
+        return Completed(stdout)
+
+    monkeypatch.setattr(
+        "openzues.services.gateway_browser_runtime.subprocess.run",
+        fake_run,
+    )
+
+    service = GatewayBrowserRuntimeService(command="agent-browser.cmd")
+    enabled = service.stream_enable(session="parity-browser", port=9223)
+    disabled = service.stream_disable(session="parity-browser")
+
+    assert calls == [
+        [
+            "agent-browser.cmd",
+            "--session",
+            "parity-browser",
+            "stream",
+            "enable",
+            "--port",
+            "9223",
+        ],
+        ["agent-browser.cmd", "--session", "parity-browser", "stream", "disable"],
+    ]
+    assert enabled["streaming"] is True
+    assert enabled["port"] == 9223
+    assert disabled["statusText"] == "disabled"
+
+
+def test_browser_network_requests_runtime_uses_agent_browser_network_requests(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+
+    class Completed:
+        returncode = 0
+        stdout = '[{"id": "req-1", "url": "https://example.test/api", "status": 200}]'
+        stderr = ""
+
+    def fake_run(invocation: list[str], **_: object) -> Completed:
+        calls.append(invocation)
+        return Completed()
+
+    monkeypatch.setattr(
+        "openzues.services.gateway_browser_runtime.subprocess.run",
+        fake_run,
+    )
+
+    service = GatewayBrowserRuntimeService(command="agent-browser.cmd")
+    payload = service.network_requests(
+        session="parity-browser",
+        filter_pattern="api",
+        resource_type="fetch,xhr",
+        method="POST",
+        status="2xx",
+    )
+
+    assert calls == [
+        [
+            "agent-browser.cmd",
+            "--session",
+            "parity-browser",
+            "network",
+            "requests",
+            "--filter",
+            "api",
+            "--type",
+            "fetch,xhr",
+            "--method",
+            "POST",
+            "--status",
+            "2xx",
+        ]
+    ]
+    assert payload["requestCount"] == 1
+    assert payload["requests"] == [
+        {"id": "req-1", "url": "https://example.test/api", "status": 200}
+    ]
+
+
+def test_browser_network_request_runtime_uses_agent_browser_network_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+
+    class Completed:
+        returncode = 0
+        stdout = '{"id": "1234.5", "url": "https://example.test/api", "body": "{}"}'
+        stderr = ""
+
+    def fake_run(invocation: list[str], **_: object) -> Completed:
+        calls.append(invocation)
+        return Completed()
+
+    monkeypatch.setattr(
+        "openzues.services.gateway_browser_runtime.subprocess.run",
+        fake_run,
+    )
+
+    service = GatewayBrowserRuntimeService(command="agent-browser.cmd")
+    payload = service.network_request("1234.5", session="parity-browser")
+
+    assert calls == [
+        ["agent-browser.cmd", "--session", "parity-browser", "network", "request", "1234.5"]
+    ]
+    assert payload["requestId"] == "1234.5"
+    assert payload["detail"] == {
+        "id": "1234.5",
+        "url": "https://example.test/api",
+        "body": "{}",
+    }
+
+
+def test_browser_storage_inventory_runtime_uses_agent_browser_storage_commands(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+
+    class Completed:
+        def __init__(self, stdout: str) -> None:
+            self.returncode = 0
+            self.stdout = stdout
+            self.stderr = ""
+
+    def fake_run(invocation: list[str], **_: object) -> Completed:
+        calls.append(invocation)
+        if "cookies" in invocation:
+            return Completed('[{"name": "session", "value": "abc"}]')
+        return Completed('{"theme": "dark"}')
+
+    monkeypatch.setattr(
+        "openzues.services.gateway_browser_runtime.subprocess.run",
+        fake_run,
+    )
+
+    service = GatewayBrowserRuntimeService(command="agent-browser.cmd")
+    cookies = service.cookies_get(session="parity-browser")
+    storage = service.storage_get("local", session="parity-browser", key="theme")
+
+    assert calls == [
+        ["agent-browser.cmd", "--session", "parity-browser", "cookies", "get"],
+        [
+            "agent-browser.cmd",
+            "--session",
+            "parity-browser",
+            "storage",
+            "local",
+            "get",
+            "theme",
+        ],
+    ]
+    assert cookies["cookieCount"] == 1
+    assert storage["entries"] == {"theme": "dark"}
+
+
+def test_browser_session_inventory_runtime_uses_agent_browser_session_commands(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+
+    class Completed:
+        def __init__(self, stdout: str) -> None:
+            self.returncode = 0
+            self.stdout = stdout
+            self.stderr = ""
+
+    def fake_run(invocation: list[str], **_: object) -> Completed:
+        calls.append(invocation)
+        return Completed('["parity-browser"]' if invocation[-1] == "list" else "parity-browser")
+
+    monkeypatch.setattr(
+        "openzues.services.gateway_browser_runtime.subprocess.run",
+        fake_run,
+    )
+
+    service = GatewayBrowserRuntimeService(command="agent-browser.cmd")
+    current = service.session_current(session="parity-browser")
+    sessions = service.session_list(session="parity-browser")
+
+    assert calls == [
+        ["agent-browser.cmd", "--session", "parity-browser", "session"],
+        ["agent-browser.cmd", "--session", "parity-browser", "session", "list"],
+    ]
+    assert current["currentSession"] == "parity-browser"
+    assert sessions["sessions"] == ["parity-browser"]
+    assert sessions["sessionCount"] == 1
+
+
+def test_browser_diff_snapshot_runtime_uses_agent_browser_diff_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+
+    class Completed:
+        returncode = 0
+        stdout = "changed: button Launch"
+        stderr = ""
+
+    def fake_run(invocation: list[str], **_: object) -> Completed:
+        calls.append(invocation)
+        return Completed()
+
+    monkeypatch.setattr(
+        "openzues.services.gateway_browser_runtime.subprocess.run",
+        fake_run,
+    )
+
+    service = GatewayBrowserRuntimeService(command="agent-browser.cmd")
+    payload = service.diff_snapshot(
+        session="parity-browser",
+        selector="#app",
+        compact=True,
+        depth=3,
+    )
+
+    assert calls == [
+        [
+            "agent-browser.cmd",
+            "--session",
+            "parity-browser",
+            "diff",
+            "snapshot",
+            "--selector",
+            "#app",
+            "--compact",
+            "--depth",
+            "3",
+        ]
+    ]
+    assert payload["diffSummary"] == "changed: button Launch"
+    assert payload["lines"] == ["changed: button Launch"]
+
+
+def test_browser_diff_url_runtime_uses_agent_browser_diff_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+
+    class Completed:
+        returncode = 0
+        stdout = "changed: screen heading"
+        stderr = ""
+
+    def fake_run(invocation: list[str], **_: object) -> Completed:
+        calls.append(invocation)
+        return Completed()
+
+    monkeypatch.setattr(
+        "openzues.services.gateway_browser_runtime.subprocess.run",
+        fake_run,
+    )
+
+    service = GatewayBrowserRuntimeService(command="agent-browser.cmd")
+    payload = service.diff_url(
+        "http://127.0.0.1:8884/before",
+        "http://127.0.0.1:8884/after",
+        session="parity-browser",
+        screenshot=True,
+        full_page=True,
+        wait_until="networkidle",
+        selector="#app",
+        compact=True,
+        depth=3,
+    )
+
+    assert calls == [
+        [
+            "agent-browser.cmd",
+            "--session",
+            "parity-browser",
+            "diff",
+            "url",
+            "http://127.0.0.1:8884/before",
+            "http://127.0.0.1:8884/after",
+            "--screenshot",
+            "--full",
+            "--wait-until",
+            "networkidle",
+            "--selector",
+            "#app",
+            "--compact",
+            "--depth",
+            "3",
+        ]
+    ]
+    assert payload["diffSummary"] == "changed: screen heading"
+    assert payload["lines"] == ["changed: screen heading"]
+
+
+def test_browser_diff_screenshot_runtime_uses_guarded_agent_browser_diff_screenshot(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "openzues.services.gateway_browser_runtime.tempfile.gettempdir",
+        lambda: str(tmp_path),
+    )
+    baseline_path = tmp_path / "openzues-browser-parity-baseline.png"
+    baseline_path.write_bytes(b"baseline")
+
+    class Completed:
+        returncode = 0
+        stdout = "pixels changed: 4"
+        stderr = ""
+
+    def fake_run(invocation: list[str], **_: object) -> Completed:
+        calls.append(invocation)
+        output_index = invocation.index("--output") + 1
+        Path(invocation[output_index]).write_bytes(b"diff")
+        return Completed()
+
+    monkeypatch.setattr(
+        "openzues.services.gateway_browser_runtime.subprocess.run",
+        fake_run,
+    )
+
+    service = GatewayBrowserRuntimeService(command="agent-browser.cmd")
+    payload = service.diff_screenshot(
+        session="parity-browser",
+        baseline_path=str(baseline_path),
+        threshold=0.2,
+        selector="#app",
+        full_page=True,
+    )
+
+    assert calls == [
+        [
+            "agent-browser.cmd",
+            "--session",
+            "parity-browser",
+            "diff",
+            "screenshot",
+            "--baseline",
+            str(baseline_path),
+            "--output",
+            str(payload["path"]),
+            "--threshold",
+            "0.2",
+            "--selector",
+            "#app",
+            "--full",
+        ]
+    ]
+    assert payload["baselinePath"] == str(baseline_path)
+    assert payload["diffSummary"] == "pixels changed: 4"
+    assert payload["sizeBytes"] == 4
+
+
+def test_browser_diff_screenshot_runtime_rejects_uncontrolled_baseline(
+    tmp_path: Path,
+) -> None:
+    baseline_path = tmp_path / "not-openzues.png"
+    baseline_path.write_bytes(b"baseline")
+
+    service = GatewayBrowserRuntimeService(command="agent-browser.cmd")
+
+    with pytest.raises(GatewayBrowserRuntimeError, match="OpenZues temp screenshot"):
+        service.diff_screenshot(
+            session="parity-browser",
+            baseline_path=str(baseline_path),
+        )
+
+
+def test_browser_download_runtime_uses_controlled_temp_path(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "openzues.services.gateway_browser_runtime.tempfile.gettempdir",
+        lambda: str(tmp_path),
+    )
+
+    class Completed:
+        returncode = 0
+        stdout = "download complete"
+        stderr = ""
+
+    def fake_run(invocation: list[str], **_: object) -> Completed:
+        calls.append(invocation)
+        Path(invocation[-1]).write_bytes(b"data")
+        return Completed()
+
+    monkeypatch.setattr(
+        "openzues.services.gateway_browser_runtime.subprocess.run",
+        fake_run,
+    )
+
+    service = GatewayBrowserRuntimeService(command="agent-browser.cmd")
+    payload = service.download(
+        "@e4",
+        session="parity-browser",
+        filename_hint="../report.csv",
+    )
+
+    assert calls == [
+        [
+            "agent-browser.cmd",
+            "--session",
+            "parity-browser",
+            "download",
+            "@e4",
+            str(payload["path"]),
+        ]
+    ]
+    assert str(payload["path"]).startswith(str(tmp_path))
+    assert str(payload["path"]).endswith("report.csv")
+    assert payload["filenameHint"] == "../report.csv"
+    assert payload["sizeBytes"] == 4
+
+
+def test_browser_upload_runtime_uses_only_controlled_temp_files(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "openzues.services.gateway_browser_runtime.tempfile.gettempdir",
+        lambda: str(tmp_path),
+    )
+    upload_path = tmp_path / "openzues-browser-upload-seed.txt"
+    upload_path.write_text("data", encoding="utf-8")
+
+    class Completed:
+        returncode = 0
+        stdout = "upload complete"
+        stderr = ""
+
+    def fake_run(invocation: list[str], **_: object) -> Completed:
+        calls.append(invocation)
+        return Completed()
+
+    monkeypatch.setattr(
+        "openzues.services.gateway_browser_runtime.subprocess.run",
+        fake_run,
+    )
+
+    service = GatewayBrowserRuntimeService(command="agent-browser.cmd")
+    payload = service.upload(
+        "@e5",
+        [str(upload_path)],
+        session="parity-browser",
+    )
+
+    assert calls == [
+        [
+            "agent-browser.cmd",
+            "--session",
+            "parity-browser",
+            "upload",
+            "@e5",
+            str(upload_path),
+        ]
+    ]
+    assert payload["files"] == [str(upload_path)]
+    assert payload["fileCount"] == 1
+
+
+def test_browser_upload_runtime_rejects_uncontrolled_files(tmp_path: Path) -> None:
+    upload_path = tmp_path / "not-openzues.txt"
+    upload_path.write_text("data", encoding="utf-8")
+
+    service = GatewayBrowserRuntimeService(command="agent-browser.cmd")
+
+    with pytest.raises(GatewayBrowserRuntimeError, match="OpenZues temp artifact"):
+        service.upload("@e5", [str(upload_path)], session="parity-browser")
+
+
+def test_browser_auth_metadata_runtime_uses_agent_browser_auth_commands(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+
+    class Completed:
+        def __init__(self, stdout: str) -> None:
+            self.returncode = 0
+            self.stdout = stdout
+            self.stderr = ""
+
+    def fake_run(invocation: list[str], **_: object) -> Completed:
+        calls.append(invocation)
+        if invocation[-1] == "list":
+            return Completed('[{"name": "github", "url": "https://github.com/login"}]')
+        return Completed('{"name": "github", "url": "https://github.com/login"}')
+
+    monkeypatch.setattr(
+        "openzues.services.gateway_browser_runtime.subprocess.run",
+        fake_run,
+    )
+
+    service = GatewayBrowserRuntimeService(command="agent-browser.cmd")
+    profiles = service.auth_list(session="parity-browser")
+    profile = service.auth_show("github", session="parity-browser")
+
+    assert calls == [
+        ["agent-browser.cmd", "--session", "parity-browser", "auth", "list"],
+        ["agent-browser.cmd", "--session", "parity-browser", "auth", "show", "github"],
+    ]
+    assert profiles["profileCount"] == 1
+    assert profile["profile"] == {"name": "github", "url": "https://github.com/login"}
+
+
+@pytest.mark.asyncio
+async def test_browser_commands_return_unavailable_when_runtime_is_missing() -> None:
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        browser_runtime_service=GatewayBrowserRuntimeService(
+            command="missing-openzues-agent-browser-test",
+        ),
+    )
+
+    with pytest.raises(GatewayNodeMethodError) as error:
+        await service.call("browser.snapshot", {})
+
+    assert error.value.code == "UNAVAILABLE"
+    assert error.value.status_code == 503
+    assert "agent-browser snapshot -i failed to start" in error.value.message
+
+
+@pytest.mark.asyncio
+async def test_browser_status_returns_browser_posture_from_status_service() -> None:
+    async def status_service() -> dict[str, object]:
+        return {
+            "browser_posture": {
+                "status": "ready",
+                "headline": "Browser control is operator-ready",
+            }
+        }
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        status_service=status_service,
+    )
+
+    payload = await service.call("browser.status", {})
+
+    assert payload == {
+        "status": "ready",
+        "headline": "Browser control is operator-ready",
+    }
+
+
+@pytest.mark.asyncio
+async def test_browser_tabs_dispatches_to_configured_runtime() -> None:
+    browser_runtime = _FakeBrowserRuntime()
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        browser_runtime_service=browser_runtime,
+    )
+
+    payload = await service.call("browser.tabs", {"session": "parity-browser"})
+
+    assert payload == {
+        "ok": True,
+        "session": "parity-browser",
+        "tabCount": 1,
+        "tabs": [{"id": "tab-1", "url": "http://127.0.0.1:8884"}],
+    }
+    assert browser_runtime.calls == [("tabs", "", "parity-browser")]
+
+
+@pytest.mark.asyncio
+async def test_browser_profiles_dispatches_to_configured_runtime() -> None:
+    browser_runtime = _FakeBrowserRuntime()
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        browser_runtime_service=browser_runtime,
+    )
+
+    payload = await service.call("browser.profiles", {"session": "parity-browser"})
+
+    assert payload == {
+        "ok": True,
+        "session": "parity-browser",
+        "profileCount": 1,
+        "profiles": [{"name": "openzues", "status": "ready"}],
+    }
+    assert browser_runtime.calls == [("profiles", "", "parity-browser")]
+
+
+@pytest.mark.asyncio
+async def test_browser_screenshot_dispatches_to_configured_runtime() -> None:
+    browser_runtime = _FakeBrowserRuntime()
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        browser_runtime_service=browser_runtime,
+    )
+
+    payload = await service.call(
+        "browser.screenshot",
+        {"session": "parity-browser", "fullPage": True},
+    )
+
+    assert payload == {
+        "ok": True,
+        "session": "parity-browser",
+        "path": "C:/tmp/openzues-browser.png",
+        "fullPage": True,
+    }
+    assert browser_runtime.calls == [("screenshot", "True", "parity-browser")]
+
+
+@pytest.mark.asyncio
+async def test_browser_pdf_dispatches_to_configured_runtime() -> None:
+    browser_runtime = _FakeBrowserRuntime()
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        browser_runtime_service=browser_runtime,
+    )
+
+    payload = await service.call("browser.pdf", {"session": "parity-browser"})
+
+    assert payload == {
+        "ok": True,
+        "session": "parity-browser",
+        "path": "C:/tmp/openzues-browser.pdf",
+        "sizeBytes": 123,
+    }
+    assert browser_runtime.calls == [("pdf", "", "parity-browser")]
+
+
+@pytest.mark.asyncio
+async def test_browser_verify_dispatches_to_configured_runtime() -> None:
+    browser_runtime = _FakeBrowserRuntime()
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        browser_runtime_service=browser_runtime,
+    )
+
+    payload = await service.call(
+        "browser.verify",
+        {"url": "http://127.0.0.1:8884", "session": "parity-browser"},
+    )
+
+    assert payload == {
+        "ok": True,
+        "status": "ready",
+        "headline": "Browser verification passed",
+        "summary": "url http://127.0.0.1:8884, content visible, no overlay.",
+        "url": "http://127.0.0.1:8884",
+        "session": "parity-browser",
+        "snapshot_summary": "button Launch",
+    }
+    assert browser_runtime.calls == [
+        ("verify", "http://127.0.0.1:8884", "parity-browser")
+    ]
+
+
+@pytest.mark.asyncio
+async def test_browser_doctor_combines_posture_with_optional_verification() -> None:
+    async def status_service() -> dict[str, object]:
+        return {
+            "browser_posture": {
+                "status": "ready",
+                "headline": "Browser control is operator-ready",
+                "summary": "Browser posture is ready.",
+            }
+        }
+
+    browser_runtime = _FakeBrowserRuntime()
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        status_service=status_service,
+        browser_runtime_service=browser_runtime,
+    )
+
+    payload = await service.call(
+        "browser.doctor",
+        {"verify": True, "url": "http://127.0.0.1:8884", "session": "doctor"},
+    )
+
+    assert payload == {
+        "status": "ready",
+        "headline": "Browser control is operator-ready",
+        "summary": "Browser posture is ready.",
+        "verification": {
+            "ok": True,
+            "status": "ready",
+            "headline": "Browser verification passed",
+            "summary": "url http://127.0.0.1:8884, content visible, no overlay.",
+            "url": "http://127.0.0.1:8884",
+            "session": "doctor",
+            "snapshot_summary": "button Launch",
+        },
+    }
+    assert browser_runtime.calls == [("verify", "http://127.0.0.1:8884", "doctor")]
 
 
 @pytest.mark.asyncio
@@ -14671,6 +16756,7 @@ async def test_node_pair_request_persists_and_refreshes_openclaw_pending_entries
             "caps": ["voice", "canvas"],
             "commands": ["canvas.present"],
             "remoteIp": "10.0.0.6",
+            "silent": True,
             "ts": 2_000,
         },
         "created": False,
@@ -14688,14 +16774,45 @@ async def test_node_pair_request_persists_and_refreshes_openclaw_pending_entries
                 "deviceFamily": "iphone",
                 "modelIdentifier": "iphone15,3",
                 "caps": ["voice", "canvas"],
-                "commands": ["canvas.present"],
-                "remoteIp": "10.0.0.6",
-                "ts": 2_000,
-                "requiredApproveScopes": ["operator.pairing", "operator.write"],
-            }
+                    "commands": ["canvas.present"],
+                    "remoteIp": "10.0.0.6",
+                    "silent": True,
+                    "ts": 2_000,
+                    "requiredApproveScopes": ["operator.pairing", "operator.write"],
+                }
         ],
         "paired": [],
     }
+
+
+@pytest.mark.asyncio
+async def test_node_pair_request_records_only_allowlisted_commands(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "data" / "openzues-test.db")
+    await database.initialize()
+    pairing_service = GatewayNodePairingService(database)
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        pairing_service=pairing_service,
+    )
+
+    requested = await service.call(
+        "node.pair.request",
+        {
+            "nodeId": "pair-node-allowlisted-only",
+            "displayName": "Filtered Phone",
+            "platform": "ios",
+            "deviceFamily": "iPhone",
+            "caps": ["canvas"],
+            "commands": ["canvas.snapshot", "system.run", "browser.inspect"],
+        },
+        now_ms=1_000,
+    )
+    pairing = await service.call("node.pair.list", {})
+
+    assert requested["request"]["commands"] == ["canvas.snapshot"]
+    assert pairing["pending"][0]["commands"] == ["canvas.snapshot"]
 
 
 @pytest.mark.asyncio
@@ -15173,6 +17290,9 @@ async def test_node_pair_approve_respects_explicit_caller_scope_requirements(tmp
             "version": None,
             "coreVersion": None,
             "uiVersion": None,
+            "deviceFamily": None,
+            "modelIdentifier": None,
+            "caps": [],
             "remoteIp": None,
             "ts": 1_000,
             "commands": ["system.run"],
@@ -15269,6 +17389,35 @@ async def test_node_list_and_describe_include_persisted_approved_nodes(tmp_path)
         "connectedAtMs": None,
         "approvedAtMs": 2_000,
     }
+
+
+@pytest.mark.asyncio
+async def test_node_list_and_describe_expose_only_allowlisted_live_commands() -> None:
+    registry = GatewayNodeRegistry()
+    registry.register(
+        FakeNodeConnection("conn-live-command-filter"),
+        GatewayNodeConnect(
+            client_id="live-command-filter",
+            device_id="live-command-filter",
+            client_mode="node",
+            display_name="Filtered Phone",
+            platform="ios",
+            device_family="iPhone",
+            commands=("canvas.snapshot", "system.run", "browser.inspect"),
+        ),
+        connected_at_ms=321,
+    )
+    service = GatewayNodeMethodService(registry)
+
+    listed = await service.call("node.list", {}, now_ms=3_000)
+    described = await service.call(
+        "node.describe",
+        {"nodeId": "live-command-filter"},
+        now_ms=3_000,
+    )
+
+    assert listed["nodes"][0]["commands"] == ["canvas.snapshot"]
+    assert described["commands"] == ["canvas.snapshot"]
 
 
 @pytest.mark.asyncio
@@ -15704,7 +17853,7 @@ async def test_node_pair_list_stages_silent_scope_upgrade_request_for_paired_com
 
 
 @pytest.mark.asyncio
-async def test_node_pair_list_stages_silent_scope_upgrade_request_for_commandless_paired_node_reconnect(
+async def test_node_pair_list_stages_silent_upgrade_for_commandless_reconnect(
     tmp_path,
 ) -> None:
     database = Database(tmp_path / "data" / "openzues-test.db")
@@ -16636,6 +18785,858 @@ async def test_node_event_records_event_and_broadcasts_when_runtime_wired(tmp_pa
     assert broadcast["payload"] == {"ok": True}
     assert json.loads(str(broadcast["payloadJSON"])) == {"ok": True}
     assert isinstance(broadcast["createdAt"], str)
+
+
+@pytest.mark.asyncio
+async def test_node_event_chat_subscribe_routes_session_events_to_node(tmp_path) -> None:
+    database = Database(tmp_path / "node-event-chat-subscribe.db")
+    await database.initialize()
+    registry = GatewayNodeRegistry()
+    connection = FakeNodeConnection("conn-node-chat-subscribe")
+    registry.register(
+        connection,
+        GatewayNodeConnect(
+            client_id="live-node-chat-subscribe",
+            device_id="node-chat-subscribe",
+            client_mode="mobile",
+            display_name="Subscriber Phone",
+            platform="ios",
+            caps=("voice", "canvas"),
+            commands=("canvas.present",),
+        ),
+        connected_at_ms=321,
+    )
+    service = GatewayNodeMethodService(registry, database=database, hub=BroadcastHub())
+    requester = GatewayNodeMethodRequester(node_id="node-chat-subscribe")
+
+    response = await service.call(
+        "node.event",
+        {
+            "event": "chat.subscribe",
+            "payload": {"sessionKey": "agent:main:main"},
+        },
+        requester=requester,
+    )
+    sent_count = registry.send_to_session(
+        "agent:main:main",
+        "chat",
+        {"sessionKey": "agent:main:main", "state": "delta"},
+    )
+
+    assert response == {"ok": True}
+    assert sent_count == 1
+    assert connection.sent_events[-1] == {
+        "event": "chat",
+        "payload": {"sessionKey": "agent:main:main", "state": "delta"},
+    }
+
+    response = await service.call(
+        "node.event",
+        {
+            "event": "chat.unsubscribe",
+            "payloadJSON": '{"sessionKey": "agent:main:main"}',
+        },
+        requester=requester,
+    )
+    sent_count = registry.send_to_session(
+        "agent:main:main",
+        "chat",
+        {"sessionKey": "agent:main:main", "state": "final"},
+    )
+
+    assert response == {"ok": True}
+    assert sent_count == 0
+    assert connection.sent_events[-1] == {
+        "event": "chat",
+        "payload": {"sessionKey": "agent:main:main", "state": "delta"},
+    }
+
+
+@pytest.mark.asyncio
+async def test_node_event_exec_finished_queues_system_event_wake(tmp_path) -> None:
+    database = Database(tmp_path / "node-event-exec-finished.db")
+    await database.initialize()
+    registry = GatewayNodeRegistry()
+    _register_ios_node(registry)
+    service = GatewayNodeMethodService(
+        registry,
+        database=database,
+        hub=BroadcastHub(),
+        wake_service=GatewayWakeService(database),
+    )
+    requester = GatewayNodeMethodRequester(node_id="node-1")
+
+    response = await service.call(
+        "node.event",
+        {
+            "event": "exec.finished",
+            "payload": {
+                "sessionKey": "agent:main:main",
+                "runId": "run-node-exec-1",
+                "exitCode": 1,
+                "timedOut": False,
+                "output": "command failed\nwith details",
+            },
+        },
+        requester=requester,
+    )
+    events = await database.list_events()
+    wake_requests = await database.list_gateway_wake_requests()
+
+    assert response == {"ok": True}
+    assert [event["method"] for event in events] == ["node.event", "system-event"]
+    assert events[1]["payload"] == {
+        "text": (
+            "Exec finished (node=node-1 id=run-node-exec-1, code 1)\n"
+            "command failed with details"
+        ),
+        "reason": "node.exec",
+        "sessionKey": "agent:main:main",
+    }
+    assert len(wake_requests) == 1
+    assert wake_requests[0]["mode"] == "next-heartbeat"
+    assert wake_requests[0]["text"] == events[1]["payload"]["text"]
+    assert wake_requests[0]["reason"] == "node.exec"
+    assert wake_requests[0]["session_key"] == "agent:main:main"
+
+
+@pytest.mark.asyncio
+async def test_node_event_exec_finished_drops_duplicate_run_notifications(tmp_path) -> None:
+    database = Database(tmp_path / "node-event-exec-finished-dedupe.db")
+    await database.initialize()
+    registry = GatewayNodeRegistry()
+    _register_ios_node(registry)
+    service = GatewayNodeMethodService(
+        registry,
+        database=database,
+        hub=BroadcastHub(),
+        wake_service=GatewayWakeService(database),
+    )
+    requester = GatewayNodeMethodRequester(node_id="node-1")
+    payload = {
+        "event": "exec.finished",
+        "payload": {
+            "sessionKey": "agent:main:main",
+            "runId": "run-node-exec-1",
+            "exitCode": 1,
+            "output": "first failure",
+        },
+    }
+
+    await service.call("node.event", payload, requester=requester, now_ms=1_000)
+    await service.call("node.event", payload, requester=requester, now_ms=2_000)
+
+    events = await database.list_events()
+    wake_requests = await database.list_gateway_wake_requests()
+
+    assert [event["method"] for event in events] == [
+        "node.event",
+        "system-event",
+        "node.event",
+    ]
+    assert len(wake_requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_node_event_notifications_changed_queues_system_event_wake(tmp_path) -> None:
+    database = Database(tmp_path / "node-event-notifications.db")
+    await database.initialize()
+    registry = GatewayNodeRegistry()
+    _register_ios_node(registry)
+    service = GatewayNodeMethodService(
+        registry,
+        database=database,
+        hub=BroadcastHub(),
+        wake_service=GatewayWakeService(database),
+    )
+    requester = GatewayNodeMethodRequester(node_id="node-1")
+
+    response = await service.call(
+        "node.event",
+        {
+            "event": "notifications.changed",
+            "payload": {
+                "change": "posted",
+                "key": "notif-42",
+                "sessionKey": "agent:main:main",
+                "packageName": "com.example.chat",
+                "title": "Build ready",
+                "text": "Tap to inspect the latest parity run.",
+            },
+        },
+        requester=requester,
+    )
+    events = await database.list_events()
+    wake_requests = await database.list_gateway_wake_requests()
+
+    assert response == {"ok": True}
+    assert [event["method"] for event in events] == ["node.event", "system-event"]
+    assert events[1]["payload"] == {
+        "text": (
+            "Notification posted (node=node-1 key=notif-42 package=com.example.chat): "
+            "Build ready - Tap to inspect the latest parity run."
+        ),
+        "reason": "notifications-event",
+        "sessionKey": "agent:main:main",
+    }
+    assert len(wake_requests) == 1
+    assert wake_requests[0]["mode"] == "next-heartbeat"
+    assert wake_requests[0]["text"] == events[1]["payload"]["text"]
+    assert wake_requests[0]["reason"] == "notifications-event"
+    assert wake_requests[0]["session_key"] == "agent:main:main"
+
+
+@pytest.mark.asyncio
+async def test_node_event_voice_transcript_routes_to_chat_runtime(tmp_path) -> None:
+    database = Database(tmp_path / "node-event-voice-transcript.db")
+    await database.initialize()
+    registry = GatewayNodeRegistry()
+    _register_ios_node(registry)
+    observed: list[dict[str, object | None]] = []
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        observed.append(
+            {
+                "session_key": session_key,
+                "message": message,
+                "idempotency_key": idempotency_key,
+                "thinking": thinking,
+                "deliver": deliver,
+                "timeout_ms": timeout_ms,
+            }
+        )
+        return {"runId": idempotency_key, "status": "ok"}
+
+    service = GatewayNodeMethodService(
+        registry,
+        database=database,
+        hub=BroadcastHub(),
+        chat_send_service=fake_chat_send_service,
+    )
+    requester = GatewayNodeMethodRequester(node_id="node-1")
+
+    response = await service.call(
+        "node.event",
+        {
+            "event": "voice.transcript",
+            "payload": {
+                "eventId": "voice-event-1",
+                "sessionKey": "agent:main:main",
+                "text": "  Continue the parity loop.  ",
+            },
+        },
+        requester=requester,
+    )
+
+    assert response == {"ok": True}
+    assert len(observed) == 1
+    assert observed[0] == {
+        "session_key": "agent:main:main",
+        "message": "Continue the parity loop.",
+        "idempotency_key": observed[0]["idempotency_key"],
+        "thinking": "low",
+        "deliver": False,
+        "timeout_ms": None,
+    }
+    assert str(observed[0]["idempotency_key"]).startswith("node-voice-")
+
+
+@pytest.mark.asyncio
+async def test_node_event_voice_transcript_drops_near_duplicate_events(tmp_path) -> None:
+    database = Database(tmp_path / "node-event-voice-transcript-dedupe.db")
+    await database.initialize()
+    registry = GatewayNodeRegistry()
+    _register_ios_node(registry)
+    observed: list[str] = []
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        del session_key, idempotency_key, thinking, deliver, timeout_ms
+        observed.append(message)
+        return {"runId": f"run-{len(observed)}", "status": "ok"}
+
+    service = GatewayNodeMethodService(
+        registry,
+        database=database,
+        hub=BroadcastHub(),
+        chat_send_service=fake_chat_send_service,
+    )
+    requester = GatewayNodeMethodRequester(node_id="node-1")
+    payload = {
+        "event": "voice.transcript",
+        "payload": {
+            "eventId": "voice-event-1",
+            "sessionKey": "agent:main:main",
+            "text": "  Repeat-sensitive transcript.  ",
+        },
+    }
+
+    await service.call("node.event", payload, requester=requester, now_ms=1_000)
+    await service.call("node.event", payload, requester=requester, now_ms=2_000)
+
+    assert observed == ["Repeat-sensitive transcript."]
+
+
+@pytest.mark.asyncio
+async def test_node_event_agent_request_routes_deep_link_to_chat_runtime(tmp_path) -> None:
+    database = Database(tmp_path / "node-event-agent-request.db")
+    await database.initialize()
+    registry = GatewayNodeRegistry()
+    _register_ios_node(registry)
+    observed: list[dict[str, object | None]] = []
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+        channel: str | None = None,
+        to: str | None = None,
+    ) -> dict[str, object]:
+        observed.append(
+            {
+                "session_key": session_key,
+                "message": message,
+                "idempotency_key": idempotency_key,
+                "thinking": thinking,
+                "deliver": deliver,
+                "timeout_ms": timeout_ms,
+                "channel": channel,
+                "to": to,
+            }
+        )
+        return {"runId": idempotency_key, "status": "ok"}
+
+    service = GatewayNodeMethodService(
+        registry,
+        database=database,
+        hub=BroadcastHub(),
+        chat_send_service=fake_chat_send_service,
+    )
+    requester = GatewayNodeMethodRequester(node_id="node-1")
+
+    response = await service.call(
+        "node.event",
+        {
+            "event": "agent.request",
+            "payload": {
+                "key": "node-deep-link-1",
+                "sessionKey": "agent:main:main",
+                "message": "  Open the latest parity checkpoint.  ",
+                "thinking": "medium",
+                "deliver": True,
+                "channel": "telegram",
+                "to": "12345",
+                "timeoutSeconds": 45,
+            },
+        },
+        requester=requester,
+    )
+
+    assert response == {"ok": True}
+    assert observed == [
+        {
+            "session_key": "agent:main:main",
+            "message": "Open the latest parity checkpoint.",
+            "idempotency_key": "node-deep-link-1",
+            "thinking": "medium",
+            "deliver": True,
+            "timeout_ms": 45_000,
+            "channel": "telegram",
+            "to": "12345",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_node_event_agent_request_disables_delivery_without_route(tmp_path) -> None:
+    database = Database(tmp_path / "node-event-agent-request-no-route.db")
+    await database.initialize()
+    registry = GatewayNodeRegistry()
+    _register_ios_node(registry)
+    observed: list[dict[str, object | None]] = []
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+        channel: str | None = None,
+        to: str | None = None,
+    ) -> dict[str, object]:
+        observed.append(
+            {
+                "session_key": session_key,
+                "message": message,
+                "idempotency_key": idempotency_key,
+                "thinking": thinking,
+                "deliver": deliver,
+                "timeout_ms": timeout_ms,
+                "channel": channel,
+                "to": to,
+            }
+        )
+        return {"runId": idempotency_key, "status": "ok"}
+
+    service = GatewayNodeMethodService(
+        registry,
+        database=database,
+        hub=BroadcastHub(),
+        chat_send_service=fake_chat_send_service,
+    )
+    requester = GatewayNodeMethodRequester(node_id="node-1")
+
+    await service.call(
+        "node.event",
+        {
+            "event": "agent.request",
+            "payload": {
+                "key": "node-deep-link-no-route",
+                "sessionKey": "agent:main:main",
+                "message": "Route-sensitive request.",
+                "deliver": True,
+            },
+        },
+        requester=requester,
+    )
+
+    assert observed == [
+        {
+            "session_key": "agent:main:main",
+            "message": "Route-sensitive request.",
+            "idempotency_key": "node-deep-link-no-route",
+            "thinking": None,
+            "deliver": False,
+            "timeout_ms": None,
+            "channel": None,
+            "to": None,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_node_event_agent_request_sends_receipt_ack_when_route_is_present(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "node-event-agent-request-receipt.db")
+    await database.initialize()
+    registry = GatewayNodeRegistry()
+    _register_ios_node(registry)
+    chat_observed: list[str] = []
+    receipt_observed: list[dict[str, object | None]] = []
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+        channel: str | None = None,
+        to: str | None = None,
+    ) -> dict[str, object]:
+        del session_key, idempotency_key, thinking, deliver, timeout_ms, channel, to
+        chat_observed.append(message)
+        return {"runId": f"run-{len(chat_observed)}", "status": "ok"}
+
+    async def fake_send_channel_message_service(
+        **payload: object,
+    ) -> dict[str, object]:
+        receipt_observed.append(dict(payload))
+        return {"ok": True, "deliveryId": "receipt-1"}
+
+    service = GatewayNodeMethodService(
+        registry,
+        database=database,
+        hub=BroadcastHub(),
+        chat_send_service=fake_chat_send_service,
+        send_channel_message_service=fake_send_channel_message_service,
+    )
+    requester = GatewayNodeMethodRequester(node_id="node-1")
+
+    await service.call(
+        "node.event",
+        {
+            "event": "agent.request",
+            "payload": {
+                "key": "node-deep-link-receipt",
+                "sessionKey": "agent:main:main",
+                "message": "Inspect the shared image.",
+                "deliver": True,
+                "channel": "telegram",
+                "to": "12345",
+                "receipt": True,
+                "receiptText": "Received the request.",
+            },
+        },
+        requester=requester,
+    )
+
+    assert chat_observed == ["Inspect the shared image."]
+    assert receipt_observed == [
+        {
+            "channel": "telegram",
+            "to": "12345",
+            "message": "Received the request.",
+            "session_key": "agent:main:main",
+            "idempotency_key": "node-agent-receipt-node-deep-link-receipt",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_node_event_agent_request_effective_attachments_fail_as_unavailable_runtime(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "node-event-agent-request-attachments.db")
+    await database.initialize()
+    registry = GatewayNodeRegistry()
+    _register_ios_node(registry)
+    observed: list[str] = []
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+        channel: str | None = None,
+        to: str | None = None,
+    ) -> dict[str, object]:
+        del session_key, idempotency_key, thinking, deliver, timeout_ms, channel, to
+        observed.append(message)
+        return {"runId": "unused", "status": "ok"}
+
+    service = GatewayNodeMethodService(
+        registry,
+        database=database,
+        hub=BroadcastHub(),
+        chat_send_service=fake_chat_send_service,
+    )
+    requester = GatewayNodeMethodRequester(node_id="node-1")
+
+    with pytest.raises(GatewayNodeMethodError) as exc_info:
+        await service.call(
+            "node.event",
+            {
+                "event": "agent.request",
+                "payload": {
+                    "key": "node-deep-link-attachment",
+                    "sessionKey": "agent:main:main",
+                    "message": "Inspect this image.",
+                    "attachments": [
+                        {
+                            "type": "image",
+                            "mimeType": "image/png",
+                            "fileName": "preview.png",
+                            "content": "Zm9v",
+                        }
+                    ],
+                },
+            },
+            requester=requester,
+        )
+
+    assert observed == []
+    assert exc_info.value.code == "UNAVAILABLE"
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.message == (
+        "agent.request attachments are unavailable until control chat attachment runtime is wired"
+    )
+
+
+@pytest.mark.asyncio
+async def test_node_event_agent_request_uses_attachment_runtime_when_wired(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "node-event-agent-request-attachment-runtime.db")
+    await database.initialize()
+    registry = GatewayNodeRegistry()
+    _register_ios_node(registry)
+    observed: list[dict[str, object | None]] = []
+    attachments = [
+        {
+            "type": "image",
+            "mimeType": "image/png",
+            "fileName": "preview.png",
+            "content": "Zm9v",
+        }
+    ]
+
+    async def fake_attachment_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+        attachments: list[dict[str, object]],
+        channel: str | None = None,
+        to: str | None = None,
+        node_id: str | None = None,
+    ) -> dict[str, object]:
+        observed.append(
+            {
+                "session_key": session_key,
+                "message": message,
+                "idempotency_key": idempotency_key,
+                "thinking": thinking,
+                "deliver": deliver,
+                "timeout_ms": timeout_ms,
+                "attachments": attachments,
+                "channel": channel,
+                "to": to,
+                "node_id": node_id,
+            }
+        )
+        return {"runId": "run-attachment-1", "status": "ok"}
+
+    service = GatewayNodeMethodService(
+        registry,
+        database=database,
+        hub=BroadcastHub(),
+        chat_attachment_send_service=fake_attachment_send_service,
+    )
+    requester = GatewayNodeMethodRequester(node_id="node-1")
+
+    response = await service.call(
+        "node.event",
+        {
+            "event": "agent.request",
+            "payload": {
+                "key": "node-deep-link-attachment-runtime",
+                "sessionKey": "agent:main:main",
+                "message": "Inspect this image.",
+                "thinking": "medium",
+                "deliver": True,
+                "channel": "telegram",
+                "to": "12345",
+                "timeoutSeconds": 30,
+                "attachments": attachments,
+            },
+        },
+        requester=requester,
+    )
+
+    assert response == {"ok": True}
+    assert observed == [
+        {
+            "session_key": "agent:main:main",
+            "message": "Inspect this image.",
+            "idempotency_key": "node-deep-link-attachment-runtime",
+            "thinking": "medium",
+            "deliver": True,
+            "timeout_ms": 30_000,
+            "attachments": attachments,
+            "channel": "telegram",
+            "to": "12345",
+            "node_id": "node-1",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_push_test_recognizes_recorded_apns_registration(tmp_path) -> None:
+    database = Database(tmp_path / "node-event-apns-register.db")
+    await database.initialize()
+    registry = GatewayNodeRegistry()
+    _register_ios_node(registry)
+    service = GatewayNodeMethodService(
+        registry,
+        database=database,
+        hub=BroadcastHub(),
+    )
+    requester = GatewayNodeMethodRequester(node_id="node-1")
+
+    await service.call(
+        "node.event",
+        {
+            "event": "push.apns.register",
+            "payload": {
+                "token": "a" * 64,
+                "topic": "com.openzues.ios",
+                "environment": "sandbox",
+            },
+        },
+        requester=requester,
+    )
+
+    with pytest.raises(
+        GatewayNodeMethodError,
+        match="APNs sender runtime is not configured for registered node node-1",
+    ) as exc_info:
+        await service.call("push.test", {"nodeId": "node-1"})
+
+    assert exc_info.value.code == "UNAVAILABLE"
+    assert exc_info.value.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_push_test_uses_injected_apns_sender_for_registered_node(tmp_path) -> None:
+    database = Database(tmp_path / "node-event-apns-send.db")
+    await database.initialize()
+    registry = GatewayNodeRegistry()
+    _register_ios_node(registry)
+    observed: dict[str, object] = {}
+
+    async def fake_apns_sender(
+        *,
+        node_id: str,
+        registration: dict[str, object],
+        title: str,
+        body: str,
+        environment: str | None,
+    ) -> dict[str, object]:
+        observed.update(
+            {
+                "node_id": node_id,
+                "registration": registration,
+                "title": title,
+                "body": body,
+                "environment": environment,
+            }
+        )
+        return {"sent": True, "providerMessageId": "apns-1"}
+
+    service = GatewayNodeMethodService(
+        registry,
+        database=database,
+        hub=BroadcastHub(),
+        send_apns_push_service=fake_apns_sender,
+    )
+    requester = GatewayNodeMethodRequester(node_id="node-1")
+
+    await service.call(
+        "node.event",
+        {
+            "event": "push.apns.register",
+            "payload": {
+                "transport": "direct",
+                "token": "b" * 64,
+                "topic": "com.openzues.ios",
+                "environment": "sandbox",
+            },
+        },
+        requester=requester,
+    )
+
+    result = await service.call(
+        "push.test",
+        {
+            "nodeId": "node-1",
+            "title": "OpenZues",
+            "body": "Push parity ping.",
+            "environment": "production",
+        },
+    )
+
+    assert result == {"sent": True, "providerMessageId": "apns-1"}
+    assert observed == {
+        "node_id": "node-1",
+        "registration": {
+            "transport": "direct",
+            "token": "b" * 64,
+            "topic": "com.openzues.ios",
+            "environment": "sandbox",
+        },
+        "title": "OpenZues",
+        "body": "Push parity ping.",
+        "environment": "production",
+    }
+
+
+@pytest.mark.asyncio
+async def test_push_test_clears_stale_direct_apns_registration_on_bad_device_token(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "node-event-apns-stale-token.db")
+    await database.initialize()
+    registry = GatewayNodeRegistry()
+    _register_ios_node(registry)
+    send_calls: list[dict[str, object]] = []
+
+    async def fake_apns_sender(
+        *,
+        node_id: str,
+        registration: dict[str, object],
+        title: str,
+        body: str,
+        environment: str | None,
+    ) -> dict[str, object]:
+        del node_id, title, body, environment
+        send_calls.append(dict(registration))
+        return {
+            "ok": False,
+            "status": 400,
+            "reason": "BadDeviceToken",
+            "transport": "direct",
+        }
+
+    service = GatewayNodeMethodService(
+        registry,
+        database=database,
+        hub=BroadcastHub(),
+        send_apns_push_service=fake_apns_sender,
+    )
+    requester = GatewayNodeMethodRequester(node_id="node-1")
+
+    await service.call(
+        "node.event",
+        {
+            "event": "push.apns.register",
+            "payload": {
+                "transport": "direct",
+                "token": "c" * 64,
+                "topic": "com.openzues.ios",
+                "environment": "sandbox",
+            },
+        },
+        requester=requester,
+    )
+
+    result = await service.call("push.test", {"nodeId": "node-1"})
+
+    assert result == {
+        "ok": False,
+        "status": 400,
+        "reason": "BadDeviceToken",
+        "transport": "direct",
+    }
+    with pytest.raises(GatewayNodeMethodError, match="has no APNs registration"):
+        await service.call("push.test", {"nodeId": "node-1"})
+    assert send_calls == [
+        {
+            "transport": "direct",
+            "token": "c" * 64,
+            "topic": "com.openzues.ios",
+            "environment": "sandbox",
+        }
+    ]
 
 
 @pytest.mark.asyncio
@@ -18143,7 +21144,425 @@ async def test_node_invoke_waits_for_woken_node_to_reconnect_before_invoking() -
 
 
 @pytest.mark.asyncio
-async def test_node_invoke_surfaces_not_connected_wake_metadata_when_saved_lane_wake_fails() -> None:
+async def test_node_invoke_uses_recorded_apns_wake_when_saved_lane_wake_is_unavailable(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "node-invoke-apns-wake.db")
+    await database.initialize()
+    registry = GatewayNodeRegistry()
+    registry.remember(
+        KnownNode(
+            node_id="ios-node-1",
+            display_name="iOS Wakeable Node",
+            platform="ios",
+            client_id="ios-node-1",
+            client_mode="ios",
+            commands=("system.notify",),
+            paired=True,
+            connected=False,
+        )
+    )
+    await database.append_event(
+        instance_id=None,
+        thread_id=None,
+        method="node.event",
+        payload={
+            "nodeId": "ios-node-1",
+            "event": "push.apns.register",
+            "payload": {
+                "transport": "relay",
+                "relayHandle": "relay-handle-123",
+                "sendGrant": "relay-send-grant-123",
+                "installationId": "install-123",
+                "topic": "com.openzues.ios",
+                "environment": "production",
+                "distribution": "official",
+            },
+        },
+    )
+    wake_calls: list[dict[str, object]] = []
+
+    async def fake_apns_wake(
+        *,
+        node_id: str,
+        registration: dict[str, object],
+        wake_reason: str,
+    ) -> dict[str, object]:
+        wake_calls.append(
+            {
+                "node_id": node_id,
+                "registration": registration,
+                "wake_reason": wake_reason,
+            }
+        )
+        asyncio.get_running_loop().call_soon(
+            lambda: registry.register(
+                AutoReplyNodeConnection(registry, "conn-ios-node-1"),
+                GatewayNodeConnect(
+                    client_id="ios-node-1",
+                    device_id=node_id,
+                    client_mode="ios",
+                    display_name="iOS Wakeable Node",
+                    platform="ios",
+                    commands=("system.notify",),
+                ),
+            )
+        )
+        return {
+            "attempted": True,
+            "available": True,
+            "connected": False,
+            "path": "sent",
+            "durationMs": 3,
+        }
+
+    service = GatewayNodeMethodService(
+        registry,
+        database=database,
+        send_apns_wake_service=fake_apns_wake,
+    )
+
+    result = await service.call(
+        "node.invoke",
+        {
+            "nodeId": "ios-node-1",
+            "command": "system.notify",
+            "params": {"title": "Wake", "body": "Reconnect."},
+            "timeoutMs": 250,
+            "idempotencyKey": "idem-apns-wake",
+        },
+    )
+
+    assert result == {
+        "ok": True,
+        "nodeId": "ios-node-1",
+        "command": "system.notify",
+        "payload": {"status": "done"},
+        "payloadJSON": '{"status":"done"}',
+    }
+    assert wake_calls == [
+        {
+            "node_id": "ios-node-1",
+            "registration": {
+                "transport": "relay",
+                "relayHandle": "relay-handle-123",
+                "sendGrant": "relay-send-grant-123",
+                "installationId": "install-123",
+                "topic": "com.openzues.ios",
+                "environment": "production",
+                "distribution": "official",
+            },
+            "wake_reason": "node.invoke",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_node_invoke_retries_recorded_apns_wake_when_first_wake_does_not_reconnect(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "node-invoke-apns-wake-retry.db")
+    await database.initialize()
+    registry = GatewayNodeRegistry()
+    registry.remember(
+        KnownNode(
+            node_id="ios-node-1",
+            display_name="iOS Wakeable Node",
+            platform="ios",
+            client_id="ios-node-1",
+            client_mode="ios",
+            commands=("system.notify",),
+            paired=True,
+            connected=False,
+        )
+    )
+    await database.append_event(
+        instance_id=None,
+        thread_id=None,
+        method="node.event",
+        payload={
+            "nodeId": "ios-node-1",
+            "event": "push.apns.register",
+            "payload": {
+                "transport": "relay",
+                "relayHandle": "relay-handle-123",
+                "sendGrant": "relay-send-grant-123",
+                "installationId": "install-123",
+                "topic": "com.openzues.ios",
+                "environment": "production",
+                "distribution": "official",
+            },
+        },
+    )
+    wake_calls: list[str] = []
+
+    async def fake_apns_wake(
+        *,
+        node_id: str,
+        registration: dict[str, object],
+        wake_reason: str,
+    ) -> dict[str, object]:
+        del registration, wake_reason
+        wake_calls.append(node_id)
+        if len(wake_calls) == 2:
+            asyncio.get_running_loop().call_soon(
+                lambda: registry.register(
+                    AutoReplyNodeConnection(registry, "conn-ios-node-1"),
+                    GatewayNodeConnect(
+                        client_id="ios-node-1",
+                        device_id=node_id,
+                        client_mode="ios",
+                        display_name="iOS Wakeable Node",
+                        platform="ios",
+                        commands=("system.notify",),
+                    ),
+                )
+            )
+        return {
+            "attempted": True,
+            "available": True,
+            "connected": False,
+            "path": "sent",
+            "durationMs": 3,
+        }
+
+    service = GatewayNodeMethodService(
+        registry,
+        database=database,
+        send_apns_wake_service=fake_apns_wake,
+    )
+
+    result = await service.call(
+        "node.invoke",
+        {
+            "nodeId": "ios-node-1",
+            "command": "system.notify",
+            "params": {"title": "Wake", "body": "Retry reconnect."},
+            "timeoutMs": 250,
+            "idempotencyKey": "idem-apns-wake-retry",
+        },
+    )
+
+    assert wake_calls == ["ios-node-1", "ios-node-1"]
+    assert result == {
+        "ok": True,
+        "nodeId": "ios-node-1",
+        "command": "system.notify",
+        "payload": {"status": "done"},
+        "payloadJSON": '{"status":"done"}',
+    }
+
+
+@pytest.mark.asyncio
+async def test_node_invoke_clears_stale_direct_apns_registration_after_wake_failure(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "node-invoke-apns-wake-stale-token.db")
+    await database.initialize()
+    registry = GatewayNodeRegistry()
+    registry.remember(
+        KnownNode(
+            node_id="ios-node-1",
+            display_name="iOS Wakeable Node",
+            platform="ios",
+            client_id="ios-node-1",
+            client_mode="ios",
+            commands=("system.notify",),
+            paired=True,
+            connected=False,
+        )
+    )
+    await database.append_event(
+        instance_id=None,
+        thread_id=None,
+        method="node.event",
+        payload={
+            "nodeId": "ios-node-1",
+            "event": "push.apns.register",
+            "payload": {
+                "transport": "direct",
+                "token": "d" * 64,
+                "topic": "com.openzues.ios",
+                "environment": "sandbox",
+            },
+        },
+    )
+    wake_calls: list[str] = []
+
+    async def fake_apns_wake(
+        *,
+        node_id: str,
+        registration: dict[str, object],
+        wake_reason: str,
+    ) -> dict[str, object]:
+        del registration, wake_reason
+        wake_calls.append(node_id)
+        return {
+            "attempted": True,
+            "available": True,
+            "connected": False,
+            "path": "send-error",
+            "durationMs": 3,
+            "apnsStatus": 410,
+            "apnsReason": "Unregistered",
+        }
+
+    service = GatewayNodeMethodService(
+        registry,
+        database=database,
+        send_apns_wake_service=fake_apns_wake,
+    )
+
+    with pytest.raises(GatewayNodeMethodError, match="node not connected"):
+        await service.call(
+            "node.invoke",
+            {
+                "nodeId": "ios-node-1",
+                "command": "system.notify",
+                "params": {"title": "Wake", "body": "Reconnect."},
+                "timeoutMs": 250,
+                "idempotencyKey": "idem-apns-wake-stale-token",
+            },
+        )
+
+    with pytest.raises(GatewayNodeMethodError, match="has no APNs registration"):
+        await service.call("push.test", {"nodeId": "ios-node-1"})
+    assert wake_calls == ["ios-node-1"]
+
+
+@pytest.mark.asyncio
+async def test_node_invoke_sends_foreground_apns_nudge_after_wake_retry_stalls(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "node-invoke-apns-foreground-nudge.db")
+    await database.initialize()
+    registry = GatewayNodeRegistry()
+    registry.remember(
+        KnownNode(
+            node_id="ios-node-1",
+            display_name="iOS Wakeable Node",
+            platform="ios",
+            client_id="ios-node-1",
+            client_mode="ios",
+            commands=("system.notify",),
+            paired=True,
+            connected=False,
+        )
+    )
+    await database.append_event(
+        instance_id=None,
+        thread_id=None,
+        method="node.event",
+        payload={
+            "nodeId": "ios-node-1",
+            "event": "push.apns.register",
+            "payload": {
+                "transport": "relay",
+                "relayHandle": "relay-handle-123",
+                "sendGrant": "relay-send-grant-123",
+                "installationId": "install-123",
+                "topic": "com.openzues.ios",
+                "environment": "production",
+                "distribution": "official",
+            },
+        },
+    )
+    wake_calls: list[str] = []
+    nudge_calls: list[dict[str, object | None]] = []
+
+    async def fake_apns_wake(
+        *,
+        node_id: str,
+        registration: dict[str, object],
+        wake_reason: str,
+    ) -> dict[str, object]:
+        del registration, wake_reason
+        wake_calls.append(node_id)
+        return {
+            "attempted": True,
+            "available": True,
+            "connected": False,
+            "path": "sent",
+            "durationMs": 3,
+        }
+
+    async def fake_apns_push(
+        *,
+        node_id: str,
+        registration: dict[str, object],
+        title: str,
+        body: str,
+        environment: str | None,
+    ) -> dict[str, object]:
+        nudge_calls.append(
+            {
+                "node_id": node_id,
+                "registration": registration,
+                "title": title,
+                "body": body,
+                "environment": environment,
+            }
+        )
+        return {"ok": True, "status": 200, "transport": "relay"}
+
+    service = GatewayNodeMethodService(
+        registry,
+        database=database,
+        send_apns_push_service=fake_apns_push,
+        send_apns_wake_service=fake_apns_wake,
+    )
+
+    with pytest.raises(GatewayNodeMethodError, match="node not connected"):
+        await service.call(
+            "node.invoke",
+            {
+                "nodeId": "ios-node-1",
+                "command": "system.notify",
+                "params": {"title": "Wake", "body": "Reconnect."},
+                "timeoutMs": 250,
+                "idempotencyKey": "idem-apns-wake-foreground-nudge",
+            },
+            now_ms=10_000,
+        )
+
+    assert wake_calls == ["ios-node-1", "ios-node-1"]
+    assert nudge_calls == [
+        {
+            "node_id": "ios-node-1",
+            "registration": {
+                "transport": "relay",
+                "relayHandle": "relay-handle-123",
+                "sendGrant": "relay-send-grant-123",
+                "installationId": "install-123",
+                "topic": "com.openzues.ios",
+                "environment": "production",
+                "distribution": "official",
+            },
+            "title": "OpenZues needs a quick reopen",
+            "body": "Tap to reopen OpenZues and restore the node connection.",
+            "environment": None,
+        }
+    ]
+
+    with pytest.raises(GatewayNodeMethodError, match="node not connected"):
+        await service.call(
+            "node.invoke",
+            {
+                "nodeId": "ios-node-1",
+                "command": "system.notify",
+                "params": {"title": "Wake", "body": "Reconnect again."},
+                "timeoutMs": 250,
+                "idempotencyKey": "idem-apns-wake-foreground-nudge-2",
+            },
+            now_ms=20_000,
+        )
+
+    assert wake_calls == ["ios-node-1", "ios-node-1", "ios-node-1", "ios-node-1"]
+    assert len(nudge_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_node_invoke_surfaces_wake_metadata_when_saved_lane_wake_fails() -> None:
     registry = GatewayNodeRegistry()
     registry.remember(
         KnownNode(
@@ -18426,3 +21845,104 @@ async def test_node_invoke_rejects_persistent_browser_proxy_mutations_before_wak
         )
 
     assert wake_calls == []
+
+
+@pytest.mark.asyncio
+async def test_node_invoke_rejects_invalid_canvas_a2ui_jsonl_before_dispatch() -> None:
+    registry = GatewayNodeRegistry()
+    connection = FakeNodeConnection("conn-canvas-a2ui-node")
+    registry.register(
+        connection,
+        GatewayNodeConnect(
+            client_id="live-canvas-a2ui-node",
+            device_id="canvas-a2ui-node",
+            platform="ios",
+            commands=("canvas.a2ui.pushJSONL",),
+        ),
+    )
+    requester = GatewayNodeMethodRequester(node_id="canvas-a2ui-node")
+    service = GatewayNodeMethodService(registry)
+
+    with pytest.raises(ValueError, match="Invalid A2UI JSONL"):
+        await service.call(
+            "node.invoke",
+            {
+                "nodeId": "canvas-a2ui-node",
+                "command": "canvas.a2ui.pushJSONL",
+                "params": {"jsonl": "not json"},
+                "idempotencyKey": "idem-a2ui-bad-jsonl",
+            },
+            requester=requester,
+        )
+
+    assert connection.sent_events == []
+
+
+@pytest.mark.asyncio
+async def test_node_invoke_allows_valid_canvas_a2ui_jsonl_dispatch() -> None:
+    registry = GatewayNodeRegistry()
+    connection = AutoReplyNodeConnection(registry, "conn-canvas-a2ui-node")
+    registry.register(
+        connection,
+        GatewayNodeConnect(
+            client_id="live-canvas-a2ui-node",
+            device_id="canvas-a2ui-node",
+            platform="ios",
+            commands=("canvas.a2ui.push",),
+        ),
+    )
+    requester = GatewayNodeMethodRequester(node_id="canvas-a2ui-node")
+    service = GatewayNodeMethodService(registry)
+
+    response = await service.call(
+        "node.invoke",
+        {
+            "nodeId": "canvas-a2ui-node",
+            "command": "canvas.a2ui.push",
+            "params": {"jsonl": '{"beginRendering":{}}\n'},
+            "idempotencyKey": "idem-a2ui-good-jsonl",
+        },
+        requester=requester,
+    )
+
+    assert response == {
+        "ok": True,
+        "nodeId": "canvas-a2ui-node",
+        "command": "canvas.a2ui.push",
+        "payload": {"status": "done"},
+        "payloadJSON": '{"status":"done"}',
+    }
+    assert connection.sent_events[0]["event"] == "node.invoke.request"
+
+
+@pytest.mark.asyncio
+async def test_node_invoke_uses_configured_allow_commands_for_plugin_node_host_commands() -> None:
+    registry = GatewayNodeRegistry()
+    connection = AutoReplyNodeConnection(registry, "conn-browser-plugin-node")
+    registry.register(
+        connection,
+        GatewayNodeConnect(
+            client_id="live-browser-plugin-node",
+            device_id="browser-plugin-node",
+            platform="windows",
+            commands=("browser.inspect",),
+        ),
+    )
+    service = GatewayNodeMethodService(
+        registry,
+        node_allow_commands=("browser.inspect",),
+    )
+
+    response = await service.call(
+        "node.invoke",
+        {
+            "nodeId": "browser-plugin-node",
+            "command": "browser.inspect",
+            "params": {"selector": "body"},
+            "idempotencyKey": "idem-browser-inspect",
+        },
+    )
+
+    assert response["ok"] is True
+    assert response["command"] == "browser.inspect"
+    assert connection.sent_events[0]["event"] == "node.invoke.request"

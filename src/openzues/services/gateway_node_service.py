@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass
 from datetime import datetime
 
@@ -154,6 +155,8 @@ class GatewayNodeService:
         pairing_service: GatewayNodePairingService | None = None,
         talk_mode_service: GatewayTalkModeService | None = None,
         voicewake_service: GatewayVoiceWakeService | None = None,
+        node_allow_commands: Iterable[str] = (),
+        node_deny_commands: Iterable[str] = (),
     ) -> None:
         self.manager = manager
         self.pairing_service = pairing_service
@@ -161,6 +164,37 @@ class GatewayNodeService:
         self._voicewake_service = voicewake_service
         self.registry = GatewayNodeRegistry()
         self._managed_node_ids: set[str] = set()
+        self._node_allow_commands = tuple(node_allow_commands)
+        self._node_deny_commands = tuple(node_deny_commands)
+
+    def _normalize_declared_commands_for_metadata(
+        self,
+        commands: Iterable[str] | None,
+        *,
+        platform: str | None,
+        device_family: str | None,
+    ) -> list[str]:
+        allowlist = resolve_node_command_allowlist(
+            platform=platform,
+            device_family=device_family,
+            allow_commands=self._node_allow_commands,
+            deny_commands=self._node_deny_commands,
+        )
+        return list(normalize_declared_node_commands(commands, allowlist=allowlist))
+
+    def _normalized_known_node_commands(self, node: KnownNode) -> list[str]:
+        return self._normalize_declared_commands_for_metadata(
+            node.commands,
+            platform=node.platform,
+            device_family=node.device_family,
+        )
+
+    def _normalized_paired_node_commands(self, node: GatewayPairedNode) -> list[str]:
+        return self._normalize_declared_commands_for_metadata(
+            node.commands,
+            platform=node.platform,
+            device_family=node.device_family,
+        )
 
     async def _sync(self) -> None:
         instances = await self.manager.list_views()
@@ -278,6 +312,8 @@ class GatewayNodeService:
         allowlist = resolve_node_command_allowlist(
             platform=node.platform or paired_node.platform,
             device_family=node.device_family or paired_node.device_family,
+            allow_commands=self._node_allow_commands,
+            deny_commands=self._node_deny_commands,
         )
         live_commands = list(
             normalize_declared_node_commands(
@@ -291,7 +327,9 @@ class GatewayNodeService:
                 allowlist=allowlist,
             )
         )
-        if not live_commands or not any(command not in approved_commands for command in live_commands):
+        if not live_commands or not any(
+            command not in approved_commands for command in live_commands
+        ):
             return None
         return await self.pairing_service.request(
             node_id=node.node_id,
@@ -389,7 +427,11 @@ class GatewayNodeService:
         known_nodes = self.registry.list_known_nodes()
         known_nodes_by_id = {node.node_id: node for node in known_nodes}
         node_payloads: dict[str, dict[str, object | None]] = {
-            node_id: asdict(node) for node_id, node in known_nodes_by_id.items()
+            node_id: {
+                **asdict(node),
+                "commands": self._normalized_known_node_commands(node),
+            }
+            for node_id, node in known_nodes_by_id.items()
         }
         if self.pairing_service is not None:
             for paired_node in await self.pairing_service.list_paired_nodes():
@@ -399,7 +441,10 @@ class GatewayNodeService:
                         existing_node,
                         paired_node=paired_node,
                     )
-                paired_payload = _catalog_paired_node_payload(paired_node)
+                paired_payload = _catalog_paired_node_payload(
+                    paired_node,
+                    commands=self._normalized_paired_node_commands(paired_node),
+                )
                 existing = node_payloads.get(paired_node.node_id)
                 node_payloads[paired_node.node_id] = (
                     paired_payload
@@ -416,7 +461,10 @@ class GatewayNodeService:
         await self._sync()
         node = self.registry.describe_known_node(node_id)
         if node is not None:
-            payload = asdict(node)
+            payload = {
+                **asdict(node),
+                "commands": self._normalized_known_node_commands(node),
+            }
             if self.pairing_service is not None:
                 paired_node = await self.pairing_service.get_paired_node(node_id)
                 if paired_node is not None:
@@ -425,7 +473,10 @@ class GatewayNodeService:
                         paired_node=paired_node,
                     )
                     payload = _merge_catalog_node_payload(
-                        _catalog_paired_node_payload(paired_node),
+                        _catalog_paired_node_payload(
+                            paired_node,
+                            commands=self._normalized_paired_node_commands(paired_node),
+                        ),
                         payload,
                     )
             return GatewayCapabilityKnownNodeView.model_validate(payload)
@@ -435,7 +486,10 @@ class GatewayNodeService:
         if paired_node is None:
             return None
         return GatewayCapabilityKnownNodeView.model_validate(
-            _catalog_paired_node_payload(paired_node)
+            _catalog_paired_node_payload(
+                paired_node,
+                commands=self._normalized_paired_node_commands(paired_node),
+            )
         )
 
     async def get_pending_action_view(self, node_id: str) -> GatewayNodePendingActionPullView:
@@ -536,7 +590,11 @@ class GatewayNodeService:
         )
 
 
-def _catalog_paired_node_payload(node: GatewayPairedNode) -> dict[str, object | None]:
+def _catalog_paired_node_payload(
+    node: GatewayPairedNode,
+    *,
+    commands: Iterable[str] | None = None,
+) -> dict[str, object | None]:
     return {
         "node_id": node.node_id,
         "display_name": node.display_name,
@@ -551,7 +609,7 @@ def _catalog_paired_node_payload(node: GatewayPairedNode) -> dict[str, object | 
         "model_identifier": node.model_identifier,
         "path_env": None,
         "caps": list(node.caps),
-        "commands": list(node.commands),
+        "commands": list(commands if commands is not None else node.commands),
         "permissions": node.permissions,
         "paired": True,
         "connected": False,
@@ -616,12 +674,12 @@ def _visible_paired_commands(
 ) -> list[str] | None:
     approved = (
         [command for command in persisted_commands if isinstance(command, str)]
-        if isinstance(persisted_commands, list)
+        if isinstance(persisted_commands, (list, tuple))
         else None
     )
     live = (
         [command for command in observed_commands if isinstance(command, str)]
-        if isinstance(observed_commands, list)
+        if isinstance(observed_commands, (list, tuple))
         else None
     )
     if live is None:

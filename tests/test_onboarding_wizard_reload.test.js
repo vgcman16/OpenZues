@@ -877,6 +877,38 @@ test("guided remote lane selection updates and clears the draft lane binding", (
   assert.equal(cleared.instance_name, "Local Codex Desktop");
 });
 
+test("guided setup switching a remote draft back to local resets the stale lane mode", () => {
+  const { hooks } = createHarness();
+  const step = {
+    id: "step-mode",
+    field: "mode",
+    type: "select",
+    title: "Setup Mode",
+    options: [
+      { value: "local", label: "Local" },
+      { value: "remote", label: "Remote" },
+    ],
+  };
+
+  const localDraft = hooks.mergeOnboardingWizardDraft(
+    {
+      mode: "remote",
+      flow: "advanced",
+      instance_mode: "existing",
+      instance_id: "7",
+      instance_name: "Pinned Lane",
+      project_path: "C:/workspace/OpenZues",
+    },
+    step,
+    "local",
+  );
+
+  assert.equal(localDraft.mode, "local");
+  assert.equal(localDraft.instance_mode, "quick_connect_desktop");
+  assert.equal(localDraft.instance_id, null);
+  assert.equal(localDraft.instance_name, "Local Codex Desktop");
+});
+
 test("guided onboarding note steps render a continue-only card", () => {
   const { hooks } = createHarness();
   hooks.setOnboardingWizardState({
@@ -946,6 +978,56 @@ test("switching a local draft to remote clears the stale lane hint", () => {
   assert.equal(elements.instanceName.value, "Local Codex Desktop");
   assert.equal(draft.mode, "remote");
   assert.equal(draft.instance_mode, "existing");
+  assert.equal(draft.instance_id, null);
+  assert.equal(draft.instance_name, "Local Codex Desktop");
+});
+
+test("switching a remote draft back to local resets the stale lane mode", () => {
+  const { hooks, elements } = createHarness();
+  hooks.state.setup = {
+    wizard_session: makeWizardSession({
+      mode: "remote",
+      flow: "advanced",
+      instance_mode: "existing",
+      instance_id: 7,
+      instance_name: "Pinned Lane",
+      project_path: "C:/workspace/OpenZues",
+      operator_name: "Skull",
+      task_name: "Parity Loop",
+      objective_template: "Ship the next verified slice.",
+    }),
+  };
+
+  hooks.applyWizardSessionToForm();
+  hooks.syncOnboardingMode();
+
+  assert.equal(elements.instanceMode.value, "existing");
+  assert.equal(elements.instanceId.value, "7");
+  assert.equal(elements.instanceName.value, "Pinned Lane");
+
+  elements.setupMode.value = "local";
+  elements.setupFlow.value = "advanced";
+  hooks.syncOnboardingMode();
+
+  const draft = hooks.collectOnboardingDraftValues({
+    get(name) {
+      const field = elements[name] || null;
+      if (!field) {
+        return null;
+      }
+      if (field.type === "checkbox") {
+        return field.checked ? "on" : null;
+      }
+      return field.value;
+    },
+  });
+
+  assert.equal(elements.instanceMode.value, "quick_connect_desktop");
+  assert.equal(elements.instanceId.value, "");
+  assert.equal(elements.instanceName.value, "Local Codex Desktop");
+  assert.equal(draft.mode, "local");
+  assert.equal(draft.flow, "advanced");
+  assert.equal(draft.instance_mode, "quick_connect_desktop");
   assert.equal(draft.instance_id, null);
   assert.equal(draft.instance_name, "Local Codex Desktop");
 });

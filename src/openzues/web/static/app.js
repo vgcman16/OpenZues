@@ -622,6 +622,7 @@ function mergeOnboardingWizardDraft(currentDraft, step, rawValue) {
   if (!field) {
     return draft;
   }
+  const previousMode = draft.mode;
   const normalized = normalizeOnboardingWizardDraftValue(field, rawValue);
   if (normalized === undefined) {
     return draft;
@@ -631,6 +632,10 @@ function mergeOnboardingWizardDraft(currentDraft, step, rawValue) {
     if (normalized === "remote") {
       draft.flow = "advanced";
       draft.instance_mode = "existing";
+      draft.instance_id = null;
+      draft.instance_name = "Local Codex Desktop";
+    } else if (previousMode === "remote") {
+      draft.instance_mode = "quick_connect_desktop";
       draft.instance_id = null;
       draft.instance_name = "Local Codex Desktop";
     } else {
@@ -655,6 +660,11 @@ function mergeOnboardingWizardDraft(currentDraft, step, rawValue) {
 function clearOnboardingLaneSelection() {
   setOnboardingFormValue("instance_id", "");
   setOnboardingFormValue("instance_name", "Local Codex Desktop");
+}
+
+function resetOnboardingLocalLaneDefaults() {
+  setOnboardingFormValue("instance_mode", "quick_connect_desktop");
+  clearOnboardingLaneSelection();
 }
 
 function setOnboardingFormValue(name, value) {
@@ -820,14 +830,41 @@ function renderChatCard({ title, meta = [], body = "", note = "", actions = [] }
   `;
 }
 
+function renderCanvasPreview(preview) {
+  if (!preview || preview.kind !== "canvas" || !preview.url) {
+    return "";
+  }
+  const title = preview.title || preview.viewId || "Canvas preview";
+  const height = Math.max(160, Math.min(Number(preview.preferredHeight) || 320, 1200));
+  return `
+    <article class="chat-canvas-preview">
+      <div class="chat-canvas-preview-head">
+        <strong>${escapeHtml(title)}</strong>
+        ${preview.viewId ? pill(preview.viewId, "ok") : pill("canvas")}
+      </div>
+      <iframe
+        title="${escapeHtml(title)}"
+        src="${escapeHtml(preview.url)}"
+        style="height: ${height}px"
+        loading="lazy"
+        sandbox="allow-scripts allow-same-origin"
+      ></iframe>
+    </article>
+  `;
+}
+
 function renderControlChatEntry(message) {
   const isUser = message.role === "user";
+  const canvasPreviews = Array.isArray(message.canvas_previews)
+    ? message.canvas_previews.map(renderCanvasPreview).filter(Boolean)
+    : [];
   return renderChatMessage({
     stamp: isUser ? "YOU" : "OZ",
     lane: isUser ? "Directive" : "Zeus",
     tone: isUser ? "user" : "assistant",
     compact: true,
     title: message.content,
+    cards: canvasPreviews,
     meta: [
       !isUser && message.action_kind
         ? pill(labelizeActionKind(message.action_kind), "ok")
@@ -4278,7 +4315,8 @@ function renderOpsMesh() {
         <article class="library-card empty-state">
           <strong>No notification routes yet.</strong>
           <p class="small-muted">
-            Add a webhook route to push task and mission events into Slack, Discord, or your own gateway.
+            Add a webhook route to push task, mission, gateway/send, or gateway/poll events
+            into Slack, Discord, or your own gateway.
           </p>
         </article>
       `;
@@ -5005,6 +5043,8 @@ function syncOnboardingMode() {
   const previousMode = onboardingSetupModeEl?.dataset.lastMode || selection.mode;
   if (isRemote && previousMode !== "remote") {
     clearOnboardingLaneSelection();
+  } else if (!isRemote && previousMode === "remote") {
+    resetOnboardingLocalLaneDefaults();
   }
   if (onboardingSetupModeEl) {
     onboardingSetupModeEl.value = selection.mode;
@@ -7148,13 +7188,15 @@ notificationRouteFormEl.addEventListener("submit", async (event) => {
   const form = new FormData(event.currentTarget);
   try {
     const events = parseCsvList(form.get("events"));
+    const routeKind = String(form.get("kind") || "webhook").toLowerCase();
+    const defaultEvents = ["slack", "telegram", "discord", "whatsapp"].includes(routeKind)
+      ? ["gateway/send", "gateway/poll"]
+      : ["ops/inbox/*", "mission/completed", "mission/failed", "task/*"];
     await submitJson("/api/notification-routes", {
       name: form.get("name"),
-      kind: "webhook",
+      kind: routeKind,
       target: form.get("target"),
-      events: events.length
-        ? events
-        : ["ops/inbox/*", "mission/completed", "mission/failed", "task/*"],
+      events: events.length ? events : defaultEvents,
       conversation_target: buildConversationTargetPayload(form),
       enabled: form.get("enabled") === "on",
       secret_header_name: form.get("secret_header_name") || null,

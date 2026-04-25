@@ -107,7 +107,7 @@ class GatewaySessionsService:
             ):
                 return
             if not await self._session_matches_filters(
-                resolved_session.current_session_key,
+                resolved_session,
                 label=normalized_label,
                 spawned_by=normalized_spawned_by,
             ):
@@ -503,7 +503,7 @@ class GatewaySessionsService:
                 raise ValueError("unknown sessionId")
             session = matched_session
         if not await self._session_matches_filters(
-            session.current_session_key,
+            session,
             label=normalized_label,
             spawned_by=normalized_spawned_by,
         ):
@@ -966,7 +966,7 @@ class GatewaySessionsService:
             ):
                 return
             if not await self._session_matches_filters(
-                resolved_session.current_session_key,
+                resolved_session,
                 label=None,
                 spawned_by=spawned_by,
             ):
@@ -1056,8 +1056,6 @@ class GatewaySessionsService:
                 continue
             if label is not None and _string_or_none(metadata.get("label")) != label:
                 continue
-            if not _metadata_matches_spawned_by(metadata, spawned_by=spawned_by):
-                continue
             resolved_session = await self._session_for_key(
                 session_key,
                 default_session=default_session,
@@ -1073,6 +1071,13 @@ class GatewaySessionsService:
                 agent_id=agent_id,
             ):
                 continue
+            if not _session_matches_filter_values(
+                session=resolved_session,
+                metadata=metadata,
+                label=label,
+                spawned_by=spawned_by,
+            ):
+                continue
             dedupe_key = (
                 canonicalize_session_key(resolved_session.current_session_key)
                 or resolved_session.current_session_key.lower()
@@ -1085,19 +1090,20 @@ class GatewaySessionsService:
 
     async def _session_matches_filters(
         self,
-        session_key: str,
+        session: _CurrentControlChatSession,
         *,
         label: str | None,
         spawned_by: str | None,
     ) -> bool:
         if label is None and spawned_by is None:
             return True
-        metadata = await self._session_metadata(session_key)
-        if label is not None and _string_or_none(metadata.get("label")) != label:
-            return False
-        if not _metadata_matches_spawned_by(metadata, spawned_by=spawned_by):
-            return False
-        return True
+        metadata = await self._session_metadata(session.current_session_key)
+        return _session_matches_filter_values(
+            session=session,
+            metadata=metadata,
+            label=label,
+            spawned_by=spawned_by,
+        )
 
     def _session_matches_visibility(
         self,
@@ -1117,7 +1123,7 @@ class GatewaySessionsService:
             return True
         parsed_session_key = parse_agent_session_key(session_key)
         if parsed_session_key is None:
-            return False
+            return agent_id == "main"
         return parsed_session_key.agent_id == agent_id
 
 
@@ -1308,6 +1314,24 @@ def _metadata_matches_spawned_by(
         _session_keys_match(metadata.get("spawnedBy"), spawned_by)
         or _session_keys_match(metadata.get("parentSessionKey"), spawned_by)
     )
+
+
+def _session_matches_filter_values(
+    *,
+    session: _CurrentControlChatSession,
+    metadata: dict[str, Any],
+    label: str | None,
+    spawned_by: str | None,
+) -> bool:
+    if label is not None and _string_or_none(metadata.get("label")) != label:
+        return False
+    if spawned_by is None:
+        return True
+    if session.current_session_key == "unknown":
+        return False
+    if session.current_session_key == session.main_session_key:
+        return False
+    return _metadata_matches_spawned_by(metadata, spawned_by=spawned_by)
 
 
 def _canonicalize_owner_session_key(

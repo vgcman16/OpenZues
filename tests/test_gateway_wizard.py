@@ -258,6 +258,67 @@ async def test_start_honors_prefilled_local_advanced_flow() -> None:
 
 
 @pytest.mark.asyncio
+async def test_start_switching_remote_session_back_to_local_resets_lane_defaults() -> None:
+    state: dict[str, object] = {
+        "mode": "remote",
+        "flow": "advanced",
+        "project_path": None,
+        "instance_mode": "existing",
+        "instance_id": 7,
+        "instance_name": "Pinned Lane",
+        "task_name": None,
+    }
+    saved_patches: list[dict[str, object]] = []
+
+    async def load_session() -> dict[str, object]:
+        return dict(state)
+
+    async def save_session(patch: dict[str, object]) -> dict[str, object]:
+        saved_patches.append(dict(patch))
+        state.update(patch)
+        return dict(state)
+
+    service = GatewayWizardService(
+        load_session=load_session,
+        save_session=save_session,
+    )
+
+    start = await service.start(mode="local")
+
+    assert start == {
+        "sessionId": start["sessionId"],
+        "done": False,
+        "status": "running",
+        "step": {
+            "id": start["step"]["id"],
+            "field": "project_path",
+            "type": "text",
+            "title": "Workspace",
+            "message": "Enter the workspace path to stage for setup.",
+            "placeholder": "C:/workspace",
+            "executor": "client",
+        },
+    }
+    assert state == {
+        "mode": "local",
+        "flow": "advanced",
+        "project_path": None,
+        "instance_mode": "quick_connect_desktop",
+        "instance_id": None,
+        "instance_name": "Local Codex Desktop",
+        "task_name": None,
+    }
+    assert saved_patches == [
+        {
+            "mode": "local",
+            "instance_mode": "quick_connect_desktop",
+            "instance_id": None,
+            "instance_name": "Local Codex Desktop",
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_wizard_persists_answered_fields_before_completion() -> None:
     state: dict[str, object] = {
         "mode": "local",

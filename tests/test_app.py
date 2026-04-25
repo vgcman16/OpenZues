@@ -4432,6 +4432,48 @@ def test_setup_wizard_endpoint_ignores_selection_only_updates_without_saved_draf
     assert setup["wizard_session"]["task_name"] is None
 
 
+def test_setup_wizard_endpoint_switching_remote_draft_back_to_local_resets_lane_defaults(
+    tmp_path,
+) -> None:
+    workspace_path = str(Path(tmp_path).resolve())
+    with make_client(tmp_path) as client:
+        seed_response = client.put(
+            "/api/setup/wizard",
+            json={
+                "mode": "remote",
+                "flow": "advanced",
+                "instance_mode": "existing",
+                "instance_id": 7,
+                "instance_name": "Pinned Lane",
+                "project_path": workspace_path,
+                "task_name": "Draft Loop",
+            },
+        )
+        update_response = client.put(
+            "/api/setup/wizard",
+            json={"mode": "local", "flow": "advanced"},
+        )
+        setup_response = client.get("/api/setup")
+
+    assert seed_response.status_code == 200
+    assert update_response.status_code == 200
+    payload = update_response.json()
+    assert payload["mode"] == "local"
+    assert payload["flow"] == "advanced"
+    assert payload["instance_mode"] == "quick_connect_desktop"
+    assert payload["instance_id"] is None
+    assert payload["instance_name"] == "Local Codex Desktop"
+    assert payload["project_path"] == workspace_path
+    assert payload["task_name"] == "Draft Loop"
+
+    setup = setup_response.json()
+    assert setup["wizard_session"]["mode"] == "local"
+    assert setup["wizard_session"]["flow"] == "advanced"
+    assert setup["wizard_session"]["instance_mode"] == "quick_connect_desktop"
+    assert setup["wizard_session"]["instance_id"] is None
+    assert setup["wizard_session"]["instance_name"] == "Local Codex Desktop"
+
+
 def test_setup_launch_endpoint_reports_saved_remote_handoff_gap(tmp_path) -> None:
     with make_client(tmp_path) as client:
         client.post(
@@ -8260,6 +8302,38 @@ def test_control_chat_view_collapses_repeated_identical_messages(tmp_path) -> No
 
     assert len(view.messages) == 1
     assert "retrying blindly" in view.messages[0].content
+
+
+def test_control_chat_view_extracts_canvas_embed_previews(tmp_path) -> None:
+    dashboard = make_dashboard_view()
+
+    with make_client(tmp_path) as client:
+        database = client.app.state.database
+        asyncio.run(
+            database.append_control_chat_message(
+                role="assistant",
+                content=(
+                    'Here is the preview.\n'
+                    '[embed ref="cv_status" title="Status" height="320" /]'
+                ),
+                action_kind="observe",
+            )
+        )
+
+        view = asyncio.run(client.app.state.control_chat_service.build_view(dashboard))
+
+    assert view.messages[0].content == "Here is the preview.\n"
+    assert view.messages[0].canvas_previews == [
+        {
+            "kind": "canvas",
+            "surface": "assistant_message",
+            "render": "url",
+            "url": "/__openclaw__/canvas/documents/cv_status/index.html",
+            "viewId": "cv_status",
+            "title": "Status",
+            "preferredHeight": 320,
+        }
+    ]
 
 
 def test_control_chat_view_hides_stale_failure_and_quiet_messages_after_completed_handoff(

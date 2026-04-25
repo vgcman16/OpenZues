@@ -14717,3 +14717,2099 @@ Next best slice:
   - provider-native outbound implementation behind the shared direct/announce runtime owner remains the queue head.
   - there is no shorter cross-cutting detour ahead of it after ledgering the adjacent gateway/setup/session/model/node shard.
 
+### Recovery addendum 2026-04-22 hot gateway model-session-config shard ledger pass America/Chicago
+
+- Re-read the still-open provider-runtime queue head against:
+  - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods\send.ts`
+  - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\infra\outbound\outbound-send-service.ts`
+  - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\cli\send-runtime\channel-outbound-send.ts`
+  - `C:\Users\skull\OneDrive\Documents\OpenZues\src\openzues\services\gateway_outbound_runtime.py`
+- Queue-head finding before touching the hot shard:
+  - upstream OpenClaw still terminates gateway send/poll behind channel outbound adapters and provider-owned send services.
+  - local OpenZues still ends at `GatewayOutboundRuntimeService(runtime="session-backed")`, so the provider-runtime seam remains real and blocked for an ownership reason rather than a missing read-model or validation slice.
+- Re-read the adjacent upstream model/session source-of-truth in:
+  - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods\models.ts`
+  - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-model-catalog.ts`
+  - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\sessions-resolve.ts`
+- Integrated the adjacent hot dirty gateway model/session/config-schema shard instead of widening that blocked provider-runtime seam.
+- Verification exposed one real gateway-model regression in `src/openzues/services/gateway_models.py`: synthetic configured-only allowlist entries were disappearing whenever the live instance catalog was empty because allowlist dedupe treated configured metadata as already-emitted catalog state. The fix now dedupes synthetic allowlist entries only against the emitted catalog entries, so OpenZues keeps OpenClaw-style `agents.defaults.models` filtering without dropping configured models that only exist in config.
+- Reverified and ledgered:
+  - `src/openzues/services/gateway_models.py` now filters gateway catalogs to `agents.defaults.models` allowlists like OpenClaw while still surfacing configured-only synthetic entries and configured fallback models.
+  - `src/openzues/services/gateway_sessions.py` now keeps `spawnedBy`-filtered key and snapshot lookups off global plus `unknown` sessions, so metadata-only `spawnedBy` matches no longer make non-spawned sessions visible.
+  - `src/openzues/services/gateway_config_schema.py` keeps the earlier punctuation-rich and indexed-path parity while also allowing long but otherwise valid lookup paths instead of failing on an arbitrary length cap.
+- Product effect:
+  - gateway model catalogs now honor configured allowlists rather than leaking unrelated live models, and configured-only allowlisted models still stay visible for operators before a live runtime advertises them.
+  - spawned-session visibility now matches OpenClaw more closely by excluding global and `unknown` rows from `spawnedBy` lookups on both resolve and snapshot paths.
+  - config schema lookup no longer rejects long legitimate dot paths while still blocking forbidden prototype-pollution segments.
+- Verified this continuation with:
+  - `PYTHONPATH=src;.venv\Lib\site-packages C:\Users\skull\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m pytest tests/test_gateway_models.py -q -k "allowlist or object_shaped or configured_aliases_for_primary_and_fallbacks" --basetemp .codex-tmp/gateway-models-allowlist-rerun-2`: `4 passed`
+  - direct exact-function execution against repo-local proof roots for these eight `gateway_sessions` proofs:
+    - `test_resolve_key_session_id_prefilters_spawned_by_before_duplicate_preference`
+    - `test_resolve_key_by_key_accepts_parent_session_key_for_spawned_by_filter`
+    - `test_resolve_key_by_key_prefers_latest_controller_owner_over_stale_spawned_by`
+    - `test_owner_alias_metadata_is_canonicalized_for_filters_snapshot_and_child_sessions`
+    - `test_resolve_key_requires_primary_selector_even_with_spawned_by_filter`
+    - `test_resolve_key_key_lookup_rejects_global_session_for_spawned_by_filter_like_openclaw`
+    - `test_resolve_key_label_lookup_accepts_parent_session_key_for_spawned_by_filter`
+    - `test_build_snapshot_spawned_by_filter_excludes_global_and_unknown_sessions_like_openclaw`
+  - `PYTHONPATH=src;.venv\Lib\site-packages C:\Users\skull\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m pytest tests/test_gateway_node_methods.py -q -k "config_schema_lookup_accepts_punctuation_rich_path_segments or config_schema_lookup_accepts_long_valid_paths or config_schema_lookup_supports_array_paths_and_rejects_invalid_lookup_paths" --basetemp .codex-tmp/gateway-config-schema-paths`: `3 passed`
+  - `.\.venv\Scripts\ruff.exe check --extend-ignore E501 src/openzues/services/gateway_models.py src/openzues/services/gateway_sessions.py src/openzues/services/gateway_config_schema.py tests/test_gateway_models.py tests/test_gateway_sessions.py tests/test_gateway_node_methods.py`: clean
+  - `PYTHONPATH=src;.venv\Lib\site-packages C:\Users\skull\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m mypy src/openzues/services/gateway_models.py src/openzues/services/gateway_sessions.py src/openzues/services/gateway_config_schema.py`: clean
+- Result:
+  - the hot gateway model allowlist shard is now truthful and green instead of dropping configured-only synthetic entries.
+  - spawned-session visibility proofs all pass through the direct exact-function path that avoids the known Windows/OneDrive pytest cleanup failure.
+  - config schema long-path proofs pass without reopening the earlier prototype-pollution guard rails.
+  - the provider-runtime outbound seam remains the queue head and there is still no shorter cross-cutting detour ahead of it after ledgering this shard.
+
+### Recovery addendum 2026-04-23 provider callback runtime cutover America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw routes gateway outbound work through channel outbound adapters and provider-owned send services.
+  - OpenZues had one shared direct/announce runtime owner, but the owner could only mirror messages into a session-backed transcript path.
+- Landed the next bounded provider-runtime slice:
+  - `GatewayOutboundRuntimeService` now accepts structured provider message and poll deliverers.
+  - direct `gateway.send` prefers a `GatewayOutboundRuntimeMessageRequest` provider callback with channel, target, formatted message, media URLs, GIF playback, account, thread, session, and agent metadata.
+  - direct `gateway.poll` prefers a `GatewayOutboundRuntimePollRequest` provider callback with channel, target, question, options, selection, duration, silent, anonymous, account, thread, and session metadata.
+  - both paths still fall back to the existing session-backed deliverer when no provider callback is bound, so saved replay and local mirrored delivery behavior stay intact.
+  - fresh direct send/poll responses now surface `runtime="provider-backed"` transport metadata when the provider callback owns the delivery.
+- Product effect:
+  - the outbound owner is no longer hard-coded to session-backed replay.
+  - OpenZues can now host real channel adapters behind the same gateway send/poll contract without another API or delivery schema rewrite.
+  - native adapter binding and media upload/result semantics remain open, but the seam is narrower and executable.
+- Verified this continuation with:
+  - `.\.venv\Scripts\ruff.exe check src/openzues/services/gateway_outbound_runtime.py src/openzues/services/ops_mesh.py tests/test_ops_mesh.py`: clean
+  - `PYTHONPATH=src;.venv\Lib\site-packages C:\Users\skull\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m pytest tests/test_ops_mesh.py -k "direct_channel_message_prefers_provider_runtime or direct_channel_poll_prefers_provider_runtime or shared_outbound_runtime_owner or direct_channel_poll_records_session_backed_delivery" --basetemp .codex-tmp\pytest-provider-runtime`: `4 passed`
+  - `PYTHONPATH=src;.venv\Lib\site-packages C:\Users\skull\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m mypy src/openzues/services/gateway_outbound_runtime.py src/openzues/services/ops_mesh.py`: clean
+- Queue effect from this run:
+  - previous head "make the shared owner provider-aware" is closed.
+  - new head is concrete channel-adapter binding plus native media upload/result handling behind that provider-aware owner.
+
+### Recovery addendum 2026-04-23 route-backed gateway provider adapter America/Chicago
+
+- Queue-head seam before implementation:
+  - provider-shaped send and poll callbacks existed, but app/runtime setup still had no concrete adapter bound behind them.
+  - existing notification routes already carried channel, account, peer, webhook target, event filters, and secret handling, but they were only used for notification delivery and route inventory.
+- Landed the next bounded adapter slice:
+  - `OpsMeshService` now binds route-backed provider callbacks into `GatewayOutboundRuntimeService` by default.
+  - notification routes explicitly subscribed to `gateway/send` can deliver direct send payloads as provider-backed webhooks.
+  - notification routes explicitly subscribed to `gateway/poll` can deliver direct poll payloads as provider-backed webhooks.
+  - routes that only exist for inventory or other events still do not steal direct send/poll delivery; those paths keep falling back to the session-backed transcript owner.
+  - provider route responses can surface `messageId` or `id` back through the normal gateway direct-delivery `messageId` field.
+  - the dashboard notification-route copy now names `gateway/send` and `gateway/poll`, so the provider adapter is discoverable without reading source.
+- Product effect:
+  - OpenZues now has a concrete opt-in provider adapter path behind the shared outbound owner, using the route/webhook substrate already exposed in the product.
+  - the remaining parity gap is narrower: OpenClaw-style channel SDK adapters and native media upload/result handling are still open, but the direct gateway runtime no longer stops at abstract callbacks.
+- Verified this continuation with:
+  - `.\.venv\Scripts\ruff.exe check src/openzues/services/gateway_outbound_runtime.py src/openzues/services/ops_mesh.py tests/test_ops_mesh.py`: clean
+  - `PYTHONPATH=src;.venv\Lib\site-packages C:\Users\skull\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m pytest tests/test_ops_mesh.py -k "direct_channel_message_uses_gateway_route_adapter or direct_channel_poll_uses_gateway_route_adapter or direct_channel_message_prefers_provider_runtime or direct_channel_poll_prefers_provider_runtime or shared_outbound_runtime_owner or direct_channel_message_records_media_delivery or direct_channel_poll_records_session_backed_delivery" --basetemp .codex-tmp\pytest-route-provider-runtime`: `7 passed`
+  - `PYTHONPATH=src;.venv\Lib\site-packages C:\Users\skull\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m mypy src/openzues/services/gateway_outbound_runtime.py src/openzues/services/ops_mesh.py`: clean
+- Queue effect from this run:
+  - previous head "bind a concrete route-backed provider adapter" is closed.
+  - new head is native channel SDK adapter binding plus native media upload/result semantics behind the same provider-aware owner.
+
+### Recovery addendum 2026-04-23 provider result metadata preservation America/Chicago
+
+- Queue-head seam before implementation:
+  - route-backed provider adapters could return provider-native send/poll IDs, but only the generic `messageId` / `id` survived the OpenZues gateway response.
+  - cached `idempotencyKey` reads reconstructed the delivery from SQLite without knowing the original provider-backed runtime or provider-native IDs.
+  - upstream OpenClaw's gateway delivery payload preserves native channel fields such as `chatId`, `channelId`, `toJid`, `conversationId`, and `pollId`.
+- Landed the next bounded result-surface slice:
+  - `GatewayOutboundRuntimeDeliveryResult` now carries a bounded `native_result` payload from provider send and poll callbacks.
+  - direct route-backed `gateway.send` preserves native provider fields including `chatId`, `channelId`, and `toJid` on fresh responses, saved delivery `route_scope`, and cached `idempotencyKey` responses.
+  - direct route-backed `gateway.poll` preserves native provider fields including `conversationId` and `pollId` on fresh responses, saved delivery `route_scope`, and cached `idempotencyKey` responses.
+  - cached delivery reconstruction now restores `runtime="provider-backed"` instead of downgrading provider-owned deliveries to session-backed transport metadata.
+- Product effect:
+  - the shared outbound owner now has the provider result shape needed by future native SDK adapters.
+  - retries no longer lose provider-native identity or transport truth after the first successful delivery.
+  - the remaining gap is narrower: OpenZues still needs actual Slack/Telegram-style SDK adapter binding and native upload execution, but result propagation is no longer part of that blocker.
+- Verified this continuation with:
+  - `.\.venv\Scripts\ruff.exe check src/openzues/services/gateway_outbound_runtime.py src/openzues/services/ops_mesh.py tests/test_ops_mesh.py`: clean
+  - `PYTHONPATH=src;.venv\Lib\site-packages C:\Users\skull\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m pytest tests/test_ops_mesh.py -k "direct_channel_message_uses_gateway_route_adapter or direct_channel_poll_uses_gateway_route_adapter or direct_channel_message_prefers_provider_runtime or direct_channel_poll_prefers_provider_runtime or shared_outbound_runtime_owner or direct_channel_message_records_media_delivery or direct_channel_poll_records_session_backed_delivery" --basetemp .codex-tmp\pytest-native-result-runtime`: `7 passed`
+  - `PYTHONPATH=src;.venv\Lib\site-packages C:\Users\skull\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m mypy src/openzues/services/gateway_outbound_runtime.py src/openzues/services/ops_mesh.py`: clean
+- Queue effect from this run:
+  - previous head "native provider result metadata" is closed.
+  - new head is native channel SDK adapter binding plus native media upload execution behind the same provider-aware owner.
+
+### Recovery addendum 2026-04-23 native adapter binding hooks America/Chicago
+
+- Queue-head seam before implementation:
+  - provider-shaped callbacks and route-backed webhook adapters existed, but the shared runtime owner still had no first-class account/channel-specific binding point for SDK-style native adapters.
+  - `pyproject.toml` still contains no Slack, Telegram, Discord, or WhatsApp SDK dependency, so a real provider upload client cannot be truthfully implemented in this workspace without selecting a concrete provider package and credential model first.
+- Landed the next bounded native-binding slice:
+  - `GatewayOutboundRuntimeService` can now bind native message deliverers per `channel` plus optional `account_id`.
+  - `GatewayOutboundRuntimeService` can now bind native poll deliverers per `channel` plus optional `account_id`.
+  - native bindings are preferred before generic provider callbacks and session fallback.
+  - native-owned deliveries report `runtime="native-provider-backed"` and still preserve provider-native result metadata through the same saved delivery/cached response path.
+- Product effect:
+  - future Slack/Telegram-style SDK clients now have a precise in-repo binding seam instead of needing another gateway API or replay-schema rewrite.
+  - account-specific credentials can map to account-specific native adapters without stealing delivery for other accounts on the same channel.
+  - the remaining gap is now the external/productized part: choose the first concrete provider SDK, add credentials/config, and implement actual media upload/send execution behind these hooks.
+- Verified this continuation with:
+  - `.\.venv\Scripts\ruff.exe check src/openzues/services/gateway_outbound_runtime.py src/openzues/services/ops_mesh.py tests/test_ops_mesh.py`: clean
+  - `PYTHONPATH=src;.venv\Lib\site-packages C:\Users\skull\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m pytest tests/test_ops_mesh.py -k "native_adapter_binding or direct_channel_message_uses_gateway_route_adapter or direct_channel_poll_uses_gateway_route_adapter or direct_channel_message_prefers_provider_runtime or direct_channel_poll_prefers_provider_runtime or shared_outbound_runtime_owner" --basetemp .codex-tmp\pytest-native-adapter-runtime`: `7 passed`
+  - `PYTHONPATH=src;.venv\Lib\site-packages C:\Users\skull\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m mypy src/openzues/services/gateway_outbound_runtime.py src/openzues/services/ops_mesh.py`: clean
+- Queue effect from this run:
+  - previous head "native channel SDK adapter binding" is closed at the runtime-owner seam.
+  - new head is concrete provider SDK packages, credentials, and native media upload execution.
+
+### Recovery addendum 2026-04-23 native provider route execution America/Chicago
+
+- Queue-head seam before implementation:
+  - native adapter hooks existed, but route-backed provider execution still only had generic webhook envelopes or test-bound fake adapters.
+  - OpenClaw's channel send path terminates in provider-native send services; for OpenZues parity, route-owned provider execution needed to emit provider-shaped payloads for real channels before falling back to generic webhooks or session mirroring.
+- Landed the next bounded provider-execution slice:
+  - `NotificationRouteCreate.kind` and route views now accept `slack`, `telegram`, and `discord` in addition to generic `webhook`.
+  - Slack native routes post `chat.postMessage` payloads for message/poll-style delivery and use Slack's current external upload sequence, `files.getUploadURLExternal` -> upload bytes -> `files.completeUploadExternal`, for media URL sends.
+  - Telegram native routes post Bot API `sendMessage`, `sendPhoto`, and `sendPoll` payloads with the route secret as the bot token.
+  - Discord native routes post webhook execute payloads with native `content`, image `embeds`, and `poll` bodies, using `wait=true` so provider message IDs flow back into OpenZues.
+  - all three provider route kinds report `runtime="native-provider-backed"` and preserve provider-native message, chat/channel, poll, media ID, and media URL metadata through the same delivery/cached response path.
+- Product effect:
+  - OpenZues now has concrete Slack, Telegram, and Discord direct channel execution behind the shared runtime owner, not just route inventory or generic webhooks.
+  - Slack media sends perform the modern upload flow instead of the retired `files.upload` method.
+  - the remaining channel-provider gap is narrower: WhatsApp/business-provider delivery and deeper provider-specific file edge cases still need dedicated follow-up.
+- Verified this continuation with:
+  - `.\.venv\Scripts\ruff.exe check src/openzues/schemas.py src/openzues/services/gateway_outbound_runtime.py src/openzues/services/ops_mesh.py tests/test_ops_mesh.py`: clean
+  - `PYTHONPATH=src;.venv\Lib\site-packages C:\Users\skull\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m pytest tests/test_ops_mesh.py -k "slack_native_route or telegram_native_route or discord_native_route or native_adapter_binding or uses_gateway_route_adapter" --basetemp .codex-tmp\pytest-native-provider-runtime`: `10 passed`
+  - `PYTHONPATH=src;.venv\Lib\site-packages C:\Users\skull\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m mypy src/openzues/schemas.py src/openzues/services/gateway_outbound_runtime.py src/openzues/services/ops_mesh.py`: clean
+- Queue effect from this run:
+  - previous head "concrete provider execution for first channel families" is closed for Slack, Telegram, and Discord.
+  - new head is WhatsApp/business-provider native delivery plus deeper provider file hardening.
+
+### Recovery addendum 2026-04-23 WhatsApp native provider route execution America/Chicago
+
+- Queue-head seam before implementation:
+  - Slack, Telegram, and Discord provider route execution were concrete, but WhatsApp/business-provider delivery still fell back to the generic route/runtime story.
+  - Direct WhatsApp targets also exposed a session-key accuracy gap: `direct:+...` route matches could deliver natively while the explicit target session key still labeled that peer as `channel`.
+- Landed the next bounded provider-execution slice:
+  - `NotificationRouteCreate.kind` and route views now accept `whatsapp`.
+  - WhatsApp native routes post Cloud API messages payloads through the route target's `/messages` endpoint with the route secret as a Bearer access token.
+  - WhatsApp text and URL-media sends use `type="text"` and `type="image"` payloads, including media captions when a message is present.
+  - WhatsApp poll-style delivery uses interactive button messages with the first three options represented as reply buttons, matching the bounded provider shape available in the Cloud API messages surface.
+  - direct WhatsApp targets now preserve `peer_kind="direct"` in the shared explicit-target session key instead of collapsing `direct:+...` into a channel-peer alias.
+  - WhatsApp provider responses preserve native message, contact/chat, channel, conversation, and poll IDs through fresh responses, saved delivery `route_scope`, and cached `idempotencyKey` reads.
+- Product effect:
+  - OpenZues now has concrete Slack, Telegram, Discord, and WhatsApp native route execution behind the shared runtime owner.
+  - the current gateway/cron/session-delivery lane no longer has a missing first-class provider family ahead of the queue.
+  - the remaining queue head is now productization/hardening: provider route setup UX, credential guidance, provider-specific file edge cases, and saved-delivery replay/update edge cases.
+- Verified this continuation with:
+  - `.\.venv\Scripts\ruff.exe check src/openzues/schemas.py src/openzues/services/gateway_outbound_runtime.py src/openzues/services/ops_mesh.py tests/test_ops_mesh.py`: clean
+  - `PYTHONPATH=src;.venv\Lib\site-packages C:\Users\skull\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m pytest tests/test_ops_mesh.py -k "slack_native_route or telegram_native_route or discord_native_route or whatsapp_native_route or native_adapter_binding or uses_gateway_route_adapter" --basetemp .codex-tmp\pytest-native-provider-runtime`: `12 passed`
+  - `PYTHONPATH=src;.venv\Lib\site-packages C:\Users\skull\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m mypy src/openzues/schemas.py src/openzues/services/gateway_outbound_runtime.py src/openzues/services/ops_mesh.py`: clean
+- Queue effect from this run:
+  - previous head "WhatsApp/business-provider native delivery" is closed at the native route-execution seam.
+  - new head is provider setup UX plus deeper provider-specific file/replay hardening behind the same provider-aware owner.
+
+### Recovery addendum 2026-04-23 native provider route setup productization America/Chicago
+
+- Queue-head seam before implementation:
+  - Slack, Telegram, Discord, and WhatsApp native route execution existed behind the runtime owner.
+  - the dashboard still hardcoded notification-route creation to `kind="webhook"`, and the CLI could list/test/replay routes but not create a native provider route.
+  - that made the implementation technically usable through raw API calls, but not productized for operators.
+- Landed the next bounded productization slice:
+  - `openzues routes create` now creates notification routes from the CLI.
+  - the CLI validates `--kind webhook|slack|telegram|discord|whatsapp`, accepts conversation target routing fields, attaches inline or vault-backed secrets, and defaults native provider kinds to `gateway/send,gateway/poll` when `--events` is omitted.
+  - the dashboard notification-route form now exposes provider-kind selection for generic webhook, Slack, Telegram, Discord, and WhatsApp routes instead of forcing every route to webhook.
+  - dashboard native provider route creation also defaults missing events to `gateway/send,gateway/poll`, while generic webhooks keep the mission/task notification default.
+- Product effect:
+  - native provider delivery is now discoverable and creatable from both CLI and dashboard setup surfaces.
+  - operators no longer need to know the raw `/api/notification-routes` payload shape to wire native gateway send/poll delivery.
+  - the remaining queue head is deeper hardening: provider-specific file edge cases, saved replay/update semantics, and provider failure detail polish.
+- Verified this continuation with:
+  - `.\.venv\Scripts\ruff.exe check src/openzues/cli.py tests/test_cli.py`: clean
+  - `PYTHONPATH=src;.venv\Lib\site-packages C:\Users\skull\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m pytest tests/test_cli.py -k "routes_create_command_productizes_native_provider_routes" --basetemp .codex-tmp\pytest-cli-route-create`: `1 passed`
+  - `node --check src/openzues/web/static/app.js`: clean
+  - `PYTHONPATH=src;.venv\Lib\site-packages C:\Users\skull\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m mypy src/openzues/cli.py`: clean
+- Queue effect from this run:
+  - previous head "provider setup UX" is closed at the CLI/dashboard creation seam.
+  - new head is provider-specific file/replay hardening behind the same provider-aware owner.
+
+### Recovery addendum 2026-04-23 native route replay/test dispatch America/Chicago
+
+- Queue-head seam before implementation:
+  - native provider execution was wired for live direct send/poll calls.
+  - saved notification-route test/replay still posted generic webhook envelopes to route targets, which meant `routes test` against a native Slack/Telegram/Discord/WhatsApp gateway route could report success against the wrong payload shape or fail against a provider API base URL.
+- Landed the next bounded replay/test hardening slice:
+  - saved `gateway/send` and `gateway/poll` deliveries for native provider route kinds now dispatch through the same provider-native posting methods as live direct gateway delivery.
+  - saved native route tests synthesize a bounded provider payload from the saved summary and route conversation target when `message`, `question`, `options`, or `to` are absent.
+  - delivered saved native routes now record provider message id, `runtime="native-provider-backed"`, and provider result metadata back into the outbound delivery row.
+- Product effect:
+  - `routes test` now gives operators a real native-provider smoke test for gateway send/poll routes instead of exercising an unrelated webhook envelope.
+  - saved native route replay now preserves the same transport truth and provider IDs as live direct delivery.
+  - the remaining queue head is narrower: deeper provider file edge cases remain, especially multi-file/provider-specific upload limits beyond the current Slack external upload, Telegram URL media, Discord embeds, and WhatsApp URL image path.
+- Verified this continuation with:
+  - `.\.venv\Scripts\ruff.exe check src/openzues/services/ops_mesh.py tests/test_ops_mesh.py`: clean
+  - `PYTHONPATH=src;.venv\Lib\site-packages C:\Users\skull\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m pytest tests/test_ops_mesh.py -k "tests_slack_native_route or slack_native_route or telegram_native_route or discord_native_route or whatsapp_native_route or native_adapter_binding or uses_gateway_route_adapter" --basetemp .codex-tmp\pytest-native-route-test`: `13 passed`
+  - `PYTHONPATH=src;.venv\Lib\site-packages C:\Users\skull\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m mypy src/openzues/services/ops_mesh.py`: clean
+- Queue effect from this run:
+  - previous head "native route replay/update edge cases" is closed for saved route tests and saved `gateway/send` / `gateway/poll` replay dispatch.
+  - new head is deeper provider-specific file hardening behind the same provider-aware owner.
+
+### Recovery addendum 2026-04-23 Telegram media-group file hardening America/Chicago
+
+- Queue-head seam before implementation:
+  - Slack native routes could upload multiple files and Discord native routes could include multiple media embeds.
+  - Telegram native send still used `sendPhoto` for media URL sends, which meant only the first media URL survived a multi-media gateway send.
+  - Telegram Bot API media groups return a list of message objects, but the provider result parser only understood a single `result` object.
+- Landed the next bounded media-hardening slice:
+  - Telegram native sends now use `sendMediaGroup` when more than one media URL is present.
+  - the first media item receives the bounded caption text, while later items carry only their media URL.
+  - list-shaped Telegram media-group results now preserve the first returned message id as the delivery message id.
+  - provider media IDs are collected from each returned photo message and preserved through fresh responses and saved delivery `route_scope`.
+- Product effect:
+  - Telegram gateway sends no longer silently drop all but the first media URL.
+  - Slack, Telegram, and Discord now each preserve multi-media delivery intent through their native route path.
+  - the remaining queue head is provider-specific media constraints, especially WhatsApp multi-media fallbacks and clearer provider error/detail handling for unsupported media bundles.
+- Verified this continuation with:
+  - `.\.venv\Scripts\ruff.exe check src/openzues/services/ops_mesh.py tests/test_ops_mesh.py`: clean
+  - `PYTHONPATH=src;.venv\Lib\site-packages C:\Users\skull\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m pytest tests/test_ops_mesh.py -k "telegram_media_group or telegram_native_route or tests_slack_native_route or native_adapter_binding or uses_gateway_route_adapter" --basetemp .codex-tmp\pytest-telegram-media-group`: `8 passed`
+  - `PYTHONPATH=src;.venv\Lib\site-packages C:\Users\skull\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m mypy src/openzues/services/ops_mesh.py`: clean
+- Queue effect from this run:
+  - previous head "Telegram multi-media URL sends" is closed.
+  - new head is provider-specific media constraints behind the same provider-aware owner.
+
+### Recovery addendum 2026-04-23 WhatsApp split-media fallback America/Chicago
+
+- Queue-head seam before implementation:
+  - WhatsApp Cloud API messages accept one media object per message.
+  - local WhatsApp native send accepted multiple media URLs from the shared gateway contract but only posted the first image while preserving the full `mediaUrls` list in the result, which made delivery look broader than it actually was.
+- Landed the next bounded media-hardening slice:
+  - WhatsApp native sends now split multiple media URLs into multiple Cloud API image messages.
+  - the first image carries the bounded caption text, and subsequent images are sent without duplicating the caption.
+  - every returned WhatsApp message id is preserved as `mediaIds`; the first returned id remains the delivery `messageId`.
+- Product effect:
+  - WhatsApp gateway sends no longer silently drop later media URLs.
+  - Slack, Telegram, Discord, and WhatsApp native route families now each preserve multi-media intent within their provider constraints.
+  - the remaining queue head is now provider-specific failure detail polish instead of missing provider execution, setup, replay, or basic media fan-out.
+- Verified this continuation with:
+  - `.\.venv\Scripts\ruff.exe check src/openzues/services/ops_mesh.py tests/test_ops_mesh.py`: clean
+  - `PYTHONPATH=src;.venv\Lib\site-packages C:\Users\skull\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m pytest tests/test_ops_mesh.py -k "whatsapp_media or whatsapp_native_route or telegram_media_group" --basetemp .codex-tmp\pytest-whatsapp-media`: `4 passed`
+  - `PYTHONPATH=src;.venv\Lib\site-packages C:\Users\skull\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m mypy src/openzues/services/ops_mesh.py`: clean
+- Queue effect from this run:
+  - previous head "WhatsApp multi-media fallback" is closed.
+  - new head is provider-specific failure detail polish behind the same provider-aware owner.
+
+### Recovery addendum 2026-04-23 provider HTTP failure detail polish America/Chicago
+
+- Queue-head seam before implementation:
+  - provider-native routes had real send/poll/media behavior, but HTTP failures from provider APIs and upload URLs were collapsed to status-only errors like `Webhook returned 400`.
+  - that left saved route/delivery failure records less actionable than OpenClaw-style provider-owned send errors, where provider response details are part of the diagnostic boundary.
+- Landed the next bounded failure-detail slice:
+  - HTTP error bodies are now parsed for JSON `error`, nested `error.message`, `message`, `detail`, or `description` fields.
+  - generic webhook/provider JSON posts, Slack form calls, Slack media downloads, and Slack upload URL posts now include parsed provider detail in their raised error messages when present.
+- Product effect:
+  - native provider route failures can now preserve actionable details such as `channel_not_found` instead of only reporting the HTTP status code.
+  - the provider-runtime queue no longer has a known smaller missing execution/setup/replay/media/failure-detail blocker.
+- Verified this continuation with:
+  - `.\.venv\Scripts\ruff.exe check src/openzues/services/ops_mesh.py tests/test_ops_mesh.py`: clean
+  - `PYTHONPATH=src;.venv\Lib\site-packages C:\Users\skull\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m pytest tests/test_ops_mesh.py -k "post_json_webhook_includes_provider_http_error_body or whatsapp_media or telegram_media_group" --basetemp .codex-tmp\pytest-webhook-error`: `3 passed`
+  - `PYTHONPATH=src;.venv\Lib\site-packages C:\Users\skull\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m mypy src/openzues/services/ops_mesh.py`: clean
+- Queue effect from this run:
+  - previous head "provider-specific failure detail polish" is closed.
+  - no smaller provider-runtime blocker is currently known; next move is a final adjacent provider boundary sweep, then the next OpenClaw feature family.
+
+### Recovery addendum 2026-04-23 provider boundary sweep verification America/Chicago
+
+- Sweep finding after the native provider route/media/error-detail closure:
+  - full `tests/test_ops_mesh.py` exposed one real regression from provider route binding becoming globally available.
+  - cron failure announce paths were mistaking provider-backed `gateway/send` route availability for a live session-backed announce runtime, so they tried the gateway provider adapter for `cron/failure` instead of falling through to the matching notification route.
+  - saved route-less webhook replay also needed to distinguish true ad-hoc webhook deliveries from notification-route deliveries that had lost their `route_id`.
+- Landed the smallest boundary fix:
+  - `GatewayOutboundRuntimeService` now exposes an explicit `has_session_deliverer()` check.
+  - cron failure explicit-announce and last-channel fallback branches now require a session-backed deliverer before taking the live direct-delivery path; provider-backed gateway route adapters still own `gateway/send` and `gateway/poll`.
+  - route-less webhook replay now treats a saved webhook as ad-hoc only when its saved scope looks ad-hoc, avoiding accidental network replay for notification-route rows that lost their route id.
+- Product effect:
+  - provider-backed gateway routes no longer steal non-gateway cron failure delivery.
+  - cron failure route matching, saved ad-hoc webhook replay, and saved missing-route diagnostics now coexist behind the same outbound replay owner.
+- Verified this sweep with:
+  - `.\.venv\Scripts\ruff.exe check src/openzues/services/gateway_outbound_runtime.py src/openzues/services/ops_mesh.py tests/test_ops_mesh.py`: clean
+  - `PYTHONPATH=src;.venv\Lib\site-packages C:\Users\skull\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m pytest tests/test_ops_mesh.py -k "routes_cron_failure_to_matching_announce_notification_route or routes_last_channel_cron_failure_without_conversation_target or fails_when_saved_delivery_is_missing_route_id or retries_saved_failed_ad_hoc_webhook_delivery or retry_secret_backed_ad_hoc_webhook_delivery" --basetemp .codex-tmp\pytest-ops-mesh-regression-focus`: `5 passed`
+  - `PYTHONPATH=src;.venv\Lib\site-packages C:\Users\skull\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m mypy src/openzues/services/gateway_outbound_runtime.py src/openzues/services/ops_mesh.py`: clean
+  - `PYTHONPATH=src;.venv\Lib\site-packages C:\Users\skull\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m pytest tests/test_ops_mesh.py --basetemp .codex-tmp\pytest-ops-mesh-full-provider-sweep-2`: `88 passed`
+  - `PYTHONPATH=src;.venv\Lib\site-packages C:\Users\skull\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m pytest tests/test_cli.py --basetemp .codex-tmp\pytest-cli-full-provider-sweep-2`: `89 passed`
+- Queue effect from this run:
+  - the provider-runtime boundary now has full local Ops Mesh and CLI proof after the native route/media/error-detail closure.
+  - no smaller provider-runtime blocker is currently known in this queue; the next parity move is to start the next OpenClaw feature-family seam with a fresh proof rather than keep polishing this closed provider-runtime lane.
+
+### Recovery addendum 2026-04-23 gateway node/session adjacent sweep America/Chicago
+
+- Queue-head seam before implementation:
+  - the provider-runtime lane had full Ops Mesh/CLI proof, but the broader gateway-adjacent shard still carried stale OpenClaw assertions and a few real runtime gaps from the session/node parity work.
+  - the next honest move was not another provider patch; it was proving the adjacent gateway node/session surface stayed green before handing the queue to a new OpenClaw feature family.
+- Landed the bounded adjacent sweep:
+  - `desktop` node platforms now receive the system-command allowlist, so client-only desktop nodes can pull and acknowledge queued `system.run` pending actions.
+  - live empty command declarations now survive tuple-shaped registry payloads on node catalog views instead of falling back to approved paired commands.
+  - existing silent scope-upgrade pairing requests are reused instead of timestamp-refreshed by read-only `node.pair.list`.
+  - `wake` with `agentId="main"` now resolves the main session target through the session snapshot default rather than calling `sessions.resolve` without a primary selector.
+  - immediate wake retries now clear stale retry state and re-dispatch quickly when the first submit raises.
+  - app startup now tolerates injected fake Ops Mesh services that do not expose an outbound runtime property.
+- Product effect:
+  - node pending work, pairing scope upgrades, catalog command visibility, and wake recovery now match the OpenClaw-style gateway contract more closely.
+  - the gateway/cron/session-delivery lane now has a full adjacent gateway shard proof instead of only provider-focused proof.
+- Verified this sweep with:
+  - `ruff check src tests`: clean
+  - `PYTHONPATH=src;.venv\Lib\site-packages python -m mypy src`: `Success: no issues found in 93 source files`
+  - `PYTHONPATH=src;.venv\Lib\site-packages python -m pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q --tb=short`: `746 passed`
+  - `PYTHONPATH=src;.venv\Lib\site-packages python -m pytest tests/test_gateway_logs.py tests/test_gateway_models.py tests/test_gateway_node_methods.py tests/test_gateway_node_pairing_refresh.py tests/test_gateway_nodes_api.py tests/test_gateway_system_presence.py -q --tb=short --basetemp .codex-tmp\pytest-gateway-adjacent`: `781 passed`
+- Queue effect from this run:
+  - the gateway/cron/session-delivery lane is closed as far as this queue currently knows: provider runtime, CLI, Ops Mesh, and adjacent gateway node/session/model/log/presence proof are green.
+  - next queue head is the next OpenClaw feature family, preferably browser/canvas/nodes/voice, with a focused failing proof against `openclaw-main` before implementation.
+
+### Recovery addendum 2026-04-23 node chat subscription start America/Chicago
+
+- Queue-head seam before implementation:
+  - upstream `openclaw-main` handles `node.event` `chat.subscribe` / `chat.unsubscribe` by registering a connected node for session-scoped downstream events.
+  - local OpenZues recorded `node.event` payloads but had no node subscription manager, so mobile/browser/canvas nodes had no way to receive session-scoped `chat` events after subscribing.
+- Landed the first browser/canvas/nodes/voice slice:
+  - `GatewayNodeRegistry` now tracks node-to-session and session-to-node subscriptions, sends events to subscribed connected nodes, and cleans subscriptions when a node disconnects.
+  - `GatewayNodeMethodService` now recognizes `chat.subscribe` and `chat.unsubscribe` inside `node.event` payloads.
+  - a focused regression proof shows a node receives a routed `chat` payload after subscribing and stops receiving it after unsubscribing.
+- Product effect:
+  - the browser/canvas/nodes/voice queue head is no longer untouched; OpenZues now has the first upstream-shaped node subscription primitive needed by mobile/canvas companions.
+  - remaining queue head is deeper node-event/runtime behavior such as `exec.*`, `notifications.changed`, `voice.transcript`, and `agent.request`.
+- Verified this continuation with:
+  - `ruff check src/openzues/services/gateway_node_registry.py src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py`: clean
+  - `PYTHONPATH=src;.venv\Lib\site-packages python -m mypy src/openzues/services/gateway_node_registry.py src/openzues/services/gateway_node_methods.py`: clean
+  - `PYTHONPATH=src;.venv\Lib\site-packages python -m pytest tests/test_gateway_node_registry.py tests/test_gateway_node_methods.py::test_node_event_chat_subscribe_routes_session_events_to_node tests/test_gateway_node_methods.py::test_node_event_records_event_and_broadcasts_when_runtime_wired -q --tb=short`: `19 passed`
+- Queue effect from this run:
+  - first node subscription seam is closed.
+  - next exact seam is the next upstream node-event handler inside browser/canvas/nodes/voice, with `exec.*` event ingestion as the likely smallest useful follow-on.
+
+### Recovery addendum 2026-04-23 node exec event ingestion America/Chicago
+
+- Queue-head seam before implementation:
+  - upstream `openclaw-main` maps `node.event` `exec.started`, `exec.finished`, and `exec.denied` into session-scoped system notifications and heartbeat wakes.
+  - local OpenZues only recorded the raw node event, so mobile/system exec results never reached the operator loop as actionable session-scoped wake context.
+- Landed the next bounded node-event slice:
+  - `exec.started`, `exec.finished`, and `exec.denied` now format upstream-shaped summaries such as `Exec finished (node=node-1 id=run-1, code 1)` with compact output.
+  - successful quiet `exec.finished` events with no output are suppressed like OpenClaw.
+  - when `GatewayWakeService` is wired, the derived notification queues a `next-heartbeat` wake with `reason="node.exec"` and the reported `sessionKey`; otherwise it still records a `system-event` row when database logging is present.
+- Product effect:
+  - node-side terminal/system execution results can now wake the operator loop instead of disappearing into raw event history.
+  - remaining queue head is deeper node-event/runtime behavior such as `notifications.changed`, `voice.transcript`, and `agent.request`.
+- Verified this continuation with:
+  - `ruff check src/openzues/services/gateway_node_registry.py src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py`: clean
+  - `PYTHONPATH=src;.venv\Lib\site-packages python -m mypy src/openzues/services/gateway_node_registry.py src/openzues/services/gateway_node_methods.py`: clean
+  - `PYTHONPATH=src;.venv\Lib\site-packages python -m pytest tests/test_gateway_node_registry.py tests/test_gateway_node_methods.py::test_node_event_chat_subscribe_routes_session_events_to_node tests/test_gateway_node_methods.py::test_node_event_exec_finished_queues_system_event_wake tests/test_gateway_node_methods.py::test_node_event_records_event_and_broadcasts_when_runtime_wired -q --tb=short`: `20 passed`
+- Queue effect from this run:
+  - node exec event ingestion is closed for the focused start/finish/deny wake path.
+  - next exact seam is the next upstream node-event handler, with `notifications.changed` as the smallest adjacent event-to-wake path before larger `voice.transcript` or `agent.request` orchestration.
+
+### Recovery addendum 2026-04-23 node notification event ingestion America/Chicago
+
+- Queue-head seam before implementation:
+  - upstream `openclaw-main` maps `node.event` `notifications.changed` posted/removed payloads into bounded system context and heartbeat wakes.
+  - local OpenZues still only recorded the raw event, so mobile notification signals were visible in history but did not wake the operator loop.
+- Landed the next bounded node-event slice:
+  - `notifications.changed` now accepts `posted` / `removed` payloads with `key`, optional `packageName`, and optional title/body text.
+  - posted events format summaries such as `Notification posted (node=node-1 key=notif-42 package=com.example.chat): Build ready - Tap to inspect...`.
+  - the derived notification queues a `next-heartbeat` wake with `reason="notifications-event"` and the reported `sessionKey`; database-only runtimes still record the derived `system-event`.
+- Product effect:
+  - connected node notification signals now become actionable wake context instead of passive raw node-event records.
+  - remaining queue head is larger voice/agent node-event orchestration, especially `voice.transcript` and `agent.request`.
+- Verified this continuation with:
+  - `ruff check src/openzues/services/gateway_node_registry.py src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py`: clean
+  - `PYTHONPATH=src;.venv\Lib\site-packages python -m mypy src/openzues/services/gateway_node_registry.py src/openzues/services/gateway_node_methods.py`: clean
+  - `PYTHONPATH=src;.venv\Lib\site-packages python -m pytest tests/test_gateway_node_registry.py tests/test_gateway_node_methods.py::test_node_event_chat_subscribe_routes_session_events_to_node tests/test_gateway_node_methods.py::test_node_event_exec_finished_queues_system_event_wake tests/test_gateway_node_methods.py::test_node_event_notifications_changed_queues_system_event_wake tests/test_gateway_node_methods.py::test_node_event_records_event_and_broadcasts_when_runtime_wired -q --tb=short`: `21 passed`
+- Queue effect from this run:
+  - node notification event ingestion is closed for the focused posted/removed wake path.
+  - next exact seam is voice transcript ingestion or agent-request deep-link ingestion.
+
+### Recovery addendum 2026-04-23 node voice transcript ingress America/Chicago
+
+- Queue-head seam before implementation:
+  - upstream `openclaw-main` routes `node.event` `voice.transcript` payloads into the agent/chat ingress with low-thinking, non-delivery semantics and a stable event fingerprint.
+  - local OpenZues only recorded the raw event, so node voice transcripts were not actionable chat input.
+- Landed the next bounded node-event slice:
+  - `voice.transcript` now trims and sanitizes non-empty transcript text, rejects overlarge transcripts, and defaults missing `sessionKey` to `node-{nodeId}`.
+  - when chat runtime is wired, the transcript calls the existing chat-send owner with `thinking="low"`, `deliver=False`, and no timeout.
+  - idempotency keys are stable `node-voice-*` hashes derived from upstream event identifiers (`eventId`, `providerEventId`, `transcriptId`, call sequence/timestamp) or transcript text.
+- Product effect:
+  - voice input from a connected node can now enter the OpenZues control/chat runtime instead of stopping at event history.
+  - remaining queue head is `agent.request` deep-link ingestion plus richer attachment/receipt behavior beyond the bounded voice transcript path.
+- Verified this continuation with:
+  - `ruff check src/openzues/services/gateway_node_registry.py src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py`: clean
+  - `PYTHONPATH=src;.venv\Lib\site-packages python -m mypy src/openzues/services/gateway_node_registry.py src/openzues/services/gateway_node_methods.py`: clean
+  - `PYTHONPATH=src;.venv\Lib\site-packages python -m pytest tests/test_gateway_node_registry.py tests/test_gateway_node_methods.py::test_node_event_chat_subscribe_routes_session_events_to_node tests/test_gateway_node_methods.py::test_node_event_exec_finished_queues_system_event_wake tests/test_gateway_node_methods.py::test_node_event_notifications_changed_queues_system_event_wake tests/test_gateway_node_methods.py::test_node_event_voice_transcript_routes_to_chat_runtime tests/test_gateway_node_methods.py::test_node_event_records_event_and_broadcasts_when_runtime_wired -q --tb=short`: `22 passed`
+- Queue effect from this run:
+  - node voice transcript ingestion is closed for the focused text-to-chat path.
+  - next exact seam is `agent.request` deep-link ingestion from nodes.
+
+### Recovery addendum 2026-04-23 node agent-request text ingress America/Chicago
+
+- Queue-head seam before implementation:
+  - upstream `openclaw-main` lets nodes send `agent.request` deep links with message, session, thinking, delivery, timeout, and key hints.
+  - local OpenZues still only recorded the raw node event, so node-originated deep links did not enter the chat runtime.
+- Landed the next bounded node-event slice:
+  - `agent.request` now routes non-empty text messages into the existing chat-send runtime.
+  - explicit `key` is preserved as the idempotency key; missing keys fall back to stable `node-agent-request-*` hashes.
+  - `sessionKey` defaults to `node-{nodeId}`, `thinking` is passed through when present, `deliver` is passed as a boolean, and `timeoutSeconds` maps to local `timeout_ms`.
+- Product effect:
+  - connected nodes can now launch text deep-link requests into OpenZues sessions instead of only writing event history.
+  - remaining queue head is richer `agent.request` attachments/receipts plus APNS registration/push wake behavior.
+- Verified this continuation with:
+  - `ruff check src/openzues/services/gateway_node_registry.py src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py`: clean
+  - `PYTHONPATH=src;.venv\Lib\site-packages python -m mypy src/openzues/services/gateway_node_registry.py src/openzues/services/gateway_node_methods.py`: clean
+  - `PYTHONPATH=src;.venv\Lib\site-packages python -m pytest tests/test_gateway_node_registry.py tests/test_gateway_node_methods.py::test_node_event_chat_subscribe_routes_session_events_to_node tests/test_gateway_node_methods.py::test_node_event_exec_finished_queues_system_event_wake tests/test_gateway_node_methods.py::test_node_event_notifications_changed_queues_system_event_wake tests/test_gateway_node_methods.py::test_node_event_voice_transcript_routes_to_chat_runtime tests/test_gateway_node_methods.py::test_node_event_agent_request_routes_deep_link_to_chat_runtime tests/test_gateway_node_methods.py::test_node_event_records_event_and_broadcasts_when_runtime_wired -q --tb=short`: `23 passed`
+- Queue effect from this run:
+  - text `agent.request` ingestion is closed.
+  - next exact seam is either richer node deep-link attachments/receipts or `push.apns.register`-backed node wake behavior.
+
+### Recovery addendum 2026-04-23 node APNS registration boundary America/Chicago
+
+- Queue-head seam before implementation:
+  - upstream `openclaw-main` handles node `push.apns.register` events before `push.test` attempts a push delivery.
+  - local OpenZues recorded the raw event but still reported `node {id} has no APNs registration`, which blurred the real remaining blocker.
+- Landed the next bounded node-event slice:
+  - `push.test` now scans persisted `node.event` rows for valid direct or relay-shaped `push.apns.register` payloads for the requested node.
+  - direct registrations require a non-empty token plus topic, and relay registrations require relay handle, send grant, installation id, and topic.
+  - when a registration exists, `push.test` now reports the truthful `UNAVAILABLE` boundary: the APNS sender runtime is not configured yet.
+  - unregistered nodes keep the older `INVALID_REQUEST` missing-registration behavior.
+- Product effect:
+  - the node push lane no longer forgets that a connected iOS node registered APNS details.
+  - the next honest push seam is wiring a real sender/runtime adapter or continuing with richer `agent.request` attachment and receipt semantics.
+- Verified this continuation with:
+  - red proof: `test_push_test_recognizes_recorded_apns_registration` first failed with the stale missing-registration error.
+  - `ruff check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py`: clean
+  - `PYTHONPATH=src;.venv\Lib\site-packages python -m mypy src/openzues/services/gateway_node_methods.py`: clean
+  - `PYTHONPATH=src;.venv\Lib\site-packages python -m pytest tests/test_gateway_node_methods.py::test_push_test_fails_as_missing_apns_registration tests/test_gateway_node_methods.py::test_push_test_recognizes_recorded_apns_registration tests/test_gateway_node_methods.py::test_node_event_chat_subscribe_routes_session_events_to_node tests/test_gateway_node_methods.py::test_node_event_exec_finished_queues_system_event_wake tests/test_gateway_node_methods.py::test_node_event_notifications_changed_queues_system_event_wake tests/test_gateway_node_methods.py::test_node_event_voice_transcript_routes_to_chat_runtime tests/test_gateway_node_methods.py::test_node_event_agent_request_routes_deep_link_to_chat_runtime tests/test_gateway_node_methods.py::test_node_event_records_event_and_broadcasts_when_runtime_wired -q --tb=short`: `8 passed`
+- Queue effect from this run:
+  - APNS registration recognition is closed for the focused `push.test` boundary.
+  - next exact seam is richer `agent.request` attachment/receipt behavior or the real APNS sender-runtime adapter.
+
+### Recovery addendum 2026-04-23 node voice transcript dedupe America/Chicago
+
+- Queue-head seam before implementation:
+  - upstream `openclaw-main` drops duplicate `voice.transcript` events with the same session/fingerprint inside a 1500ms window.
+  - local OpenZues routed every transcript event, so a noisy node could submit duplicate chat work for the same utterance.
+- Landed the next bounded node-event slice:
+  - `GatewayNodeMethodService` now keeps a small in-memory recent transcript cache keyed by session.
+  - duplicate `voice.transcript` payloads with the same fingerprint inside the 1500ms window return without calling the chat runtime.
+  - the cache prunes stale or oldest entries once it exceeds the upstream 200-session cap.
+- Product effect:
+  - mobile/voice node ingress is less likely to double-start work when providers resend the same transcript.
+  - remaining node-event queue head is exec-finished duplicate suppression, richer `agent.request` attachments/receipts, or APNS sender-runtime wiring.
+- Verified this continuation with:
+  - red proof: `test_node_event_voice_transcript_drops_near_duplicate_events` first showed duplicate sends.
+  - `ruff check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py`: clean
+  - `PYTHONPATH=src;.venv\Lib\site-packages python -m mypy src/openzues/services/gateway_node_methods.py`: clean
+  - `PYTHONPATH=src;.venv\Lib\site-packages python -m pytest tests/test_gateway_node_methods.py::test_node_event_voice_transcript_routes_to_chat_runtime tests/test_gateway_node_methods.py::test_node_event_voice_transcript_drops_near_duplicate_events tests/test_gateway_node_methods.py::test_node_event_agent_request_routes_deep_link_to_chat_runtime tests/test_gateway_node_methods.py::test_push_test_fails_as_missing_apns_registration tests/test_gateway_node_methods.py::test_push_test_recognizes_recorded_apns_registration tests/test_gateway_node_methods.py::test_node_event_chat_subscribe_routes_session_events_to_node tests/test_gateway_node_methods.py::test_node_event_exec_finished_queues_system_event_wake tests/test_gateway_node_methods.py::test_node_event_notifications_changed_queues_system_event_wake tests/test_gateway_node_methods.py::test_node_event_records_event_and_broadcasts_when_runtime_wired -q --tb=short`: `9 passed`
+- Queue effect from this run:
+  - voice transcript near-duplicate suppression is closed for the focused chat-ingress path.
+  - next exact seam is exec-finished duplicate suppression or richer `agent.request` attachment/receipt behavior.
+
+### Recovery addendum 2026-04-23 node exec finished dedupe America/Chicago
+
+- Queue-head seam before implementation:
+  - upstream `openclaw-main` drops duplicate `exec.finished` derived notifications for the same session/run id inside a 10-minute window.
+  - local OpenZues recorded both raw events and emitted duplicate derived `system-event` rows plus wake requests.
+- Landed the next bounded node-event slice:
+  - `GatewayNodeMethodService` now keeps a bounded recent exec-finished cache keyed by `sessionKey::runId`.
+  - duplicate finished events inside the 10-minute window still preserve raw `node.event` history but skip the derived system notification and wake path.
+  - the cache prunes stale or oldest entries once it exceeds the upstream 2000-run cap.
+- Product effect:
+  - node exec result resends no longer spam the operator loop with repeated heartbeat wakes for the same run.
+  - remaining node-event queue head is richer `agent.request` attachments/receipts or APNS sender-runtime wiring.
+- Verified this continuation with:
+  - red proof: `test_node_event_exec_finished_drops_duplicate_run_notifications` first showed duplicate derived notifications.
+  - `ruff check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py`: clean
+  - `PYTHONPATH=src;.venv\Lib\site-packages python -m mypy src/openzues/services/gateway_node_methods.py`: clean
+  - `PYTHONPATH=src;.venv\Lib\site-packages python -m pytest tests/test_gateway_node_methods.py::test_node_event_exec_finished_queues_system_event_wake tests/test_gateway_node_methods.py::test_node_event_exec_finished_drops_duplicate_run_notifications tests/test_gateway_node_methods.py::test_node_event_voice_transcript_routes_to_chat_runtime tests/test_gateway_node_methods.py::test_node_event_voice_transcript_drops_near_duplicate_events tests/test_gateway_node_methods.py::test_node_event_agent_request_routes_deep_link_to_chat_runtime tests/test_gateway_node_methods.py::test_push_test_fails_as_missing_apns_registration tests/test_gateway_node_methods.py::test_push_test_recognizes_recorded_apns_registration tests/test_gateway_node_methods.py::test_node_event_chat_subscribe_routes_session_events_to_node tests/test_gateway_node_methods.py::test_node_event_notifications_changed_queues_system_event_wake tests/test_gateway_node_methods.py::test_node_event_records_event_and_broadcasts_when_runtime_wired -q --tb=short`: `10 passed`
+- Queue effect from this run:
+  - exec-finished duplicate suppression is closed for the derived notification path.
+  - next exact seam is richer `agent.request` attachment/receipt behavior or APNS sender-runtime wiring.
+
+### Recovery addendum 2026-04-23 injected APNS sender runtime America/Chicago
+
+- Queue-head seam before implementation:
+  - upstream `openclaw-main` can complete `push.test` after loading an APNS registration when a direct or relay sender runtime is configured.
+  - local OpenZues could recognize a recorded registration but had no runtime adapter boundary, so tests could only prove the unavailable state.
+- Landed the next bounded push-runtime slice:
+  - `GatewayNodeMethodService` now accepts an injectable APNS sender callable.
+  - `push.test` loads the recorded registration and, when a sender is supplied, calls it with node id, registration, title, body, and optional environment override.
+  - default installs without a sender still report the honest `UNAVAILABLE` APNS sender boundary; unregistered nodes still report the original missing-registration error.
+- Product effect:
+  - the node push lane now has a real runtime seam where production APNS direct/relay credentials can plug in without changing method semantics.
+  - remaining queue head is production APNS credential/relay binding or richer `agent.request` attachment/receipt behavior.
+- Verified this continuation with:
+  - red proof: `test_push_test_uses_injected_apns_sender_for_registered_node` first failed because no sender adapter existed.
+  - `ruff check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py`: clean
+  - `PYTHONPATH=src;.venv\Lib\site-packages python -m mypy src/openzues/services/gateway_node_methods.py`: clean
+  - `PYTHONPATH=src;.venv\Lib\site-packages python -m pytest tests/test_gateway_node_methods.py::test_push_test_fails_as_missing_apns_registration tests/test_gateway_node_methods.py::test_push_test_recognizes_recorded_apns_registration tests/test_gateway_node_methods.py::test_push_test_uses_injected_apns_sender_for_registered_node tests/test_gateway_node_methods.py::test_node_event_exec_finished_queues_system_event_wake tests/test_gateway_node_methods.py::test_node_event_exec_finished_drops_duplicate_run_notifications tests/test_gateway_node_methods.py::test_node_event_voice_transcript_routes_to_chat_runtime tests/test_gateway_node_methods.py::test_node_event_voice_transcript_drops_near_duplicate_events tests/test_gateway_node_methods.py::test_node_event_agent_request_routes_deep_link_to_chat_runtime tests/test_gateway_node_methods.py::test_node_event_chat_subscribe_routes_session_events_to_node tests/test_gateway_node_methods.py::test_node_event_notifications_changed_queues_system_event_wake tests/test_gateway_node_methods.py::test_node_event_records_event_and_broadcasts_when_runtime_wired -q --tb=short`: `11 passed`
+- Queue effect from this run:
+  - APNS sender runtime injection is closed for the focused method-service contract.
+  - next exact seam is production APNS direct/relay binding or richer `agent.request` attachment/receipt behavior.
+
+### Recovery addendum 2026-04-23 route-safe node agent requests America/Chicago
+
+- Queue-head seam before implementation:
+  - upstream `openclaw-main` only marks `agent.request` delivery as enabled when it can resolve a channel and target, preventing node deep-links from falling back to an unintended global route.
+  - local OpenZues forwarded `deliver=True` even when the node payload supplied no route.
+- Landed the next bounded `agent.request` slice:
+  - node deep-link delivery now requires a known chat channel and non-empty `to` target.
+  - explicit route hints are forwarded through the chat runtime hook for the first time.
+  - `submit_gateway_chat_message` accepts the optional route hints so the method-service hook can evolve without breaking the app bridge.
+- Product effect:
+  - node-originated requests no longer claim deliverability when the target is unknown.
+  - remaining queue head is richer `agent.request` attachments/receipts or production APNS credential/relay binding.
+- Verified this continuation with:
+  - red proof: `test_node_event_agent_request_disables_delivery_without_route` first showed `deliver=True` without a route.
+  - `ruff check src/openzues/services/gateway_node_methods.py src/openzues/app.py tests/test_gateway_node_methods.py`: clean
+  - `PYTHONPATH=src;.venv\Lib\site-packages python -m mypy src/openzues/services/gateway_node_methods.py src/openzues/app.py`: clean
+  - `PYTHONPATH=src;.venv\Lib\site-packages python -m pytest tests/test_gateway_node_methods.py::test_node_event_agent_request_routes_deep_link_to_chat_runtime tests/test_gateway_node_methods.py::test_node_event_agent_request_disables_delivery_without_route tests/test_gateway_node_methods.py::test_push_test_fails_as_missing_apns_registration tests/test_gateway_node_methods.py::test_push_test_recognizes_recorded_apns_registration tests/test_gateway_node_methods.py::test_push_test_uses_injected_apns_sender_for_registered_node tests/test_gateway_node_methods.py::test_node_event_exec_finished_queues_system_event_wake tests/test_gateway_node_methods.py::test_node_event_exec_finished_drops_duplicate_run_notifications tests/test_gateway_node_methods.py::test_node_event_voice_transcript_routes_to_chat_runtime tests/test_gateway_node_methods.py::test_node_event_voice_transcript_drops_near_duplicate_events tests/test_gateway_node_methods.py::test_node_event_chat_subscribe_routes_session_events_to_node tests/test_gateway_node_methods.py::test_node_event_notifications_changed_queues_system_event_wake tests/test_gateway_node_methods.py::test_node_event_records_event_and_broadcasts_when_runtime_wired -q --tb=short`: `12 passed`
+- Queue effect from this run:
+  - route-safe text `agent.request` delivery is closed.
+  - next exact seam is richer `agent.request` attachments/receipts or production APNS direct/relay binding.
+
+### Recovery addendum 2026-04-23 node agent-request receipt acknowledgements America/Chicago
+
+- Queue-head seam before implementation:
+  - upstream `openclaw-main` sends a receipt acknowledgement when `agent.request` includes `receipt=true` and a route is available.
+  - local OpenZues accepted receipt fields but did not send any acknowledgement.
+- Landed the next bounded `agent.request` slice:
+  - node deep-links with a resolved route now send receipt text through the existing direct channel message runtime before entering chat.
+  - explicit receipt text is preserved, and missing receipt text falls back to the upstream-style iOS share acknowledgement.
+  - receipt sends use stable `node-agent-receipt-*` idempotency keys so retries do not duplicate acknowledgements.
+- Product effect:
+  - node/mobile users get immediate confirmation that OpenZues received a routed request.
+  - remaining queue head is richer `agent.request` attachments or production APNS credential/relay binding.
+- Verified this continuation with:
+  - red proof: `test_node_event_agent_request_sends_receipt_ack_when_route_is_present` first showed no receipt send.
+  - `ruff check src/openzues/services/gateway_node_methods.py src/openzues/app.py tests/test_gateway_node_methods.py`: clean
+  - `PYTHONPATH=src;.venv\Lib\site-packages python -m mypy src/openzues/services/gateway_node_methods.py src/openzues/app.py`: clean
+  - `PYTHONPATH=src;.venv\Lib\site-packages python -m pytest tests/test_gateway_node_methods.py::test_node_event_agent_request_routes_deep_link_to_chat_runtime tests/test_gateway_node_methods.py::test_node_event_agent_request_disables_delivery_without_route tests/test_gateway_node_methods.py::test_node_event_agent_request_sends_receipt_ack_when_route_is_present tests/test_gateway_node_methods.py::test_push_test_fails_as_missing_apns_registration tests/test_gateway_node_methods.py::test_push_test_recognizes_recorded_apns_registration tests/test_gateway_node_methods.py::test_push_test_uses_injected_apns_sender_for_registered_node tests/test_gateway_node_methods.py::test_node_event_exec_finished_queues_system_event_wake tests/test_gateway_node_methods.py::test_node_event_exec_finished_drops_duplicate_run_notifications tests/test_gateway_node_methods.py::test_node_event_voice_transcript_routes_to_chat_runtime tests/test_gateway_node_methods.py::test_node_event_voice_transcript_drops_near_duplicate_events tests/test_gateway_node_methods.py::test_node_event_chat_subscribe_routes_session_events_to_node tests/test_gateway_node_methods.py::test_node_event_notifications_changed_queues_system_event_wake tests/test_gateway_node_methods.py::test_node_event_records_event_and_broadcasts_when_runtime_wired -q --tb=short`: `13 passed`
+- Queue effect from this run:
+  - receipt acknowledgements are closed for routed text `agent.request` events.
+  - next exact seam is richer `agent.request` attachments or production APNS direct/relay binding.
+
+### Recovery addendum 2026-04-23 node agent-request attachment boundary America/Chicago
+
+- Queue-head seam before implementation:
+  - upstream `openclaw-main` parses image attachments for `agent.request` before launching the agent command.
+  - local OpenZues has an explicit unavailable boundary for effective chat/session attachments, but node `agent.request` silently dropped effective attachments and launched text-only work.
+- Landed the next bounded `agent.request` slice:
+  - effective `agent.request` attachments now raise `UNAVAILABLE` with `agent.request attachments are unavailable until control chat attachment runtime is wired`.
+  - inert attachment shells still do not block text-only node requests.
+  - malformed attachment containers raise the same `attachments must be an array` validation used by adjacent chat/session methods.
+- Product effect:
+  - node/mobile image context is no longer lost silently.
+  - the remaining attachment seam is the real control-chat attachment runtime rather than an invisible node-event drop.
+- Verified this continuation with:
+  - red proof: `test_node_event_agent_request_effective_attachments_fail_as_unavailable_runtime` first showed no error and launched text-only chat.
+  - `ruff check src/openzues/services/gateway_node_methods.py src/openzues/app.py tests/test_gateway_node_methods.py`: clean
+  - `PYTHONPATH=src;.venv\Lib\site-packages python -m mypy src/openzues/services/gateway_node_methods.py src/openzues/app.py`: clean
+  - `PYTHONPATH=src;.venv\Lib\site-packages python -m pytest tests/test_gateway_node_methods.py::test_node_event_agent_request_routes_deep_link_to_chat_runtime tests/test_gateway_node_methods.py::test_node_event_agent_request_disables_delivery_without_route tests/test_gateway_node_methods.py::test_node_event_agent_request_sends_receipt_ack_when_route_is_present tests/test_gateway_node_methods.py::test_node_event_agent_request_effective_attachments_fail_as_unavailable_runtime tests/test_gateway_node_methods.py::test_push_test_fails_as_missing_apns_registration tests/test_gateway_node_methods.py::test_push_test_recognizes_recorded_apns_registration tests/test_gateway_node_methods.py::test_push_test_uses_injected_apns_sender_for_registered_node tests/test_gateway_node_methods.py::test_node_event_exec_finished_queues_system_event_wake tests/test_gateway_node_methods.py::test_node_event_exec_finished_drops_duplicate_run_notifications tests/test_gateway_node_methods.py::test_node_event_voice_transcript_routes_to_chat_runtime tests/test_gateway_node_methods.py::test_node_event_voice_transcript_drops_near_duplicate_events tests/test_gateway_node_methods.py::test_node_event_chat_subscribe_routes_session_events_to_node tests/test_gateway_node_methods.py::test_node_event_notifications_changed_queues_system_event_wake tests/test_gateway_node_methods.py::test_node_event_records_event_and_broadcasts_when_runtime_wired -q --tb=short`: `14 passed`
+  - `PYTHONPATH=src;.venv\Lib\site-packages python -m pytest tests/test_gateway_node_methods.py -q --tb=short`: `389 passed`
+- Queue effect from this run:
+  - the silent node attachment drop is closed.
+  - next exact seam is the real control-chat attachment runtime or production APNS direct/relay binding.
+
+### Recovery addendum 2026-04-24 node agent-request attachment adapter America/Chicago
+
+- Queue-head seam before implementation:
+  - upstream `openclaw-main` parses image attachments for `agent.request` and forwards them into the launched agent command.
+  - local OpenZues had only the truthful unavailable boundary, so effective node attachments could no longer be lost silently but still could not succeed when a runtime existed.
+- Landed the next bounded `agent.request` slice:
+  - `GatewayNodeMethodService` now accepts an injectable control-chat attachment sender.
+  - node `agent.request` events with effective attachments call that sender with session, message, idempotency, thinking, delivery, timeout, attachment, route, and node context when it is wired.
+  - default installs without the sender keep the explicit `UNAVAILABLE` attachment-runtime boundary.
+- Product effect:
+  - node/mobile image context now has a real runtime seam instead of stopping at a hardcoded unavailable state.
+  - the adjacent remaining attachment seam is direct `chat.send` / `sessions.send` runtime wiring, plus the separate production APNS direct/relay binding.
+- Verified this continuation with:
+  - red proof: `test_node_event_agent_request_uses_attachment_runtime_when_wired` first failed because no attachment sender hook existed.
+  - `ruff check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py`: clean
+  - `PYTHONPATH=src;.venv\Lib\site-packages python -m mypy src/openzues/services/gateway_node_methods.py`: clean
+  - `PYTHONPATH=src;.venv\Lib\site-packages python -m pytest tests/test_gateway_node_methods.py::test_node_event_agent_request_routes_deep_link_to_chat_runtime tests/test_gateway_node_methods.py::test_node_event_agent_request_disables_delivery_without_route tests/test_gateway_node_methods.py::test_node_event_agent_request_sends_receipt_ack_when_route_is_present tests/test_gateway_node_methods.py::test_node_event_agent_request_effective_attachments_fail_as_unavailable_runtime tests/test_gateway_node_methods.py::test_node_event_agent_request_uses_attachment_runtime_when_wired tests/test_gateway_node_methods.py::test_push_test_fails_as_missing_apns_registration tests/test_gateway_node_methods.py::test_push_test_recognizes_recorded_apns_registration tests/test_gateway_node_methods.py::test_push_test_uses_injected_apns_sender_for_registered_node tests/test_gateway_node_methods.py::test_node_event_exec_finished_queues_system_event_wake tests/test_gateway_node_methods.py::test_node_event_exec_finished_drops_duplicate_run_notifications tests/test_gateway_node_methods.py::test_node_event_voice_transcript_routes_to_chat_runtime tests/test_gateway_node_methods.py::test_node_event_voice_transcript_drops_near_duplicate_events tests/test_gateway_node_methods.py::test_node_event_chat_subscribe_routes_session_events_to_node tests/test_gateway_node_methods.py::test_node_event_notifications_changed_queues_system_event_wake tests/test_gateway_node_methods.py::test_node_event_records_event_and_broadcasts_when_runtime_wired -q --tb=short`: `15 passed`
+- Queue effect from this run:
+  - the node `agent.request` attachment adapter is closed for the injected-runtime path.
+  - next exact seam is the direct `chat.send` attachment runtime adapter so the same attachment sender can be used without going through a node event.
+
+### Recovery addendum 2026-04-24 direct chat/session attachment adapters America/Chicago
+
+- Queue-head seam before implementation:
+  - after node `agent.request` gained an injectable attachment sender, direct `chat.send`, `sessions.send`, and `sessions.steer` still hardcoded effective attachments to `UNAVAILABLE`.
+  - that left the attachment runtime usable only through node events, not through the first-class chat/session gateway methods.
+- Landed the next bounded attachment slice:
+  - `chat.send` now calls the injected attachment sender for effective attachments while preserving text-only sends through the existing chat sender.
+  - `sessions.send` now uses the same attachment sender and keeps message-sequence enrichment plus session changed events intact.
+  - `sessions.steer` now uses the same attachment sender after interrupting an active run and still returns `interruptedActiveRun` when appropriate.
+  - default installs without the attachment sender keep the explicit unavailable boundaries for all three methods.
+- Product effect:
+  - the control-chat attachment runtime seam is now shared by node deep-links and direct chat/session gateway methods.
+  - the next honest attachment seam is app-level attachment runtime wiring, while the separate node push seam remains production APNS direct/relay binding.
+- Verified this continuation with:
+  - red proofs: `test_chat_send_uses_attachment_runtime_when_wired`, `test_sessions_send_uses_attachment_runtime_when_wired`, and `test_sessions_steer_uses_attachment_runtime_when_wired` first failed on the hardcoded unavailable branches.
+  - `ruff check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py`: clean
+  - `PYTHONPATH=src;.venv\Lib\site-packages python -m mypy src/openzues/services/gateway_node_methods.py`: clean
+  - `PYTHONPATH=src;.venv\Lib\site-packages python -m pytest tests/test_gateway_node_methods.py::test_chat_send_returns_run_ack_from_injected_control_chat_bridge tests/test_gateway_node_methods.py::test_chat_send_ignores_inert_attachments_without_effective_content tests/test_gateway_node_methods.py::test_chat_send_effective_attachments_fail_as_unavailable_runtime tests/test_gateway_node_methods.py::test_chat_send_uses_attachment_runtime_when_wired tests/test_gateway_node_methods.py::test_sessions_send_ignores_inert_attachments_without_effective_content tests/test_gateway_node_methods.py::test_sessions_send_effective_attachments_fail_as_unavailable_runtime tests/test_gateway_node_methods.py::test_sessions_send_uses_attachment_runtime_when_wired tests/test_gateway_node_methods.py::test_sessions_steer_ignores_inert_attachments_without_effective_content tests/test_gateway_node_methods.py::test_sessions_steer_effective_attachments_fail_as_unavailable_runtime tests/test_gateway_node_methods.py::test_sessions_steer_uses_attachment_runtime_when_wired tests/test_gateway_node_methods.py::test_node_event_agent_request_routes_deep_link_to_chat_runtime tests/test_gateway_node_methods.py::test_node_event_agent_request_disables_delivery_without_route tests/test_gateway_node_methods.py::test_node_event_agent_request_sends_receipt_ack_when_route_is_present tests/test_gateway_node_methods.py::test_node_event_agent_request_effective_attachments_fail_as_unavailable_runtime tests/test_gateway_node_methods.py::test_node_event_agent_request_uses_attachment_runtime_when_wired tests/test_gateway_node_methods.py::test_push_test_fails_as_missing_apns_registration tests/test_gateway_node_methods.py::test_push_test_recognizes_recorded_apns_registration tests/test_gateway_node_methods.py::test_push_test_uses_injected_apns_sender_for_registered_node tests/test_gateway_node_methods.py::test_node_event_exec_finished_queues_system_event_wake tests/test_gateway_node_methods.py::test_node_event_exec_finished_drops_duplicate_run_notifications tests/test_gateway_node_methods.py::test_node_event_voice_transcript_routes_to_chat_runtime tests/test_gateway_node_methods.py::test_node_event_voice_transcript_drops_near_duplicate_events tests/test_gateway_node_methods.py::test_node_event_chat_subscribe_routes_session_events_to_node tests/test_gateway_node_methods.py::test_node_event_notifications_changed_queues_system_event_wake tests/test_gateway_node_methods.py::test_node_event_records_event_and_broadcasts_when_runtime_wired -q --tb=short`: `31 passed`
+- Queue effect from this run:
+  - direct chat/session attachment adapters are closed for the injected-runtime path.
+  - next exact seam is app-level attachment runtime wiring or production APNS direct/relay binding.
+
+### Recovery addendum 2026-04-24 app-level attachment bridge America/Chicago
+
+- Queue-head seam before implementation:
+  - method-level attachment sender hooks existed, but `create_app()` did not wire one.
+  - the HTTP gateway still returned 503 for effective `chat.send`, `sessions.send`, and `sessions.steer` attachments even though the method service could now route them when injected.
+- Landed the next bounded attachment slice:
+  - `create_app()` now wires a control-chat attachment sender into `GatewayNodeMethodService`.
+  - the sender creates a bounded text envelope containing the original message, attachment type, MIME/name, route/node source hints, and inline/base64 evidence.
+  - this is honest text-runtime support, not a claim of full OpenClaw multimodal/offload parity.
+- Product effect:
+  - effective attachments submitted through the HTTP gateway now reach the control-chat transcript instead of stopping at the unavailable boundary.
+  - the next honest attachment seam is durable multimodal/offload storage, while the next node-push seam is production APNS direct/relay binding.
+- Verified this continuation with:
+  - red endpoint proofs: effective `chat.send`, `sessions.send`, and `sessions.steer` attachments first still returned HTTP 503 from the app bridge.
+  - `ruff check src/openzues/app.py src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`: clean
+  - `PYTHONPATH=src;.venv\Lib\site-packages python -m mypy src/openzues/app.py src/openzues/services/gateway_node_methods.py`: clean
+  - `PYTHONPATH=src;.venv\Lib\site-packages python -m pytest tests/test_gateway_node_methods.py::test_chat_send_uses_attachment_runtime_when_wired tests/test_gateway_node_methods.py::test_sessions_send_uses_attachment_runtime_when_wired tests/test_gateway_node_methods.py::test_sessions_steer_uses_attachment_runtime_when_wired tests/test_gateway_node_methods.py::test_node_event_agent_request_uses_attachment_runtime_when_wired tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_sends_effective_chat_send_attachments_ tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_sends_effective_sessions_send_attachments_ tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_steers_effective_sessions_attachments_ tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_ignores_inert_chat_send_attachments tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_ignores_inert_sessions_send_attachments tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_ignores_inert_sessions_steer_attachments -q --tb=short`: `16 passed`
+- Queue effect from this run:
+  - the app-level attachment bridge is closed for bounded text-envelope support.
+  - next exact seam is either durable multimodal attachment persistence/offload or production APNS direct/relay binding.
+
+### Recovery addendum 2026-04-24 app-level APNS relay binding America/Chicago
+
+- Queue-head seam before implementation:
+  - method-level `push.test` could recognize recorded `push.apns.register` events and call an injected sender, but `create_app()` still had no production sender.
+  - upstream `openclaw-main` sends relay registrations through `OPENCLAW_APNS_RELAY_BASE_URL` with bearer `sendGrant`, gateway device identity headers, and an Ed25519 signature over the relay request body.
+- Landed the next bounded APNS slice:
+  - added `GatewayApnsPushService` as the app-level relay sender for recorded relay registrations.
+  - added `OPENZUES_APNS_RELAY_BASE_URL`, `OPENZUES_APNS_RELAY_TIMEOUT_MS`, and `OPENZUES_APNS_RELAY_ALLOW_HTTP` settings while preserving `OPENCLAW_APNS_RELAY_*` environment fallbacks.
+  - added gateway identity signing support so relay requests carry `x-openclaw-gateway-device-id`, `x-openclaw-gateway-signature`, and `x-openclaw-gateway-signed-at-ms`.
+  - `push.test` relay responses now preserve `ok`, `status`, `apnsId`, `reason`, `tokenSuffix`, `topic`, `environment`, and `transport`.
+- Product effect:
+  - app-level `push.test` can now exercise a real OpenClaw-style relay APNS path instead of stopping at the sender-runtime boundary.
+  - the remaining APNS seam is direct APNS credential binding; the parallel attachment seam is durable multimodal/offload storage beyond the bounded text-envelope bridge.
+- Verified this continuation with:
+  - red endpoint proof: `test_gateway_node_method_call_endpoint_sends_apns_relay_push` first failed because no `openzues.services.gateway_apns` relay runtime existed.
+  - `ruff check src/openzues/services/gateway_apns.py src/openzues/services/gateway_identity.py src/openzues/settings.py src/openzues/app.py tests/test_gateway_nodes_api.py pyproject.toml`: clean
+  - `mypy src/openzues/services/gateway_apns.py src/openzues/services/gateway_identity.py src/openzues/settings.py src/openzues/app.py`: clean
+  - `pytest tests/test_gateway_node_methods.py::test_push_test_fails_as_missing_apns_registration tests/test_gateway_node_methods.py::test_push_test_recognizes_recorded_apns_registration tests/test_gateway_node_methods.py::test_push_test_uses_injected_apns_sender_for_registered_node tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_reports_missing_push_registration tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_sends_apns_relay_push`: `5 passed`
+- Queue effect from this run:
+  - app-level APNS relay binding is closed for relay registrations.
+  - next exact seam is either direct APNS credential binding or durable multimodal attachment persistence/offload.
+
+### Recovery addendum 2026-04-24 app-level direct APNS binding America/Chicago
+
+- Queue-head seam before implementation:
+  - relay APNS binding existed, but direct APNS registrations still stopped at the old sender-runtime boundary.
+  - upstream `openclaw-main` resolves `OPENCLAW_APNS_TEAM_ID`, `OPENCLAW_APNS_KEY_ID`, and `.p8` private key credentials, signs an ES256 bearer JWT, and posts alert payloads to the APNS HTTP/2 `/3/device/{token}` endpoint.
+- Landed the next bounded APNS slice:
+  - `GatewayApnsPushService` now supports direct APNS registrations as well as relay registrations.
+  - added `OPENZUES_APNS_TEAM_ID`, `OPENZUES_APNS_KEY_ID`, `OPENZUES_APNS_PRIVATE_KEY_P8`, `OPENZUES_APNS_PRIVATE_KEY_PATH`, and `OPENZUES_APNS_TIMEOUT_MS` settings while preserving the `OPENCLAW_APNS_*` fallbacks.
+  - direct sends normalize APNS tokens, honor the `push.test` environment override, build OpenClaw-style alert metadata, sign compact ES256 JWTs with raw P-1363 signatures, and send HTTP/2 APNS headers.
+  - direct results now preserve `ok`, `status`, `apnsId`, `reason`, `tokenSuffix`, `topic`, `environment`, and `transport`.
+- Product effect:
+  - app-level `push.test` now has both OpenClaw direct APNS and relay APNS execution paths.
+  - the next honest node-push follow-up is reusing this sender for background `node.wake` notifications; the parallel attachment seam remains durable multimodal/offload storage.
+- Verified this continuation with:
+  - red endpoint proof: `test_gateway_node_method_call_endpoint_sends_direct_apns_push` first failed with HTTP 503 because direct registrations still had no app-level sender path.
+  - `ruff check src/openzues/services/gateway_apns.py src/openzues/services/gateway_identity.py src/openzues/settings.py src/openzues/app.py tests/test_gateway_nodes_api.py pyproject.toml`: clean
+  - `mypy src/openzues/services/gateway_apns.py src/openzues/services/gateway_identity.py src/openzues/settings.py src/openzues/app.py`: clean
+  - `pytest tests/test_gateway_node_methods.py::test_push_test_fails_as_missing_apns_registration tests/test_gateway_node_methods.py::test_push_test_recognizes_recorded_apns_registration tests/test_gateway_node_methods.py::test_push_test_uses_injected_apns_sender_for_registered_node tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_reports_missing_push_registration tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_sends_apns_relay_push tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_sends_direct_apns_push`: `6 passed`
+- Queue effect from this run:
+  - app-level direct/relay APNS binding is closed for `push.test`.
+  - next exact seam is either background APNS reuse for node wake or durable multimodal attachment persistence/offload.
+
+### Recovery addendum 2026-04-24 APNS-backed node invoke wake America/Chicago
+
+- Queue-head seam before implementation:
+  - app-level `push.test` could send direct and relay APNS alerts, but disconnected APNS-registered nodes still relied only on saved-lane wake callbacks before `node.invoke`.
+  - upstream `openclaw-main` calls `maybeWakeNodeWithApns()` for disconnected nodes, sends a background APNS wake with `kind="node.wake"`, waits for reconnect, then invokes the node command.
+- Landed the next bounded node-wake slice:
+  - `GatewayNodeMethodService` now accepts an injectable APNS wake sender.
+  - `node.invoke` falls back to recorded `push.apns.register` events and the APNS wake sender when a saved-lane wake callback is missing or unavailable.
+  - `node.pending.enqueue` shares the same disconnected-node wake helper, so pending work can also use APNS wake when available.
+  - `GatewayApnsPushService` now exposes `send_wake()` and builds direct/relay background APNS payloads with `aps.content-available=1` plus OpenClaw `node.wake` metadata.
+  - `create_app()` wires the APNS wake sender beside the existing `push.test` APNS sender.
+- Product effect:
+  - APNS-registered mobile nodes can now be nudged awake for `node.invoke` without a separate managed desktop lane wake.
+  - remaining APNS parity work is retry/nudge throttling and stale-registration cleanup; the parallel attachment seam remains durable multimodal/offload storage.
+- Verified this continuation with:
+  - focused proof: `test_node_invoke_uses_recorded_apns_wake_when_saved_lane_wake_is_unavailable` shows a disconnected APNS-registered node waking, reconnecting, and completing `node.invoke`.
+  - `ruff check src/openzues/services/gateway_apns.py src/openzues/services/gateway_node_methods.py src/openzues/services/gateway_identity.py src/openzues/settings.py src/openzues/app.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py pyproject.toml`: clean
+  - `mypy src/openzues/services/gateway_apns.py src/openzues/services/gateway_node_methods.py src/openzues/services/gateway_identity.py src/openzues/settings.py src/openzues/app.py`: clean
+  - `pytest tests/test_gateway_node_methods.py::test_push_test_fails_as_missing_apns_registration tests/test_gateway_node_methods.py::test_push_test_recognizes_recorded_apns_registration tests/test_gateway_node_methods.py::test_push_test_uses_injected_apns_sender_for_registered_node tests/test_gateway_node_methods.py::test_node_invoke_uses_recorded_apns_wake_when_saved_lane_wake_is_unavailable tests/test_gateway_node_methods.py::test_node_invoke_attempts_saved_lane_wake_before_failing_not_connected tests/test_gateway_node_methods.py::test_node_invoke_waits_for_woken_node_to_reconnect_before_invoking tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_reports_missing_push_registration tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_sends_apns_relay_push tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_sends_direct_apns_push`: `9 passed`
+- Queue effect from this run:
+  - first APNS-backed node invoke wake is closed.
+  - next exact seam is APNS wake retry/nudge throttling and stale-registration cleanup, or durable multimodal attachment persistence/offload.
+
+### Recovery addendum 2026-04-24 APNS-backed node invoke wake retry America/Chicago
+
+- Queue-head seam before implementation:
+  - disconnected APNS-registered nodes could send one background wake before `node.invoke`, but an available wake that did not reconnect immediately still ended at `node not connected`.
+  - upstream `openclaw-main` retries the APNS wake once before giving up on the disconnected node path.
+- Landed the next bounded node-wake slice:
+  - `GatewayNodeMethodService` now gives `node.invoke` the same honest wake/reconnect/retry cadence already used by pending-work wakes.
+  - an available first APNS wake waits for reconnect, and if the node is still disconnected, the service sends one more disconnected-node wake before resolving the invoke boundary.
+  - the retry path still preserves truthful `NOT_CONNECTED` metadata when neither nudge brings the node back.
+- Product effect:
+  - APNS-registered mobile nodes now get the OpenClaw-style second wake chance for `node.invoke` instead of failing after one nudge.
+  - remaining APNS parity work is stale-registration cleanup and any deeper nudge throttling/accounting; the parallel attachment seam remains durable multimodal/offload storage.
+- Verified this continuation with:
+  - red proof: `test_node_invoke_retries_recorded_apns_wake_when_first_wake_does_not_reconnect` first failed because `node.invoke` sent only one APNS wake and returned `NOT_CONNECTED`.
+  - `ruff check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py`: clean
+  - `mypy src/openzues/services/gateway_node_methods.py`: clean
+  - `pytest tests/test_gateway_node_methods.py::test_push_test_fails_as_missing_apns_registration tests/test_gateway_node_methods.py::test_push_test_recognizes_recorded_apns_registration tests/test_gateway_node_methods.py::test_push_test_uses_injected_apns_sender_for_registered_node tests/test_gateway_node_methods.py::test_node_invoke_uses_recorded_apns_wake_when_saved_lane_wake_is_unavailable tests/test_gateway_node_methods.py::test_node_invoke_retries_recorded_apns_wake_when_first_wake_does_not_reconnect tests/test_gateway_node_methods.py::test_node_invoke_attempts_saved_lane_wake_before_failing_not_connected tests/test_gateway_node_methods.py::test_node_invoke_waits_for_woken_node_to_reconnect_before_invoking tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_reports_missing_push_registration tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_sends_apns_relay_push tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_sends_direct_apns_push`: `10 passed`
+- Queue effect from this run:
+  - APNS-backed `node.invoke` wake retry is closed.
+  - next exact seam is APNS stale-registration cleanup/nudge throttling or durable multimodal attachment persistence/offload.
+
+### Recovery addendum 2026-04-24 stale direct APNS registration cleanup America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw clears direct APNS registrations after APNS returns `410` or `400 BadDeviceToken`, but OpenZues kept replaying the latest recorded `push.apns.register` node event forever.
+  - that meant a dead direct token could be retried by both `push.test` and APNS-backed `node.invoke` wakes instead of falling back to the truthful missing-registration boundary.
+- Landed the next bounded APNS cleanup slice:
+  - `GatewayNodeMethodService` now appends an internal `push.apns.unregister` node event when the current direct registration is invalidated by APNS.
+  - `_recorded_apns_registration()` now treats the latest unregister/clear event as the end of that registration's lifetime while still allowing newer register events to win.
+  - cleanup only applies to direct APNS registrations and preserves the OpenClaw guard that a different `push.test` environment override must not clear the stored token.
+  - APNS wake sends share the same cleanup path as alert sends.
+- Product effect:
+  - dead iOS APNS tokens stop being reused after APNS explicitly rejects them as stale.
+  - relay registrations remain untouched by direct-token invalidation rules.
+  - remaining APNS parity work is the foreground nudge alert and its throttling after background wake retry still fails to reconnect.
+- Verified this continuation with:
+  - red proof: `test_push_test_clears_stale_direct_apns_registration_on_bad_device_token` first failed because the second `push.test` reused the stale direct registration.
+  - wake-side proof: `test_node_invoke_clears_stale_direct_apns_registration_after_wake_failure` shows a `410` background wake result clearing the direct registration before the next push lookup.
+  - `ruff check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py`: clean
+  - `mypy src/openzues/services/gateway_node_methods.py`: clean
+  - `pytest tests/test_gateway_node_methods.py::test_push_test_fails_as_missing_apns_registration tests/test_gateway_node_methods.py::test_push_test_recognizes_recorded_apns_registration tests/test_gateway_node_methods.py::test_push_test_uses_injected_apns_sender_for_registered_node tests/test_gateway_node_methods.py::test_push_test_clears_stale_direct_apns_registration_on_bad_device_token tests/test_gateway_node_methods.py::test_node_invoke_uses_recorded_apns_wake_when_saved_lane_wake_is_unavailable tests/test_gateway_node_methods.py::test_node_invoke_retries_recorded_apns_wake_when_first_wake_does_not_reconnect tests/test_gateway_node_methods.py::test_node_invoke_clears_stale_direct_apns_registration_after_wake_failure tests/test_gateway_node_methods.py::test_node_invoke_attempts_saved_lane_wake_before_failing_not_connected tests/test_gateway_node_methods.py::test_node_invoke_waits_for_woken_node_to_reconnect_before_invoking tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_reports_missing_push_registration tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_sends_apns_relay_push tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_sends_direct_apns_push`: `12 passed`
+- Queue effect from this run:
+  - stale direct APNS registration cleanup is closed.
+  - next exact seam is APNS foreground nudge alert throttling after failed background wake retry, or durable multimodal attachment persistence/offload.
+
+### Recovery addendum 2026-04-24 foreground APNS node wake nudge America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw sends a foreground APNS alert nudge after background wake plus forced retry still fail to reconnect an iOS node.
+  - OpenZues stopped after background wake retry and returned `node not connected`, so the user never got the "reopen the app" alert path.
+- Landed the next bounded APNS nudge slice:
+  - `GatewayNodeMethodService` now sends a best-effort foreground APNS alert through the existing push sender when `node.invoke` remains disconnected after wake retry.
+  - the nudge title/body are OpenZues-branded and ask the user to reopen the app to restore the node connection.
+  - the nudge path shares stale direct-registration cleanup with `push.test` and background wake sends.
+  - nudge sends are throttled to one successful nudge per node per 10 minutes.
+- Product effect:
+  - failed background APNS wake cycles now have the same user-visible recovery nudge shape as OpenClaw instead of silently stopping at the gateway error.
+  - remaining browser/canvas/nodes/voice parity work moves back toward durable multimodal attachment persistence/offload and broader canvas/media surfaces.
+- Verified this continuation with:
+  - red proof: `test_node_invoke_sends_foreground_apns_nudge_after_wake_retry_stalls` first failed because two background wake attempts happened but no foreground alert nudge was sent.
+  - throttle proof: the same test runs a second failed invoke inside the throttle window and verifies no second nudge is sent.
+  - `ruff check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py`: clean
+  - `mypy src/openzues/services/gateway_node_methods.py`: clean
+  - `pytest tests/test_gateway_node_methods.py::test_push_test_fails_as_missing_apns_registration tests/test_gateway_node_methods.py::test_push_test_recognizes_recorded_apns_registration tests/test_gateway_node_methods.py::test_push_test_uses_injected_apns_sender_for_registered_node tests/test_gateway_node_methods.py::test_push_test_clears_stale_direct_apns_registration_on_bad_device_token tests/test_gateway_node_methods.py::test_node_invoke_uses_recorded_apns_wake_when_saved_lane_wake_is_unavailable tests/test_gateway_node_methods.py::test_node_invoke_retries_recorded_apns_wake_when_first_wake_does_not_reconnect tests/test_gateway_node_methods.py::test_node_invoke_clears_stale_direct_apns_registration_after_wake_failure tests/test_gateway_node_methods.py::test_node_invoke_sends_foreground_apns_nudge_after_wake_retry_stalls tests/test_gateway_node_methods.py::test_node_invoke_attempts_saved_lane_wake_before_failing_not_connected tests/test_gateway_node_methods.py::test_node_invoke_waits_for_woken_node_to_reconnect_before_invoking tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_reports_missing_push_registration tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_sends_apns_relay_push tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_sends_direct_apns_push`: `13 passed`
+- Queue effect from this run:
+  - APNS foreground nudge plus throttle is closed.
+  - next exact seam is durable multimodal attachment persistence/offload or the next concrete canvas/media node surface.
+
+### Recovery addendum 2026-04-24 durable app-level attachment offload America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw's `parseMessageWithAttachments()` validates inbound image attachments, offloads media to disk when needed, and preserves structured refs for transcripts.
+  - OpenZues had an app-level attachment bridge, but it still copied effective base64 payloads directly into the bounded control-chat text envelope.
+- Landed the next bounded attachment slice:
+  - `create_app()` now persists effective base64 attachments from `chat.send`, `sessions.send`, and `sessions.steer` under `data/gateway-attachments/inbound`.
+  - stored artifacts are addressed by SHA-256 and carry MIME/file extension hints.
+  - the control-chat prompt now receives bounded `media://inbound/{sha256}` refs, saved path, SHA-256 hash, and byte count metadata instead of raw base64 blob text.
+- Product effect:
+  - gateway chat/session attachment ingress is now durable and inspectable instead of transcript-only blob text.
+  - this is still not full multimodal model delivery; the next honest browser/canvas/nodes/voice seam should move to the next concrete canvas/media or browser node surface beyond the persisted text-envelope bridge.
+- Verified this continuation with:
+  - red endpoint proof: `test_gateway_node_method_call_endpoint_sends_effective_chat_send_attachments_` first failed because the expected attachment artifact did not exist.
+  - `pytest tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_sends_effective_chat_send_attachments_ tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_sends_effective_sessions_send_attachments_ tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_steers_effective_sessions_attachments_ -q`: `6 passed`
+  - `ruff check src/openzues/app.py tests/test_gateway_nodes_api.py`: clean
+  - `mypy src/openzues/app.py`: clean
+- Queue effect from this run:
+  - durable app-level attachment persistence/offload is closed for direct chat/session gateway entrypoints.
+  - next exact seam is the next concrete upstream canvas/media or browser node surface.
+
+### Recovery addendum 2026-04-24 channels.start method boundary America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw exposes `channels.start` beside `channels.status` and `channels.logout`.
+  - OpenZues already had `channels.status` and `channels.logout`, but `channels.start` fell through to `unsupported method`.
+- Landed the next bounded channel-method slice:
+  - `channels.start` now validates `channel` and optional `accountId` with the same blank-account tolerance used by adjacent channel methods.
+  - unsupported local channel runtimes now fail with `channel {channel} does not support runtime start` instead of an unknown-method response.
+  - `commands.list` can now surface `channels.start` as a discoverable native operator command.
+- Product effect:
+  - gateway clients can branch on a stable OpenClaw method boundary even before a local native channel start runtime is available.
+  - the remaining larger channel gap is true native runtime start/stop execution, not method discovery or request-shape parity.
+- Verified this continuation with:
+  - red proof: `test_channels_start_allows_blank_account_id_and_fails_runtime_boundary` first failed with `unsupported method: channels.start`.
+  - red API proof: `test_gateway_node_method_call_endpoint_allows_blank_channels_start_account_id` first returned the unknown-method detail.
+  - `pytest tests/test_gateway_node_methods.py::test_channels_start_allows_blank_account_id_and_fails_runtime_boundary tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_allows_blank_channels_start_account_id -q`: `2 passed`
+  - adjacent channel regression packs: `6 passed`
+  - `ruff check src/openzues/services/gateway_node_methods.py src/openzues/services/gateway_commands.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`: clean
+  - `mypy src/openzues/services/gateway_node_methods.py src/openzues/services/gateway_commands.py`: clean
+- Queue effect from this run:
+  - `channels.start` method discovery and validated boundary are closed.
+  - next exact seam remains native channel runtime start execution or the next concrete browser/canvas/media node surface.
+
+### Recovery addendum 2026-04-24 doctor memory dream diary probe America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw's `doctor.memory.dreamDiary` reads the agent workspace dream diary and returns an `agentId` / `found` / `path` / `content` / `updatedAtMs` payload.
+  - OpenZues still treated the read-only diary probe like the mutating dreaming repair methods and returned `UNAVAILABLE`.
+- Landed the next bounded memory-doctor slice:
+  - `GatewayNodeMethodService` now accepts a memory doctor workspace root and defaults it to the current workspace.
+  - `doctor.memory.dreamDiary` reads `DREAMS.md` or `dreams.md` from that workspace and returns the OpenClaw-shaped read-only payload.
+  - mutating dreaming methods such as backfill, reset, repair, and dedupe remain explicitly unavailable until a real dreaming runtime exists.
+- Product effect:
+  - operators and gateway clients can inspect the local dream diary from the gateway method surface.
+  - the remaining memory-doctor gap is the real memory status/dreaming runtime and the mutating repair/backfill actions, not the read-only diary probe.
+- Verified this continuation with:
+  - red proof: `test_doctor_memory_dream_diary_reads_workspace_diary` first failed because the constructor had no memory-doctor workspace hook and the method still used the unavailable branch.
+  - HTTP proof: `test_gateway_node_method_call_endpoint_reads_doctor_memory_dream_diary` verifies the API surface reads the workspace diary.
+  - method proof pack: `6 passed`
+  - API proof pack: `6 passed`
+  - `ruff check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`: clean
+  - `mypy src/openzues/services/gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - read-only dream diary parity is closed.
+  - next exact seam is either `doctor.memory.status` runtime shaping, native channel runtime start execution, or the next concrete browser/canvas/media node surface.
+
+### Recovery addendum 2026-04-24 doctor memory status payload America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw returns a structured `doctor.memory.status` payload even when memory search is unavailable.
+  - OpenZues still treated that read-only status as a method-level `UNAVAILABLE` response.
+- Landed the next bounded memory-doctor slice:
+  - `doctor.memory.status` now validates an empty params object and returns `agentId="openzues"` plus `embedding.ok=false`.
+  - the payload includes the truthful diagnostic `memory search unavailable` instead of making clients handle an absent method/runtime boundary.
+  - mutating doctor-memory repair, reset, backfill, and dedupe methods remain explicitly unavailable until a real memory doctor runtime is wired.
+- Product effect:
+  - gateway clients can render memory health from a normal method response while still seeing that embedding/search is not currently available.
+  - the remaining memory-doctor gap is now the real memory search/dreaming repair runtime, not read-only status or diary introspection.
+- Verified this continuation with:
+  - red method proof: `test_doctor_memory_status_returns_missing_runtime_payload` first failed on the old 503 unavailable branch.
+  - red HTTP proof: `test_gateway_node_method_call_endpoint_returns_doctor_memory_status_payload` first returned HTTP 503 instead of the status payload.
+  - method proof pack: `7 passed`
+  - API proof pack: `7 passed`
+  - `ruff check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`: clean
+  - `mypy src/openzues/services/gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - read-only doctor memory status parity is closed.
+  - next exact seam is either native channel runtime start execution, mutating memory-doctor runtime actions, or the next concrete browser/canvas/media node surface.
+
+### Recovery addendum 2026-04-24 macOS screen snapshot node-policy parity America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw's node command policy allows `screen.snapshot` by default for macOS nodes.
+  - OpenClaw still keeps `screen.record` dangerous and gated unless explicitly allowlisted.
+  - OpenZues already had the shared node command-policy owner, but macOS defaults omitted `screen.snapshot`.
+- Landed the next bounded browser/node slice:
+  - `resolve_node_command_allowlist()` now includes `screen.snapshot` for macOS/darwin nodes.
+  - `screen.record` remains absent from platform defaults and only appears when an operator explicitly includes it in `allow_commands`.
+- Product effect:
+  - macOS nodes can advertise and receive the safe screenshot command through the same node policy path as OpenClaw.
+  - screen recording remains a deliberate operator opt-in instead of becoming part of default node capabilities.
+- Verified this continuation with:
+  - red proof: `test_macos_allowlist_includes_screen_snapshot_but_not_screen_record` first failed because `screen.snapshot` was missing from the macOS allowlist.
+  - policy proof pack: `pytest tests/test_gateway_node_command_policy.py tests/test_gateway_node_registry.py::test_pull_pending_actions_filters_commands_not_allowlisted_for_platform -q`: `3 passed`
+  - `ruff check src/openzues/services/gateway_node_command_policy.py tests/test_gateway_node_command_policy.py`: clean
+  - `mypy src/openzues/services/gateway_node_command_policy.py`: clean
+- Queue effect from this run:
+  - safe macOS screen snapshot command-policy parity is closed.
+  - next exact seam remains a concrete browser/canvas/media node command/runtime surface or native channel runtime start execution.
+
+### Recovery addendum 2026-04-24 canvas document URL helper parity America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw has managed canvas document helpers for stable `/__openclaw__/canvas/documents/...` URLs.
+  - OpenClaw also resolves hosted canvas document HTTP paths back into managed local storage while rejecting traversal.
+  - OpenZues only had scoped canvas capability URLs, not document-hosting URL/path helpers.
+- Landed the first bounded canvas-document slice:
+  - added `gateway_canvas_documents.py` with OpenClaw-shaped canvas document root/document path resolution.
+  - added entry/asset URL builders that encode document entrypoint path segments like OpenClaw.
+  - added traversal-safe hosted path resolution that returns `None` for invalid document IDs or logical paths.
+- Product effect:
+  - OpenZues now has a safe foundation for managed canvas documents before wiring full document materialization or HTTP hosting.
+  - the remaining canvas-document gap is real document creation, asset copying, PDF/image/video wrappers, and web-serving integration.
+- Verified this continuation with:
+  - red proof: `test_gateway_canvas_documents.py` first failed because `openzues.services.gateway_canvas_documents` did not exist.
+  - `pytest tests/test_gateway_canvas_documents.py -q`: `3 passed`
+  - `ruff check src/openzues/services/gateway_canvas_documents.py tests/test_gateway_canvas_documents.py`: clean
+  - `mypy src/openzues/services/gateway_canvas_documents.py`: clean
+- Queue effect from this run:
+  - managed canvas document URL/path helper parity is closed.
+  - next exact seam is basic canvas document materialization for inline HTML/path entrypoints or another concrete browser/canvas node surface.
+
+### Recovery addendum 2026-04-24 inline canvas document materialization America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw can materialize inline HTML canvas documents into managed storage with stable entry URLs.
+  - OpenClaw replaces prior materialized content when a caller reuses a stable document ID.
+  - OpenZues only had the newly added URL/path helper surface and could not create a managed canvas document yet.
+- Landed the next bounded canvas-document slice:
+  - `create_canvas_document()` now accepts an inline HTML entrypoint and writes `index.html` under the managed document directory.
+  - stable caller-provided document IDs now replace prior document directories before writing the new manifest.
+  - manifests include `id`, `kind`, `createdAt`, `entryUrl`, `localEntrypoint`, `assets`, and trimmed optional title metadata.
+- Product effect:
+  - OpenZues now has a concrete managed canvas artifact path for inline UI previews and tool-card HTML surfaces.
+  - remaining canvas-document gaps include path entrypoints, asset copying, URL/PDF wrappers, image/video wrappers, and HTTP serving integration.
+- Verified this continuation with:
+  - red proof: `test_create_canvas_document_materializes_inline_html_and_manifest` first failed because `create_canvas_document` was missing.
+  - `pytest tests/test_gateway_canvas_documents.py -q`: `5 passed`
+  - `ruff check src/openzues/services/gateway_canvas_documents.py tests/test_gateway_canvas_documents.py`: clean
+  - `mypy src/openzues/services/gateway_canvas_documents.py`: clean
+- Queue effect from this run:
+  - inline managed canvas document materialization is closed.
+  - next exact seam is path/PDF entrypoint materialization or managed asset URL/copy parity.
+
+### Recovery addendum 2026-04-24 path and PDF canvas document materialization America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw can materialize workspace-relative path entrypoints into managed canvas document storage.
+  - OpenClaw wraps local PDF documents in an `index.html` viewer page instead of handing the raw PDF path to the canvas.
+  - OpenZues had inline HTML document materialization only.
+- Landed the next bounded canvas-document slice:
+  - `create_canvas_document()` now resolves relative path entrypoints against the provided workspace directory and copies them into the document directory.
+  - local PDF path entrypoints now copy the PDF and write an OpenClaw-style `index.html` object/iframe wrapper.
+  - manifests keep the stable managed entry URL pointing at the copied file or wrapper page.
+- Product effect:
+  - OpenZues can now host local HTML bundles and local PDF previews as managed canvas artifacts.
+  - remaining canvas-document gaps include declared asset copying, asset URL listing, URL/PDF wrappers, image/video wrappers, and HTTP serving integration.
+- Verified this continuation with:
+  - red proof: path and PDF tests first failed on the inline-only `canvas document entrypoint type unsupported` branch.
+  - `pytest tests/test_gateway_canvas_documents.py -q`: `7 passed`
+  - `ruff check src/openzues/services/gateway_canvas_documents.py tests/test_gateway_canvas_documents.py`: clean
+  - `mypy src/openzues/services/gateway_canvas_documents.py`: clean
+- Queue effect from this run:
+  - workspace path and local PDF canvas document materialization are closed.
+  - next exact seam is managed asset copy/list parity or remote URL/PDF wrapper parity.
+
+### Recovery addendum 2026-04-24 managed canvas document assets America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw copies declared canvas document assets into the managed document directory.
+  - OpenClaw can resolve copied assets into local paths plus stable hosted URLs, with optional base URL prefixing.
+  - OpenZues had document shells and path/PDF materialization but no asset copy/list surface.
+- Landed the next bounded canvas-document slice:
+  - `create_canvas_document()` now copies declared assets from workspace-relative, absolute, or home-relative source paths.
+  - asset logical paths are normalized with the same traversal guard used by hosted document paths.
+  - `resolve_canvas_document_assets()` now returns logical path, optional content type, managed local path, and hosted URL for each copied asset.
+- Product effect:
+  - managed canvas HTML bundles can now reference copied audio/image/style/script assets by stable hosted paths.
+  - remaining canvas-document gaps include remote URL/PDF wrappers, image/video wrappers, manifest loading, and HTTP serving integration.
+- Verified this continuation with:
+  - red proof: the asset test first failed because `resolve_canvas_document_assets` did not exist.
+  - `pytest tests/test_gateway_canvas_documents.py -q`: `8 passed`
+  - `ruff check src/openzues/services/gateway_canvas_documents.py tests/test_gateway_canvas_documents.py`: clean
+  - `mypy src/openzues/services/gateway_canvas_documents.py`: clean
+- Queue effect from this run:
+  - managed canvas asset copy/list parity is closed.
+  - next exact seam is remote URL/PDF wrapper parity or image/video path wrapper parity.
+
+### Recovery addendum 2026-04-24 remote PDF and image canvas wrappers America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw wraps remote PDF URL entrypoints in a managed `index.html` PDF viewer page.
+  - OpenClaw wraps local image entrypoints in a managed image viewer page instead of exposing only the raw copied image.
+  - OpenZues supported inline, path, local PDF, and asset materialization but not these wrappers.
+- Landed the next bounded canvas-document slice:
+  - remote PDF URL entrypoints now write an `index.html` wrapper and preserve the original URL as `externalUrl`.
+  - image path entrypoints now copy the image and write a centered `index.html` viewer page.
+  - the shared materializer also has the matching video wrapper path for `video_asset` entrypoints.
+- Product effect:
+  - OpenZues can now produce renderable managed canvas documents for common remote PDF and local image previews.
+  - remaining canvas-document gaps include non-PDF URL pass-through tests, manifest loading, and HTTP serving integration.
+- Verified this continuation with:
+  - red proof: remote PDF and image tests first failed on unsupported URL entrypoints and missing image wrapper output.
+  - `pytest tests/test_gateway_canvas_documents.py -q`: `10 passed`
+  - `ruff check src/openzues/services/gateway_canvas_documents.py tests/test_gateway_canvas_documents.py`: clean
+  - `mypy src/openzues/services/gateway_canvas_documents.py`: clean
+- Queue effect from this run:
+  - remote PDF and image wrapper materialization are closed.
+  - next exact seam is manifest loading / non-PDF URL pass-through or HTTP serving integration for managed canvas documents.
+
+### Recovery addendum 2026-04-24 canvas manifest loading and URL pass-through America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw can reload a saved canvas document manifest by document ID.
+  - OpenClaw passes non-PDF URL entrypoints through as external URLs instead of forcing every URL through managed local storage.
+  - OpenZues had materialization and manifest writing but no manifest loader.
+- Landed the next bounded canvas-document slice:
+  - `load_canvas_document_manifest()` now reads saved manifests from managed canvas storage and returns `None` for missing or invalid files.
+  - non-PDF URL entrypoints now stay external and preserve `entryUrl` plus `externalUrl` without creating a local entrypoint.
+- Product effect:
+  - canvas document metadata can now be rehydrated after creation, which is the foundation for HTTP serving and later dashboard/runtime surfaces.
+  - remaining canvas-document gaps include FastAPI serving integration, manifest-driven asset serving, and broader runtime integration with chat/tool cards.
+- Verified this continuation with:
+  - red proof: manifest/url tests first failed because `load_canvas_document_manifest` did not exist.
+  - `pytest tests/test_gateway_canvas_documents.py -q`: `12 passed`
+  - `ruff check src/openzues/services/gateway_canvas_documents.py tests/test_gateway_canvas_documents.py`: clean
+  - `mypy src/openzues/services/gateway_canvas_documents.py`: clean
+- Queue effect from this run:
+  - manifest loading and non-PDF URL pass-through are closed.
+  - next exact seam is FastAPI HTTP serving for managed canvas document paths.
+
+### Recovery addendum 2026-04-24 FastAPI canvas document serving America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw serves managed canvas document files from `/__openclaw__/canvas/documents/...`.
+  - OpenZues could create and resolve managed canvas document paths, but the FastAPI app still returned 404 for those URLs.
+- Landed the next bounded end-to-end canvas slice:
+  - `create_app()` now wires `/__openclaw__/canvas/documents/{path}` to the traversal-safe canvas document resolver.
+  - missing files and traversal-style document paths return 404.
+  - valid managed document files are served with `FileResponse`.
+- Product effect:
+  - managed canvas documents are now usable through the local web app path, not just as service-layer artifacts.
+  - remaining canvas gaps move toward runtime integration: creating documents from tool/chat flows and linking them into node canvas surfaces.
+- Verified this continuation with:
+  - red proof: `test_create_app_serves_managed_canvas_document_paths` first returned 404 for an existing managed document URL.
+  - `pytest tests/test_gateway_canvas_documents.py::test_create_app_serves_managed_canvas_document_paths tests/test_gateway_canvas_documents.py -q`: `13 passed`
+  - `ruff check src/openzues/app.py src/openzues/services/gateway_canvas_documents.py tests/test_gateway_canvas_documents.py`: clean
+  - `mypy src/openzues/app.py src/openzues/services/gateway_canvas_documents.py`: clean
+- Queue effect from this run:
+  - managed canvas document HTTP serving is closed.
+  - next exact seam is connecting managed canvas documents to a runtime surface or continuing node/browser command breadth.
+
+### Recovery addendum 2026-04-24 canvas media upload path resolution America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw resolves `/__openclaw__/canvas/documents/...` media URLs back into local files before media upload.
+  - OpenZues could serve managed canvas documents over HTTP, but Ops Mesh still treated those media paths as remote URLs during Slack native upload.
+- Landed the next bounded canvas/media slice:
+  - `OpsMeshService` now accepts an optional canvas state dir.
+  - Slack native media download resolves managed canvas document paths into local files before falling back to network fetch.
+  - `create_app()` passes the active OpenZues data dir into Ops Mesh so app-created canvas documents can be uploaded by provider routes.
+- Product effect:
+  - managed canvas assets can now move from OpenZues local canvas storage into Slack native uploads without requiring an externally reachable URL.
+  - remaining media gaps include broad provider coverage for local canvas path resolution and richer chat/tool-card integration.
+- Verified this continuation with:
+  - red proof: `test_slack_media_download_resolves_managed_canvas_document_path` first failed because Ops Mesh had no canvas state dir hook.
+  - `pytest tests/test_ops_mesh.py::test_slack_media_download_resolves_managed_canvas_document_path tests/test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_slack_native_route -q`: `2 passed`
+  - `pytest tests/test_gateway_canvas_documents.py::test_create_app_serves_managed_canvas_document_paths -q`: `1 passed`
+  - `ruff check src/openzues/services/ops_mesh.py src/openzues/app.py tests/test_ops_mesh.py`: clean
+  - `mypy src/openzues/services/ops_mesh.py src/openzues/app.py`: clean
+- Queue effect from this run:
+  - Slack upload path resolution for managed canvas documents is closed.
+  - next exact seam is extending local managed-canvas media resolution across other provider surfaces or connecting canvas documents to chat/tool-card creation.
+
+### Recovery addendum 2026-04-24 canvas embed shortcode parser America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw parses Control UI `[embed ...]` shortcodes into structured canvas previews.
+  - OpenClaw supports hosted document refs such as `ref="cv_123"` and explicit `/__openclaw__/canvas/documents/...` URLs.
+  - OpenZues now had hosted canvas documents but no parser for assistant text to reference them.
+- Landed the next bounded canvas-render slice:
+  - added `gateway_canvas_render.py` with `extract_canvas_shortcodes()`.
+  - valid shortcodes are stripped from visible text and converted into `kind="canvas"`, `surface="assistant_message"`, `render="url"` preview payloads.
+  - fenced code blocks are ignored, invalid targets remain visible, and preferred heights are clamped into the OpenClaw range.
+- Product effect:
+  - OpenZues now has the parser foundation needed to let assistant/chat output attach hosted canvas documents to webchat bubbles.
+  - remaining canvas render gaps are UI integration and structured preview storage in chat history.
+- Verified this continuation with:
+  - red proof: `test_gateway_canvas_render.py` first failed because `openzues.services.gateway_canvas_render` did not exist.
+  - `pytest tests/test_gateway_canvas_render.py -q`: `3 passed`
+  - `ruff check src/openzues/services/gateway_canvas_render.py tests/test_gateway_canvas_render.py`: clean
+  - `mypy src/openzues/services/gateway_canvas_render.py`: clean
+- Queue effect from this run:
+  - canvas embed shortcode parsing is closed.
+  - next exact seam is wiring parsed previews into the webchat/dashboard message rendering path or storing preview metadata with chat history.
+
+### Recovery addendum 2026-04-24 control-chat canvas preview attachment America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw parses assistant `[embed ...]` shortcodes into structured canvas previews and renders them in chat instead of showing raw shortcode text.
+  - OpenZues had the parser and hosted canvas document URLs, but `ControlChatMessageView` still returned the raw text with no preview metadata.
+- Landed the next bounded canvas-render slice:
+  - `ControlChatMessageView` now carries `canvas_previews`.
+  - `ControlChatService` keeps raw database history intact but attaches parsed preview metadata on `build_view()` and append responses.
+  - repeated-message collapse now includes preview payloads so stripped text from different previews does not collapse incorrectly.
+  - the web chat renderer now displays canvas previews as sandboxed iframe cards under the assistant message.
+- Product effect:
+  - assistant output can now reference managed canvas documents in the control transcript without leaking shortcode syntax to the operator.
+  - remaining canvas gaps move toward upstream canvas creation/runtime breadth beyond the assistant transcript preview surface.
+- Verified this continuation with:
+  - red proof: `test_control_chat_view_extracts_canvas_embed_previews` first failed because the shortcode stayed in `message.content`.
+  - `pytest tests/test_app.py::test_control_chat_view_extracts_canvas_embed_previews -q`: `1 passed`
+  - `pytest tests/test_gateway_canvas_render.py tests/test_app.py::test_control_chat_view_extracts_canvas_embed_previews -q`: `4 passed`
+  - `ruff check src/openzues/schemas.py src/openzues/services/control_chat.py src/openzues/services/gateway_canvas_render.py tests/test_app.py tests/test_gateway_canvas_render.py`: clean
+  - `mypy src/openzues/schemas.py src/openzues/services/control_chat.py src/openzues/services/gateway_canvas_render.py`: clean
+  - `node --check src/openzues/web/static/app.js`: clean
+- Queue effect from this run:
+  - control-chat canvas preview attachment/rendering is closed.
+  - next exact seam is the next concrete upstream browser/canvas command/runtime surface beyond assistant shortcode previews.
+
+### Recovery addendum 2026-04-24 A2UI scaffold serving America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw serves the bundled A2UI canvas scaffold from `/__openclaw__/a2ui`.
+  - OpenClaw exposes an `a2ui.bundle.js` helper containing the `openclawCanvasA2UIAction` bridge and blocks traversal escapes.
+  - OpenZues only served managed canvas documents under `/__openclaw__/canvas/documents/...`, so the A2UI scaffold route returned 404.
+- Landed the next bounded canvas-host slice:
+  - added `gateway_canvas_a2ui.py` with a built-in A2UI scaffold and bridge bundle.
+  - `create_app()` now serves `/__openclaw__/a2ui`, `/__openclaw__/a2ui/`, and `/__openclaw__/a2ui/a2ui.bundle.js`.
+  - A2UI route responses set `Cache-Control: no-store`, support HEAD, and reject normalized or encoded traversal paths.
+- Product effect:
+  - OpenZues can now host the same basic A2UI node-canvas control surface path as OpenClaw.
+  - remaining canvas-host gaps include the broader live-reload websocket/watch surface and deeper runtime command plumbing.
+- Verified this continuation with:
+  - red proof: `test_create_app_serves_a2ui_canvas_scaffold_and_blocks_traversal` first failed because `/__openclaw__/a2ui/` returned 404.
+  - `pytest tests/test_gateway_canvas_documents.py::test_create_app_serves_a2ui_canvas_scaffold_and_blocks_traversal -q`: `1 passed`
+  - `pytest tests/test_gateway_canvas_documents.py tests/test_gateway_canvas_render.py tests/test_app.py::test_control_chat_view_extracts_canvas_embed_previews -q`: `18 passed`
+  - `ruff check src/openzues/services/gateway_canvas_a2ui.py src/openzues/app.py tests/test_gateway_canvas_documents.py`: clean
+  - `mypy src/openzues/services/gateway_canvas_a2ui.py src/openzues/app.py src/openzues/services/gateway_canvas_documents.py src/openzues/services/gateway_canvas_render.py src/openzues/services/control_chat.py`: clean
+- Queue effect from this run:
+  - A2UI scaffold serving is closed.
+  - next exact seam is the next concrete upstream canvas command or live-reload surface beyond scaffold serving.
+
+### Recovery addendum 2026-04-24 canvas live-reload websocket boundary America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw injects a canvas live-reload websocket pointed at `/__openclaw__/ws`.
+  - OpenClaw returns `426 upgrade required` for plain HTTP on that path and accepts websocket upgrades there.
+  - OpenZues served the A2UI scaffold but the live-reload socket path still closed immediately.
+- Landed the next bounded canvas-host slice:
+  - `create_app()` now exposes a plain HTTP `/__openclaw__/ws` upgrade-required response.
+  - `create_app()` now accepts websocket clients on `/__openclaw__/ws` and holds the connection until disconnect.
+  - the A2UI bundle now opens `/__openclaw__/ws` with the optional `oc_cap` query and reloads when a future broadcaster sends `reload`.
+- Product effect:
+  - A2UI/canvas pages can now connect to the same live-reload endpoint shape OpenClaw injects.
+  - remaining canvas-host gaps include actual filesystem watch/broadcast reload behavior and root canvas file serving.
+- Verified this continuation with:
+  - red proof: `test_create_app_exposes_canvas_live_reload_websocket_path` first failed because the websocket closed during connect.
+  - `pytest tests/test_gateway_canvas_documents.py::test_create_app_exposes_canvas_live_reload_websocket_path -q`: `1 passed`
+  - `pytest tests/test_gateway_canvas_documents.py tests/test_gateway_canvas_render.py tests/test_app.py::test_control_chat_view_extracts_canvas_embed_previews -q`: `19 passed`
+  - `ruff check src/openzues/services/gateway_canvas_a2ui.py src/openzues/app.py tests/test_gateway_canvas_documents.py`: clean
+  - `mypy src/openzues/services/gateway_canvas_a2ui.py src/openzues/app.py src/openzues/services/gateway_canvas_documents.py src/openzues/services/gateway_canvas_render.py src/openzues/services/control_chat.py`: clean
+- Queue effect from this run:
+  - canvas live-reload websocket accept/upgrade boundary is closed.
+  - next exact seam is canvas host root/default page plus traversal-safe file serving under `/__openclaw__/canvas`.
+
+### Recovery addendum 2026-04-24 canvas host root/default page serving America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw prepares the canvas state root and serves a default `OpenClaw Canvas` page from `/__openclaw__/canvas/`.
+  - OpenClaw keeps the same traversal-safe root separate from managed canvas documents.
+  - OpenZues served managed document paths but returned 404 for the canvas host root.
+- Landed the next bounded canvas-host slice:
+  - `ensure_canvas_host_default_index()` creates `data/canvas/index.html` with a basic OpenClaw Canvas action bridge page.
+  - `resolve_canvas_host_http_path_to_local_path()` resolves root canvas paths under the canvas state root while rejecting traversal and deferring `/documents/...` to the managed document route.
+  - `create_app()` now serves `/__openclaw__/canvas/` and `/__openclaw__/canvas/index.html` through the traversal-safe host resolver.
+- Product effect:
+  - OpenZues now has the same root canvas-host page shape as OpenClaw instead of only managed document previews.
+  - remaining canvas-host gaps include actual file-change watch/reload broadcasting and deeper canvas command runtime plumbing.
+- Verified this continuation with:
+  - red proof: `test_create_app_serves_canvas_host_root_and_blocks_traversal` first failed because `/__openclaw__/canvas/` returned 404.
+  - `pytest tests/test_gateway_canvas_documents.py::test_create_app_serves_canvas_host_root_and_blocks_traversal -q`: `1 passed`
+  - `pytest tests/test_gateway_canvas_documents.py tests/test_gateway_canvas_render.py tests/test_app.py::test_control_chat_view_extracts_canvas_embed_previews -q`: `20 passed`
+  - `ruff check src/openzues/services/gateway_canvas_documents.py src/openzues/app.py tests/test_gateway_canvas_documents.py`: clean
+  - `mypy src/openzues/services/gateway_canvas_a2ui.py src/openzues/app.py src/openzues/services/gateway_canvas_documents.py src/openzues/services/gateway_canvas_render.py src/openzues/services/control_chat.py`: clean
+- Queue effect from this run:
+  - canvas host root/default page serving is closed.
+  - next exact seam is actual canvas file-change reload broadcasting or the next browser/node command runtime gap.
+
+### Recovery addendum 2026-04-24 canvas live-reload broadcast delivery America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw broadcasts the literal `reload` frame to connected `/__openclaw__/ws` clients when the canvas root changes.
+  - OpenZues accepted the websocket and the A2UI bundle listened for `reload`, but there was no server-side broadcast owner.
+- Landed the next bounded canvas-host slice:
+  - `create_app()` now owns a dedicated `canvas_live_reload_hub` in app state.
+  - `/__openclaw__/ws` subscribers now listen for `canvas/reload` events and send `reload` to the client.
+  - this establishes the reload delivery contract independently of the later filesystem watcher seam.
+- Product effect:
+  - OpenZues can now push reload frames to connected canvas clients through the same websocket path OpenClaw uses.
+  - remaining canvas-host gap is filesystem watch/debounce integration that publishes `canvas/reload` when files change.
+- Verified this continuation with:
+  - red proof: `test_canvas_live_reload_broadcast_reaches_connected_websocket` first failed because `canvas_live_reload_hub` did not exist.
+  - `pytest tests/test_gateway_canvas_documents.py::test_canvas_live_reload_broadcast_reaches_connected_websocket tests/test_gateway_canvas_documents.py::test_create_app_exposes_canvas_live_reload_websocket_path -q`: `2 passed`
+  - `pytest tests/test_gateway_canvas_documents.py tests/test_gateway_canvas_render.py tests/test_app.py::test_control_chat_view_extracts_canvas_embed_previews -q`: `21 passed`
+  - `ruff check src/openzues/app.py tests/test_gateway_canvas_documents.py`: clean
+  - `mypy src/openzues/services/gateway_canvas_a2ui.py src/openzues/app.py src/openzues/services/gateway_canvas_documents.py src/openzues/services/gateway_canvas_render.py src/openzues/services/control_chat.py`: clean
+- Queue effect from this run:
+  - canvas live-reload broadcast delivery is closed.
+  - next exact seam is filesystem watch/debounce publishing into `canvas_live_reload_hub` or the next browser command runtime gap.
+
+### Recovery addendum 2026-04-24 canvas filesystem watch/debounce publishing America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw watches the canvas root with ignore-initial, dotfile and `node_modules` ignores, write-stability handling, and a short debounce before broadcasting `reload`.
+  - OpenZues had the websocket delivery hub but no file-change owner to publish `canvas/reload` when the hosted canvas root changed.
+- Landed the next bounded canvas-host slice:
+  - added `CanvasLiveReloadWatcher`, a dependency-free polling watcher for the OpenZues canvas root.
+  - the watcher snapshots `data/canvas`, ignores dotfiles and `node_modules`, coalesces repeated file-change scans with a short debounce, and publishes `{"type": "canvas/reload"}`.
+  - `create_app()` now starts and stops the watcher with the control-plane lifespan and exposes it in app state for focused proofing.
+- Product effect:
+  - OpenZues now has the end-to-end server-side canvas live-reload chain: root file change -> debounced reload event -> `/__openclaw__/ws` `reload` frame.
+  - remaining canvas-host gaps include injecting the live-reload hook into served canvas HTML and deeper browser/canvas node command runtime breadth.
+- Verified this continuation with:
+  - red proof: the watcher tests first failed because `openzues.services.gateway_canvas_live_reload` did not exist.
+  - `pytest tests/test_gateway_canvas_documents.py::test_canvas_live_reload_watcher_debounces_file_change_events tests/test_gateway_canvas_documents.py::test_create_app_canvas_watcher_publishes_reload_to_websocket -q`: `2 passed`
+  - `pytest tests/test_gateway_canvas_documents.py tests/test_gateway_canvas_render.py tests/test_app.py::test_control_chat_view_extracts_canvas_embed_previews -q`: `23 passed` with existing TestClient/aiosqlite thread warnings.
+  - `ruff check src/openzues/services/gateway_canvas_live_reload.py src/openzues/services/gateway_canvas_documents.py src/openzues/services/gateway_canvas_a2ui.py src/openzues/app.py tests/test_gateway_canvas_documents.py tests/test_gateway_canvas_render.py tests/test_app.py`: clean
+  - `mypy src/openzues/services/gateway_canvas_live_reload.py src/openzues/services/gateway_canvas_a2ui.py src/openzues/app.py src/openzues/services/gateway_canvas_documents.py src/openzues/services/gateway_canvas_render.py src/openzues/services/control_chat.py`: clean
+- Queue effect from this run:
+  - canvas filesystem watch/debounce publishing is closed.
+  - next exact seam is HTML live-reload injection for served canvas pages or the next concrete browser/canvas command runtime gap.
+
+### Recovery addendum 2026-04-24 served canvas HTML live-reload injection America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw injects the A2UI action bridge and `/__openclaw__/ws` reload hook into served canvas HTML.
+  - OpenZues could serve the canvas root and managed document HTML, but both arrived raw, so the newly landed websocket/watch chain could not reload ordinary canvas pages.
+- Landed the next bounded canvas-host slice:
+  - added `inject_canvas_live_reload()` alongside the A2UI scaffold helpers.
+  - canvas HTML responses now preserve the original document/root content while adding `OpenClaw.postMessage`, `openclawSendUserAction`, and the `/__openclaw__/ws` `location.reload()` hook.
+  - non-HTML canvas assets still use `FileResponse` unchanged.
+- Product effect:
+  - served canvas pages now have the same client-side live-reload/action bridge shape OpenClaw injects.
+  - remaining canvas-host gaps include exact base-path edge cases and deeper browser/canvas node command runtime breadth.
+- Verified this continuation with:
+  - red proof: `test_create_app_injects_live_reload_hook_into_canvas_html` first failed because managed canvas HTML returned only `<div>live</div>`.
+  - `pytest tests/test_gateway_canvas_documents.py::test_create_app_injects_live_reload_hook_into_canvas_html -q`: `1 passed`
+  - `pytest tests/test_gateway_canvas_documents.py tests/test_gateway_canvas_render.py tests/test_app.py::test_control_chat_view_extracts_canvas_embed_previews -q`: `24 passed` with existing TestClient/aiosqlite thread warnings.
+  - `ruff check src/openzues/services/gateway_canvas_live_reload.py src/openzues/services/gateway_canvas_documents.py src/openzues/services/gateway_canvas_a2ui.py src/openzues/app.py tests/test_gateway_canvas_documents.py tests/test_gateway_canvas_render.py tests/test_app.py`: clean
+  - `mypy src/openzues/services/gateway_canvas_live_reload.py src/openzues/services/gateway_canvas_a2ui.py src/openzues/app.py src/openzues/services/gateway_canvas_documents.py src/openzues/services/gateway_canvas_render.py src/openzues/services/control_chat.py`: clean
+- Queue effect from this run:
+  - served canvas HTML live-reload hook injection is closed.
+  - next exact seam is exact `/__openclaw__/canvas` base-path handling or the next concrete browser/canvas command runtime gap.
+
+### Recovery addendum 2026-04-24 scoped canvas capability routing America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenZues already minted OpenClaw-shaped scoped canvas URLs from `node.canvas.capability.refresh`.
+  - The minted `/__openclaw__/cap/<token>/...` URLs had no app-level HTTP/WebSocket consumer, so a node could receive a scoped canvas host URL that did not route anywhere.
+- Landed the next bounded canvas-auth slice:
+  - `create_app()` now validates active, unexpired node canvas capability tokens against the live node registry.
+  - scoped HTTP paths can serve canvas host assets and A2UI assets through the existing traversal-safe handlers.
+  - scoped websocket paths can subscribe to `/__openclaw__/ws` reload delivery through the same live-reload hub.
+  - invalid or expired capability tokens return `401` on HTTP and close scoped websocket attempts.
+- Product effect:
+  - the existing `node.canvas.capability.refresh` method now produces usable scoped canvas URLs instead of a write-only token.
+  - remaining browser/canvas gaps are moving from host/auth plumbing toward A2UI JSONL validation/productization and broader browser command runtime breadth.
+- Verified this continuation with:
+  - red proof: `test_create_app_serves_canvas_through_scoped_capability_paths` first failed because the scoped websocket route closed during connect.
+  - `pytest tests/test_gateway_canvas_documents.py::test_create_app_serves_canvas_through_scoped_capability_paths -q`: `1 passed`
+  - `pytest tests/test_gateway_canvas_documents.py tests/test_gateway_canvas_render.py tests/test_gateway_node_methods.py::test_node_canvas_capability_refresh_rotates_scoped_host_url tests/test_gateway_nodes_api.py::test_remote_node_canvas_capability_refresh_returns_scoped_host_url tests/test_app.py::test_control_chat_view_extracts_canvas_embed_previews -q`: `27 passed` with existing TestClient/aiosqlite thread warnings.
+  - `ruff check src/openzues/services/gateway_canvas_live_reload.py src/openzues/services/gateway_canvas_documents.py src/openzues/services/gateway_canvas_a2ui.py src/openzues/app.py tests/test_gateway_canvas_documents.py tests/test_gateway_canvas_render.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py tests/test_app.py`: clean
+  - `mypy src/openzues/services/gateway_canvas_live_reload.py src/openzues/services/gateway_canvas_a2ui.py src/openzues/app.py src/openzues/services/gateway_canvas_documents.py src/openzues/services/gateway_canvas_render.py src/openzues/services/control_chat.py src/openzues/services/gateway_node_methods.py src/openzues/services/gateway_node_registry.py`: clean
+- Queue effect from this run:
+  - scoped canvas capability routing is closed.
+  - next exact seam is A2UI JSONL validation/productization or the next concrete browser command runtime gap.
+
+### Recovery addendum 2026-04-24 A2UI JSONL validation before node dispatch America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw validates A2UI JSONL before invoking canvas node commands.
+  - OpenZues allowlisted `canvas.a2ui.push` / `canvas.a2ui.pushJSONL`, but malformed JSONL was forwarded to the node and only failed after invoke timeout or node-side behavior.
+- Landed the next bounded node/canvas slice:
+  - `node.invoke` now validates `canvas.a2ui.push` and `canvas.a2ui.pushJSONL` payloads before registry dispatch.
+  - the validator requires non-empty `params.jsonl`, parses JSONL line-by-line, requires exactly one A2UI action key per message, rejects empty streams, and rejects mixed v0.8/v0.9 messages.
+  - valid A2UI JSONL still dispatches through the normal node invoke path.
+- Product effect:
+  - malformed canvas UI payloads fail quickly at the gateway boundary instead of timing out a foreground node command.
+  - remaining browser/canvas gaps are broader browser command runtime breadth and richer node canvas command productization.
+- Verified this continuation with:
+  - red proof: `test_node_invoke_rejects_invalid_canvas_a2ui_jsonl_before_dispatch` first timed out after dispatching `not json` to the node.
+  - `pytest tests/test_gateway_node_methods.py::test_node_invoke_rejects_invalid_canvas_a2ui_jsonl_before_dispatch tests/test_gateway_node_methods.py::test_node_invoke_allows_valid_canvas_a2ui_jsonl_dispatch -q`: `2 passed`
+  - `pytest tests/test_gateway_node_methods.py::test_node_invoke_rejects_invalid_canvas_a2ui_jsonl_before_dispatch tests/test_gateway_node_methods.py::test_node_invoke_allows_valid_canvas_a2ui_jsonl_dispatch tests/test_gateway_node_methods.py::test_node_invoke_returns_openclaw_shaped_success_payload tests/test_gateway_node_methods.py::test_node_invoke_rejects_persistent_browser_proxy_mutations_before_wake_attempt tests/test_gateway_canvas_documents.py tests/test_gateway_canvas_render.py -q`: `30 passed` with existing TestClient/aiosqlite thread warnings.
+  - `ruff check src/openzues/services/gateway_node_methods.py src/openzues/services/gateway_canvas_live_reload.py src/openzues/services/gateway_canvas_documents.py src/openzues/services/gateway_canvas_a2ui.py src/openzues/app.py tests/test_gateway_node_methods.py tests/test_gateway_canvas_documents.py tests/test_gateway_canvas_render.py`: clean
+  - `mypy src/openzues/services/gateway_node_methods.py src/openzues/services/gateway_canvas_live_reload.py src/openzues/services/gateway_canvas_a2ui.py src/openzues/app.py src/openzues/services/gateway_canvas_documents.py src/openzues/services/gateway_canvas_render.py`: clean
+- Queue effect from this run:
+  - A2UI JSONL validation is closed.
+  - next exact seam is broader browser command runtime breadth or node canvas command productization.
+
+### Recovery addendum 2026-04-24 configured plugin node-host command allowlist America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw can intentionally enable plugin-declared node-host commands such as `browser.inspect` through `gateway.nodes.allowCommands` while keeping dangerous/default command gates intact.
+  - OpenZues had the pure allowlist helper but did not wire configured allow/deny command lists into node invoke or node catalog/scope-upgrade logic.
+- Landed the next bounded browser/node slice:
+  - added `gateway_node_allow_commands` and `gateway_node_deny_commands` settings.
+  - `GatewayNodeMethodService` now applies configured allow/deny commands during `node.invoke` command authorization and silent scope-upgrade detection.
+  - `GatewayNodeService` now applies the same configured allow/deny commands to node catalog/scope-upgrade logic.
+  - `create_app()` passes the configured command lists into both services.
+- Product effect:
+  - plugin node-host commands can now be explicitly enabled without making them default for every node.
+  - remaining browser/runtime gaps include productizing actual plugin command inventory/runtime adapters beyond the generic node-dispatch path.
+- Verified this continuation with:
+  - red proof: `test_node_invoke_uses_configured_allow_commands_for_plugin_node_host_commands` first failed because `GatewayNodeMethodService` did not accept `node_allow_commands`.
+  - `pytest tests/test_gateway_node_methods.py::test_node_invoke_uses_configured_allow_commands_for_plugin_node_host_commands -q`: `1 passed`
+  - `pytest tests/test_gateway_node_methods.py::test_node_invoke_uses_configured_allow_commands_for_plugin_node_host_commands tests/test_gateway_node_methods.py::test_node_invoke_rejects_commands_the_node_did_not_declare tests/test_gateway_node_methods.py::test_node_invoke_rejects_invalid_canvas_a2ui_jsonl_before_dispatch tests/test_gateway_node_command_policy.py -q`: `5 passed`
+  - `ruff check src/openzues/settings.py src/openzues/services/gateway_node_methods.py src/openzues/services/gateway_node_service.py src/openzues/app.py tests/test_gateway_node_methods.py tests/test_gateway_node_command_policy.py`: clean
+  - `mypy src/openzues/settings.py src/openzues/services/gateway_node_methods.py src/openzues/services/gateway_node_service.py src/openzues/app.py`: clean
+- Queue effect from this run:
+  - configured plugin node-host command allow/deny wiring is closed.
+  - next exact seam is browser command runtime productization or richer node-host plugin command inventory.
+
+### Recovery addendum 2026-04-24 allowlist-normalized node command catalogs America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw normalizes node-reported commands through the platform/config allowlist during connect/reconcile.
+  - OpenZues applied the allowlist at `node.invoke`, but `node.list`, `node.describe`, HTTP node catalog views, and new pairing requests could still expose raw rejected declarations such as iOS `system.run` or unconfigured `browser.inspect`.
+- Landed the next bounded node-catalog slice:
+  - `GatewayNodeMethodService` now normalizes advertised commands for `node.list`, `node.describe`, stored/live paired-node merge payloads, and new `node.pair.request` calls when platform metadata is present.
+  - `GatewayNodeService` now applies the same configured allow/deny normalization to `/api/gateway/nodes` and `/api/gateway/nodes/{node_id}`.
+  - low-level registry state remains raw; the user-facing catalog and pairing surfaces now match the gateway execution policy.
+- Product effect:
+  - operators no longer see commands that the gateway will later reject unless those commands are explicitly configured into the allowlist.
+  - plugin node-host commands such as `browser.inspect` remain opt-in and become visible only when the configured allowlist permits them.
+- Verified this continuation with:
+  - red proof: `test_node_list_and_describe_expose_only_allowlisted_live_commands` first showed iOS `browser.inspect`, `canvas.snapshot`, and `system.run` in the catalog.
+  - red proof: `test_node_pair_request_records_only_allowlisted_commands` first stored all three raw commands in the pending pairing request.
+  - `pytest tests/test_gateway_node_methods.py::test_node_list_and_describe_expose_only_allowlisted_live_commands tests/test_gateway_node_methods.py::test_node_pair_request_records_only_allowlisted_commands tests/test_gateway_nodes_api.py::test_gateway_node_catalog_endpoint_exposes_only_allowlisted_live_commands -q`: `3 passed`
+  - `pytest tests/test_gateway_node_methods.py::test_node_list_and_describe_include_persisted_approved_nodes tests/test_gateway_node_methods.py::test_node_list_and_describe_keep_empty_live_command_surface_over_paired_values tests/test_gateway_node_methods.py::test_node_pair_request_refresh_preserves_omitted_fields_and_allows_explicit_empty_lists tests/test_gateway_node_methods.py::test_node_invoke_uses_configured_allow_commands_for_plugin_node_host_commands tests/test_gateway_nodes_api.py::test_gateway_node_endpoints_surface_known_nodes_and_pending_actions tests/test_gateway_nodes_api.py::test_gateway_node_catalog_endpoint_exposes_only_allowlisted_live_commands -q`: `6 passed`
+  - `ruff check src/openzues/services/gateway_node_methods.py src/openzues/services/gateway_node_service.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`: clean
+  - `mypy src/openzues/services/gateway_node_methods.py src/openzues/services/gateway_node_service.py`: clean
+- Queue effect from this run:
+  - allowlist-normalized node command catalog/pairing surfaces are closed.
+  - next exact seam is browser command runtime productization or richer node-host plugin command inventory beyond generic node dispatch.
+
+### Recovery addendum 2026-04-24 native browser command method runtime America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenZues advertised native browser commands through `commands.list` and `/api/gateway/commands`.
+  - `browser.open`, `browser.snapshot`, `browser.console`, and `browser.errors` were catalog-only names at the gateway method layer, so API callers could discover commands they could not execute.
+- Landed the next bounded browser-runtime slice:
+  - added `GatewayBrowserRuntimeService` as a default/injectable `agent-browser` command runner with OpenZues-shaped open, snapshot, console, and errors payloads.
+  - `GatewayNodeMethodService` now dispatches the four advertised browser methods to that runtime and maps missing process/runtime failures to `UNAVAILABLE` / 503 instead of an unknown-method boundary.
+  - `gateway_method_policy` now classifies snapshot/console/errors as read methods and browser.open as a write method.
+- Product effect:
+  - the native browser command catalog is no longer hollow for the first operator browser runtime commands.
+  - missing local `agent-browser` tooling stays honest and repairable instead of pretending the methods do not exist.
+- Verified this continuation with:
+  - red proof: `test_browser_commands_dispatch_to_configured_runtime` first failed because `GatewayNodeMethodService` did not accept a browser runtime and did not implement the methods.
+  - `pytest tests/test_gateway_node_methods.py::test_browser_commands_dispatch_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_commands_return_unavailable_when_runtime_is_missing tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_open_runtime tests/test_gateway_method_policy.py::test_gateway_method_policy_mirrors_openclaw_operator_scope_groups -q`: `4 passed`
+  - `pytest tests/test_gateway_node_methods.py::test_commands_list_returns_bounded_native_operator_inventory tests/test_gateway_node_methods.py::test_commands_list_supports_scope_filters_and_omits_args_when_requested tests/test_gateway_node_methods.py::test_browser_commands_dispatch_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_commands_return_unavailable_when_runtime_is_missing tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_commands_list tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_open_runtime tests/test_gateway_method_policy.py::test_gateway_method_policy_mirrors_openclaw_operator_scope_groups -q`: `7 passed`
+  - `ruff check src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_node_methods.py src/openzues/services/gateway_method_policy.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py tests/test_gateway_method_policy.py`: clean
+  - `mypy src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_node_methods.py src/openzues/services/gateway_method_policy.py src/openzues/app.py`: clean
+- Queue effect from this run:
+  - native browser open/snapshot/console/errors method runtime is closed.
+  - next exact seam is productizing `browser.status` / `browser.verify` / `browser.doctor` at the gateway method layer or continuing into richer node-host plugin command inventory.
+
+### Recovery addendum 2026-04-24 browser.status gateway method productization America/Chicago
+
+- Queue-head seam before implementation:
+  - `browser.status` was advertised by the native command catalog and the CLI already had a browser posture concept, but the gateway method layer only supported generic `status`.
+  - API callers discovering `browser.status` would still hit the unknown-method boundary instead of receiving the browser-only posture they needed for browser-led parity work.
+- Landed the next bounded browser-runtime slice:
+  - `GatewayNodeMethodService` now validates empty `browser.status` params, calls the existing operator status service, and returns the `browser_posture` object only.
+  - missing status wiring or missing browser posture now returns a truthful `UNAVAILABLE` / 503 boundary.
+  - `gateway_method_policy` now classifies `browser.status` as an operator read method.
+- Product effect:
+  - the browser command surface now has a dedicated status method for browser posture without duplicating posture logic or inventing a second browser status owner.
+  - the first browser runtime method family now covers posture plus open/snapshot/console/errors execution.
+- Verified this continuation with:
+  - red proof: `test_browser_status_returns_browser_posture_from_status_service` first failed with `unsupported method: browser.status`.
+  - `pytest tests/test_gateway_node_methods.py::test_browser_status_returns_browser_posture_from_status_service tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_status_runtime tests/test_gateway_method_policy.py::test_gateway_method_policy_mirrors_openclaw_operator_scope_groups -q`: `3 passed`
+  - `pytest tests/test_gateway_node_methods.py::test_commands_list_returns_bounded_native_operator_inventory tests/test_gateway_node_methods.py::test_commands_list_supports_scope_filters_and_omits_args_when_requested tests/test_gateway_node_methods.py::test_browser_commands_dispatch_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_commands_return_unavailable_when_runtime_is_missing tests/test_gateway_node_methods.py::test_browser_status_returns_browser_posture_from_status_service tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_commands_list tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_open_runtime tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_status_runtime tests/test_gateway_method_policy.py::test_gateway_method_policy_mirrors_openclaw_operator_scope_groups -q`: `9 passed`
+  - `ruff check src/openzues/services/gateway_node_methods.py src/openzues/services/gateway_method_policy.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py tests/test_gateway_method_policy.py`: clean
+  - `mypy src/openzues/services/gateway_node_methods.py src/openzues/services/gateway_method_policy.py src/openzues/app.py`: clean
+- Queue effect from this run:
+  - `browser.status` gateway method productization is closed.
+  - next exact seam is `browser.verify` / `browser.doctor` productization at the gateway method layer or richer node-host plugin command inventory.
+
+### Recovery addendum 2026-04-24 browser.verify and browser.doctor gateway method productization America/Chicago
+
+- Queue-head seam before implementation:
+  - `browser.verify` and `browser.doctor` were advertised by the native command catalog and already existed as CLI verbs, but the gateway method layer still rejected both as unsupported.
+  - Browser-led parity callers could discover the methods but could not run a bounded browser verification or combine browser posture with verification through `/api/gateway/node-methods/call`.
+- Landed the next bounded browser-runtime slice:
+  - `GatewayBrowserRuntimeService.verify()` now opens the target URL, waits briefly, probes URL/title/content/overlay state, captures snapshot/errors/console streams, and returns an OpenZues-shaped verification payload.
+  - `GatewayNodeMethodService` now dispatches `browser.verify` to that runtime and wraps the result with stable ready/warn headline semantics.
+  - `GatewayNodeMethodService` now dispatches `browser.doctor`, returning the existing browser posture with `verification=None` by default or an embedded verification payload when `verify=true`.
+  - `gateway_method_policy` now classifies `browser.verify` and `browser.doctor` as operator read methods.
+- Product effect:
+  - the advertised browser command surface is no longer hollow for status, doctor, or bounded verification flows.
+  - missing `agent-browser` execution still maps to an honest `UNAVAILABLE` / 503 boundary.
+- Verified this continuation with:
+  - red proof: `test_browser_verify_dispatches_to_configured_runtime` first failed with `unsupported method: browser.verify`.
+  - red proof: `test_browser_doctor_combines_posture_with_optional_verification` first failed with `unsupported method: browser.doctor`.
+  - `pytest tests/test_gateway_node_methods.py::test_browser_verify_dispatches_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_doctor_combines_posture_with_optional_verification tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_verify_runtime tests/test_gateway_method_policy.py::test_gateway_method_policy_mirrors_openclaw_operator_scope_groups -q`: `4 passed`
+  - `pytest tests/test_gateway_node_methods.py::test_commands_list_returns_bounded_native_operator_inventory tests/test_gateway_node_methods.py::test_commands_list_supports_scope_filters_and_omits_args_when_requested tests/test_gateway_node_methods.py::test_browser_commands_dispatch_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_commands_return_unavailable_when_runtime_is_missing tests/test_gateway_node_methods.py::test_browser_status_returns_browser_posture_from_status_service tests/test_gateway_node_methods.py::test_browser_verify_dispatches_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_doctor_combines_posture_with_optional_verification tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_commands_list tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_open_runtime tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_status_runtime tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_verify_runtime tests/test_gateway_method_policy.py::test_gateway_method_policy_mirrors_openclaw_operator_scope_groups -q`: `12 passed`
+  - `ruff check src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_node_methods.py src/openzues/services/gateway_method_policy.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py tests/test_gateway_method_policy.py`: clean
+  - `mypy src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_node_methods.py src/openzues/services/gateway_method_policy.py src/openzues/app.py`: clean
+- Queue effect from this run:
+  - `browser.verify` / `browser.doctor` gateway method productization is closed.
+  - next exact seam is richer node-host plugin command inventory or the next concrete upstream browser command family not yet represented by the gateway method dispatcher.
+
+### Recovery addendum 2026-04-24 browser.tabs command-breadth productization America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw documents browser tab inventory as a first-class browser command, while OpenZues only exposed status/doctor/verify/open/snapshot/console/errors in the native command catalog.
+  - API callers could not discover or call a `browser.tabs` gateway method even though tab inventory is the safest next browser command-breadth seam before mutating click/type/navigation actions.
+- Landed the next bounded browser-runtime slice:
+  - `GatewayBrowserRuntimeService.tabs()` now runs `agent-browser tabs` and returns a stable tab inventory payload, accepting either JSON output or plain-text fallback lines.
+  - `GatewayCommandsService` now advertises `browser.tabs` with session/json arguments.
+  - `GatewayNodeMethodService` now validates `browser.tabs` params and dispatches to the browser runtime.
+  - `gateway_method_policy` now classifies `browser.tabs` as an operator read method.
+- Product effect:
+  - operators can now inspect browser tab inventory through the same native gateway method/API path as the rest of the browser runtime family.
+  - this closes the first non-status browser command-breadth seam without taking on mutating action semantics yet.
+- Verified this continuation with:
+  - red proof: `test_commands_list_returns_bounded_native_operator_inventory` first showed `browser.tabs` was absent from the native catalog.
+  - red proof: `test_browser_tabs_dispatches_to_configured_runtime` first failed with `unsupported method: browser.tabs`.
+  - `pytest tests/test_gateway_node_methods.py::test_commands_list_returns_bounded_native_operator_inventory tests/test_gateway_node_methods.py::test_browser_tabs_dispatches_to_configured_runtime tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_commands_list tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_tabs_runtime tests/test_gateway_method_policy.py::test_gateway_method_policy_mirrors_openclaw_operator_scope_groups -q`: `5 passed`
+  - `pytest tests/test_gateway_node_methods.py::test_commands_list_returns_bounded_native_operator_inventory tests/test_gateway_node_methods.py::test_commands_list_supports_scope_filters_and_omits_args_when_requested tests/test_gateway_node_methods.py::test_browser_commands_dispatch_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_commands_return_unavailable_when_runtime_is_missing tests/test_gateway_node_methods.py::test_browser_status_returns_browser_posture_from_status_service tests/test_gateway_node_methods.py::test_browser_tabs_dispatches_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_verify_dispatches_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_doctor_combines_posture_with_optional_verification tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_commands_list tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_open_runtime tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_status_runtime tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_verify_runtime tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_tabs_runtime tests/test_gateway_method_policy.py::test_gateway_method_policy_mirrors_openclaw_operator_scope_groups -q`: `14 passed`
+  - `ruff check src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_node_methods.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_commands.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py tests/test_gateway_method_policy.py`: clean
+  - `mypy src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_node_methods.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_commands.py src/openzues/app.py`: clean
+- Queue effect from this run:
+  - `browser.tabs` command-breadth productization is closed.
+  - next exact seam is another upstream browser command family such as lifecycle/profile/screenshot/action commands, or richer plugin node-host inventory.
+
+### Recovery addendum 2026-04-24 browser.profiles command-breadth productization America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw documents browser profiles as a first-class browser management surface, while OpenZues had no native catalog or gateway method for profile inventory.
+  - Profile inventory is a safe read-only follow-on after `browser.tabs`, before mutating profile creation/deletion or lifecycle commands.
+- Landed the next bounded browser-runtime slice:
+  - `GatewayBrowserRuntimeService.profiles()` now runs `agent-browser profiles` and returns a stable profile inventory payload, accepting either JSON output or plain-text fallback lines.
+  - `GatewayCommandsService` now advertises `browser.profiles` with session/json arguments.
+  - `GatewayNodeMethodService` now validates `browser.profiles` params and dispatches to the browser runtime.
+  - `gateway_method_policy` now classifies `browser.profiles` as an operator read method.
+- Product effect:
+  - operators can now inspect browser profile inventory through the native gateway method/API path.
+  - this extends browser command breadth while keeping mutating lifecycle/profile actions out of the trusted surface until they have their own proofs.
+- Verified this continuation with:
+  - red proof: `test_commands_list_returns_bounded_native_operator_inventory` first showed `browser.profiles` was absent from the native catalog.
+  - red proof: `test_browser_profiles_dispatches_to_configured_runtime` first failed with `unsupported method: browser.profiles`.
+  - `pytest tests/test_gateway_node_methods.py::test_commands_list_returns_bounded_native_operator_inventory tests/test_gateway_node_methods.py::test_browser_profiles_dispatches_to_configured_runtime tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_commands_list tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_profiles_runtime tests/test_gateway_method_policy.py::test_gateway_method_policy_mirrors_openclaw_operator_scope_groups -q`: `5 passed`
+  - `pytest tests/test_gateway_node_methods.py::test_commands_list_returns_bounded_native_operator_inventory tests/test_gateway_node_methods.py::test_commands_list_supports_scope_filters_and_omits_args_when_requested tests/test_gateway_node_methods.py::test_browser_commands_dispatch_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_commands_return_unavailable_when_runtime_is_missing tests/test_gateway_node_methods.py::test_browser_status_returns_browser_posture_from_status_service tests/test_gateway_node_methods.py::test_browser_tabs_dispatches_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_profiles_dispatches_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_verify_dispatches_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_doctor_combines_posture_with_optional_verification tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_commands_list tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_open_runtime tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_status_runtime tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_verify_runtime tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_tabs_runtime tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_profiles_runtime tests/test_gateway_method_policy.py::test_gateway_method_policy_mirrors_openclaw_operator_scope_groups -q`: `16 passed`
+  - `ruff check src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_node_methods.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_commands.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py tests/test_gateway_method_policy.py`: clean
+  - `mypy src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_node_methods.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_commands.py src/openzues/app.py`: clean
+- Queue effect from this run:
+  - `browser.profiles` command-breadth productization is closed.
+  - next exact seam is a bounded screenshot/lifecycle method or richer plugin node-host inventory.
+
+### Recovery addendum 2026-04-24 browser.screenshot command-breadth productization America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw documents screenshot capture as a first-class browser command, while OpenZues still stopped at DOM snapshot/console/error streams plus tab/profile inventory.
+  - Screenshot capture is the safest visual artifact seam before mutating browser lifecycle/action commands, but it needed a controlled file boundary so callers could not pick arbitrary output paths through the gateway method.
+- Landed the next bounded browser-runtime slice:
+  - `GatewayBrowserRuntimeService.screenshot()` now runs `agent-browser screenshot`, optionally passes `--full`, writes to an OpenZues-controlled temp PNG path, parses a reported output path when present, and returns path/size/session/full-page metadata.
+  - `GatewayCommandsService` now advertises `browser.screenshot` with session/full/json arguments.
+  - `GatewayNodeMethodService` now validates `browser.screenshot` params and dispatches to the browser runtime with `fullPage` support.
+  - `gateway_method_policy` now classifies `browser.screenshot` as an operator read method.
+- Product effect:
+  - operators can now capture browser visual evidence through the same native gateway method/API path as the rest of the browser runtime family.
+  - the gateway method intentionally does not accept a caller-supplied file path; visual artifacts land in a controlled temp location.
+- Verified this continuation with:
+  - red proof: `test_commands_list_returns_bounded_native_operator_inventory` first showed `browser.screenshot` was absent from the native catalog.
+  - red proof: `test_browser_screenshot_dispatches_to_configured_runtime` first failed with `unsupported method: browser.screenshot`.
+  - `pytest tests/test_gateway_node_methods.py::test_commands_list_returns_bounded_native_operator_inventory tests/test_gateway_node_methods.py::test_browser_screenshot_dispatches_to_configured_runtime tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_commands_list tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_screenshot_runtime tests/test_gateway_method_policy.py::test_gateway_method_policy_mirrors_openclaw_operator_scope_groups -q`: `5 passed`
+  - `pytest tests/test_gateway_node_methods.py::test_commands_list_returns_bounded_native_operator_inventory tests/test_gateway_node_methods.py::test_browser_commands_dispatch_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_commands_return_unavailable_when_runtime_is_missing tests/test_gateway_node_methods.py::test_browser_status_returns_browser_posture_from_status_service tests/test_gateway_node_methods.py::test_browser_tabs_dispatches_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_profiles_dispatches_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_screenshot_dispatches_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_verify_dispatches_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_doctor_combines_posture_with_optional_verification tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_commands_list tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_status_runtime tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_verify_runtime tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_tabs_runtime tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_profiles_runtime tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_screenshot_runtime tests/test_gateway_method_policy.py::test_gateway_method_policy_mirrors_openclaw_operator_scope_groups -q`: `16 passed`
+  - `ruff check src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_node_methods.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_commands.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py tests/test_gateway_method_policy.py`: clean
+  - `mypy src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_node_methods.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_commands.py src/openzues/app.py`: clean
+- Queue effect from this run:
+  - `browser.screenshot` command-breadth productization is closed.
+  - next exact seam is bounded browser lifecycle start/stop or richer plugin node-host inventory.
+
+### Recovery addendum 2026-04-24 browser.pdf command-breadth productization America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw exposes `pdf` in the browser tool action schema alongside screenshot and snapshot artifact flows, while OpenZues had no native catalog or gateway method for page-to-PDF export.
+  - Like screenshot capture, PDF export needed a controlled file boundary so callers could not choose arbitrary output paths through the gateway method.
+- Landed the next bounded browser-runtime slice:
+  - `GatewayBrowserRuntimeService.pdf()` now runs `agent-browser pdf`, writes to an OpenZues-controlled temp PDF path, parses a reported output path when present, and returns path/size/session metadata.
+  - `GatewayCommandsService` now advertises `browser.pdf` with session/json arguments.
+  - `GatewayNodeMethodService` now validates `browser.pdf` params and dispatches to the browser runtime.
+  - `gateway_method_policy` now classifies `browser.pdf` as an operator read method.
+- Product effect:
+  - operators can now capture PDF browser evidence through the same native gateway method/API path as screenshot and snapshot flows.
+  - the gateway method intentionally does not accept a caller-supplied file path; artifacts land in a controlled temp location.
+- Verified this continuation with:
+  - red proof: `test_commands_list_returns_bounded_native_operator_inventory` first showed `browser.pdf` was absent from the native catalog.
+  - red proof: `test_browser_pdf_dispatches_to_configured_runtime` first failed with `unsupported method: browser.pdf`.
+  - `pytest tests/test_gateway_node_methods.py::test_commands_list_returns_bounded_native_operator_inventory tests/test_gateway_node_methods.py::test_browser_pdf_dispatches_to_configured_runtime tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_commands_list tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_pdf_runtime tests/test_gateway_method_policy.py::test_gateway_method_policy_mirrors_openclaw_operator_scope_groups -q`: `5 passed`
+  - `pytest tests/test_gateway_node_methods.py::test_commands_list_returns_bounded_native_operator_inventory tests/test_gateway_node_methods.py::test_browser_commands_dispatch_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_commands_return_unavailable_when_runtime_is_missing tests/test_gateway_node_methods.py::test_browser_status_returns_browser_posture_from_status_service tests/test_gateway_node_methods.py::test_browser_tabs_dispatches_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_profiles_dispatches_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_screenshot_dispatches_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_pdf_dispatches_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_verify_dispatches_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_doctor_combines_posture_with_optional_verification tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_commands_list tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_status_runtime tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_verify_runtime tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_tabs_runtime tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_profiles_runtime tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_screenshot_runtime tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_pdf_runtime tests/test_gateway_method_policy.py::test_gateway_method_policy_mirrors_openclaw_operator_scope_groups -q`: `18 passed`
+  - `ruff check src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_node_methods.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_commands.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py tests/test_gateway_method_policy.py`: clean
+  - `mypy src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_node_methods.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_commands.py src/openzues/app.py`: clean
+- Queue effect from this run:
+  - `browser.pdf` command-breadth productization is closed.
+  - next exact seam is mutating browser navigation/action/lifecycle parity or richer plugin node-host inventory.
+
+### Recovery addendum 2026-04-24 browser.navigate command-breadth productization America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw exposes `navigate` in the browser tool action schema, while OpenZues only exposed `browser.open`.
+  - The safe smallest local slice is active-session URL navigation. OpenZues does not yet claim upstream target-tab routing for `targetId`.
+- Landed the next bounded browser-runtime slice:
+  - `GatewayBrowserRuntimeService.navigate()` now runs the local `agent-browser open <url>` primitive and returns a navigation payload.
+  - `GatewayCommandsService` now advertises `browser.navigate` with url/session/json arguments.
+  - `GatewayNodeMethodService` now validates `browser.navigate` params, accepts `url` or `target`, and dispatches to the browser runtime.
+  - `gateway_method_policy` now classifies `browser.navigate` as an operator write method.
+- Product effect:
+  - operators can now use the OpenClaw-shaped `browser.navigate` method/API surface instead of overloading `browser.open`.
+  - target-tab navigation remains an honest follow-on seam rather than an unverified claim.
+- Verified this continuation with:
+  - red proof: `test_commands_list_returns_bounded_native_operator_inventory` first showed `browser.navigate` was absent from the native catalog.
+  - red proof: `test_browser_navigate_dispatches_to_configured_runtime` first failed with `unsupported method: browser.navigate`.
+  - `pytest tests/test_gateway_node_methods.py::test_commands_list_returns_bounded_native_operator_inventory tests/test_gateway_node_methods.py::test_browser_navigate_dispatches_to_configured_runtime tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_commands_list tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_navigate_runtime tests/test_gateway_method_policy.py::test_gateway_method_policy_mirrors_openclaw_operator_scope_groups -q`: `5 passed`
+  - `pytest tests/test_gateway_node_methods.py::test_commands_list_returns_bounded_native_operator_inventory tests/test_gateway_node_methods.py::test_browser_commands_dispatch_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_navigate_dispatches_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_commands_return_unavailable_when_runtime_is_missing tests/test_gateway_node_methods.py::test_browser_status_returns_browser_posture_from_status_service tests/test_gateway_node_methods.py::test_browser_tabs_dispatches_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_profiles_dispatches_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_screenshot_dispatches_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_pdf_dispatches_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_verify_dispatches_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_doctor_combines_posture_with_optional_verification tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_commands_list tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_navigate_runtime tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_status_runtime tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_verify_runtime tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_tabs_runtime tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_profiles_runtime tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_screenshot_runtime tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_pdf_runtime tests/test_gateway_method_policy.py::test_gateway_method_policy_mirrors_openclaw_operator_scope_groups -q`: `20 passed`
+  - `ruff check src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_node_methods.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_commands.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py tests/test_gateway_method_policy.py`: clean
+  - `mypy src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_node_methods.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_commands.py src/openzues/app.py`: clean
+- Queue effect from this run:
+  - `browser.navigate` command-breadth productization is closed.
+  - next exact seam is target-aware navigation/action support, close/lifecycle methods, or richer plugin node-host inventory.
+
+### Recovery addendum 2026-04-24 browser.close command-breadth productization America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw exposes `close` in the browser tool action schema, while OpenZues did not advertise or dispatch a browser close method.
+  - The safe smallest local slice is session/all-session close through `agent-browser close [--all]`. TargetId tab-close remains a separate follow-on seam.
+- Landed the next bounded browser-runtime slice:
+  - `GatewayBrowserRuntimeService.close()` now runs `agent-browser close`, optionally passes `--all`, and returns session/all-session metadata.
+  - `GatewayCommandsService` now advertises `browser.close` with session/all/json arguments.
+  - `GatewayNodeMethodService` now validates `browser.close` params and dispatches to the browser runtime.
+  - `gateway_method_policy` now classifies `browser.close` as an operator write method.
+- Product effect:
+  - operators can now close the active browser session, or all sessions when explicitly requested, through the native gateway method/API path.
+  - targetId tab-close remains an honest follow-on seam rather than an unverified claim.
+- Verified this continuation with:
+  - red proof: `test_commands_list_returns_bounded_native_operator_inventory` first showed `browser.close` was absent from the native catalog.
+  - red proof: `test_browser_close_dispatches_to_configured_runtime` first failed with `unsupported method: browser.close`.
+  - `pytest tests/test_gateway_node_methods.py::test_commands_list_returns_bounded_native_operator_inventory tests/test_gateway_node_methods.py::test_browser_close_dispatches_to_configured_runtime tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_commands_list tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_close_runtime tests/test_gateway_method_policy.py::test_gateway_method_policy_mirrors_openclaw_operator_scope_groups -q`: `5 passed`
+  - `pytest tests/test_gateway_node_methods.py::test_commands_list_returns_bounded_native_operator_inventory tests/test_gateway_node_methods.py::test_browser_commands_dispatch_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_close_dispatches_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_navigate_dispatches_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_commands_return_unavailable_when_runtime_is_missing tests/test_gateway_node_methods.py::test_browser_status_returns_browser_posture_from_status_service tests/test_gateway_node_methods.py::test_browser_tabs_dispatches_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_profiles_dispatches_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_screenshot_dispatches_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_pdf_dispatches_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_verify_dispatches_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_doctor_combines_posture_with_optional_verification tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_commands_list tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_close_runtime tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_navigate_runtime tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_status_runtime tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_verify_runtime tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_tabs_runtime tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_profiles_runtime tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_screenshot_runtime tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_pdf_runtime tests/test_gateway_method_policy.py::test_gateway_method_policy_mirrors_openclaw_operator_scope_groups -q`: `22 passed`
+  - `ruff check src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_node_methods.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_commands.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py tests/test_gateway_method_policy.py`: clean
+  - `mypy src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_node_methods.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_commands.py src/openzues/app.py`: clean
+- Queue effect from this run:
+  - `browser.close` command-breadth productization is closed.
+  - next exact seam is target-aware tab actions or a bounded `browser.act` subset.
+
+### Recovery addendum 2026-04-24 browser.act bounded action bridge America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw exposes `act` in the browser tool action schema with structured action requests for wait, click, type, press, hover, fill, resize, evaluate, and close-style operations.
+  - OpenZues had no `browser.act` gateway method or native command catalog entry, so browser action parity stopped at open/navigate/close and read/artifact commands.
+- Landed the next bounded browser-runtime slice:
+  - `GatewayBrowserRuntimeService.act()` now maps a bounded action subset into local `agent-browser` primitives: wait, click, type, fill, press, hover, focus, check, uncheck, evaluate, resize, and close.
+  - `GatewayCommandsService` now advertises `browser.act` with kind/session/json arguments.
+  - `GatewayNodeMethodService` now validates `browser.act`, accepts either `request={...}` or flattened action fields, and dispatches to the browser runtime.
+  - `gateway_method_policy` now classifies `browser.act` as an operator write method.
+- Product effect:
+  - operators can now drive common browser interactions through a structured JSON gateway method rather than free-form shell access.
+  - target-aware tab routing and the complete OpenClaw action grammar remain honest follow-on seams.
+- Verified this continuation with:
+  - red proof: `test_commands_list_returns_bounded_native_operator_inventory` first showed `browser.act` was absent from the native catalog.
+  - red proof: `test_browser_act_dispatches_to_configured_runtime` first failed with `unsupported method: browser.act`.
+  - `pytest tests/test_gateway_node_methods.py::test_commands_list_returns_bounded_native_operator_inventory tests/test_gateway_node_methods.py::test_browser_act_dispatches_to_configured_runtime tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_commands_list tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_act_runtime tests/test_gateway_method_policy.py::test_gateway_method_policy_mirrors_openclaw_operator_scope_groups -q`: `5 passed`
+  - `pytest tests/test_gateway_node_methods.py::test_commands_list_returns_bounded_native_operator_inventory tests/test_gateway_node_methods.py::test_browser_commands_dispatch_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_act_dispatches_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_act_args_maps_bounded_action_subset tests/test_gateway_node_methods.py::test_browser_close_dispatches_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_navigate_dispatches_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_commands_return_unavailable_when_runtime_is_missing tests/test_gateway_node_methods.py::test_browser_status_returns_browser_posture_from_status_service tests/test_gateway_node_methods.py::test_browser_tabs_dispatches_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_profiles_dispatches_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_screenshot_dispatches_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_pdf_dispatches_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_verify_dispatches_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_doctor_combines_posture_with_optional_verification tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_commands_list tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_act_runtime tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_close_runtime tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_navigate_runtime tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_status_runtime tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_verify_runtime tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_tabs_runtime tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_profiles_runtime tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_screenshot_runtime tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_pdf_runtime tests/test_gateway_method_policy.py::test_gateway_method_policy_mirrors_openclaw_operator_scope_groups -q`: `25 passed`
+  - `ruff check src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_node_methods.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_commands.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py tests/test_gateway_method_policy.py`: clean
+  - `mypy src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_node_methods.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_commands.py src/openzues/app.py`: clean
+- Queue effect from this run:
+  - first `browser.act` command-breadth productization is closed.
+  - next exact seam is target-aware tab routing, richer action grammar, or lifecycle start/stop.
+
+### Recovery addendum 2026-04-24 browser target-aware tab focus and close America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw exposes target-aware tab focus and close behavior through browser tool actions.
+  - OpenZues had session/all-session `browser.close` and no `browser.focus`, so callers could not focus or close a specific tab target/index through the gateway method layer.
+- Landed the next bounded browser-runtime slice:
+  - `GatewayBrowserRuntimeService.focus()` now runs `agent-browser tab <targetId>` and returns target/session metadata.
+  - `GatewayBrowserRuntimeService.close()` now accepts `target_id` and runs `agent-browser tab close <targetId>` while preserving the existing session/all-session close behavior.
+  - `GatewayCommandsService` now advertises `browser.focus` and includes `targetId` on `browser.close`.
+  - `GatewayNodeMethodService` now validates and dispatches `browser.focus`, and allows `browser.close` with `targetId` unless `all=true` is also requested.
+  - `gateway_method_policy` now classifies `browser.focus` as an operator write method.
+- Product effect:
+  - operators can focus or close a specific local browser tab target/index through structured JSON gateway methods.
+  - richer targetId-to-tab resolution and tab-open tracking remain follow-on seams.
+- Verified this continuation with:
+  - red proof: `test_browser_close_dispatches_target_tab_to_configured_runtime` first failed because `browser.close` rejected `targetId`.
+  - red proof: `test_browser_focus_dispatches_to_configured_runtime` first failed with `unsupported method: browser.focus`.
+  - `pytest tests/test_gateway_node_methods.py::test_commands_list_returns_bounded_native_operator_inventory tests/test_gateway_node_methods.py::test_browser_close_dispatches_target_tab_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_focus_dispatches_to_configured_runtime tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_commands_list tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_focus_runtime tests/test_gateway_method_policy.py::test_gateway_method_policy_mirrors_openclaw_operator_scope_groups -q`: `6 passed`
+  - `pytest tests/test_gateway_node_methods.py::test_commands_list_returns_bounded_native_operator_inventory tests/test_gateway_node_methods.py::test_browser_commands_dispatch_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_act_dispatches_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_act_args_maps_bounded_action_subset tests/test_gateway_node_methods.py::test_browser_close_dispatches_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_close_dispatches_target_tab_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_focus_dispatches_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_navigate_dispatches_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_commands_return_unavailable_when_runtime_is_missing tests/test_gateway_node_methods.py::test_browser_status_returns_browser_posture_from_status_service tests/test_gateway_node_methods.py::test_browser_tabs_dispatches_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_profiles_dispatches_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_screenshot_dispatches_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_pdf_dispatches_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_verify_dispatches_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_doctor_combines_posture_with_optional_verification tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_commands_list tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_act_runtime tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_close_runtime tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_focus_runtime tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_navigate_runtime tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_status_runtime tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_verify_runtime tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_tabs_runtime tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_profiles_runtime tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_screenshot_runtime tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_pdf_runtime tests/test_gateway_method_policy.py::test_gateway_method_policy_mirrors_openclaw_operator_scope_groups -q`: `28 passed`
+  - `ruff check src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_node_methods.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_commands.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py tests/test_gateway_method_policy.py`: clean
+  - `mypy src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_node_methods.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_commands.py src/openzues/app.py`: clean
+- Queue effect from this run:
+  - target-aware tab focus/close is closed for local target/index values.
+  - next exact seam is richer targetId-to-tab resolution, tab-open tracking, richer action grammar, or lifecycle start/stop.
+
+### Recovery addendum 2026-04-24 browser.open tab tracking semantics America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw `open` creates or tracks a tab target, while OpenZues `browser.open` still used the same active-page navigation primitive as `browser.navigate`.
+  - Now that `browser.navigate` exists, `browser.open` can honestly move toward new-tab semantics.
+- Landed the next bounded browser-runtime slice:
+  - `GatewayBrowserRuntimeService.open_page()` now runs `agent-browser tab new <url>` instead of active-session `open <url>`.
+  - `browser_tab_target_id()` parses target metadata from JSON or plain command output and `browser.open` returns `targetId` when available.
+- Product effect:
+  - `browser.open` and `browser.navigate` now have distinct semantics: new tab vs active-session navigation.
+  - richer targetId-to-tab resolution remains a follow-on seam.
+- Verified this continuation with:
+  - red proof: `test_browser_tab_target_id_accepts_json_and_plain_output` first failed because the parser helper did not exist.
+  - `pytest tests/test_gateway_node_methods.py::test_browser_tab_target_id_accepts_json_and_plain_output -q`: `1 passed`
+  - `pytest tests/test_gateway_node_methods.py::test_commands_list_returns_bounded_native_operator_inventory tests/test_gateway_node_methods.py::test_browser_commands_dispatch_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_act_dispatches_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_act_args_maps_bounded_action_subset tests/test_gateway_node_methods.py::test_browser_tab_target_id_accepts_json_and_plain_output tests/test_gateway_node_methods.py::test_browser_close_dispatches_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_close_dispatches_target_tab_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_focus_dispatches_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_navigate_dispatches_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_commands_return_unavailable_when_runtime_is_missing tests/test_gateway_node_methods.py::test_browser_status_returns_browser_posture_from_status_service tests/test_gateway_node_methods.py::test_browser_tabs_dispatches_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_profiles_dispatches_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_screenshot_dispatches_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_pdf_dispatches_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_verify_dispatches_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_doctor_combines_posture_with_optional_verification tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_commands_list tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_open_runtime tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_act_runtime tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_close_runtime tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_focus_runtime tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_navigate_runtime tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_status_runtime tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_verify_runtime tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_tabs_runtime tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_profiles_runtime tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_screenshot_runtime tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_pdf_runtime tests/test_gateway_method_policy.py::test_gateway_method_policy_mirrors_openclaw_operator_scope_groups -q`: `30 passed`
+  - `ruff check src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_node_methods.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_commands.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py tests/test_gateway_method_policy.py`: clean
+  - `mypy src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_node_methods.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_commands.py src/openzues/app.py`: clean
+- Queue effect from this run:
+  - tab-open tracking semantics are closed for the local `agent-browser` path.
+  - next exact seam is richer targetId-to-tab resolution, richer action grammar, or lifecycle start/stop.
+
+### Recovery addendum 2026-04-24 browser lifecycle start/stop America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw browser control includes explicit lifecycle semantics, while OpenZues had open/navigate/close/focus/action methods but no structured `browser.start` or `browser.stop` gateway methods.
+  - The native command catalog and gateway dispatcher therefore could not initialize or stop an `agent-browser` session through the same JSON method bus as the rest of the browser runtime family.
+- Landed the next bounded browser-runtime slice:
+  - `GatewayBrowserRuntimeService.start()` now initializes an `agent-browser` session on `about:blank` and returns session/status/output metadata.
+  - `GatewayBrowserRuntimeService.stop()` now closes the current session or all sessions when `all=true` is explicitly requested.
+  - `GatewayCommandsService` now advertises `browser.start` and `browser.stop`.
+  - `GatewayNodeMethodService` now validates and dispatches `browser.start` / `browser.stop`.
+  - `gateway_method_policy` now classifies both lifecycle methods as operator write methods, and the OpenZues-only method-registry proof explicitly names the browser bridge methods.
+- Product effect:
+  - operators can now start and stop local browser automation sessions through structured JSON gateway methods instead of shelling out.
+  - lifecycle control is intentionally session-scoped unless the caller explicitly asks for all-session shutdown.
+- Verified this continuation with:
+  - red proof: `test_commands_list_returns_bounded_native_operator_inventory` first showed `browser.start` was absent from the native catalog.
+  - red proof: `test_browser_lifecycle_dispatches_to_configured_runtime` first failed with `unsupported method: browser.start`.
+  - `pytest tests/test_gateway_node_methods.py::test_commands_list_returns_bounded_native_operator_inventory tests/test_gateway_node_methods.py::test_browser_lifecycle_dispatches_to_configured_runtime tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_commands_list tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_lifecycle_runtime tests/test_gateway_method_policy.py::test_gateway_method_policy_mirrors_openclaw_operator_scope_groups -q`: `5 passed`
+  - `pytest tests/test_gateway_node_methods.py -q -k "browser or commands_list_returns_bounded_native_operator_inventory"`: `21 passed`
+  - `pytest tests/test_gateway_nodes_api.py -q -k "browser or commands_list"`: `17 passed`
+  - `pytest tests/test_gateway_method_policy.py -q`: `18 passed`
+  - `ruff check src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_commands.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py tests/test_gateway_method_policy.py`: clean
+  - `mypy src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_commands.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - `browser.start` / `browser.stop` lifecycle productization is closed.
+  - next exact seam is the discovered local `browser.tabs` command mismatch: the runtime currently calls `agent-browser tabs`, while the installed CLI exposes tab inventory under `agent-browser tab list`.
+
+### Recovery addendum 2026-04-24 browser.tabs CLI verb correction America/Chicago
+
+- Queue-head seam before implementation:
+  - The installed `agent-browser` CLI exposes tab inventory as `agent-browser tab list`.
+  - OpenZues still called `agent-browser tabs`, which returns top-level help on the installed CLI and could make the gateway method report help text as tab inventory.
+- Landed the smallest runtime correction:
+  - `GatewayBrowserRuntimeService.tabs()` now runs `agent-browser tab list`.
+  - Added a runtime-level regression proof that monkeypatches subprocess and asserts the exact invocation before parsing JSON tab output.
+- Product effect:
+  - `browser.tabs` now maps to the real local tab inventory command, not a stale alias/help path.
+- Verified this continuation with:
+  - red proof: `test_browser_tabs_runtime_uses_agent_browser_tab_list` first failed because the invocation was `tabs`.
+  - `pytest tests/test_gateway_node_methods.py::test_browser_tabs_runtime_uses_agent_browser_tab_list -q`: `1 passed`
+  - `pytest tests/test_gateway_node_methods.py -q -k "browser or commands_list_returns_bounded_native_operator_inventory"`: `22 passed`
+  - `pytest tests/test_gateway_nodes_api.py -q -k "browser or commands_list"`: `17 passed`
+  - `pytest tests/test_gateway_method_policy.py -q`: `18 passed`
+  - `ruff check src/openzues/services/gateway_browser_runtime.py tests/test_gateway_node_methods.py`: clean
+  - `mypy src/openzues/services/gateway_browser_runtime.py`: clean
+- Queue effect from this run:
+  - the discovered `browser.tabs` runtime-command mismatch is closed.
+  - next exact seam is richer `browser.act` grammar for installed local primitives such as double-click, select, scroll, and scroll-into-view.
+
+### Recovery addendum 2026-04-24 browser.act documented primitive expansion America/Chicago
+
+- Queue-head seam before implementation:
+  - The installed `agent-browser` CLI documents `dblclick`, `select`, `scroll`, and `scrollintoview`, but OpenZues' bounded `browser.act` mapper still rejected those action kinds.
+  - That meant common non-file, non-network browser interactions still required shell access or failed at gateway validation.
+- Landed the bounded mapper expansion:
+  - `browser_act_args()` now maps `dblclick` / `doubleClick`, `select` with one or more values, directional `scroll` with optional pixels, and `scrollintoview`.
+  - `GatewayNodeMethodService` now allows the corresponding flattened/request keys: `direction`, `px`, `value`, and `values`.
+- Product effect:
+  - `browser.act` can now drive more of the installed local browser CLI through structured JSON while still deferring riskier upload/download/network/storage actions to separate proofs.
+- Verified this continuation with:
+  - red proof: `test_browser_act_args_maps_bounded_action_subset` first failed on `unsupported browser.act kind: dblclick`.
+  - `pytest tests/test_gateway_node_methods.py::test_browser_act_args_maps_bounded_action_subset -q`: `1 passed`
+  - `pytest tests/test_gateway_node_methods.py -q -k "browser or commands_list_returns_bounded_native_operator_inventory"`: `22 passed`
+  - `pytest tests/test_gateway_nodes_api.py -q -k "browser or commands_list"`: `17 passed`
+  - `pytest tests/test_gateway_method_policy.py -q`: `18 passed`
+  - `ruff check src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py`: clean
+  - `mypy src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - the non-file documented local action grammar seam is closed for `dblclick`, `select`, `scroll`, and `scrollintoview`.
+  - next exact seam is a read-only browser info bridge such as `browser.get` or `browser.is`.
+
+### Recovery addendum 2026-04-24 browser.get read-only info bridge America/Chicago
+
+- Queue-head seam before implementation:
+  - The installed `agent-browser` CLI exposes `get <what> [selector]` for text, HTML, value, title, URL, count, box, styles, and CDP URL reads.
+  - OpenZues had no structured `browser.get` gateway method, so callers needed shell access for basic browser reads beyond snapshot/console/error streams.
+- Landed the bounded read-only bridge:
+  - `GatewayBrowserRuntimeService.get()` now runs `agent-browser get <what> [selector]` and returns value, line, selector, and session metadata.
+  - `GatewayCommandsService` now advertises `browser.get` with what/selector/session/json arguments.
+  - `GatewayNodeMethodService` now validates `browser.get` params against a read-only `what` allowlist and dispatches to the runtime.
+  - `gateway_method_policy` now classifies `browser.get` as an operator read method.
+- Product effect:
+  - operators can read page text, title, URL, element values, counts, boxes, styles, and CDP URL through the same JSON gateway method bus as the rest of the browser runtime family.
+- Verified this continuation with:
+  - red proof: `test_commands_list_returns_bounded_native_operator_inventory` first showed `browser.get` was absent from the native catalog.
+  - red proof: `test_browser_get_dispatches_to_configured_runtime` first failed with `unsupported method: browser.get`.
+  - red proof: `test_browser_get_runtime_uses_agent_browser_get` first failed because `GatewayBrowserRuntimeService` had no `get` method.
+  - `pytest tests/test_gateway_node_methods.py::test_commands_list_returns_bounded_native_operator_inventory tests/test_gateway_node_methods.py::test_browser_get_dispatches_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_get_runtime_uses_agent_browser_get tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_commands_list tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_get_runtime tests/test_gateway_method_policy.py::test_gateway_method_policy_mirrors_openclaw_operator_scope_groups -q`: `6 passed`
+  - `pytest tests/test_gateway_node_methods.py -q -k "browser or commands_list_returns_bounded_native_operator_inventory"`: `24 passed`
+  - `pytest tests/test_gateway_nodes_api.py -q -k "browser or commands_list"`: `18 passed`
+  - `pytest tests/test_gateway_method_policy.py -q`: `18 passed`
+  - `ruff check src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_commands.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py tests/test_gateway_method_policy.py`: clean
+  - `mypy src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_commands.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - `browser.get` read-only info bridge is closed.
+  - next exact seam is `browser.is` for visible/enabled/checked state checks.
+
+### Recovery addendum 2026-04-24 browser.is state-check bridge America/Chicago
+
+- Queue-head seam before implementation:
+  - The installed `agent-browser` CLI exposes `is visible|enabled|checked <selector>`.
+  - OpenZues had no structured `browser.is` gateway method, so state checks required shell access or ad hoc evaluation.
+- Landed the bounded read-only bridge:
+  - `GatewayBrowserRuntimeService.is_state()` now runs `agent-browser is <state> <selector>` and returns matched/value/line/session metadata.
+  - `GatewayCommandsService` now advertises `browser.is` with state/selector/session/json arguments.
+  - `GatewayNodeMethodService` now validates `browser.is` against visible/enabled/checked and dispatches to the runtime.
+  - `gateway_method_policy` now classifies `browser.is` as an operator read method.
+- Product effect:
+  - operators can now check basic element state through the JSON gateway method bus.
+- Verified this continuation with:
+  - red proof: `test_commands_list_returns_bounded_native_operator_inventory` first showed `browser.is` was absent from the native catalog.
+  - red proof: `test_browser_is_dispatches_to_configured_runtime` first failed with `unsupported method: browser.is`.
+  - red proof: `test_browser_is_runtime_uses_agent_browser_is` first failed because `GatewayBrowserRuntimeService` had no `is_state` method.
+  - `pytest tests/test_gateway_node_methods.py::test_commands_list_returns_bounded_native_operator_inventory tests/test_gateway_node_methods.py::test_browser_is_dispatches_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_is_runtime_uses_agent_browser_is tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_commands_list tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_is_runtime tests/test_gateway_method_policy.py::test_gateway_method_policy_mirrors_openclaw_operator_scope_groups -q`: `6 passed`
+  - `pytest tests/test_gateway_node_methods.py -q -k "browser or commands_list_returns_bounded_native_operator_inventory"`: `26 passed`
+  - `pytest tests/test_gateway_nodes_api.py -q -k "browser or commands_list"`: `19 passed`
+  - `pytest tests/test_gateway_method_policy.py -q`: `18 passed`
+  - `ruff check src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_commands.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py tests/test_gateway_method_policy.py`: clean
+  - `mypy src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_commands.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - `browser.is` read-only state-check bridge is closed.
+  - next exact seam is low-risk browser history navigation: `browser.back`, `browser.forward`, and `browser.reload`.
+
+### Recovery addendum 2026-04-24 browser history navigation America/Chicago
+
+- Queue-head seam before implementation:
+  - The installed `agent-browser` CLI exposes `back`, `forward`, and `reload`.
+  - OpenZues had active-session URL navigation but no structured gateway methods for history navigation.
+- Landed the bounded write-scoped bridge:
+  - `GatewayBrowserRuntimeService.history()` now runs the allowed `back`, `forward`, or `reload` primitive and returns action/session/output metadata.
+  - `GatewayCommandsService` now advertises `browser.back`, `browser.forward`, and `browser.reload`.
+  - `GatewayNodeMethodService` now validates these methods and dispatches to the runtime.
+  - `gateway_method_policy` now classifies all three as operator write methods.
+- Product effect:
+  - operators can now move browser history or reload the active page through structured JSON gateway methods instead of shelling out.
+- Verified this continuation with:
+  - red proof: `test_commands_list_returns_bounded_native_operator_inventory` first showed `browser.back` was absent from the native catalog.
+  - red proof: `test_browser_history_dispatches_to_configured_runtime` first failed with `unsupported method: browser.back`.
+  - red proof: `test_browser_history_runtime_uses_agent_browser_navigation` first failed because `GatewayBrowserRuntimeService` had no `history` method.
+  - `pytest tests/test_gateway_node_methods.py::test_commands_list_returns_bounded_native_operator_inventory tests/test_gateway_node_methods.py::test_browser_history_dispatches_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_history_runtime_uses_agent_browser_navigation tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_commands_list tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_history_runtime tests/test_gateway_method_policy.py::test_gateway_method_policy_mirrors_openclaw_operator_scope_groups -q`: `6 passed`
+  - `pytest tests/test_gateway_node_methods.py -q -k "browser or commands_list_returns_bounded_native_operator_inventory"`: `28 passed`
+  - `pytest tests/test_gateway_nodes_api.py -q -k "browser or commands_list"`: `20 passed`
+  - `pytest tests/test_gateway_method_policy.py -q`: `18 passed`
+  - `ruff check src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_commands.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py tests/test_gateway_method_policy.py`: clean
+  - `mypy src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_commands.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - browser history navigation is closed.
+  - next exact seam is read-only browser runtime stream status.
+
+### Recovery addendum 2026-04-24 browser stream status America/Chicago
+
+- Queue-head seam before implementation:
+  - The installed `agent-browser` CLI exposes `stream status`.
+  - OpenZues had no structured read-only gateway method for stream posture, so callers needed shell access before deciding whether to mutate stream lifecycle.
+- Landed the bounded read-only bridge:
+  - `GatewayBrowserRuntimeService.stream_status()` now runs `agent-browser stream status` and returns status text, parsed streaming/port hints, line, and session metadata.
+  - `GatewayCommandsService` now advertises `browser.stream.status`.
+  - `GatewayNodeMethodService` now dispatches `browser.stream.status` with a session-only payload.
+  - `gateway_method_policy` now classifies `browser.stream.status` as an operator read method.
+- Product effect:
+  - operators can inspect browser stream posture through the JSON gateway method bus before requesting stream lifecycle mutations.
+- Verified this continuation with:
+  - red proof: `test_commands_list_returns_bounded_native_operator_inventory` first showed `browser.stream.status` was absent from the native catalog.
+  - red proof: `test_browser_stream_status_dispatches_to_configured_runtime` first failed with `unsupported method: browser.stream.status`.
+  - red proof: `test_gateway_node_method_call_endpoint_runs_browser_stream_status_runtime` first returned HTTP 400 before the dispatcher was wired.
+  - `pytest tests/test_gateway_node_methods.py::test_commands_list_returns_bounded_native_operator_inventory tests/test_gateway_node_methods.py::test_browser_stream_status_dispatches_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_stream_status_runtime_uses_agent_browser_stream_status tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_commands_list tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_stream_status_runtime tests/test_gateway_method_policy.py::test_gateway_method_policy_mirrors_openclaw_operator_scope_groups -q`: `6 passed`
+  - `pytest tests/test_gateway_node_methods.py -q`: `430 passed`
+  - `pytest tests/test_gateway_nodes_api.py -q -k browser`: `19 passed`
+  - `pytest tests/test_gateway_method_policy.py -q`: `18 passed`
+  - `ruff check src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_commands.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py tests/test_gateway_method_policy.py`: clean
+  - `mypy src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_commands.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - `browser.stream.status` read-only posture is closed.
+  - next exact seam is mutating browser stream lifecycle: `browser.stream.enable` / `browser.stream.disable`.
+
+### Recovery addendum 2026-04-24 browser stream lifecycle America/Chicago
+
+- Queue-head seam before implementation:
+  - The installed `agent-browser` CLI exposes `stream enable [--port]` and `stream disable`.
+  - OpenZues had read-only stream posture after the prior slice but no structured gateway methods to mutate browser streaming through the JSON method bus.
+- Landed the bounded write-scoped bridge:
+  - `GatewayBrowserRuntimeService.stream_enable()` now runs `agent-browser stream enable` with an optional bounded localhost port.
+  - `GatewayBrowserRuntimeService.stream_disable()` now runs `agent-browser stream disable`.
+  - `GatewayCommandsService` now advertises `browser.stream.enable` and `browser.stream.disable`.
+  - `GatewayNodeMethodService` now validates session-only disable and session plus `1..65535` port enable payloads.
+  - `gateway_method_policy` now classifies both stream lifecycle methods as operator write methods.
+- Product effect:
+  - operators can inspect, enable, and disable browser stream posture through structured gateway methods without shell access.
+- Verified this continuation with:
+  - red proof: `test_commands_list_returns_bounded_native_operator_inventory` first showed `browser.stream.disable` and `browser.stream.enable` were absent from the native catalog.
+  - red proof: `test_browser_stream_lifecycle_dispatches_to_configured_runtime` first failed with `unsupported method: browser.stream.enable`.
+  - red proof: `test_browser_stream_lifecycle_runtime_uses_agent_browser_stream_commands` first failed because `GatewayBrowserRuntimeService` had no stream lifecycle helpers.
+  - `pytest tests/test_gateway_node_methods.py::test_commands_list_returns_bounded_native_operator_inventory tests/test_gateway_node_methods.py::test_browser_stream_lifecycle_dispatches_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_stream_lifecycle_runtime_uses_agent_browser_stream_commands tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_commands_list tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_stream_lifecycle_runtime tests/test_gateway_method_policy.py::test_gateway_method_policy_mirrors_openclaw_operator_scope_groups -q`: `6 passed`
+  - `pytest tests/test_gateway_node_methods.py -q -k "browser or commands_list_returns_bounded_native_operator_inventory"`: `32 passed`
+  - `pytest tests/test_gateway_nodes_api.py -q -k browser`: `20 passed`
+  - `pytest tests/test_gateway_method_policy.py -q`: `18 passed`
+  - `ruff check src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_commands.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py tests/test_gateway_method_policy.py`: clean
+  - `mypy src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_commands.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - browser stream lifecycle is closed.
+  - next exact seam is a read-only browser network/storage/file command-family bridge before any broader mutation surface.
+
+### Recovery addendum 2026-04-24 browser network request list America/Chicago
+
+- Queue-head seam before implementation:
+  - The installed `agent-browser` CLI exposes `network requests` with filter, resource type, method, and status read filters plus a separate mutating `--clear` option.
+  - OpenZues had no structured browser network request-log read bridge, so operators needed shell access for request inspection.
+- Landed the bounded read-only bridge:
+  - `GatewayBrowserRuntimeService.network_requests()` now runs `agent-browser network requests` with optional filter/type/method/status flags and never passes `--clear`.
+  - `GatewayCommandsService` now advertises `browser.network.requests`.
+  - `GatewayNodeMethodService` now validates session/filter/type/method/status payloads and dispatches to the runtime.
+  - `gateway_method_policy` now classifies `browser.network.requests` as an operator read method.
+- Product effect:
+  - operators can inspect captured browser network requests through the JSON gateway method bus before any route/unroute/HAR mutation surface is exposed.
+- Verified this continuation with:
+  - red proof: `test_commands_list_returns_bounded_native_operator_inventory` first showed `browser.network.requests` was absent from the native catalog.
+  - red proof: `test_browser_network_requests_dispatches_to_configured_runtime` first failed with `unsupported method: browser.network.requests`.
+  - red proof: `test_browser_network_requests_runtime_uses_agent_browser_network_requests` first failed because `GatewayBrowserRuntimeService` had no network request helper.
+  - `pytest tests/test_gateway_node_methods.py::test_commands_list_returns_bounded_native_operator_inventory tests/test_gateway_node_methods.py::test_browser_network_requests_dispatches_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_network_requests_runtime_uses_agent_browser_network_requests tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_commands_list tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_network_requests_runtime tests/test_gateway_method_policy.py::test_gateway_method_policy_mirrors_openclaw_operator_scope_groups -q`: `6 passed`
+  - `pytest tests/test_gateway_node_methods.py -q -k "browser or commands_list_returns_bounded_native_operator_inventory"`: `34 passed`
+  - `pytest tests/test_gateway_nodes_api.py -q -k browser`: `21 passed`
+  - `pytest tests/test_gateway_method_policy.py -q`: `18 passed`
+  - `ruff check src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_commands.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py tests/test_gateway_method_policy.py`: clean
+  - `mypy src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_commands.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - read-only browser network request-list inspection is closed.
+  - next exact seam is read-only browser network request detail: `browser.network.request`.
+
+### Recovery addendum 2026-04-24 browser network request detail America/Chicago
+
+- Queue-head seam before implementation:
+  - The installed `agent-browser` CLI exposes `network request <requestId>` for full captured request/response detail.
+  - OpenZues had filtered request-log listing but no structured single-request detail bridge.
+- Landed the bounded read-only bridge:
+  - `GatewayBrowserRuntimeService.network_request()` now runs `agent-browser network request <requestId>` and returns parsed JSON detail plus raw lines.
+  - `GatewayCommandsService` now advertises `browser.network.request`.
+  - `GatewayNodeMethodService` now validates a required `requestId` and dispatches to the runtime.
+  - `gateway_method_policy` now classifies `browser.network.request` as an operator read method.
+- Product effect:
+  - operators can inspect one captured browser network request/response through the JSON gateway method bus without exposing route, clear, or HAR mutation.
+- Verified this continuation with:
+  - red proof: `test_commands_list_returns_bounded_native_operator_inventory` first showed `browser.network.request` was absent from the native catalog.
+  - red proof: `test_browser_network_request_dispatches_to_configured_runtime` first failed with `unsupported method: browser.network.request`.
+  - red proof: `test_browser_network_request_runtime_uses_agent_browser_network_request` first failed because `GatewayBrowserRuntimeService` had no request-detail helper.
+  - `pytest tests/test_gateway_node_methods.py::test_commands_list_returns_bounded_native_operator_inventory tests/test_gateway_node_methods.py::test_browser_network_request_dispatches_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_network_request_runtime_uses_agent_browser_network_request tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_commands_list tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_network_request_runtime tests/test_gateway_method_policy.py::test_gateway_method_policy_mirrors_openclaw_operator_scope_groups -q`: `6 passed`
+  - `pytest tests/test_gateway_node_methods.py -q -k "browser or commands_list_returns_bounded_native_operator_inventory"`: `36 passed`
+  - `pytest tests/test_gateway_nodes_api.py -q -k browser`: `22 passed`
+  - `pytest tests/test_gateway_method_policy.py -q`: `18 passed`
+  - `ruff check src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_commands.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py tests/test_gateway_method_policy.py`: clean
+  - `mypy src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_commands.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - read-only browser network request detail is closed.
+  - next exact seam is read-only storage/cookie inventory before storage mutation.
+
+### Recovery addendum 2026-04-24 browser storage inventory America/Chicago
+
+- Queue-head seam before implementation:
+  - The installed `agent-browser` CLI exposes `cookies get` and `storage <local|session> get [key]`.
+  - OpenZues had browser network reads but no structured cookie/localStorage/sessionStorage inventory bridge.
+- Landed the bounded read-only bridge:
+  - `GatewayBrowserRuntimeService.cookies_get()` now runs `agent-browser cookies get` and returns parsed cookie count plus raw lines.
+  - `GatewayBrowserRuntimeService.storage_get()` now runs `agent-browser storage local|session get [key]` and returns parsed entries plus raw lines.
+  - `GatewayCommandsService` now advertises `browser.cookies.get` and `browser.storage.get`.
+  - `GatewayNodeMethodService` now validates session-only cookies and storage type `local|session` plus optional key.
+  - `gateway_method_policy` now classifies both methods as operator read methods.
+- Product effect:
+  - operators can inspect browser cookies and local/session storage through structured gateway methods without exposing set/clear mutation.
+- Verified this continuation with:
+  - red proof: `test_commands_list_returns_bounded_native_operator_inventory` first showed `browser.cookies.get` was absent from the native catalog.
+  - red proof: `test_browser_storage_inventory_dispatches_to_configured_runtime` first failed with `unsupported method: browser.cookies.get`.
+  - red proof: `test_browser_storage_inventory_runtime_uses_agent_browser_storage_commands` first failed because `GatewayBrowserRuntimeService` had no cookie/storage helpers.
+  - `pytest tests/test_gateway_node_methods.py::test_commands_list_returns_bounded_native_operator_inventory tests/test_gateway_node_methods.py::test_browser_storage_inventory_dispatches_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_storage_inventory_runtime_uses_agent_browser_storage_commands tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_commands_list tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_storage_inventory_runtime tests/test_gateway_method_policy.py::test_gateway_method_policy_mirrors_openclaw_operator_scope_groups -q`: `6 passed`
+  - `pytest tests/test_gateway_node_methods.py -q -k "browser or commands_list_returns_bounded_native_operator_inventory"`: `38 passed`
+  - `pytest tests/test_gateway_nodes_api.py -q -k browser`: `23 passed`
+  - `pytest tests/test_gateway_method_policy.py -q`: `18 passed`
+  - `ruff check src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_commands.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py tests/test_gateway_method_policy.py`: clean
+  - `mypy src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_commands.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - read-only browser storage inventory is closed.
+  - next exact seam is a read-only browser diagnostic such as diff or browser session inventory before set/clear/upload/download mutation.
+
+### Recovery addendum 2026-04-24 browser session inventory America/Chicago
+
+- Queue-head seam before implementation:
+  - The installed `agent-browser` CLI exposes `session` and `session list`.
+  - OpenZues had browser storage and network diagnostics but no structured browser-daemon session inventory bridge.
+- Landed the bounded read-only bridge:
+  - `GatewayBrowserRuntimeService.session_current()` now runs `agent-browser session`.
+  - `GatewayBrowserRuntimeService.session_list()` now runs `agent-browser session list`.
+  - `GatewayCommandsService` now advertises `browser.session.current` and `browser.session.list`.
+  - `GatewayNodeMethodService` now dispatches both methods with a session-only payload.
+  - `gateway_method_policy` now classifies both methods as operator read methods.
+- Product effect:
+  - operators can inspect current and active agent-browser sessions through structured gateway methods.
+- Verified this continuation with:
+  - red proof: `test_commands_list_returns_bounded_native_operator_inventory` first showed `browser.session.current` was absent from the native catalog.
+  - red proof: `test_browser_session_inventory_dispatches_to_configured_runtime` first failed with `unsupported method: browser.session.current`.
+  - red proof: `test_browser_session_inventory_runtime_uses_agent_browser_session_commands` first failed because `GatewayBrowserRuntimeService` had no session helpers.
+  - `pytest tests/test_gateway_node_methods.py::test_commands_list_returns_bounded_native_operator_inventory tests/test_gateway_node_methods.py::test_browser_session_inventory_dispatches_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_session_inventory_runtime_uses_agent_browser_session_commands tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_commands_list tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_session_inventory_runtime tests/test_gateway_method_policy.py::test_gateway_method_policy_mirrors_openclaw_operator_scope_groups -q`: `6 passed`
+  - `pytest tests/test_gateway_node_methods.py -q -k "browser or commands_list_returns_bounded_native_operator_inventory"`: `40 passed`
+  - `pytest tests/test_gateway_nodes_api.py -q -k browser`: `24 passed`
+  - `pytest tests/test_gateway_method_policy.py -q`: `18 passed`
+  - `ruff check src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_commands.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py tests/test_gateway_method_policy.py`: clean
+  - `mypy src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_commands.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - read-only browser session inventory is closed.
+  - next exact seam is read-only browser diff diagnostics.
+
+### Recovery addendum 2026-04-24 browser diff snapshot America/Chicago
+
+- Queue-head seam before implementation:
+  - The installed `agent-browser` CLI exposes `diff snapshot` with selector, compact, and depth options, plus optional baseline file input.
+  - OpenZues had no structured diff diagnostic method and should not jump straight to arbitrary baseline file paths before a path-guarded seam exists.
+- Landed the bounded read-only bridge:
+  - `GatewayBrowserRuntimeService.diff_snapshot()` now runs `agent-browser diff snapshot` with optional selector, compact, and bounded depth.
+  - `GatewayCommandsService` now advertises `browser.diff.snapshot`.
+  - `GatewayNodeMethodService` now validates session, selector, compact, and depth `1..20`.
+  - `gateway_method_policy` now classifies `browser.diff.snapshot` as an operator read method.
+- Product effect:
+  - operators can compare the current browser snapshot against the last session snapshot through structured gateway methods without exposing arbitrary baseline file access.
+- Verified this continuation with:
+  - red proof: `test_commands_list_returns_bounded_native_operator_inventory` first showed `browser.diff.snapshot` was absent from the native catalog.
+  - red proof: `test_browser_diff_snapshot_dispatches_to_configured_runtime` first failed with `unsupported method: browser.diff.snapshot`.
+  - red proof: `test_browser_diff_snapshot_runtime_uses_agent_browser_diff_snapshot` first failed because `GatewayBrowserRuntimeService` had no diff helper.
+  - `pytest tests/test_gateway_node_methods.py::test_commands_list_returns_bounded_native_operator_inventory tests/test_gateway_node_methods.py::test_browser_diff_snapshot_dispatches_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_diff_snapshot_runtime_uses_agent_browser_diff_snapshot tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_commands_list tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_diff_snapshot_runtime tests/test_gateway_method_policy.py::test_gateway_method_policy_mirrors_openclaw_operator_scope_groups -q`: `6 passed`
+  - `pytest tests/test_gateway_node_methods.py -q -k "browser or commands_list_returns_bounded_native_operator_inventory"`: `42 passed`
+  - `pytest tests/test_gateway_nodes_api.py -q -k browser`: `25 passed`
+  - `pytest tests/test_gateway_method_policy.py -q`: `18 passed`
+  - `ruff check src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_commands.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py tests/test_gateway_method_policy.py`: clean
+  - `mypy src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_commands.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - read-only browser snapshot diff diagnostics are closed.
+  - next exact seam is either guarded auth-profile metadata reads or write-scoped diff URL/browser mutation.
+
+### Recovery addendum 2026-04-24 browser auth metadata America/Chicago
+
+- Queue-head seam before implementation:
+  - The installed `agent-browser` CLI exposes `auth list` and `auth show <name>` for profile metadata without passwords.
+  - OpenZues had no structured auth profile metadata read methods and should not jump to save/login/delete mutation first.
+- Landed the bounded read-only bridge:
+  - `GatewayBrowserRuntimeService.auth_list()` now runs `agent-browser auth list`.
+  - `GatewayBrowserRuntimeService.auth_show()` now runs `agent-browser auth show <name>`.
+  - `GatewayCommandsService` now advertises `browser.auth.list` and `browser.auth.show`.
+  - `GatewayNodeMethodService` now validates session-only list and required profile `name` for show.
+  - `gateway_method_policy` now classifies both methods as operator read methods.
+- Product effect:
+  - operators can inspect saved browser auth profile metadata through structured gateway methods without exposing password, save, login, or delete flows.
+- Verified this continuation with:
+  - red proof: `test_commands_list_returns_bounded_native_operator_inventory` first showed `browser.auth.list` was absent from the native catalog.
+  - red proof: `test_browser_auth_metadata_dispatches_to_configured_runtime` first failed with `unsupported method: browser.auth.list`.
+  - red proof: `test_browser_auth_metadata_runtime_uses_agent_browser_auth_commands` first failed because `GatewayBrowserRuntimeService` had no auth metadata helpers.
+  - `pytest tests/test_gateway_node_methods.py::test_commands_list_returns_bounded_native_operator_inventory tests/test_gateway_node_methods.py::test_browser_auth_metadata_dispatches_to_configured_runtime tests/test_gateway_node_methods.py::test_browser_auth_metadata_runtime_uses_agent_browser_auth_commands tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_supports_commands_list tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_auth_metadata_runtime tests/test_gateway_method_policy.py::test_gateway_method_policy_mirrors_openclaw_operator_scope_groups -q`: `6 passed`
+  - `pytest tests/test_gateway_node_methods.py -q -k "browser or commands_list_returns_bounded_native_operator_inventory"`: `44 passed`
+  - `pytest tests/test_gateway_nodes_api.py -q -k browser`: `26 passed`
+  - `pytest tests/test_gateway_method_policy.py -q`: `18 passed`
+  - `ruff check src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_commands.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py tests/test_gateway_method_policy.py`: clean
+  - `mypy src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_commands.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - read-only browser auth metadata is closed.
+  - next exact seam is a write-scoped diff URL/navigation diagnostic or guarded file-output diff path.
+
+### Recovery addendum 2026-04-24 browser diff URL America/Chicago
+
+- Queue-head seam before implementation:
+  - The installed `agent-browser` CLI exposes `diff url <url1> <url2>` with screenshot, full-page, wait-until, selector, compact, and depth options.
+  - OpenZues had snapshot diff diagnostics and auth metadata reads, but no structured URL-to-URL browser diff method.
+- Landed the bounded write-scoped bridge:
+  - `GatewayBrowserRuntimeService.diff_url()` now runs `agent-browser diff url <url1> <url2>` with optional screenshot, full-page, wait-until, selector, compact, and bounded depth options.
+  - `GatewayCommandsService` now advertises `browser.diff.url`.
+  - `GatewayNodeMethodService` now validates required `url1` / `url2`, optional `waitUntil` as `load|domcontentloaded|networkidle`, booleans for screenshot/full-page/compact, and depth `1..20`.
+  - `gateway_method_policy` now classifies `browser.diff.url` as an operator write method because it can navigate browser state.
+- Product effect:
+  - operators can run structured URL comparison diagnostics through gateway methods without exposing arbitrary baseline file paths or file-output mutation yet.
+- Verified this continuation with:
+  - red proof: `test_browser_diff_url_dispatches_to_configured_runtime` first failed with `unsupported method: browser.diff.url`.
+  - red proof: `test_browser_diff_url_runtime_uses_agent_browser_diff_url` first failed because `GatewayBrowserRuntimeService` had no URL diff helper.
+  - `pytest tests/test_gateway_node_methods.py -q -k "browser_diff_url or commands_list_includes_native_gateway_commands"`: `2 passed`
+  - `pytest tests/test_gateway_nodes_api.py -q -k "browser_diff_url or commands_list_includes_native_gateway_commands"`: `1 passed`
+  - `pytest tests/test_gateway_method_policy.py -q`: `18 passed`
+  - `pytest tests/test_gateway_node_methods.py -q -k browser`: `45 passed`
+  - `pytest tests/test_gateway_nodes_api.py -q -k browser`: `27 passed`
+  - `ruff check src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_commands.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py tests/test_gateway_method_policy.py`: clean
+  - `mypy src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_commands.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - write-scoped browser URL diff diagnostics are closed.
+  - next exact seam is a guarded visual diff file-output path or the next low-risk browser file/upload/download diagnostic boundary.
+
+### Recovery addendum 2026-04-24 browser screenshot diff America/Chicago
+
+- Queue-head seam before implementation:
+  - The installed `agent-browser` CLI exposes `diff screenshot --baseline <file>` with optional output path, threshold, selector, and full-page flags.
+  - OpenZues had URL and snapshot diff diagnostics but no visual diff bridge, and arbitrary caller-supplied file paths would have been too broad for a first safe slice.
+- Landed the guarded read-only visual diff bridge:
+  - `GatewayBrowserRuntimeService.diff_screenshot()` now runs `agent-browser diff screenshot --baseline <path> --output <controlled-temp-path>`.
+  - Baselines must be existing absolute paths under the OpenZues temp screenshot namespace (`openzues-browser-*` image files), and the diff output path is always generated by OpenZues.
+  - `GatewayCommandsService` now advertises `browser.diff.screenshot`, including a numeric threshold argument.
+  - `GatewayNodeMethodService` validates required `baselinePath`, optional threshold `0..1`, selector, full-page flag, and session before dispatch.
+  - `gateway_method_policy` classifies `browser.diff.screenshot` as an operator read method because it captures diagnostics and writes only controlled temp artifacts.
+- Product effect:
+  - operators can compare the live browser screenshot against a prior OpenZues-controlled screenshot artifact without granting arbitrary baseline reads or output writes.
+- Verified this continuation with:
+  - red proof: `test_commands_list_returns_bounded_native_operator_inventory` first showed `browser.diff.screenshot` was absent from the native catalog.
+  - red proof: `test_browser_diff_screenshot_dispatches_to_configured_runtime` first failed with `unsupported method: browser.diff.screenshot`.
+  - red proof: `test_browser_diff_screenshot_runtime_uses_guarded_agent_browser_diff_screenshot` first failed because `GatewayBrowserRuntimeService` had no screenshot diff helper.
+  - red proof: `test_browser_diff_screenshot_runtime_rejects_uncontrolled_baseline` first failed before the baseline guard existed.
+  - `pytest tests/test_gateway_node_methods.py -q -k "browser_diff_screenshot or commands_list_returns_bounded_native_operator_inventory"`: `4 passed`
+  - `pytest tests/test_gateway_nodes_api.py -q -k "browser_diff_screenshot or commands_list_includes_native_gateway_commands"`: `1 passed`
+  - `pytest tests/test_gateway_method_policy.py -q`: `18 passed`
+  - `pytest tests/test_gateway_node_methods.py -q -k browser`: `48 passed`
+  - `pytest tests/test_gateway_nodes_api.py -q -k browser`: `28 passed`
+  - `ruff check src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_commands.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py tests/test_gateway_method_policy.py`: clean
+  - `mypy src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_commands.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - guarded visual screenshot diff diagnostics are closed.
+  - next exact seam is a low-risk browser file boundary such as controlled download capture, upload guardrails, or read-only trace/profile metadata before broader browser mutation.
+
+### Recovery addendum 2026-04-24 browser controlled download America/Chicago
+
+- Queue-head seam before implementation:
+  - The installed `agent-browser` CLI exposes `download <selector> <path>`.
+  - OpenZues had screenshot/PDF/temp diff artifacts but no structured download bridge, and a first slice needed to avoid caller-controlled output paths.
+- Landed the controlled write-scoped file bridge:
+  - `GatewayBrowserRuntimeService.download()` now runs `agent-browser download <selector> <controlled-temp-path>`.
+  - Callers provide only a selector plus optional filename hint; the hint is sanitized and embedded in an OpenZues-generated temp path.
+  - `GatewayCommandsService` now advertises `browser.download`.
+  - `GatewayNodeMethodService` validates required selector, optional filename hint, and session before dispatch.
+  - `gateway_method_policy` classifies `browser.download` as an operator write method because it clicks the page and may trigger browser-side download state.
+- Product effect:
+  - operators can capture browser downloads through a structured gateway method without granting arbitrary write paths.
+- Verified this continuation with:
+  - red proof: `test_commands_list_returns_bounded_native_operator_inventory` first showed `browser.download` was absent from the native catalog.
+  - red proof: `test_browser_download_dispatches_to_configured_runtime` first failed with `unsupported method: browser.download`.
+  - red proof: `test_browser_download_runtime_uses_controlled_temp_path` first failed because `GatewayBrowserRuntimeService` had no download helper.
+  - `pytest tests/test_gateway_node_methods.py -q -k "browser_download or commands_list_returns_bounded_native_operator_inventory"`: `3 passed`
+  - `pytest tests/test_gateway_nodes_api.py -q -k "browser_download or commands_list_includes_native_gateway_commands"`: `1 passed`
+  - `pytest tests/test_gateway_method_policy.py -q`: `18 passed`
+  - `pytest tests/test_gateway_node_methods.py -q -k browser`: `50 passed`
+  - `pytest tests/test_gateway_nodes_api.py -q -k browser`: `29 passed`
+  - `ruff check src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_commands.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py tests/test_gateway_method_policy.py`: clean
+  - `mypy src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_commands.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - controlled browser download capture is closed.
+  - next exact seam is upload guardrails or a read-only trace/profile metadata boundary.
+
+### Recovery addendum 2026-04-24 browser upload guardrails America/Chicago
+
+- Queue-head seam before implementation:
+  - The installed `agent-browser` CLI exposes `upload <selector> <files...>`.
+  - OpenZues had controlled download capture but no reciprocal upload bridge, and arbitrary local file upload would be too broad.
+- Landed the guarded write-scoped upload bridge:
+  - `GatewayBrowserRuntimeService.upload()` now runs `agent-browser upload <selector> <files...>`.
+  - Upload files must be existing files under the OpenZues temp artifact namespace (`openzues-browser-*`), so prior screenshots, PDFs, diffs, downloads, or explicit temp artifacts can be reused without exposing arbitrary filesystem paths.
+  - `GatewayCommandsService` now advertises `browser.upload` with an array-shaped `filePaths` argument.
+  - `GatewayNodeMethodService` validates required selector plus non-empty `filePaths` before dispatch.
+  - `gateway_method_policy` classifies `browser.upload` as an operator write method because it mutates page file-input state.
+- Product effect:
+  - operators can upload controlled browser artifacts through structured gateway methods while keeping arbitrary local file exfiltration outside the default parity surface.
+- Verified this continuation with:
+  - red proof: `test_commands_list_returns_bounded_native_operator_inventory` first showed `browser.upload` was absent from the native catalog.
+  - red proof: `test_browser_upload_dispatches_to_configured_runtime` first failed with `unsupported method: browser.upload`.
+  - red proof: `test_browser_upload_runtime_uses_only_controlled_temp_files` first failed because `GatewayBrowserRuntimeService` had no upload helper.
+  - red proof: `test_browser_upload_runtime_rejects_uncontrolled_files` first failed before the temp-artifact guard existed.
+  - `pytest tests/test_gateway_node_methods.py -q -k "browser_upload or commands_list_returns_bounded_native_operator_inventory"`: `4 passed`
+  - `pytest tests/test_gateway_nodes_api.py -q -k "browser_upload or commands_list_includes_native_gateway_commands"`: `1 passed`
+  - `pytest tests/test_gateway_method_policy.py -q`: `18 passed`
+  - `pytest tests/test_gateway_node_methods.py -q -k browser`: `53 passed`
+  - `pytest tests/test_gateway_nodes_api.py -q -k browser`: `30 passed`
+  - `ruff check src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_commands.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py tests/test_gateway_method_policy.py`: clean
+  - `mypy src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_commands.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - upload guardrails are closed.
+  - next exact seam is read-only trace/profile metadata or another bounded browser debug diagnostic before broader debug/control mutation.

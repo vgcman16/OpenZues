@@ -16,7 +16,11 @@ from types import SimpleNamespace
 
 import pytest
 from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+    Ed25519PrivateKey,
+    Ed25519PublicKey,
+)
 from fastapi.testclient import TestClient
 
 from openzues.app import create_app
@@ -91,6 +95,36 @@ class _AutoReplyNodeConnection:
                 payload_json='{"status":"done"}',
                 error=None,
             )
+            )
+
+
+class _BackgroundUnavailableNodeConnection:
+    def __init__(self, registry: GatewayNodeRegistry, conn_id: str) -> None:
+        self.registry = registry
+        self.conn_id = conn_id
+
+    def send_gateway_event(self, event: str, payload: object) -> None:
+        if event != "node.invoke.request" or not isinstance(payload, dict):
+            return
+        request_id = str(payload.get("id") or "")
+        node_id = str(payload.get("nodeId") or "")
+        if not request_id or not node_id:
+            return
+        asyncio.get_running_loop().call_soon(
+            lambda: self.registry.handle_invoke_result(
+                request_id=request_id,
+                node_id=node_id,
+                ok=False,
+                payload=None,
+                payload_json=None,
+                error={
+                    "code": "NODE_BACKGROUND_UNAVAILABLE",
+                    "message": (
+                        "NODE_BACKGROUND_UNAVAILABLE: canvas/camera/screen commands "
+                        "require foreground"
+                    ),
+                },
+            )
         )
 
 
@@ -139,6 +173,7 @@ def _register_known_live_node(
     display_name: str,
     platform: str,
     client_mode: str = "desktop",
+    device_family: str | None = None,
     path_env: str | None = None,
     commands: tuple[str, ...] = (),
     permissions: dict[str, bool] | None = None,
@@ -151,6 +186,7 @@ def _register_known_live_node(
             platform=platform,
             client_id=client_id,
             client_mode=client_mode,
+            device_family=device_family,
             path_env=path_env,
             commands=commands,
             permissions=permissions,
@@ -166,6 +202,7 @@ def _register_known_live_node(
             client_mode=client_mode,
             display_name=display_name,
             platform=platform,
+            device_family=device_family,
             path_env=path_env,
             commands=commands,
             permissions=permissions,
@@ -276,6 +313,34 @@ def test_gateway_node_endpoints_surface_known_nodes_and_pending_actions(tmp_path
         "nodeId": "node-1",
         "actions": [],
     }
+
+
+def test_gateway_node_catalog_endpoint_exposes_only_allowlisted_live_commands(tmp_path) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+    registry = app.state.gateway_node_service.registry
+    _register_known_live_node(
+        registry,
+        conn_id="conn-node-filter",
+        node_id="node-filter",
+        client_id="live-node-filter",
+        display_name="Filtered Phone",
+        platform="ios",
+        device_family="iPhone",
+        commands=("canvas.snapshot", "system.run", "browser.inspect"),
+    )
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        nodes_response = client.get("/api/gateway/nodes")
+        node_response = client.get("/api/gateway/nodes/node-filter")
+
+    assert nodes_response.status_code == 200
+    assert nodes_response.json()["nodes"][0]["commands"] == ["canvas.snapshot"]
+    assert node_response.status_code == 200
+    assert node_response.json()["commands"] == ["canvas.snapshot"]
 
 
 def test_gateway_node_endpoints_preserve_empty_live_permissions_map(tmp_path) -> None:
@@ -1248,6 +1313,10 @@ def test_remote_gateway_node_pair_approve_threads_operator_gateway_scopes(tmp_pa
         "version": None,
         "coreVersion": None,
         "uiVersion": None,
+        "deviceFamily": None,
+        "modelIdentifier": None,
+        "caps": [],
+        "commands": ["system.run"],
         "remoteIp": None,
         "permissions": None,
         "createdAtMs": owner_payload["node"]["createdAtMs"],
@@ -2179,7 +2248,7 @@ def test_gateway_nodes_endpoints_stage_silent_scope_upgrade_request_for_paired_c
     ]
 
 
-def test_gateway_nodes_endpoints_stage_silent_scope_upgrade_request_for_commandless_paired_node_reconnect(
+def test_gateway_nodes_endpoints_stage_silent_upgrade_for_commandless_reconnect(
     tmp_path,
 ) -> None:
     app_settings = Settings(
@@ -2481,6 +2550,78 @@ def test_gateway_node_method_call_endpoint_supports_node_invoke(tmp_path) -> Non
         "command": "system.run",
         "payload": {"status": "done"},
         "payloadJSON": '{"status":"done"}',
+    }
+
+
+def test_gateway_node_call_endpoint_queues_foreground_ios_invoke_pending_actions(
+    tmp_path,
+) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+    registry = app.state.gateway_node_service.registry
+    registry.register(
+        _BackgroundUnavailableNodeConnection(registry, "conn-node-1"),
+        GatewayNodeConnect(
+            client_id="live-node-1",
+            device_id="node-1",
+            platform="ios",
+            device_family="iphone",
+            commands=("canvas.navigate",),
+        ),
+    )
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        invoke_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "node.invoke",
+                "params": {
+                    "nodeId": "node-1",
+                    "command": "canvas.navigate",
+                    "params": {"url": "http://example.com/"},
+                    "idempotencyKey": "idem-queued",
+                },
+            },
+        )
+        pending_response = client.get("/api/gateway/nodes/node-1/pending-actions")
+        pending_payload = pending_response.json()
+        queued_action_id = pending_payload["actions"][0]["id"]
+        ack_response = client.post(
+            "/api/gateway/nodes/node-1/pending-actions/ack",
+            json={"ids": [queued_action_id]},
+        )
+        empty_response = client.get("/api/gateway/nodes/node-1/pending-actions")
+
+    assert invoke_response.status_code == 503
+    assert invoke_response.json() == {
+        "detail": "node command queued until iOS returns to foreground"
+    }
+    assert pending_response.status_code == 200
+    assert pending_payload == {
+        "nodeId": "node-1",
+        "actions": [
+            {
+                "id": queued_action_id,
+                "command": "canvas.navigate",
+                "paramsJSON": '{"url": "http://example.com/"}',
+                "enqueuedAtMs": pending_payload["actions"][0]["enqueuedAtMs"],
+            }
+        ],
+    }
+    assert ack_response.status_code == 200
+    assert ack_response.json() == {
+        "nodeId": "node-1",
+        "ackedIds": [queued_action_id],
+        "remainingCount": 0,
+    }
+    assert empty_response.status_code == 200
+    assert empty_response.json() == {
+        "nodeId": "node-1",
+        "actions": [],
     }
 
 
@@ -4371,6 +4512,69 @@ def test_gateway_node_method_call_endpoint_accepts_punctuation_rich_lookup_paths
     }
 
 
+def test_gateway_node_method_call_endpoint_accepts_long_valid_lookup_paths(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    long_segment = "p" * 1100
+    long_path = f"{long_segment}.leaf"
+    monkeypatch.setattr(
+        gateway_config_schema_module,
+        "_root_schema",
+        lambda: {
+            "type": "object",
+            "properties": {
+                long_segment: {
+                    "type": "object",
+                    "title": "Long Segment Container",
+                    "properties": {
+                        "leaf": {
+                            "type": "string",
+                            "title": "Long Path Leaf",
+                        }
+                    },
+                }
+            },
+        },
+    )
+    monkeypatch.setattr(
+        gateway_config_schema_module,
+        "_UI_HINTS",
+        {
+            long_path: {
+                "label": "Long Path Leaf",
+            },
+        },
+    )
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "config.schema.lookup",
+                "params": {"path": long_path},
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "path": long_path,
+        "schema": {
+            "type": "string",
+            "title": "Long Path Leaf",
+        },
+        "hint": {"label": "Long Path Leaf"},
+        "hintPath": long_path,
+        "children": [],
+    }
+
+
 def test_gateway_node_method_call_endpoint_supports_tools_catalog(tmp_path) -> None:
     app_settings = Settings(
         data_dir=tmp_path / "data",
@@ -5252,6 +5456,27 @@ def test_gateway_node_method_call_endpoint_ignores_inert_chat_send_attachments(
     ]
 
 
+def _assert_gateway_attachment_was_persisted(
+    *,
+    app_settings: Settings,
+    prompt: str,
+    encoded_content: str = "Zm9v",
+    extension: str = "png",
+) -> None:
+    decoded_content = base64.b64decode(encoded_content)
+    digest = hashlib.sha256(decoded_content).hexdigest()
+    stored_path = (
+        app_settings.data_dir / "gateway-attachments" / "inbound" / f"{digest}.{extension}"
+    )
+
+    assert stored_path.read_bytes() == decoded_content
+    assert f"media://inbound/{digest}" in prompt
+    assert f"sha256={digest}" in prompt
+    assert "bytes=3" in prompt
+    assert str(stored_path) in prompt
+    assert encoded_content not in prompt
+
+
 @pytest.mark.parametrize(
     ("attachments",),
     [
@@ -5278,7 +5503,7 @@ def test_gateway_node_method_call_endpoint_ignores_inert_chat_send_attachments(
         ),
     ],
 )
-def test_gateway_node_method_call_endpoint_treats_effective_chat_send_attachments_(
+def test_gateway_node_method_call_endpoint_sends_effective_chat_send_attachments_(
     attachments: list[dict[str, object]],
 ) -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-chat-send-effective-attachments-api"
@@ -5304,10 +5529,20 @@ def test_gateway_node_method_call_endpoint_treats_effective_chat_send_attachment
                 },
             },
         )
+        messages = asyncio.run(client.app.state.database.list_control_chat_messages())
 
-    assert response.status_code == 503
-    assert response.json()["detail"] == (
-        "chat.send attachments are unavailable until control chat attachment runtime is wired"
+    assert response.status_code == 200
+    assert response.json() == {
+        "runId": "run-chat-send-effective-attachments-api-1",
+        "status": "ok",
+    }
+    assert [message["role"] for message in messages[-2:]] == ["user", "assistant"]
+    assert "status" in messages[-2]["content"]
+    assert "Gateway attachments:" in messages[-2]["content"]
+    assert "image/png" in messages[-2]["content"]
+    _assert_gateway_attachment_was_persisted(
+        app_settings=app_settings,
+        prompt=messages[-2]["content"],
     )
 
 
@@ -5684,7 +5919,7 @@ def test_gateway_node_method_call_endpoint_ignores_inert_sessions_send_attachmen
         ),
     ],
 )
-def test_gateway_node_method_call_endpoint_treats_effective_sessions_send_attachments_(
+def test_gateway_node_method_call_endpoint_sends_effective_sessions_send_attachments_(
     attachments: list[dict[str, object]],
 ) -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-send-effective-attachments-api"
@@ -5710,10 +5945,20 @@ def test_gateway_node_method_call_endpoint_treats_effective_sessions_send_attach
                 },
             },
         )
+        messages = asyncio.run(client.app.state.database.list_control_chat_messages())
 
-    assert response.status_code == 503
-    assert response.json()["detail"] == (
-        "sessions.send attachments are unavailable until control chat attachment runtime is wired"
+    assert response.status_code == 200
+    assert response.json() == {
+        "runId": "run-session-send-effective-attachments-api-1",
+        "status": "ok",
+    }
+    assert [message["role"] for message in messages[-2:]] == ["user", "assistant"]
+    assert "status" in messages[-2]["content"]
+    assert "Gateway attachments:" in messages[-2]["content"]
+    assert "image/png" in messages[-2]["content"]
+    _assert_gateway_attachment_was_persisted(
+        app_settings=app_settings,
+        prompt=messages[-2]["content"],
     )
 
 
@@ -6312,7 +6557,7 @@ def test_gateway_node_method_call_endpoint_ignores_inert_sessions_steer_attachme
         ),
     ],
 )
-def test_gateway_node_method_call_endpoint_treats_effective_sessions_steer_attachments_(
+def test_gateway_node_method_call_endpoint_steers_effective_sessions_attachments_(
     attachments: list[dict[str, object]],
 ) -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-steer-effective-attachments-api"
@@ -6338,10 +6583,20 @@ def test_gateway_node_method_call_endpoint_treats_effective_sessions_steer_attac
                 },
             },
         )
+        messages = asyncio.run(client.app.state.database.list_control_chat_messages())
 
-    assert response.status_code == 503
-    assert response.json()["detail"] == (
-        "sessions.steer attachments are unavailable until control chat attachment runtime is wired"
+    assert response.status_code == 200
+    assert response.json() == {
+        "runId": "run-session-steer-effective-attachments-api-1",
+        "status": "ok",
+    }
+    assert [message["role"] for message in messages[-2:]] == ["user", "assistant"]
+    assert "redirect" in messages[-2]["content"]
+    assert "Gateway attachments:" in messages[-2]["content"]
+    assert "image/png" in messages[-2]["content"]
+    _assert_gateway_attachment_was_persisted(
+        app_settings=app_settings,
+        prompt=messages[-2]["content"],
     )
 
 
@@ -7186,10 +7441,11 @@ def test_gateway_node_method_call_endpoint_sessions_reset_clears_transcript() ->
     assert messages_response.json() == {"messages": []}
 
     assert list_response.status_code == 200
-    assert [session["key"] for session in list_response.json()["sessions"]] == [
+    assert {session["key"] for session in list_response.json()["sessions"]} == {
         main_session_key,
         session_key,
-    ]
+        other_session_key,
+    }
 
     sessions_changed = [
         event
@@ -7338,7 +7594,10 @@ def test_gateway_node_method_call_endpoint_sessions_delete_removes_metadata_sess
     assert messages_response.json() == {"messages": []}
 
     assert list_response.status_code == 200
-    assert [session["key"] for session in list_response.json()["sessions"]] == [main_session_key]
+    assert {session["key"] for session in list_response.json()["sessions"]} == {
+        main_session_key,
+        other_session_key,
+    }
 
     assert resolve_response.status_code == 400
     assert resolve_response.json()["detail"] == "unknown session key"
@@ -7447,17 +7706,17 @@ def test_gateway_node_method_call_endpoint_supports_sessions_compact_and_checkpo
         {
             "checkpointId": checkpoint_id,
             "sessionKey": "openzues:thread:demo",
-            "sessionId": "openzues:thread:demo",
+            "sessionId": "demo",
             "createdAt": list_payload["checkpoints"][0]["createdAt"],
             "reason": "manual",
             "summary": "Alpha line 1 Alpha line 2 Bravo line 1",
             "firstKeptEntryId": str(kept_id),
             "preCompaction": {
-                "sessionId": "openzues:thread:demo",
+                "sessionId": "demo",
                 "entryId": list_payload["checkpoints"][0]["preCompaction"]["entryId"],
             },
             "postCompaction": {
-                "sessionId": "openzues:thread:demo",
+                "sessionId": "demo",
                 "entryId": str(kept_id),
             },
         }
@@ -7579,17 +7838,17 @@ def test_gateway_node_method_call_endpoint_supports_sessions_compact_summary_wit
         {
             "checkpointId": checkpoint_id,
             "sessionKey": "openzues:thread:demo",
-            "sessionId": "openzues:thread:demo",
+            "sessionId": "demo",
             "createdAt": list_payload["checkpoints"][0]["createdAt"],
             "reason": "summary",
             "summary": "Alpha line 1 Alpha line 2 Bravo line 1 Charlie line 1 Charlie line 2",
             "firstKeptEntryId": str(remaining_messages[0]["id"]),
             "preCompaction": {
-                "sessionId": "openzues:thread:demo",
+                "sessionId": "demo",
                 "entryId": str(third_id),
             },
             "postCompaction": {
-                "sessionId": "openzues:thread:demo",
+                "sessionId": "demo",
                 "entryId": str(remaining_messages[0]["id"]),
             },
         }
@@ -8185,6 +8444,311 @@ def test_gateway_node_method_call_endpoint_reports_missing_push_registration(tmp
     )
 
 
+def test_gateway_node_method_call_endpoint_sends_apns_relay_push(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+        apns_relay_base_url="https://relay.example.test",
+        apns_relay_timeout_ms=1500,
+    )
+    app = create_app(app_settings)
+    registry = app.state.gateway_node_service.registry
+    _register_known_live_node(
+        registry,
+        conn_id="conn-ios-relay-push-1",
+        node_id="ios-node-1",
+        client_id="live-ios-relay-push-1",
+        display_name="iOS Relay Node",
+        platform="ios",
+    )
+    observed: dict[str, object] = {}
+
+    class _FakeRelayResponse:
+        status_code = 202
+        is_success = True
+
+        def json(self) -> dict[str, object]:
+            return {
+                "ok": True,
+                "status": 200,
+                "apnsId": "apns-relay-1",
+                "tokenSuffix": "relay123",
+            }
+
+    class _FakeRelayClient:
+        def __init__(self, *, timeout: float, follow_redirects: bool) -> None:
+            observed["timeout"] = timeout
+            observed["follow_redirects"] = follow_redirects
+
+        async def __aenter__(self) -> _FakeRelayClient:
+            return self
+
+        async def __aexit__(self, *_: object) -> None:
+            return None
+
+        async def post(
+            self,
+            url: str,
+            *,
+            content: str,
+            headers: dict[str, str],
+        ) -> _FakeRelayResponse:
+            observed["url"] = url
+            observed["content"] = content
+            observed["headers"] = headers
+            return _FakeRelayResponse()
+
+    monkeypatch.setattr("openzues.services.gateway_apns.httpx.AsyncClient", _FakeRelayClient)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        register_response = client.post(
+            "/api/gateway/nodes/ios-node-1/method-call",
+            json={
+                "method": "node.event",
+                "params": {
+                    "event": "push.apns.register",
+                    "payload": {
+                        "transport": "relay",
+                        "relayHandle": "relay-handle-123",
+                        "sendGrant": "relay-send-grant-123",
+                        "installationId": "install-123",
+                        "topic": "com.openzues.ios",
+                        "environment": "production",
+                        "distribution": "official",
+                        "tokenDebugSuffix": "debug123",
+                    },
+                },
+            },
+        )
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "push.test",
+                "params": {
+                    "nodeId": "ios-node-1",
+                    "title": "OpenZues",
+                    "body": "Push parity ping.",
+                    "environment": "production",
+                },
+            },
+        )
+
+    assert register_response.status_code == 200
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True,
+        "status": 200,
+        "apnsId": "apns-relay-1",
+        "reason": None,
+        "tokenSuffix": "relay123",
+        "topic": "com.openzues.ios",
+        "environment": "production",
+        "transport": "relay",
+    }
+    assert observed["timeout"] == 1.5
+    assert observed["follow_redirects"] is False
+    assert observed["url"] == "https://relay.example.test/v1/push/send"
+    body_json = str(observed["content"])
+    body = json.loads(body_json)
+    assert body == {
+        "relayHandle": "relay-handle-123",
+        "pushType": "alert",
+        "priority": 10,
+        "payload": {
+            "aps": {
+                "alert": {
+                    "title": "OpenZues",
+                    "body": "Push parity ping.",
+                },
+                "sound": "default",
+            },
+            "openclaw": {
+                "kind": "push.test",
+                "nodeId": "ios-node-1",
+                "ts": body["payload"]["openclaw"]["ts"],
+            },
+        },
+    }
+    assert isinstance(body["payload"]["openclaw"]["ts"], int)
+    headers = observed["headers"]
+    assert isinstance(headers, dict)
+    assert headers["authorization"] == "Bearer relay-send-grant-123"
+    assert headers["content-type"] == "application/json"
+    signed_at_ms = int(headers["x-openclaw-gateway-signed-at-ms"])
+    signature_payload = "\n".join(
+        [
+            "openclaw-relay-send-v1",
+            headers["x-openclaw-gateway-device-id"],
+            str(signed_at_ms),
+            body_json,
+        ]
+    )
+    signature = base64.urlsafe_b64decode(
+        headers["x-openclaw-gateway-signature"] + "==="
+    )
+    public_key = base64.urlsafe_b64decode(
+        app.state.gateway_identity_service.load().public_key + "==="
+    )
+    Ed25519PublicKey.from_public_bytes(public_key).verify(
+        signature,
+        signature_payload.encode("utf-8"),
+    )
+
+
+def test_gateway_node_method_call_endpoint_sends_direct_apns_push(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    private_key = ec.generate_private_key(ec.SECP256R1())
+    private_key_pem = private_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    ).decode("utf-8")
+    monkeypatch.setenv("OPENCLAW_APNS_TEAM_ID", "TEAM123456")
+    monkeypatch.setenv("OPENCLAW_APNS_KEY_ID", "KEY1234567")
+    monkeypatch.setenv("OPENCLAW_APNS_PRIVATE_KEY_P8", private_key_pem)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+        apns_timeout_ms=1500,
+    )
+    app = create_app(app_settings)
+    registry = app.state.gateway_node_service.registry
+    _register_known_live_node(
+        registry,
+        conn_id="conn-ios-direct-push-1",
+        node_id="ios-node-1",
+        client_id="live-ios-direct-push-1",
+        display_name="iOS Direct Node",
+        platform="ios",
+    )
+    observed: dict[str, object] = {}
+
+    class _FakeApnsResponse:
+        status_code = 200
+        is_success = True
+        headers = {"apns-id": "apns-direct-1"}
+        text = ""
+
+        def json(self) -> dict[str, object]:
+            return {}
+
+    class _FakeApnsClient:
+        def __init__(
+            self,
+            *,
+            timeout: float,
+            follow_redirects: bool,
+            http2: bool = False,
+        ) -> None:
+            observed["timeout"] = timeout
+            observed["follow_redirects"] = follow_redirects
+            observed["http2"] = http2
+
+        async def __aenter__(self) -> _FakeApnsClient:
+            return self
+
+        async def __aexit__(self, *_: object) -> None:
+            return None
+
+        async def post(
+            self,
+            url: str,
+            *,
+            content: str,
+            headers: dict[str, str],
+        ) -> _FakeApnsResponse:
+            observed["url"] = url
+            observed["content"] = content
+            observed["headers"] = headers
+            return _FakeApnsResponse()
+
+    monkeypatch.setattr("openzues.services.gateway_apns.httpx.AsyncClient", _FakeApnsClient)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        register_response = client.post(
+            "/api/gateway/nodes/ios-node-1/method-call",
+            json={
+                "method": "node.event",
+                "params": {
+                    "event": "push.apns.register",
+                    "payload": {
+                        "transport": "direct",
+                        "token": "c" * 64,
+                        "topic": "com.openzues.ios",
+                        "environment": "sandbox",
+                    },
+                },
+            },
+        )
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "push.test",
+                "params": {
+                    "nodeId": "ios-node-1",
+                    "title": "OpenZues",
+                    "body": "Direct push parity ping.",
+                    "environment": "production",
+                },
+            },
+        )
+
+    assert register_response.status_code == 200
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True,
+        "status": 200,
+        "apnsId": "apns-direct-1",
+        "reason": None,
+        "tokenSuffix": "cccccccc",
+        "topic": "com.openzues.ios",
+        "environment": "production",
+        "transport": "direct",
+    }
+    assert observed["timeout"] == 1.5
+    assert observed["follow_redirects"] is False
+    assert observed["http2"] is True
+    assert observed["url"] == f"https://api.push.apple.com/3/device/{'c' * 64}"
+    headers = observed["headers"]
+    assert isinstance(headers, dict)
+    assert headers["apns-topic"] == "com.openzues.ios"
+    assert headers["apns-push-type"] == "alert"
+    assert headers["apns-priority"] == "10"
+    assert headers["apns-expiration"] == "0"
+    assert headers["content-type"] == "application/json"
+    assert headers["authorization"].startswith("bearer ")
+    jwt_header, jwt_payload, jwt_signature = headers["authorization"][7:].split(".")
+    decoded_header = json.loads(base64.urlsafe_b64decode(jwt_header + "==="))
+    decoded_payload = json.loads(base64.urlsafe_b64decode(jwt_payload + "==="))
+    assert decoded_header == {"alg": "ES256", "kid": "KEY1234567", "typ": "JWT"}
+    assert decoded_payload["iss"] == "TEAM123456"
+    assert isinstance(decoded_payload["iat"], int)
+    assert len(base64.urlsafe_b64decode(jwt_signature + "===")) == 64
+    body = json.loads(str(observed["content"]))
+    assert body == {
+        "aps": {
+            "alert": {
+                "title": "OpenZues",
+                "body": "Direct push parity ping.",
+            },
+            "sound": "default",
+        },
+        "openclaw": {
+            "kind": "push.test",
+            "nodeId": "ios-node-1",
+            "ts": body["openclaw"]["ts"],
+        },
+    }
+    assert isinstance(body["openclaw"]["ts"], int)
+
+
 def test_gateway_node_method_call_endpoint_rejects_connect_as_non_callable_method(tmp_path) -> None:
     app_settings = Settings(
         data_dir=tmp_path / "data",
@@ -8313,6 +8877,32 @@ def test_gateway_node_method_call_endpoint_allows_blank_logout_account_id(
 
     assert response.status_code == 400
     assert response.json()["detail"] == "channel telegram does not support logout"
+
+
+def test_gateway_node_method_call_endpoint_allows_blank_channels_start_account_id(
+    tmp_path,
+) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "channels.start",
+                "params": {
+                    "channel": "telegram",
+                    "accountId": "   ",
+                },
+            },
+        )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "channel telegram does not support runtime start"
 
 
 def test_gateway_node_method_call_endpoint_rejects_channels_logout_without_supported_channel(
@@ -8627,7 +9217,7 @@ def test_gateway_node_method_call_endpoint_supports_wizard_start_next_completion
         team_step_payload = team_step_response.json()
         team_step = team_step_payload["step"]
 
-        task_step_response = client.post(
+        note_step_response = client.post(
             "/api/gateway/node-methods/call",
             json={
                 "method": "wizard.next",
@@ -8636,6 +9226,23 @@ def test_gateway_node_method_call_endpoint_supports_wizard_start_next_completion
                     "answer": {
                         "stepId": team_step["id"],
                         "value": "Platform Ops",
+                    },
+                },
+            },
+        )
+        assert note_step_response.status_code == 200
+        note_step_payload = note_step_response.json()
+        note_step = note_step_payload["step"]
+
+        task_step_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "wizard.next",
+                "params": {
+                    "sessionId": session_id,
+                    "answer": {
+                        "stepId": note_step["id"],
+                        "value": True,
                     },
                 },
             },
@@ -8698,6 +9305,22 @@ def test_gateway_node_method_call_endpoint_supports_wizard_start_next_completion
             "message": "Optionally group the remote operator under a team label.",
             "placeholder": "Platform Ops",
             "required": False,
+            "executor": "client",
+        },
+    }
+    assert note_step_payload == {
+        "done": False,
+        "status": "running",
+        "step": {
+            "id": note_step["id"],
+            "field": "remote_lane_note",
+            "type": "note",
+            "title": "Lane Binding Can Wait",
+            "message": (
+                "No saved lane is staged yet. Remote setup can still save the workspace, "
+                "operator access, and recurring task now, then bind a lane when the first "
+                "launch is ready."
+            ),
             "executor": "client",
         },
     }
@@ -8776,13 +9399,27 @@ def test_onboarding_wizard_http_endpoint_supports_remote_completion(tmp_path) ->
         team_step_payload = team_step_response.json()
         team_step = team_step_payload["step"]
 
-        task_step_response = client.post(
+        note_step_response = client.post(
             "/api/onboarding/wizard/next",
             json={
                 "sessionId": session_id,
                 "answer": {
                     "stepId": team_step["id"],
                     "value": "",
+                },
+            },
+        )
+        assert note_step_response.status_code == 200
+        note_step_payload = note_step_response.json()
+        note_step = note_step_payload["step"]
+
+        task_step_response = client.post(
+            "/api/onboarding/wizard/next",
+            json={
+                "sessionId": session_id,
+                "answer": {
+                    "stepId": note_step["id"],
+                    "value": True,
                 },
             },
         )
@@ -8839,6 +9476,22 @@ def test_onboarding_wizard_http_endpoint_supports_remote_completion(tmp_path) ->
             "message": "Optionally group the remote operator under a team label.",
             "placeholder": "Platform Ops",
             "required": False,
+            "executor": "client",
+        },
+    }
+    assert note_step_payload == {
+        "done": False,
+        "status": "running",
+        "step": {
+            "id": note_step["id"],
+            "field": "remote_lane_note",
+            "type": "note",
+            "title": "Lane Binding Can Wait",
+            "message": (
+                "No saved lane is staged yet. Remote setup can still save the workspace, "
+                "operator access, and recurring task now, then bind a lane when the first "
+                "launch is ready."
+            ),
             "executor": "client",
         },
     }
@@ -9858,17 +10511,17 @@ def test_sessions_subscribe_api_delivers_compaction_checkpoint_metadata() -> Non
     assert event["payload"]["latestCompactionCheckpoint"] == {
         "checkpointId": compact_payload["checkpointId"],
         "sessionKey": session_key,
-        "sessionId": session_key,
+        "sessionId": "thread-subscribe-websocket-compact",
         "createdAt": event["payload"]["latestCompactionCheckpoint"]["createdAt"],
         "reason": "manual",
         "summary": "Alpha line 1 Alpha line 2 Bravo line 1",
         "firstKeptEntryId": event["payload"]["latestCompactionCheckpoint"]["firstKeptEntryId"],
         "preCompaction": {
-            "sessionId": session_key,
+            "sessionId": "thread-subscribe-websocket-compact",
             "entryId": event["payload"]["latestCompactionCheckpoint"]["preCompaction"]["entryId"],
         },
         "postCompaction": {
-            "sessionId": session_key,
+            "sessionId": "thread-subscribe-websocket-compact",
             "entryId": event["payload"]["latestCompactionCheckpoint"]["postCompaction"]["entryId"],
         },
     }
@@ -14261,7 +14914,10 @@ def test_gateway_node_method_call_endpoint_wake_resolves_main_agent_target(
         _allow_mutating_api_requests(client)
         resolved_session_response = client.post(
             "/api/gateway/node-methods/call",
-            json={"method": "sessions.resolve", "params": {"agentId": "main"}},
+            json={
+                "method": "sessions.resolve",
+                "params": {"key": "launch:mode:workspace_affinity", "agentId": "main"},
+            },
         )
         monkeypatch.setattr(client.app.state.control_chat_service, "submit", fake_submit)
         response = client.post(
@@ -14862,7 +15518,7 @@ def test_gateway_node_method_call_endpoint_returns_explicit_agents_mutate_unavai
     assert response.json() == {"detail": detail}
 
 
-def test_gateway_node_method_call_endpoint_returns_doctor_memory_unavailable_contract(
+def test_gateway_node_method_call_endpoint_returns_doctor_memory_status_payload(
     tmp_path,
 ) -> None:
     app_settings = Settings(
@@ -14881,19 +15537,54 @@ def test_gateway_node_method_call_endpoint_returns_doctor_memory_unavailable_con
             },
         )
 
-    assert response.status_code == 503
+    assert response.status_code == 200
     assert response.json() == {
-        "detail": "doctor.memory.status is unavailable until gateway memory doctor runtime is wired"
+        "agentId": "openzues",
+        "embedding": {
+            "ok": False,
+            "error": "memory search unavailable",
+        },
     }
+
+
+def test_gateway_node_method_call_endpoint_reads_doctor_memory_dream_diary(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    diary_path = tmp_path / "DREAMS.md"
+    diary_path.write_text("# Dream Diary\n\n- API parity proof.\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "doctor.memory.dreamDiary",
+                "params": {},
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload == {
+        "agentId": "openzues",
+        "found": True,
+        "path": str(diary_path),
+        "content": "# Dream Diary\n\n- API parity proof.\n",
+        "updatedAtMs": payload["updatedAtMs"],
+    }
+    assert isinstance(payload["updatedAtMs"], int)
 
 
 @pytest.mark.parametrize(
     ("method", "detail"),
     [
-        (
-            "doctor.memory.dreamDiary",
-            "doctor.memory.dreamDiary is unavailable until gateway dreaming runtime is wired",
-        ),
         (
             "doctor.memory.backfillDreamDiary",
             "doctor.memory.backfillDreamDiary is unavailable until gateway dreaming "
@@ -17531,17 +18222,17 @@ def test_gateway_node_method_call_endpoint_sessions_list_surfaces_compaction_che
     assert session_payload["latestCompactionCheckpoint"] == {
         "checkpointId": compact_response.json()["checkpointId"],
         "sessionKey": session_key,
-        "sessionId": session_key,
+        "sessionId": "thread-compaction-list",
         "createdAt": session_payload["latestCompactionCheckpoint"]["createdAt"],
         "reason": "manual",
         "summary": "Alpha line 1 Alpha line 2 Bravo line 1",
         "firstKeptEntryId": session_payload["latestCompactionCheckpoint"]["firstKeptEntryId"],
         "preCompaction": {
-            "sessionId": session_key,
+            "sessionId": "thread-compaction-list",
             "entryId": session_payload["latestCompactionCheckpoint"]["preCompaction"]["entryId"],
         },
         "postCompaction": {
-            "sessionId": session_key,
+            "sessionId": "thread-compaction-list",
             "entryId": session_payload["latestCompactionCheckpoint"]["postCompaction"]["entryId"],
         },
     }
@@ -18167,7 +18858,7 @@ def test_gateway_node_method_call_endpoint_supports_sessions_resolve() -> None:
             "/api/gateway/node-methods/call",
             json={
                 "method": "sessions.resolve",
-                "params": {"agentId": "main"},
+                "params": {"key": "launch:mode:workspace_affinity"},
             },
         )
 
@@ -18212,7 +18903,7 @@ def test_gateway_node_method_call_endpoint_supports_sessions_resolve_by_label() 
     assert response.json() == {"ok": True, "key": current_session_key}
 
 
-def test_gateway_node_method_call_endpoint_supports_sessions_resolve_by_spawned_by() -> None:
+def test_gateway_node_method_call_endpoint_rejects_global_session_spawned_by_filter() -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-resolve-spawned-by-api"
     shutil.rmtree(tmp_path, ignore_errors=True)
     tmp_path.mkdir(parents=True, exist_ok=True)
@@ -18241,12 +18932,15 @@ def test_gateway_node_method_call_endpoint_supports_sessions_resolve_by_spawned_
             "/api/gateway/node-methods/call",
             json={
                 "method": "sessions.resolve",
-                "params": {"spawnedBy": "parity-conductor"},
+                "params": {
+                    "key": current_session_key,
+                    "spawnedBy": "parity-conductor",
+                },
             },
         )
 
-    assert response.status_code == 200
-    assert response.json() == {"ok": True, "key": current_session_key}
+    assert response.status_code == 400
+    assert response.json()["detail"] == "unknown session key"
 
 
 def test_gateway_node_method_call_endpoint_hides_current_session_label_when_global_is_excluded(
@@ -18325,7 +19019,10 @@ def test_gateway_node_method_call_endpoint_supports_sessions_resolve_by_metadata
             "/api/gateway/node-methods/call",
             json={
                 "method": "sessions.resolve",
-                "params": {"spawnedBy": "parity-conductor"},
+                "params": {
+                    "key": thread_session_key,
+                    "spawnedBy": "parity-conductor",
+                },
             },
         )
 
@@ -18714,7 +19411,1313 @@ def test_gateway_node_method_call_endpoint_supports_commands_list(tmp_path) -> N
     assert any(command["name"] == "status" for command in payload["commands"])
     assert any(command["name"] == "agents.list" for command in payload["commands"])
     assert any(command["name"] == "channels.status" for command in payload["commands"])
+    assert any(command["name"] == "browser.act" for command in payload["commands"])
+    assert any(command["name"] == "browser.auth.list" for command in payload["commands"])
+    assert any(command["name"] == "browser.auth.show" for command in payload["commands"])
+    assert any(command["name"] == "browser.back" for command in payload["commands"])
+    assert any(command["name"] == "browser.close" for command in payload["commands"])
+    assert any(command["name"] == "browser.cookies.get" for command in payload["commands"])
+    assert any(command["name"] == "browser.diff.snapshot" for command in payload["commands"])
+    assert any(command["name"] == "browser.diff.screenshot" for command in payload["commands"])
+    assert any(command["name"] == "browser.diff.url" for command in payload["commands"])
+    assert any(command["name"] == "browser.download" for command in payload["commands"])
+    assert any(command["name"] == "browser.focus" for command in payload["commands"])
+    assert any(command["name"] == "browser.forward" for command in payload["commands"])
+    assert any(command["name"] == "browser.get" for command in payload["commands"])
+    assert any(command["name"] == "browser.is" for command in payload["commands"])
+    assert any(command["name"] == "browser.upload" for command in payload["commands"])
+    assert any(command["name"] == "browser.navigate" for command in payload["commands"])
+    assert any(command["name"] == "browser.network.request" for command in payload["commands"])
+    assert any(command["name"] == "browser.network.requests" for command in payload["commands"])
     assert any(command["name"] == "browser.open" for command in payload["commands"])
+    assert any(command["name"] == "browser.pdf" for command in payload["commands"])
+    assert any(command["name"] == "browser.profiles" for command in payload["commands"])
+    assert any(command["name"] == "browser.reload" for command in payload["commands"])
+    assert any(command["name"] == "browser.screenshot" for command in payload["commands"])
+    assert any(command["name"] == "browser.session.current" for command in payload["commands"])
+    assert any(command["name"] == "browser.session.list" for command in payload["commands"])
+    assert any(command["name"] == "browser.start" for command in payload["commands"])
+    assert any(command["name"] == "browser.stop" for command in payload["commands"])
+    assert any(command["name"] == "browser.storage.get" for command in payload["commands"])
+    assert any(command["name"] == "browser.stream.disable" for command in payload["commands"])
+    assert any(command["name"] == "browser.stream.enable" for command in payload["commands"])
+    assert any(command["name"] == "browser.stream.status" for command in payload["commands"])
+    assert any(command["name"] == "browser.tabs" for command in payload["commands"])
+
+
+def test_gateway_node_method_call_endpoint_runs_browser_open_runtime(tmp_path) -> None:
+    class FakeBrowserRuntime:
+        def open_page(self, target: str, *, session: str) -> dict[str, object]:
+            return {"ok": True, "url": target, "session": session}
+
+        def snapshot(self, *, session: str) -> dict[str, object]:
+            raise AssertionError("snapshot should not be called")
+
+        def console(self, *, session: str) -> dict[str, object]:
+            raise AssertionError("console should not be called")
+
+        def errors(self, *, session: str) -> dict[str, object]:
+            raise AssertionError("errors should not be called")
+
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(
+        app_settings,
+        gateway_node_method_service=GatewayNodeMethodService(
+            GatewayNodeRegistry(),
+            browser_runtime_service=FakeBrowserRuntime(),
+        ),
+    )
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "browser.open",
+                "params": {
+                    "target": "http://127.0.0.1:8884",
+                    "session": "parity-browser",
+                },
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True,
+        "url": "http://127.0.0.1:8884",
+        "session": "parity-browser",
+    }
+
+
+def test_gateway_node_method_call_endpoint_runs_browser_navigate_runtime(tmp_path) -> None:
+    class FakeBrowserRuntime:
+        def navigate(self, target: str, *, session: str) -> dict[str, object]:
+            return {"ok": True, "url": target, "session": session}
+
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(
+        app_settings,
+        gateway_node_method_service=GatewayNodeMethodService(
+            GatewayNodeRegistry(),
+            browser_runtime_service=FakeBrowserRuntime(),
+        ),
+    )
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "browser.navigate",
+                "params": {
+                    "url": "http://127.0.0.1:8884/dashboard",
+                    "session": "parity-browser",
+                },
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True,
+        "url": "http://127.0.0.1:8884/dashboard",
+        "session": "parity-browser",
+    }
+
+
+def test_gateway_node_method_call_endpoint_runs_browser_close_runtime(tmp_path) -> None:
+    class FakeBrowserRuntime:
+        def close(
+            self,
+            *,
+            session: str,
+            all_sessions: bool = False,
+            target_id: str | None = None,
+        ) -> dict[str, object]:
+            return {
+                "ok": True,
+                "session": session,
+                "allSessions": all_sessions,
+                "targetId": target_id,
+            }
+
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(
+        app_settings,
+        gateway_node_method_service=GatewayNodeMethodService(
+            GatewayNodeRegistry(),
+            browser_runtime_service=FakeBrowserRuntime(),
+        ),
+    )
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "browser.close",
+                "params": {"session": "parity-browser", "all": True},
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True,
+        "session": "parity-browser",
+        "allSessions": True,
+        "targetId": None,
+    }
+
+
+def test_gateway_node_method_call_endpoint_runs_browser_focus_runtime(tmp_path) -> None:
+    class FakeBrowserRuntime:
+        def focus(self, target_id: str, *, session: str) -> dict[str, object]:
+            return {"ok": True, "session": session, "targetId": target_id}
+
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(
+        app_settings,
+        gateway_node_method_service=GatewayNodeMethodService(
+            GatewayNodeRegistry(),
+            browser_runtime_service=FakeBrowserRuntime(),
+        ),
+    )
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "browser.focus",
+                "params": {"session": "parity-browser", "targetId": "2"},
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True, "session": "parity-browser", "targetId": "2"}
+
+
+def test_gateway_node_method_call_endpoint_runs_browser_lifecycle_runtime(tmp_path) -> None:
+    class FakeBrowserRuntime:
+        def start(self, *, session: str) -> dict[str, object]:
+            return {"ok": True, "session": session, "status": "ready"}
+
+        def stop(self, *, session: str, all_sessions: bool = False) -> dict[str, object]:
+            return {"ok": True, "session": session, "allSessions": all_sessions}
+
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(
+        app_settings,
+        gateway_node_method_service=GatewayNodeMethodService(
+            GatewayNodeRegistry(),
+            browser_runtime_service=FakeBrowserRuntime(),
+        ),
+    )
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        start_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "browser.start",
+                "params": {"session": "parity-browser"},
+            },
+        )
+        stop_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "browser.stop",
+                "params": {"session": "parity-browser", "all": True},
+            },
+        )
+
+    assert start_response.status_code == 200
+    assert start_response.json() == {
+        "ok": True,
+        "session": "parity-browser",
+        "status": "ready",
+    }
+    assert stop_response.status_code == 200
+    assert stop_response.json() == {
+        "ok": True,
+        "session": "parity-browser",
+        "allSessions": True,
+    }
+
+
+def test_gateway_node_method_call_endpoint_runs_browser_get_runtime(tmp_path) -> None:
+    class FakeBrowserRuntime:
+        def get(
+            self,
+            what: str,
+            *,
+            session: str,
+            selector: str | None = None,
+        ) -> dict[str, object]:
+            return {
+                "ok": True,
+                "session": session,
+                "what": what,
+                "selector": selector,
+                "value": "Zeus",
+            }
+
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(
+        app_settings,
+        gateway_node_method_service=GatewayNodeMethodService(
+            GatewayNodeRegistry(),
+            browser_runtime_service=FakeBrowserRuntime(),
+        ),
+    )
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "browser.get",
+                "params": {
+                    "session": "parity-browser",
+                    "what": "text",
+                    "selector": "body",
+                },
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True,
+        "session": "parity-browser",
+        "what": "text",
+        "selector": "body",
+        "value": "Zeus",
+    }
+
+
+def test_gateway_node_method_call_endpoint_runs_browser_is_runtime(tmp_path) -> None:
+    class FakeBrowserRuntime:
+        def is_state(self, state: str, selector: str, *, session: str) -> dict[str, object]:
+            return {
+                "ok": True,
+                "session": session,
+                "state": state,
+                "selector": selector,
+                "matched": True,
+            }
+
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(
+        app_settings,
+        gateway_node_method_service=GatewayNodeMethodService(
+            GatewayNodeRegistry(),
+            browser_runtime_service=FakeBrowserRuntime(),
+        ),
+    )
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "browser.is",
+                "params": {
+                    "session": "parity-browser",
+                    "state": "visible",
+                    "selector": "body",
+                },
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True,
+        "session": "parity-browser",
+        "state": "visible",
+        "selector": "body",
+        "matched": True,
+    }
+
+
+def test_gateway_node_method_call_endpoint_runs_browser_history_runtime(tmp_path) -> None:
+    class FakeBrowserRuntime:
+        def history(self, action: str, *, session: str) -> dict[str, object]:
+            return {"ok": True, "session": session, "action": action}
+
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(
+        app_settings,
+        gateway_node_method_service=GatewayNodeMethodService(
+            GatewayNodeRegistry(),
+            browser_runtime_service=FakeBrowserRuntime(),
+        ),
+    )
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "browser.reload",
+                "params": {"session": "parity-browser"},
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True,
+        "session": "parity-browser",
+        "action": "reload",
+    }
+
+
+def test_gateway_node_method_call_endpoint_runs_browser_stream_status_runtime(tmp_path) -> None:
+    class FakeBrowserRuntime:
+        def stream_status(self, *, session: str) -> dict[str, object]:
+            return {"ok": True, "session": session, "streaming": False}
+
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(
+        app_settings,
+        gateway_node_method_service=GatewayNodeMethodService(
+            GatewayNodeRegistry(),
+            browser_runtime_service=FakeBrowserRuntime(),
+        ),
+    )
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "browser.stream.status",
+                "params": {"session": "parity-browser"},
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True, "session": "parity-browser", "streaming": False}
+
+
+def test_gateway_node_method_call_endpoint_runs_browser_stream_lifecycle_runtime(
+    tmp_path,
+) -> None:
+    class FakeBrowserRuntime:
+        def stream_enable(self, *, session: str, port: int | None = None) -> dict[str, object]:
+            return {"ok": True, "session": session, "streaming": True, "port": port}
+
+        def stream_disable(self, *, session: str) -> dict[str, object]:
+            return {"ok": True, "session": session, "streaming": False}
+
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(
+        app_settings,
+        gateway_node_method_service=GatewayNodeMethodService(
+            GatewayNodeRegistry(),
+            browser_runtime_service=FakeBrowserRuntime(),
+        ),
+    )
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        enable_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "browser.stream.enable",
+                "params": {"session": "parity-browser", "port": 9223},
+            },
+        )
+        disable_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "browser.stream.disable",
+                "params": {"session": "parity-browser"},
+            },
+        )
+
+    assert enable_response.status_code == 200
+    assert enable_response.json() == {
+        "ok": True,
+        "session": "parity-browser",
+        "streaming": True,
+        "port": 9223,
+    }
+    assert disable_response.status_code == 200
+    assert disable_response.json() == {
+        "ok": True,
+        "session": "parity-browser",
+        "streaming": False,
+    }
+
+
+def test_gateway_node_method_call_endpoint_runs_browser_network_requests_runtime(
+    tmp_path,
+) -> None:
+    class FakeBrowserRuntime:
+        def network_requests(
+            self,
+            *,
+            session: str,
+            filter_pattern: str | None = None,
+            resource_type: str | None = None,
+            method: str | None = None,
+            status: str | None = None,
+        ) -> dict[str, object]:
+            return {
+                "ok": True,
+                "session": session,
+                "filter": filter_pattern,
+                "type": resource_type,
+                "method": method,
+                "statusFilter": status,
+            }
+
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(
+        app_settings,
+        gateway_node_method_service=GatewayNodeMethodService(
+            GatewayNodeRegistry(),
+            browser_runtime_service=FakeBrowserRuntime(),
+        ),
+    )
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "browser.network.requests",
+                "params": {
+                    "session": "parity-browser",
+                    "filter": "api",
+                    "type": "fetch,xhr",
+                    "method": "POST",
+                    "status": "2xx",
+                },
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True,
+        "session": "parity-browser",
+        "filter": "api",
+        "type": "fetch,xhr",
+        "method": "POST",
+        "statusFilter": "2xx",
+    }
+
+
+def test_gateway_node_method_call_endpoint_runs_browser_network_request_runtime(
+    tmp_path,
+) -> None:
+    class FakeBrowserRuntime:
+        def network_request(self, request_id: str, *, session: str) -> dict[str, object]:
+            return {"ok": True, "session": session, "requestId": request_id}
+
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(
+        app_settings,
+        gateway_node_method_service=GatewayNodeMethodService(
+            GatewayNodeRegistry(),
+            browser_runtime_service=FakeBrowserRuntime(),
+        ),
+    )
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "browser.network.request",
+                "params": {"session": "parity-browser", "requestId": "1234.5"},
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True,
+        "session": "parity-browser",
+        "requestId": "1234.5",
+    }
+
+
+def test_gateway_node_method_call_endpoint_runs_browser_storage_inventory_runtime(
+    tmp_path,
+) -> None:
+    class FakeBrowserRuntime:
+        def cookies_get(self, *, session: str) -> dict[str, object]:
+            return {"ok": True, "session": session, "cookieCount": 1}
+
+        def storage_get(
+            self,
+            storage_type: str,
+            *,
+            session: str,
+            key: str | None = None,
+        ) -> dict[str, object]:
+            return {"ok": True, "session": session, "type": storage_type, "key": key}
+
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(
+        app_settings,
+        gateway_node_method_service=GatewayNodeMethodService(
+            GatewayNodeRegistry(),
+            browser_runtime_service=FakeBrowserRuntime(),
+        ),
+    )
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        cookies_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "browser.cookies.get",
+                "params": {"session": "parity-browser"},
+            },
+        )
+        storage_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "browser.storage.get",
+                "params": {"session": "parity-browser", "type": "local", "key": "theme"},
+            },
+        )
+
+    assert cookies_response.status_code == 200
+    assert cookies_response.json() == {
+        "ok": True,
+        "session": "parity-browser",
+        "cookieCount": 1,
+    }
+    assert storage_response.status_code == 200
+    assert storage_response.json() == {
+        "ok": True,
+        "session": "parity-browser",
+        "type": "local",
+        "key": "theme",
+    }
+
+
+def test_gateway_node_method_call_endpoint_runs_browser_session_inventory_runtime(
+    tmp_path,
+) -> None:
+    class FakeBrowserRuntime:
+        def session_current(self, *, session: str) -> dict[str, object]:
+            return {"ok": True, "session": session, "currentSession": session}
+
+        def session_list(self, *, session: str) -> dict[str, object]:
+            return {"ok": True, "session": session, "sessionCount": 1}
+
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(
+        app_settings,
+        gateway_node_method_service=GatewayNodeMethodService(
+            GatewayNodeRegistry(),
+            browser_runtime_service=FakeBrowserRuntime(),
+        ),
+    )
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        current_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "browser.session.current",
+                "params": {"session": "parity-browser"},
+            },
+        )
+        list_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "browser.session.list",
+                "params": {"session": "parity-browser"},
+            },
+        )
+
+    assert current_response.status_code == 200
+    assert current_response.json() == {
+        "ok": True,
+        "session": "parity-browser",
+        "currentSession": "parity-browser",
+    }
+    assert list_response.status_code == 200
+    assert list_response.json() == {
+        "ok": True,
+        "session": "parity-browser",
+        "sessionCount": 1,
+    }
+
+
+def test_gateway_node_method_call_endpoint_runs_browser_diff_snapshot_runtime(
+    tmp_path,
+) -> None:
+    class FakeBrowserRuntime:
+        def diff_snapshot(
+            self,
+            *,
+            session: str,
+            selector: str | None = None,
+            compact: bool = False,
+            depth: int | None = None,
+        ) -> dict[str, object]:
+            return {
+                "ok": True,
+                "session": session,
+                "selector": selector,
+                "compact": compact,
+                "depth": depth,
+            }
+
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(
+        app_settings,
+        gateway_node_method_service=GatewayNodeMethodService(
+            GatewayNodeRegistry(),
+            browser_runtime_service=FakeBrowserRuntime(),
+        ),
+    )
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "browser.diff.snapshot",
+                "params": {
+                    "session": "parity-browser",
+                    "selector": "#app",
+                    "compact": True,
+                    "depth": 3,
+                },
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True,
+        "session": "parity-browser",
+        "selector": "#app",
+        "compact": True,
+        "depth": 3,
+    }
+
+
+def test_gateway_node_method_call_endpoint_runs_browser_diff_url_runtime(
+    tmp_path,
+) -> None:
+    class FakeBrowserRuntime:
+        def diff_url(
+            self,
+            url1: str,
+            url2: str,
+            *,
+            session: str,
+            screenshot: bool = False,
+            full_page: bool = False,
+            wait_until: str | None = None,
+            selector: str | None = None,
+            compact: bool = False,
+            depth: int | None = None,
+        ) -> dict[str, object]:
+            return {
+                "ok": True,
+                "session": session,
+                "url1": url1,
+                "url2": url2,
+                "screenshot": screenshot,
+                "fullPage": full_page,
+                "waitUntil": wait_until,
+                "selector": selector,
+                "compact": compact,
+                "depth": depth,
+            }
+
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(
+        app_settings,
+        gateway_node_method_service=GatewayNodeMethodService(
+            GatewayNodeRegistry(),
+            browser_runtime_service=FakeBrowserRuntime(),
+        ),
+    )
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "browser.diff.url",
+                "params": {
+                    "session": "parity-browser",
+                    "url1": "http://127.0.0.1:8884/before",
+                    "url2": "http://127.0.0.1:8884/after",
+                    "screenshot": True,
+                    "fullPage": True,
+                    "waitUntil": "networkidle",
+                    "selector": "#app",
+                    "compact": True,
+                    "depth": 3,
+                },
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True,
+        "session": "parity-browser",
+        "url1": "http://127.0.0.1:8884/before",
+        "url2": "http://127.0.0.1:8884/after",
+        "screenshot": True,
+        "fullPage": True,
+        "waitUntil": "networkidle",
+        "selector": "#app",
+        "compact": True,
+        "depth": 3,
+    }
+
+
+def test_gateway_node_method_call_endpoint_runs_browser_diff_screenshot_runtime(
+    tmp_path,
+) -> None:
+    class FakeBrowserRuntime:
+        def diff_screenshot(
+            self,
+            *,
+            session: str,
+            baseline_path: str,
+            threshold: float | None = None,
+            selector: str | None = None,
+            full_page: bool = False,
+        ) -> dict[str, object]:
+            return {
+                "ok": True,
+                "session": session,
+                "baselinePath": baseline_path,
+                "threshold": threshold,
+                "selector": selector,
+                "fullPage": full_page,
+            }
+
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(
+        app_settings,
+        gateway_node_method_service=GatewayNodeMethodService(
+            GatewayNodeRegistry(),
+            browser_runtime_service=FakeBrowserRuntime(),
+        ),
+    )
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "browser.diff.screenshot",
+                "params": {
+                    "session": "parity-browser",
+                    "baselinePath": "C:/Temp/openzues-browser-parity-baseline.png",
+                    "threshold": 0.2,
+                    "selector": "#app",
+                    "fullPage": True,
+                },
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True,
+        "session": "parity-browser",
+        "baselinePath": "C:/Temp/openzues-browser-parity-baseline.png",
+        "threshold": 0.2,
+        "selector": "#app",
+        "fullPage": True,
+    }
+
+
+def test_gateway_node_method_call_endpoint_runs_browser_download_runtime(
+    tmp_path,
+) -> None:
+    class FakeBrowserRuntime:
+        def download(
+            self,
+            selector: str,
+            *,
+            session: str,
+            filename_hint: str | None = None,
+        ) -> dict[str, object]:
+            return {
+                "ok": True,
+                "session": session,
+                "selector": selector,
+                "filenameHint": filename_hint,
+            }
+
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(
+        app_settings,
+        gateway_node_method_service=GatewayNodeMethodService(
+            GatewayNodeRegistry(),
+            browser_runtime_service=FakeBrowserRuntime(),
+        ),
+    )
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "browser.download",
+                "params": {
+                    "session": "parity-browser",
+                    "selector": "@e4",
+                    "filenameHint": "report.csv",
+                },
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True,
+        "session": "parity-browser",
+        "selector": "@e4",
+        "filenameHint": "report.csv",
+    }
+
+
+def test_gateway_node_method_call_endpoint_runs_browser_upload_runtime(
+    tmp_path,
+) -> None:
+    class FakeBrowserRuntime:
+        def upload(
+            self,
+            selector: str,
+            file_paths: list[str],
+            *,
+            session: str,
+        ) -> dict[str, object]:
+            return {
+                "ok": True,
+                "session": session,
+                "selector": selector,
+                "files": file_paths,
+            }
+
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(
+        app_settings,
+        gateway_node_method_service=GatewayNodeMethodService(
+            GatewayNodeRegistry(),
+            browser_runtime_service=FakeBrowserRuntime(),
+        ),
+    )
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "browser.upload",
+                "params": {
+                    "session": "parity-browser",
+                    "selector": "@e5",
+                    "filePaths": ["C:/Temp/openzues-browser-upload-seed.txt"],
+                },
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True,
+        "session": "parity-browser",
+        "selector": "@e5",
+        "files": ["C:/Temp/openzues-browser-upload-seed.txt"],
+    }
+
+
+def test_gateway_node_method_call_endpoint_runs_browser_auth_metadata_runtime(
+    tmp_path,
+) -> None:
+    class FakeBrowserRuntime:
+        def auth_list(self, *, session: str) -> dict[str, object]:
+            return {"ok": True, "session": session, "profileCount": 1}
+
+        def auth_show(self, name: str, *, session: str) -> dict[str, object]:
+            return {"ok": True, "session": session, "name": name}
+
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(
+        app_settings,
+        gateway_node_method_service=GatewayNodeMethodService(
+            GatewayNodeRegistry(),
+            browser_runtime_service=FakeBrowserRuntime(),
+        ),
+    )
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        list_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "browser.auth.list",
+                "params": {"session": "parity-browser"},
+            },
+        )
+        show_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "browser.auth.show",
+                "params": {"session": "parity-browser", "name": "github"},
+            },
+        )
+
+    assert list_response.status_code == 200
+    assert list_response.json() == {
+        "ok": True,
+        "session": "parity-browser",
+        "profileCount": 1,
+    }
+    assert show_response.status_code == 200
+    assert show_response.json() == {"ok": True, "session": "parity-browser", "name": "github"}
+
+
+def test_gateway_node_method_call_endpoint_runs_browser_act_runtime(tmp_path) -> None:
+    class FakeBrowserRuntime:
+        def act(self, request: dict[str, object], *, session: str) -> dict[str, object]:
+            return {"ok": True, "session": session, "kind": request["kind"]}
+
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(
+        app_settings,
+        gateway_node_method_service=GatewayNodeMethodService(
+            GatewayNodeRegistry(),
+            browser_runtime_service=FakeBrowserRuntime(),
+        ),
+    )
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "browser.act",
+                "params": {
+                    "session": "parity-browser",
+                    "request": {"kind": "wait", "timeMs": 250},
+                },
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True, "session": "parity-browser", "kind": "wait"}
+
+
+def test_gateway_node_method_call_endpoint_runs_browser_status_runtime(tmp_path) -> None:
+    async def fake_status_service() -> dict[str, object]:
+        return {
+            "browser_posture": {
+                "status": "ready",
+                "headline": "Browser control is operator-ready",
+            }
+        }
+
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(
+        app_settings,
+        gateway_node_method_service=GatewayNodeMethodService(
+            GatewayNodeRegistry(),
+            status_service=fake_status_service,
+        ),
+    )
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={"method": "browser.status", "params": {}},
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "ready",
+        "headline": "Browser control is operator-ready",
+    }
+
+
+def test_gateway_node_method_call_endpoint_runs_browser_verify_runtime(tmp_path) -> None:
+    class FakeBrowserRuntime:
+        def verify(self, target: str, *, session: str) -> dict[str, object]:
+            return {
+                "ok": True,
+                "status": "ready",
+                "summary": "url http://127.0.0.1:8884, content visible, no overlay.",
+                "url": target,
+                "session": session,
+            }
+
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(
+        app_settings,
+        gateway_node_method_service=GatewayNodeMethodService(
+            GatewayNodeRegistry(),
+            browser_runtime_service=FakeBrowserRuntime(),
+        ),
+    )
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "browser.verify",
+                "params": {
+                    "url": "http://127.0.0.1:8884",
+                    "session": "parity-browser",
+                },
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True,
+        "status": "ready",
+        "headline": "Browser verification passed",
+        "summary": "url http://127.0.0.1:8884, content visible, no overlay.",
+        "url": "http://127.0.0.1:8884",
+        "session": "parity-browser",
+    }
+
+
+def test_gateway_node_method_call_endpoint_runs_browser_tabs_runtime(tmp_path) -> None:
+    class FakeBrowserRuntime:
+        def tabs(self, *, session: str) -> dict[str, object]:
+            return {
+                "ok": True,
+                "session": session,
+                "tabCount": 1,
+                "tabs": [{"id": "tab-1", "url": "http://127.0.0.1:8884"}],
+            }
+
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(
+        app_settings,
+        gateway_node_method_service=GatewayNodeMethodService(
+            GatewayNodeRegistry(),
+            browser_runtime_service=FakeBrowserRuntime(),
+        ),
+    )
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "browser.tabs",
+                "params": {"session": "parity-browser"},
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True,
+        "session": "parity-browser",
+        "tabCount": 1,
+        "tabs": [{"id": "tab-1", "url": "http://127.0.0.1:8884"}],
+    }
+
+
+def test_gateway_node_method_call_endpoint_runs_browser_profiles_runtime(tmp_path) -> None:
+    class FakeBrowserRuntime:
+        def profiles(self, *, session: str) -> dict[str, object]:
+            return {
+                "ok": True,
+                "session": session,
+                "profileCount": 1,
+                "profiles": [{"name": "openzues", "status": "ready"}],
+            }
+
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(
+        app_settings,
+        gateway_node_method_service=GatewayNodeMethodService(
+            GatewayNodeRegistry(),
+            browser_runtime_service=FakeBrowserRuntime(),
+        ),
+    )
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "browser.profiles",
+                "params": {"session": "parity-browser"},
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True,
+        "session": "parity-browser",
+        "profileCount": 1,
+        "profiles": [{"name": "openzues", "status": "ready"}],
+    }
+
+
+def test_gateway_node_method_call_endpoint_runs_browser_screenshot_runtime(tmp_path) -> None:
+    class FakeBrowserRuntime:
+        def screenshot(self, *, session: str, full_page: bool = False) -> dict[str, object]:
+            return {
+                "ok": True,
+                "session": session,
+                "path": "C:/tmp/openzues-browser.png",
+                "fullPage": full_page,
+            }
+
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(
+        app_settings,
+        gateway_node_method_service=GatewayNodeMethodService(
+            GatewayNodeRegistry(),
+            browser_runtime_service=FakeBrowserRuntime(),
+        ),
+    )
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "browser.screenshot",
+                "params": {"session": "parity-browser", "fullPage": True},
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True,
+        "session": "parity-browser",
+        "path": "C:/tmp/openzues-browser.png",
+        "fullPage": True,
+    }
+
+
+def test_gateway_node_method_call_endpoint_runs_browser_pdf_runtime(tmp_path) -> None:
+    class FakeBrowserRuntime:
+        def pdf(self, *, session: str) -> dict[str, object]:
+            return {
+                "ok": True,
+                "session": session,
+                "path": "C:/tmp/openzues-browser.pdf",
+                "sizeBytes": 123,
+            }
+
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(
+        app_settings,
+        gateway_node_method_service=GatewayNodeMethodService(
+            GatewayNodeRegistry(),
+            browser_runtime_service=FakeBrowserRuntime(),
+        ),
+    )
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "browser.pdf",
+                "params": {"session": "parity-browser"},
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True,
+        "session": "parity-browser",
+        "path": "C:/tmp/openzues-browser.pdf",
+        "sizeBytes": 123,
+    }
 
 
 def test_gateway_node_method_call_endpoint_supports_status() -> None:

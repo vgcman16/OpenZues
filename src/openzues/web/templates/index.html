@@ -724,17 +724,31 @@
                             <h2>Push mission and task events outward</h2>
                           </div>
                           <p class="panel-lede">
-                            Webhook routes can receive mission lifecycle and task launch events.
+                            Webhook and native Slack, Telegram, Discord, or WhatsApp routes
+                            can receive mission/task events or opt into gateway/send and
+                            gateway/poll provider delivery.
                           </p>
                         </div>
 
                         <form id="notification-route-form" class="stack compact-form">
                           <input name="name" type="text" placeholder="Route name" required />
-                          <input name="target" type="text" placeholder="Webhook URL" required />
+                          <select name="kind">
+                            <option value="webhook">Generic webhook</option>
+                            <option value="slack">Slack native route</option>
+                            <option value="telegram">Telegram native route</option>
+                            <option value="discord">Discord native route</option>
+                            <option value="whatsapp">WhatsApp native route</option>
+                          </select>
+                          <input
+                            name="target"
+                            type="text"
+                            placeholder="Webhook URL or provider API target"
+                            required
+                          />
                           <input
                             name="events"
                             type="text"
-                            placeholder="ops/inbox/*, mission/completed, mission/failed, task/*"
+                            placeholder="gateway/send, gateway/poll, ops/inbox/*, mission/completed"
                           />
                           <input
                             name="conversation_channel"
@@ -771,7 +785,7 @@
                           <input
                             name="secret_token"
                             type="password"
-                            placeholder="New secret token (leave blank to attach existing)"
+                            placeholder="Secret token, bot token, or access token"
                           />
                           <label class="checkbox">
                             <input name="enabled" type="checkbox" checked />

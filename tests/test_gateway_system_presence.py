@@ -105,7 +105,10 @@ def test_gateway_system_presence_self_entry_includes_gateway_metadata(monkeypatc
                 "scopes": [],
                 "tags": ["gateway", "self"],
                 "ts": 1_700_000_000_000,
-                "text": "Gateway: gateway-host (192.168.0.10) \u00b7 app 0.1.0 \u00b7 mode backend \u00b7 reason self",
+                "text": (
+                    "Gateway: gateway-host (192.168.0.10) \u00b7 app 0.1.0 "
+                    "\u00b7 mode backend \u00b7 reason self"
+                ),
             }
         ]
     }
@@ -188,7 +191,10 @@ def test_gateway_system_presence_self_entry_falls_back_to_hostname_when_ip_looku
                 "scopes": [],
                 "tags": ["gateway", "self"],
                 "ts": 1_700_000_000_000,
-                "text": "Gateway: gateway-host (gateway-host) \u00b7 mode backend \u00b7 reason self",
+                "text": (
+                    "Gateway: gateway-host (gateway-host) \u00b7 mode backend "
+                    "\u00b7 reason self"
+                ),
             }
         ]
     }

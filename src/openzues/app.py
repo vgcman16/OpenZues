@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
+import hashlib
 import json
 import logging
 import os
@@ -17,7 +20,7 @@ from typing import Any, Literal, cast
 
 from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -154,7 +157,20 @@ from openzues.services.followups import (
     operator_ready_handoff_missions,
 )
 from openzues.services.gateway_agents import GatewayAgentsService
+from openzues.services.gateway_apns import GatewayApnsPushService
 from openzues.services.gateway_bootstrap import GatewayBootstrapService
+from openzues.services.gateway_canvas_a2ui import (
+    A2UI_PATH,
+    CANVAS_WS_PATH,
+    get_canvas_a2ui_asset,
+    inject_canvas_live_reload,
+)
+from openzues.services.gateway_canvas_documents import (
+    CANVAS_HOST_PATH,
+    resolve_canvas_host_http_path_to_local_path,
+    resolve_canvas_http_path_to_local_path,
+)
+from openzues.services.gateway_canvas_live_reload import CanvasLiveReloadWatcher
 from openzues.services.gateway_capability import GatewayCapabilityService
 from openzues.services.gateway_channels import GatewayChannelsService
 from openzues.services.gateway_commands import GatewayCommandsService
@@ -1645,6 +1661,196 @@ def build_operator_status_payload(
     }
 
 
+_GATEWAY_ATTACHMENT_PREVIEW_CHARS = 2_048
+_GATEWAY_ATTACHMENT_ENVELOPE_CHARS = 16_000
+_GATEWAY_ATTACHMENT_MAX_BYTES = 5_000_000
+_GATEWAY_ATTACHMENT_EXTENSIONS_BY_MIME = {
+    "image/gif": "gif",
+    "image/heic": "heic",
+    "image/heif": "heif",
+    "image/jpeg": "jpg",
+    "image/png": "png",
+    "image/webp": "webp",
+}
+
+
+def _gateway_attachment_text_value(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    text = value.replace("\x00", "\\0").strip()
+    return text or None
+
+
+def _gateway_attachment_first_text(
+    attachment: dict[str, object],
+    keys: tuple[str, ...],
+) -> str | None:
+    for key in keys:
+        text = _gateway_attachment_text_value(attachment.get(key))
+        if text is not None:
+            return text
+    source = attachment.get("source")
+    if isinstance(source, dict):
+        for key in keys:
+            text = _gateway_attachment_text_value(source.get(key))
+            if text is not None:
+                return text
+    return None
+
+
+def _gateway_attachment_content_preview(attachment: dict[str, object]) -> str | None:
+    stored_preview = _gateway_attachment_stored_preview(attachment)
+    if stored_preview is not None:
+        return stored_preview
+    content = _gateway_attachment_first_text(
+        attachment,
+        ("content", "data", "url", "path", "filePath"),
+    )
+    if content is None:
+        return None
+    if len(content) <= _GATEWAY_ATTACHMENT_PREVIEW_CHARS:
+        return content
+    omitted = len(content) - _GATEWAY_ATTACHMENT_PREVIEW_CHARS
+    return f"{content[:_GATEWAY_ATTACHMENT_PREVIEW_CHARS]}... [truncated {omitted} chars]"
+
+
+def _gateway_attachment_stored_preview(attachment: dict[str, object]) -> str | None:
+    media_ref = _gateway_attachment_text_value(attachment.get("openzuesMediaRef"))
+    saved_path = _gateway_attachment_text_value(attachment.get("openzuesSavedPath"))
+    digest = _gateway_attachment_text_value(attachment.get("openzuesSha256"))
+    byte_length = attachment.get("openzuesByteLength")
+    if media_ref is None or saved_path is None or digest is None:
+        return None
+    parts = [f"mediaRef={media_ref}", f"savedPath={saved_path}", f"sha256={digest}"]
+    if isinstance(byte_length, int) and byte_length >= 0:
+        parts.append(f"bytes={byte_length}")
+    return ", ".join(parts)
+
+
+def _gateway_attachment_base64_value(attachment: dict[str, object]) -> str | None:
+    content = _gateway_attachment_text_value(attachment.get("content"))
+    if content is not None:
+        return content
+    data = _gateway_attachment_text_value(attachment.get("data"))
+    if data is not None:
+        return data
+    source = attachment.get("source")
+    if not isinstance(source, dict):
+        return None
+    source_type = _gateway_attachment_text_value(source.get("type"))
+    if source_type != "base64":
+        return None
+    return _gateway_attachment_text_value(source.get("data"))
+
+
+def _decode_gateway_attachment_base64(value: str) -> bytes | None:
+    candidate = value.strip()
+    if candidate.lower().startswith("data:") and "," in candidate:
+        candidate = candidate.split(",", 1)[1].strip()
+    if not candidate:
+        return None
+    padded = f"{candidate}{'=' * (-len(candidate) % 4)}"
+    try:
+        decoded = base64.b64decode(padded, validate=True)
+    except (binascii.Error, ValueError):
+        return None
+    if not decoded or len(decoded) > _GATEWAY_ATTACHMENT_MAX_BYTES:
+        return None
+    return decoded
+
+
+def _gateway_attachment_extension(attachment: dict[str, object]) -> str:
+    name = _gateway_attachment_first_text(attachment, ("fileName", "filename", "name"))
+    if name is not None:
+        suffix = Path(name).suffix.lower().lstrip(".")
+        if suffix and re.fullmatch(r"[a-z0-9]{1,8}", suffix):
+            return suffix
+    mime = _gateway_attachment_first_text(
+        attachment,
+        ("mimeType", "mime_type", "media_type"),
+    )
+    if mime is None:
+        return "bin"
+    return _GATEWAY_ATTACHMENT_EXTENSIONS_BY_MIME.get(mime.lower(), "bin")
+
+
+def _persist_gateway_chat_attachments(
+    *,
+    data_dir: Path,
+    attachments: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    persisted: list[dict[str, object]] = []
+    storage_dir = data_dir / "gateway-attachments" / "inbound"
+    for attachment in attachments:
+        base64_value = _gateway_attachment_base64_value(attachment)
+        decoded = (
+            _decode_gateway_attachment_base64(base64_value)
+            if base64_value is not None
+            else None
+        )
+        if decoded is None:
+            persisted.append(dict(attachment))
+            continue
+
+        digest = hashlib.sha256(decoded).hexdigest()
+        stored_path = storage_dir / f"{digest}.{_gateway_attachment_extension(attachment)}"
+        stored_path.parent.mkdir(parents=True, exist_ok=True)
+        if not stored_path.exists():
+            stored_path.write_bytes(decoded)
+
+        stored_attachment = dict(attachment)
+        stored_attachment["openzuesMediaRef"] = f"media://inbound/{digest}"
+        stored_attachment["openzuesSavedPath"] = str(stored_path)
+        stored_attachment["openzuesSha256"] = digest
+        stored_attachment["openzuesByteLength"] = len(decoded)
+        persisted.append(stored_attachment)
+    return persisted
+
+
+def _format_gateway_attachment_prompt(
+    message: str,
+    attachments: list[dict[str, object]],
+    *,
+    channel: str | None = None,
+    to: str | None = None,
+    node_id: str | None = None,
+) -> str:
+    lines = [message.strip(), "", "Gateway attachments:"]
+    source_parts = []
+    if node_id:
+        source_parts.append(f"node={node_id}")
+    if channel:
+        source_parts.append(f"channel={channel}")
+    if to:
+        source_parts.append(f"to={to}")
+    if source_parts:
+        lines.append(f"- source: {', '.join(source_parts)}")
+    for index, attachment in enumerate(attachments, start=1):
+        kind = _gateway_attachment_first_text(attachment, ("type",)) or "attachment"
+        mime = _gateway_attachment_first_text(
+            attachment,
+            ("mimeType", "mime_type", "media_type"),
+        )
+        name = _gateway_attachment_first_text(
+            attachment,
+            ("fileName", "filename", "name"),
+        )
+        details = [f"type={kind}"]
+        if mime is not None:
+            details.append(f"mime={mime}")
+        if name is not None:
+            details.append(f"name={name}")
+        lines.append(f"- Attachment {index}: {', '.join(details)}")
+        preview = _gateway_attachment_content_preview(attachment)
+        if preview is not None:
+            lines.append(f"  content: {preview}")
+    envelope = "\n".join(lines)
+    if len(envelope) <= _GATEWAY_ATTACHMENT_ENVELOPE_CHARS:
+        return envelope
+    omitted = len(envelope) - _GATEWAY_ATTACHMENT_ENVELOPE_CHARS
+    return f"{envelope[:_GATEWAY_ATTACHMENT_ENVELOPE_CHARS]}\n[truncated {omitted} chars]"
+
+
 def create_app(
     app_settings: Settings | None = None,
     *,
@@ -1674,6 +1880,11 @@ def create_app(
     configure_ecc_catalog(active_settings.ecc_source_path)
     active_database = database or Database(active_settings.effective_db_path)
     active_hub = hub or BroadcastHub()
+    active_canvas_live_reload_hub = BroadcastHub()
+    active_canvas_live_reload_watcher = CanvasLiveReloadWatcher(
+        state_dir=active_settings.data_dir,
+        publish_reload=active_canvas_live_reload_hub.publish,
+    )
     active_desktop_service = desktop_service or CodexDesktopService(
         approval_policy=active_settings.desktop_approval_policy,
         sandbox_mode=active_settings.desktop_sandbox_mode,
@@ -1698,6 +1909,10 @@ def create_app(
     )
     active_gateway_node_pairing_service = GatewayNodePairingService(active_database)
     active_gateway_identity_service = GatewayIdentityService(active_settings.data_dir)
+    active_gateway_apns_push_service = GatewayApnsPushService(
+        active_settings,
+        gateway_identity_service=active_gateway_identity_service,
+    )
     active_gateway_talk_mode_service = GatewayTalkModeService(active_settings.data_dir)
     active_gateway_tts_service = GatewayTtsService(active_settings.data_dir)
     active_gateway_tts_runtime_service = GatewayTtsRuntimeService(
@@ -1738,6 +1953,8 @@ def create_app(
         pairing_service=active_gateway_node_pairing_service,
         talk_mode_service=active_gateway_talk_mode_service,
         voicewake_service=active_gateway_voicewake_service,
+        node_allow_commands=active_settings.gateway_node_allow_commands,
+        node_deny_commands=active_settings.gateway_node_deny_commands,
     )
 
     async def load_gateway_status() -> dict[str, object]:
@@ -1766,6 +1983,7 @@ def create_app(
         cron_webhook_url=active_settings.cron_webhook_url,
         cron_webhook_token=active_settings.cron_webhook_token,
         outbound_runtime_service=GatewayOutboundRuntimeService(),
+        canvas_state_dir=active_settings.data_dir,
     )
     active_setup_service = SetupService(
         active_database,
@@ -1876,13 +2094,23 @@ def create_app(
 
             def run_pending_immediate_wakes() -> None:
                 nonlocal pending_immediate_wake_timer
+                retry_immediate_wake = False
                 try:
                     asyncio.run(dispatch_pending_immediate_wakes())
                 except Exception:
+                    retry_immediate_wake = True
+                    active_control_chat_service.clear_wake_retry_state()
                     logger.exception("Immediate wake dispatch failed")
                 finally:
                     with pending_immediate_wake_lock:
                         pending_immediate_wake_timer = None
+                        if retry_immediate_wake and attention_queue_runtime_enabled:
+                            pending_immediate_wake_timer = threading.Timer(
+                                immediate_wake_coalesce_seconds,
+                                run_pending_immediate_wakes,
+                            )
+                            pending_immediate_wake_timer.daemon = True
+                            pending_immediate_wake_timer.start()
 
             pending_immediate_wake_timer = threading.Timer(
                 immediate_wake_coalesce_seconds,
@@ -1916,11 +2144,21 @@ def create_app(
     )
     active_control_chat_service.set_wake_service(active_gateway_wake_service)
     active_ops_mesh_service.wake_service = active_gateway_wake_service
-    if active_ops_mesh_service.outbound_runtime_service is None:
-        active_ops_mesh_service.outbound_runtime_service = GatewayOutboundRuntimeService()
-    active_ops_mesh_service.outbound_runtime_service.bind_session_deliverer(
-        active_control_chat_service.append_session_assistant_message
+    outbound_runtime_service = getattr(
+        active_ops_mesh_service,
+        "outbound_runtime_service",
+        None,
     )
+    if outbound_runtime_service is None and hasattr(
+        active_ops_mesh_service,
+        "outbound_runtime_service",
+    ):
+        outbound_runtime_service = GatewayOutboundRuntimeService()
+        active_ops_mesh_service.outbound_runtime_service = outbound_runtime_service
+    if outbound_runtime_service is not None:
+        outbound_runtime_service.bind_session_deliverer(
+            active_control_chat_service.append_session_assistant_message
+        )
     active_ops_mesh_service.session_delivery_service = (
         active_control_chat_service.append_session_assistant_message
     )
@@ -1933,8 +2171,10 @@ def create_app(
         thinking: str | None,
         deliver: bool | None,
         timeout_ms: int | None,
+        channel: str | None = None,
+        to: str | None = None,
     ) -> dict[str, object]:
-        del thinking, deliver, timeout_ms
+        del thinking, deliver, timeout_ms, channel, to
         dashboard_view = await build_dashboard()
         await active_control_chat_service.submit(
             message,
@@ -1942,6 +2182,41 @@ def create_app(
             session_key=session_key,
         )
         return {"runId": idempotency_key, "status": "ok"}
+
+    async def submit_gateway_chat_attachment_message(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+        attachments: list[dict[str, object]],
+        channel: str | None = None,
+        to: str | None = None,
+        node_id: str | None = None,
+    ) -> dict[str, object]:
+        persisted_attachments = _persist_gateway_chat_attachments(
+            data_dir=active_settings.data_dir,
+            attachments=attachments,
+        )
+        attachment_prompt = _format_gateway_attachment_prompt(
+            message,
+            persisted_attachments,
+            channel=channel,
+            to=to,
+            node_id=node_id,
+        )
+        return await submit_gateway_chat_message(
+            session_key=session_key,
+            message=attachment_prompt,
+            idempotency_key=idempotency_key,
+            thinking=thinking,
+            deliver=deliver,
+            timeout_ms=timeout_ms,
+            channel=channel,
+            to=to,
+        )
 
     async def abort_gateway_chat_run(
         *,
@@ -2011,6 +2286,9 @@ def create_app(
             send_channel_message_service=active_ops_mesh_service.send_direct_channel_message,
             send_channel_poll_service=active_ops_mesh_service.send_direct_channel_poll,
             chat_send_service=submit_gateway_chat_message,
+            chat_attachment_send_service=submit_gateway_chat_attachment_message,
+            send_apns_push_service=active_gateway_apns_push_service.send_push,
+            send_apns_wake_service=active_gateway_apns_push_service.send_wake,
             chat_abort_service=abort_gateway_chat_run,
             create_task_blueprint=getattr(active_ops_mesh_service, "create_task_blueprint", None),
             run_task_blueprint_now=active_ops_mesh_service.run_task_blueprint_now,
@@ -2033,6 +2311,8 @@ def create_app(
             sync=active_gateway_node_service.sync,
             wake_node=active_gateway_node_service.wake_node,
             probe_secret=active_vault_service.probe_secret,
+            node_allow_commands=active_settings.gateway_node_allow_commands,
+            node_deny_commands=active_settings.gateway_node_deny_commands,
         )
     active_control_plane_lease = control_plane_lease or ControlPlaneLease(
         active_settings.data_dir / "control-plane.lock"
@@ -2064,6 +2344,7 @@ def create_app(
         attention_queue_started = False
         hermes_platform_started = False
         runtime_update_started = False
+        canvas_live_reload_started = False
         try:
             await active_manager.load(auto_connect=is_control_plane_owner)
             if is_control_plane_owner:
@@ -2086,9 +2367,13 @@ def create_app(
                 hermes_platform_started = True
                 await active_runtime_update_service.start()
                 runtime_update_started = True
+                await active_canvas_live_reload_watcher.start()
+                canvas_live_reload_started = True
             yield
         finally:
             if is_control_plane_owner:
+                if canvas_live_reload_started:
+                    await active_canvas_live_reload_watcher.close()
                 if runtime_update_started:
                     await active_runtime_update_service.close()
                 if hermes_platform_started:
@@ -2118,11 +2403,14 @@ def create_app(
     fastapi_app.state.manager = active_manager
     fastapi_app.state.mission_service = active_mission_service
     fastapi_app.state.control_chat_service = active_control_chat_service
+    fastapi_app.state.canvas_live_reload_hub = active_canvas_live_reload_hub
+    fastapi_app.state.canvas_live_reload_watcher = active_canvas_live_reload_watcher
     fastapi_app.state.ops_mesh_service = active_ops_mesh_service
     fastapi_app.state.onboarding_service = active_onboarding_service
     fastapi_app.state.gateway_capability_service = active_gateway_capability_service
     fastapi_app.state.gateway_node_service = active_gateway_node_service
     fastapi_app.state.gateway_node_method_service = active_gateway_node_method_service
+    fastapi_app.state.gateway_identity_service = active_gateway_identity_service
     fastapi_app.state.recall_service = active_recall_service
     fastapi_app.state.hermes_platform_service = active_hermes_platform_service
     fastapi_app.state.gateway_bootstrap_service = active_gateway_bootstrap_service
@@ -2859,6 +3147,113 @@ def create_app(
     @fastapi_app.get("/favicon.ico", include_in_schema=False)
     async def favicon() -> RedirectResponse:
         return RedirectResponse(url="/static/favicon.svg", status_code=307)
+
+    def canvas_asset_response(local_path: Path) -> Response:
+        if local_path.suffix.lower() not in {".html", ".htm"}:
+            return FileResponse(local_path)
+        try:
+            html = local_path.read_text(encoding="utf-8")
+        except OSError as exc:
+            raise HTTPException(status_code=404, detail="canvas asset not found") from exc
+        return Response(
+            content=inject_canvas_live_reload(html),
+            media_type="text/html; charset=utf-8",
+        )
+
+    def canvas_a2ui_asset_response(asset_path: str, method: str) -> Response:
+        asset = get_canvas_a2ui_asset(asset_path)
+        if asset is None:
+            raise HTTPException(status_code=404, detail="a2ui asset not found")
+        content = b"" if method == "HEAD" else asset.content
+        return Response(
+            content=content,
+            media_type=asset.content_type,
+            headers={"Cache-Control": "no-store"},
+        )
+
+    def canvas_live_reload_upgrade_response() -> Response:
+        return Response(
+            content="upgrade required",
+            status_code=426,
+            media_type="text/plain; charset=utf-8",
+        )
+
+    def canvas_http_asset_response(request_path: str) -> Response:
+        local_path = resolve_canvas_http_path_to_local_path(
+            request_path,
+            state_dir=active_settings.data_dir,
+        )
+        if local_path is None:
+            local_path = resolve_canvas_host_http_path_to_local_path(
+                request_path,
+                state_dir=active_settings.data_dir,
+            )
+        if local_path is None or not local_path.is_file():
+            raise HTTPException(status_code=404, detail="canvas asset not found")
+        return canvas_asset_response(local_path)
+
+    def canvas_capability_is_active(capability: str) -> bool:
+        token = str(capability or "").strip()
+        if not token:
+            return False
+        now_ms = int(datetime.now(UTC).timestamp() * 1000)
+        for session in active_gateway_node_service.registry.list_connected():
+            expires_at_ms = session.canvas_capability_expires_at_ms
+            if session.canvas_capability != token:
+                continue
+            if isinstance(expires_at_ms, bool) or not isinstance(expires_at_ms, int):
+                continue
+            if expires_at_ms > now_ms:
+                return True
+        return False
+
+    def require_canvas_capability(capability: str) -> None:
+        if not canvas_capability_is_active(capability):
+            raise HTTPException(status_code=401, detail="canvas capability unauthorized")
+
+    @fastapi_app.api_route("/__openclaw__/a2ui", methods=["GET", "HEAD"], include_in_schema=False)
+    @fastapi_app.api_route(
+        "/__openclaw__/a2ui/{asset_path:path}",
+        methods=["GET", "HEAD"],
+        include_in_schema=False,
+    )
+    async def canvas_a2ui_asset(request: Request, asset_path: str = "") -> Response:
+        return canvas_a2ui_asset_response(asset_path, request.method)
+
+    @fastapi_app.get("/__openclaw__/ws", include_in_schema=False)
+    async def canvas_live_reload_requires_upgrade() -> Response:
+        return canvas_live_reload_upgrade_response()
+
+    @fastapi_app.api_route(
+        "/__openclaw__/cap/{capability}/{scoped_path:path}",
+        methods=["GET", "HEAD"],
+        include_in_schema=False,
+    )
+    async def scoped_canvas_capability_asset(
+        capability: str,
+        scoped_path: str,
+        request: Request,
+    ) -> Response:
+        require_canvas_capability(capability)
+        request_path = f"/{scoped_path.lstrip('/')}"
+        if request_path == CANVAS_WS_PATH:
+            return canvas_live_reload_upgrade_response()
+        if request_path == A2UI_PATH or request_path.startswith(f"{A2UI_PATH}/"):
+            asset_path = request_path[len(A2UI_PATH) :].lstrip("/")
+            return canvas_a2ui_asset_response(asset_path, request.method)
+        if request_path == CANVAS_HOST_PATH or request_path.startswith(f"{CANVAS_HOST_PATH}/"):
+            return canvas_http_asset_response(request_path)
+        raise HTTPException(status_code=404, detail="canvas scoped asset not found")
+
+    @fastapi_app.get("/__openclaw__/canvas/documents/{document_path:path}")
+    async def canvas_document_asset(document_path: str, request: Request) -> Response:
+        del document_path
+        return canvas_http_asset_response(request.url.path)
+
+    @fastapi_app.get("/__openclaw__/canvas/{asset_path:path}", include_in_schema=False)
+    async def canvas_host_asset(asset_path: str, request: Request) -> Response:
+        del asset_path
+        return canvas_http_asset_response(request.url.path)
 
     @fastapi_app.get(
         CONTROL_UI_BOOTSTRAP_CONFIG_PATH,
@@ -3802,6 +4197,28 @@ def create_app(
                     await websocket.send_text(json.dumps(event))
             except WebSocketDisconnect:
                 return
+
+    async def stream_canvas_live_reload_events(websocket: WebSocket) -> None:
+        await websocket.accept()
+        async with active_canvas_live_reload_hub.subscribe() as queue:
+            try:
+                while True:
+                    event = await queue.get()
+                    if event.get("type") == "canvas/reload":
+                        await websocket.send_text("reload")
+            except WebSocketDisconnect:
+                return
+
+    @fastapi_app.websocket("/__openclaw__/ws")
+    async def canvas_live_reload_events(websocket: WebSocket) -> None:
+        await stream_canvas_live_reload_events(websocket)
+
+    @fastapi_app.websocket("/__openclaw__/cap/{capability}/__openclaw__/ws")
+    async def scoped_canvas_live_reload_events(websocket: WebSocket, capability: str) -> None:
+        if not canvas_capability_is_active(capability):
+            await websocket.close(code=1008)
+            return
+        await stream_canvas_live_reload_events(websocket)
 
     return fastapi_app
 

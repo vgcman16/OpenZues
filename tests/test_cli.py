@@ -1264,6 +1264,59 @@ def test_routes_list_json_surfaces_saved_notification_routes(tmp_path, monkeypat
     assert payload[0]["conversation_target"]["peer_id"] == "deploy-room"
 
 
+def test_routes_create_command_productizes_native_provider_routes(tmp_path, monkeypatch) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch)
+
+    result = runner.invoke(
+        app,
+        [
+            "routes",
+            "create",
+            "--name",
+            "WhatsApp Native Gateway",
+            "--kind",
+            "whatsapp",
+            "--target",
+            "https://graph.facebook.com/v20.0/123456789",
+            "--conversation-channel",
+            "whatsapp",
+            "--conversation-account",
+            "wa-business",
+            "--conversation-peer-kind",
+            "direct",
+            "--conversation-peer-id",
+            "direct:+15551234567",
+            "--secret-token",
+            "wa-access-token",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["name"] == "WhatsApp Native Gateway"
+    assert payload["kind"] == "whatsapp"
+    assert payload["target"] == "https://graph.facebook.com/v20.0/123456789"
+    assert payload["events"] == ["gateway/send", "gateway/poll"]
+    conversation_target = payload["conversation_target"]
+    assert conversation_target["channel"] == "whatsapp"
+    assert conversation_target["account_id"] == "wa-business"
+    assert conversation_target["peer_kind"] == "direct"
+    assert conversation_target["peer_id"] == "direct:+15551234567"
+    assert "direct:+15551234567" in conversation_target["summary"]
+    assert payload["has_secret"] is True
+    assert payload["secret_preview"] == "****oken"
+
+    settings = Settings(data_dir=data_dir, db_path=data_dir / "openzues.db")
+    database = Database(settings.db_path)
+    asyncio.run(database.initialize())
+    routes = asyncio.run(database.list_notification_routes())
+    assert len(routes) == 1
+    assert routes[0]["kind"] == "whatsapp"
+    assert routes[0]["events"] == ["gateway/send", "gateway/poll"]
+
+
 def test_routes_deliveries_json_surfaces_saved_outbound_deliveries(tmp_path, monkeypatch) -> None:
     data_dir = tmp_path / "data"
     _bootstrap_cli_workspace(tmp_path, monkeypatch)

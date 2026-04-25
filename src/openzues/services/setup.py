@@ -74,6 +74,13 @@ _DEFAULT_SETUP_MODEL = "gpt-5.4"
 _DEFAULT_SETUP_MAX_TURNS = 4
 
 
+def _normalize_setup_instance_mode(value: object) -> str:
+    instance_mode = _text_or_none(value) or _DEFAULT_SETUP_INSTANCE_MODE
+    if instance_mode not in {"quick_connect_desktop", "create_desktop", "existing"}:
+        return _DEFAULT_SETUP_INSTANCE_MODE
+    return instance_mode
+
+
 def _has_substantive_setup_wizard_state(payload: dict[str, Any]) -> bool:
     if _normalize_path(_text_or_none(payload.get("project_path"))) is not None:
         return True
@@ -258,9 +265,7 @@ class SetupService:
                 else "Local mode is ready to create or quick-connect a lane, "
                 "then save the first recurring task."
             )
-            instance_mode = str(stored.get("instance_mode") or "quick_connect_desktop")
-            if instance_mode not in {"quick_connect_desktop", "create_desktop", "existing"}:
-                instance_mode = "quick_connect_desktop"
+            instance_mode = _normalize_setup_instance_mode(stored.get("instance_mode"))
 
         updated_at = stored.get("updated_at")
         conversation_target = stored.get("conversation_target")
@@ -348,6 +353,15 @@ class SetupService:
                 merged["instance_id"] = None
             if mode_changed_to_remote and "instance_name" not in update_payload:
                 merged["instance_name"] = _DEFAULT_SETUP_INSTANCE_NAME
+        else:
+            if previous_mode == "remote":
+                if "instance_mode" not in update_payload:
+                    merged["instance_mode"] = _DEFAULT_SETUP_INSTANCE_MODE
+                if "instance_id" not in update_payload:
+                    merged["instance_id"] = None
+                if "instance_name" not in update_payload:
+                    merged["instance_name"] = _DEFAULT_SETUP_INSTANCE_NAME
+            merged["instance_mode"] = _normalize_setup_instance_mode(merged.get("instance_mode"))
         merged["flow"] = flow
         merged["project_path"] = _normalize_path(
             merged.get("project_path") if isinstance(merged.get("project_path"), str) else None

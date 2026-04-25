@@ -24,6 +24,7 @@ _CALL_LOG_COMMANDS = ("callLog.search",)
 _REMINDERS_COMMANDS = ("reminders.list",)
 _PHOTOS_COMMANDS = ("photos.latest",)
 _MOTION_COMMANDS = ("motion.activity", "motion.pedometer")
+_SCREEN_COMMANDS = ("screen.snapshot",)
 _IOS_SYSTEM_COMMANDS = ("system.notify",)
 _SYSTEM_COMMANDS = (
     "system.run.prepare",
@@ -77,7 +78,9 @@ _PLATFORM_DEFAULTS: dict[str, tuple[str, ...]] = {
         *_PHOTOS_COMMANDS,
         *_MOTION_COMMANDS,
         *_SYSTEM_COMMANDS,
+        *_SCREEN_COMMANDS,
     ),
+    "desktop": _SYSTEM_COMMANDS,
     "linux": _SYSTEM_COMMANDS,
     "windows": _SYSTEM_COMMANDS,
     "unknown": _UNKNOWN_PLATFORM_COMMANDS,
@@ -87,6 +90,7 @@ _PLATFORM_PREFIX_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("ios", ("ios",)),
     ("android", ("android",)),
     ("macos", ("mac", "darwin")),
+    ("desktop", ("desktop",)),
     ("windows", ("win",)),
     ("linux", ("linux",)),
 )

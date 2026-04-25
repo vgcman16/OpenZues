@@ -37,7 +37,10 @@ class _FakePairingDatabase:
         request_id: str,
     ) -> tuple[dict[str, object], bool]:
         persisted_request_id = self._request_ids_by_node_id.get(node_id, request_id)
-        created = persisted_request_id == request_id and persisted_request_id not in self._rows_by_request_id
+        created = (
+            persisted_request_id == request_id
+            and persisted_request_id not in self._rows_by_request_id
+        )
         existing = self._rows_by_request_id.get(persisted_request_id, {})
         row = {
             "request_id": persisted_request_id,

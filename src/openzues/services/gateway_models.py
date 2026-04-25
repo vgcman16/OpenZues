@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -54,6 +54,13 @@ class _ConfiguredModelMetadata:
     known_models: list[dict[str, Any]]
 
 
+@dataclass(frozen=True, slots=True)
+class _ConfiguredModelAllowlist:
+    allow_any: bool
+    allowed_keys: frozenset[tuple[str | None, str]]
+    synthetic_entries: tuple[dict[str, Any], ...]
+
+
 class GatewayModelsService:
     def __init__(
         self,
@@ -66,10 +73,14 @@ class GatewayModelsService:
         entries: list[dict[str, Any]] = []
         indexes: dict[tuple[str | None, str], int] = {}
         has_explicit_default = False
+        allow_any_catalog = self._list_instance_views is None
+        saw_instance = False
 
         if self._list_instance_views is not None:
             for instance in await self._list_instance_views():
+                saw_instance = True
                 configured_metadata = _build_configured_model_metadata(instance.config)
+                instance_entries: list[dict[str, Any]] = []
                 for raw_entry in instance.models:
                     normalized = _normalize_model_entry(
                         raw_entry,
@@ -77,9 +88,7 @@ class GatewayModelsService:
                     )
                     if normalized is None:
                         continue
-                    _upsert_model(entries, indexes, normalized)
-                    if normalized.get("isDefault") is True:
-                        has_explicit_default = True
+                    instance_entries.append(normalized)
                 configured_models = _normalize_configured_model_entries(
                     instance.config,
                     known_models=[
@@ -90,13 +99,34 @@ class GatewayModelsService:
                     ],
                     configured_metadata=configured_metadata,
                 )
-                for configured_model in configured_models:
-                    _upsert_model(entries, indexes, configured_model)
-                    if configured_model.get("isDefault") is True:
+                instance_entries.extend(configured_models)
+                allowlist = _build_configured_model_allowlist(
+                    instance.config,
+                    known_models=[
+                        *instance.models,
+                        *configured_metadata.known_models,
+                        *instance_entries,
+                        *entries,
+                        *_DEFAULT_MODELS,
+                    ],
+                    catalog_entries=[*instance_entries, *entries],
+                    configured_metadata=configured_metadata,
+                )
+                if allowlist.allow_any:
+                    allow_any_catalog = True
+                else:
+                    instance_entries = _filter_allowed_model_entries(
+                        instance_entries,
+                        allowlist=allowlist,
+                    )
+                for instance_entry in instance_entries:
+                    _upsert_model(entries, indexes, instance_entry)
+                    if instance_entry.get("isDefault") is True:
                         has_explicit_default = True
 
-        for raw_entry in (_FALLBACK_MODELS if has_explicit_default else _DEFAULT_MODELS):
-            _upsert_model(entries, indexes, dict(raw_entry))
+        if allow_any_catalog or not saw_instance:
+            for raw_entry in (_FALLBACK_MODELS if has_explicit_default else _DEFAULT_MODELS):
+                _upsert_model(entries, indexes, dict(raw_entry))
 
         entries.sort(key=_model_sort_key)
         return {"models": entries}
@@ -400,7 +430,7 @@ def _normalize_string_list(value: object) -> list[str] | None:
 
 def _infer_unique_provider_for_model(
     model_id: str,
-    candidates: list[object],
+    candidates: Sequence[object],
 ) -> str | None:
     normalized_model_id = model_id.casefold()
     providers: set[str] = set()
@@ -425,7 +455,7 @@ def _resolve_known_model_name(
     *,
     provider: str | None,
     model_id: str,
-    known_models: list[object],
+    known_models: Sequence[object],
 ) -> str | None:
     normalized_model_id = model_id.casefold()
     fallback_name: str | None = None
@@ -547,6 +577,213 @@ def _build_configured_model_metadata(value: object) -> _ConfiguredModelMetadata:
         alias_ref_by_alias_key=alias_ref_by_alias_key,
         known_models=known_models,
     )
+
+
+def _configured_model_config_sources(value: object) -> list[object]:
+    if not isinstance(value, Mapping):
+        return []
+    sources: list[object] = []
+    direct_model = value.get("model")
+    if direct_model is not None:
+        sources.append(direct_model)
+    raw_agents = value.get("agents")
+    if not isinstance(raw_agents, Mapping):
+        return sources
+    raw_defaults = raw_agents.get("defaults")
+    if not isinstance(raw_defaults, Mapping):
+        return sources
+    default_model = raw_defaults.get("model")
+    if default_model is not None:
+        sources.append(default_model)
+    return sources
+
+
+def _build_configured_model_allowlist(
+    value: object,
+    *,
+    known_models: list[object],
+    catalog_entries: list[dict[str, Any]],
+    configured_metadata: _ConfiguredModelMetadata | None = None,
+) -> _ConfiguredModelAllowlist:
+    if not isinstance(value, Mapping):
+        return _ConfiguredModelAllowlist(
+            allow_any=True,
+            allowed_keys=frozenset(),
+            synthetic_entries=(),
+        )
+
+    raw_agents = value.get("agents")
+    if not isinstance(raw_agents, Mapping):
+        return _ConfiguredModelAllowlist(
+            allow_any=True,
+            allowed_keys=frozenset(),
+            synthetic_entries=(),
+        )
+    raw_defaults = raw_agents.get("defaults")
+    if not isinstance(raw_defaults, Mapping):
+        return _ConfiguredModelAllowlist(
+            allow_any=True,
+            allowed_keys=frozenset(),
+            synthetic_entries=(),
+        )
+    raw_allowlist = raw_defaults.get("models")
+    if not isinstance(raw_allowlist, Mapping):
+        return _ConfiguredModelAllowlist(
+            allow_any=True,
+            allowed_keys=frozenset(),
+            synthetic_entries=(),
+        )
+
+    allowlist_refs = _extract_configured_allowlist_refs(
+        value,
+        configured_metadata=configured_metadata,
+    )
+    if not allowlist_refs:
+        return _ConfiguredModelAllowlist(
+            allow_any=True,
+            allowed_keys=frozenset(),
+            synthetic_entries=(),
+        )
+
+    allowed_keys: set[tuple[str | None, str]] = set()
+    synthetic_entries: list[dict[str, Any]] = []
+
+    for raw_ref in allowlist_refs:
+        synthetic_entry = _build_configured_model_entry(
+            raw_ref,
+            config=value,
+            known_models=known_models,
+            is_default=False,
+            configured_metadata=configured_metadata,
+        )
+        key = _model_key(synthetic_entry)
+        if key is None:
+            continue
+        allowed_keys.add(key)
+        if any(
+            _model_keys_match(_model_key(entry), key) for entry in catalog_entries
+        ) or any(
+            _model_keys_match(_model_key(entry), key) for entry in synthetic_entries
+        ):
+            continue
+        synthetic_entries.append(synthetic_entry)
+
+    if not allowed_keys:
+        return _ConfiguredModelAllowlist(
+            allow_any=True,
+            allowed_keys=frozenset(),
+            synthetic_entries=(),
+        )
+
+    return _ConfiguredModelAllowlist(
+        allow_any=False,
+        allowed_keys=frozenset(allowed_keys),
+        synthetic_entries=tuple(synthetic_entries),
+    )
+
+
+def _extract_configured_allowlist_refs(
+    value: Mapping[str, object],
+    *,
+    configured_metadata: _ConfiguredModelMetadata | None = None,
+) -> list[str]:
+    raw_agents = value.get("agents")
+    if not isinstance(raw_agents, Mapping):
+        return []
+    raw_defaults = raw_agents.get("defaults")
+    if not isinstance(raw_defaults, Mapping):
+        return []
+    raw_allowlist = raw_defaults.get("models")
+    if not isinstance(raw_allowlist, Mapping):
+        return []
+
+    refs: list[str] = []
+    seen: set[str] = set()
+    for raw_identifier in raw_allowlist:
+        identifier = _optional_non_empty_string(raw_identifier)
+        if identifier is None:
+            continue
+        normalized_key = identifier.casefold()
+        if normalized_key in seen:
+            continue
+        seen.add(normalized_key)
+        refs.append(identifier)
+
+    for fallback in _resolve_configured_allowlist_fallback_models(
+        value,
+        configured_metadata=configured_metadata,
+    ):
+        fallback_key = fallback.casefold()
+        if fallback_key in seen:
+            continue
+        seen.add(fallback_key)
+        refs.append(fallback)
+    return refs
+
+
+def _resolve_configured_allowlist_fallback_models(
+    value: object,
+    *,
+    configured_metadata: _ConfiguredModelMetadata | None = None,
+) -> list[str]:
+    fallbacks: list[str] = []
+    seen: set[str] = set()
+    for model_config in _configured_model_config_sources(value):
+        for fallback in _resolve_configured_fallback_models(
+            model_config,
+            configured_metadata=configured_metadata,
+        ):
+            fallback_key = fallback.casefold()
+            if fallback_key in seen:
+                continue
+            seen.add(fallback_key)
+            fallbacks.append(fallback)
+    return fallbacks
+
+
+def _filter_allowed_model_entries(
+    entries: list[dict[str, Any]],
+    *,
+    allowlist: _ConfiguredModelAllowlist,
+) -> list[dict[str, Any]]:
+    filtered = [
+        entry
+        for entry in entries
+        if _is_allowed_model_entry(entry, allowlist=allowlist)
+    ]
+    for synthetic_entry in allowlist.synthetic_entries:
+        synthetic_key = _model_key(synthetic_entry)
+        if synthetic_key is None:
+            continue
+        if any(
+            _model_keys_match(_model_key(existing_entry), synthetic_key)
+            for existing_entry in filtered
+        ):
+            continue
+        filtered.append(synthetic_entry)
+    return filtered
+
+
+def _is_allowed_model_entry(
+    entry: dict[str, Any],
+    *,
+    allowlist: _ConfiguredModelAllowlist,
+) -> bool:
+    key = _model_key(entry)
+    if key is None:
+        return False
+    return any(_model_keys_match(key, allowed_key) for allowed_key in allowlist.allowed_keys)
+
+
+def _model_keys_match(
+    first: tuple[str | None, str] | None,
+    second: tuple[str | None, str] | None,
+) -> bool:
+    if first is None or second is None:
+        return False
+    if first == second:
+        return True
+    return first[1] == second[1] and (first[0] is None or second[0] is None)
 
 
 def _resolve_configured_model_alias(

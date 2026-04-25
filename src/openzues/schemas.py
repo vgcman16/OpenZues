@@ -18,8 +18,10 @@ ScopeDriftLevel = Literal["aligned", "watch", "drifting", "critical"]
 DreamStatus = Literal["forming", "ready", "fresh"]
 EconomyState = Literal["compounding", "balanced", "speculative", "leaking", "hibernating"]
 TaskStatus = Literal["idle", "due", "running", "attention", "completed", "disabled"]
-NotificationRouteKind = Literal["webhook"]
-NotificationRouteViewKind = Literal["webhook", "session", "announce"]
+NotificationRouteKind = Literal["webhook", "slack", "telegram", "discord", "whatsapp"]
+NotificationRouteViewKind = Literal[
+    "webhook", "slack", "telegram", "discord", "whatsapp", "session", "announce"
+]
 GatewayBootstrapStatus = Literal["unconfigured", "staged", "ready", "degraded"]
 GatewayRouteBindingMode = Literal["saved_lane", "workspace_affinity"]
 SetupRecommendedAction = Literal["bootstrap", "keep", "modify", "reset"]
@@ -601,6 +603,7 @@ class ControlChatMessageView(BaseModel):
     id: int
     role: Literal["user", "assistant"]
     content: str
+    canvas_previews: list[dict[str, Any]] = Field(default_factory=list)
     action_kind: ControlChatActionKind | None = None
     mission_id: int | None = None
     opportunity_id: str | None = None

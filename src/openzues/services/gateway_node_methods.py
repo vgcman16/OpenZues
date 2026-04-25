@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import re
 import secrets
 import time
 import unicodedata
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
@@ -24,6 +25,11 @@ from openzues.schemas import (
 )
 from openzues.services.gateway_agent_files import GatewayAgentFilesService
 from openzues.services.gateway_agents import GatewayAgentsService
+from openzues.services.gateway_browser_runtime import (
+    DEFAULT_BROWSER_SESSION,
+    GatewayBrowserRuntimeError,
+    GatewayBrowserRuntimeService,
+)
 from openzues.services.gateway_channels import GatewayChannelsService
 from openzues.services.gateway_commands import GatewayCommandsService
 from openzues.services.gateway_config import GatewayConfigService
@@ -90,6 +96,11 @@ from openzues.services.session_keys import (
 
 _NODE_PENDING_WORK_TYPES = {"status.request", "location.request"}
 _NODE_PENDING_WORK_PRIORITIES = {"default", "normal", "high"}
+_APNS_ENVIRONMENTS = {"sandbox", "production"}
+_NODE_VOICE_TRANSCRIPT_DEDUPE_WINDOW_MS = 1_500
+_MAX_RECENT_NODE_VOICE_TRANSCRIPTS = 200
+_NODE_EXEC_FINISHED_DEDUPE_WINDOW_MS = 10 * 60 * 1_000
+_MAX_RECENT_NODE_EXEC_FINISHED_RUNS = 2_000
 _CANVAS_CAPABILITY_PATH_PREFIX = "/__openclaw__/cap"
 _CANVAS_CAPABILITY_TTL_MS = 10 * 60_000
 _SESSION_LABEL_MAX_LENGTH = 512
@@ -102,9 +113,17 @@ _INPUT_PROVENANCE_KIND_VALUES = {"external_user", "inter_session", "internal_sys
 _DEFAULT_SESSION_DELETE_ARCHIVE_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
 _KNOWN_GATEWAY_CHAT_CHANNEL_ORDER = ("discord", "slack", "telegram", "whatsapp")
 _KNOWN_GATEWAY_CHAT_CHANNEL_IDS = set(_KNOWN_GATEWAY_CHAT_CHANNEL_ORDER)
+_NODE_WAKE_NUDGE_THROTTLE_MS = 10 * 60_000
 _YYYY_MM_DD_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _UTC_OFFSET_RE = re.compile(r"^UTC[+-]\d{1,2}(?::[0-5]\d)?$")
 _BROWSER_PROXY_PROFILE_DELETE_RE = re.compile(r"^/profiles/[^/]+$")
+_A2UI_ACTION_KEYS = (
+    "beginRendering",
+    "surfaceUpdate",
+    "dataModelUpdate",
+    "deleteSurface",
+    "createSurface",
+)
 _NODE_ONLY_METHODS = {
     "node.canvas.capability.refresh",
     "node.event",
@@ -187,7 +206,10 @@ def _coerce_wake_attempt(value: object) -> GatewayNodeWakeAttempt:
     resolved_attempted = (
         attempted
         if attempted is not None
-        else bool((available if available is not None else False) or (connected if connected else False))
+        else bool(
+            (available if available is not None else False)
+            or (connected if connected else False)
+        )
     )
     resolved_available = (
         available
@@ -283,10 +305,248 @@ def _validate_node_invoke_command(command: str, params: object) -> None:
         raise ValueError(
             "node.invoke cannot mutate persistent browser profiles via browser.proxy"
         )
+    if command in {"canvas.a2ui.push", "canvas.a2ui.pushJSONL"}:
+        _validate_canvas_a2ui_jsonl(params)
+
+
+def _validate_canvas_a2ui_jsonl(params: object) -> None:
+    if not isinstance(params, dict):
+        raise ValueError("canvas.a2ui.pushJSONL requires params.jsonl")
+    jsonl = params["jsonl"] if isinstance(params.get("jsonl"), str) else ""
+    if not jsonl.strip():
+        raise ValueError("canvas.a2ui.pushJSONL requires params.jsonl")
+
+    errors: list[str] = []
+    message_count = 0
+    saw_v08 = False
+    saw_v09 = False
+    for index, line in enumerate(jsonl.splitlines(), start=1):
+        trimmed = line.strip()
+        if not trimmed:
+            continue
+        message_count += 1
+        try:
+            parsed = json.loads(trimmed)
+        except json.JSONDecodeError as exc:
+            errors.append(f"line {index}: {exc}")
+            continue
+        if not isinstance(parsed, dict):
+            errors.append(f"line {index}: expected JSON object")
+            continue
+        action_keys = [key for key in _A2UI_ACTION_KEYS if key in parsed]
+        if len(action_keys) != 1:
+            errors.append(
+                f"line {index}: expected exactly one action key "
+                f"({', '.join(_A2UI_ACTION_KEYS)})"
+            )
+            continue
+        if action_keys[0] == "createSurface":
+            saw_v09 = True
+        else:
+            saw_v08 = True
+    if message_count == 0:
+        errors.append("no JSONL messages found")
+    if saw_v08 and saw_v09:
+        errors.append("mixed A2UI v0.8 and v0.9 messages in one file")
+    if errors:
+        error_text = "\n- ".join(errors)
+        raise ValueError(f"Invalid A2UI JSONL:\n- {error_text}")
+
+
+def _browser_verification_payload(
+    *,
+    verification: dict[str, object],
+    resolved_url: str,
+    session: str,
+) -> dict[str, Any]:
+    ok = bool(verification.get("ok"))
+    return {
+        **verification,
+        "ok": ok,
+        "status": str(verification.get("status") or ("ready" if ok else "warn")).strip()
+        or ("ready" if ok else "warn"),
+        "headline": (
+            "Browser verification passed"
+            if ok
+            else "Browser verification found issues"
+        ),
+        "summary": str(verification.get("summary") or "").strip(),
+        "url": str(verification.get("url") or resolved_url).strip() or resolved_url,
+        "session": session,
+    }
+
+
+def _compact_node_exec_text(raw: object, *, limit: int | None = None) -> str:
+    if not isinstance(raw, str):
+        return ""
+    normalized = re.sub(r"\s+", " ", raw).strip()
+    if not normalized or limit is None or len(normalized) <= limit:
+        return normalized
+    safe_limit = max(3, limit)
+    return f"{normalized[: safe_limit - 3]}..."
+
+
+def _optional_exec_int(raw: object) -> int | None:
+    if isinstance(raw, bool) or not isinstance(raw, int | float):
+        return None
+    return int(raw)
+
+
+def _format_node_exec_system_event(
+    *,
+    event_name: str,
+    node_id: str,
+    payload: dict[str, Any],
+) -> str | None:
+    run_id = _compact_node_exec_text(payload.get("runId"))
+    command = _compact_node_exec_text(payload.get("command"))
+    run_fragment = f" id={run_id}" if run_id else ""
+    if event_name == "exec.started":
+        text = f"Exec started (node={node_id}{run_fragment})"
+        return f"{text}: {command}" if command else text
+    if event_name == "exec.denied":
+        reason = _compact_node_exec_text(payload.get("reason"))
+        reason_fragment = f", {reason}" if reason else ""
+        text = f"Exec denied (node={node_id}{run_fragment}{reason_fragment})"
+        return f"{text}: {command}" if command else text
+    if event_name != "exec.finished":
+        return None
+    exit_code = _optional_exec_int(payload.get("exitCode"))
+    timed_out = payload.get("timedOut") is True
+    output = _compact_node_exec_text(
+        payload.get("output"),
+        limit=_MAX_NODE_EXEC_EVENT_OUTPUT_CHARS,
+    )
+    if not timed_out and exit_code == 0 and not output:
+        return None
+    exit_label = "timeout" if timed_out else f"code {exit_code if exit_code is not None else '?'}"
+    text = f"Exec finished (node={node_id}{run_fragment}, {exit_label})"
+    return f"{text}\n{output}" if output else text
+
+
+def _format_node_notification_system_event(
+    *,
+    node_id: str,
+    payload: dict[str, Any],
+) -> str | None:
+    change = _compact_node_exec_text(payload.get("change")).lower()
+    if change not in {"posted", "removed"}:
+        return None
+    key = _compact_node_exec_text(payload.get("key"))
+    if not key:
+        return None
+    package_name = _compact_node_exec_text(payload.get("packageName"))
+    text = f"Notification {change} (node={node_id} key={key}"
+    if package_name:
+        text += f" package={package_name}"
+    text += ")"
+    if change == "posted":
+        title = _compact_node_exec_text(
+            payload.get("title"),
+            limit=_MAX_NODE_NOTIFICATION_EVENT_TEXT_CHARS,
+        )
+        body = _compact_node_exec_text(
+            payload.get("text"),
+            limit=_MAX_NODE_NOTIFICATION_EVENT_TEXT_CHARS,
+        )
+        message = " - ".join(item for item in (title, body) if item)
+        if message:
+            text += f": {message}"
+    return text
+
+
+def _compact_node_voice_transcript_text(raw: object) -> str:
+    if not isinstance(raw, str):
+        return ""
+    return raw.strip()
+
+
+def _node_voice_transcript_fingerprint(payload: dict[str, Any], text: str) -> str:
+    for key in ("eventId", "providerEventId", "transcriptId"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return f"{key}:{value.strip()}"
+    call_id = payload.get("providerCallId") or payload.get("callId")
+    if isinstance(call_id, str) and call_id.strip():
+        for key in ("sequence", "seq", "timestamp", "ts", "eventTimestamp"):
+            value = payload.get(key)
+            if isinstance(value, bool):
+                continue
+            if isinstance(value, int | float):
+                return f"{key}:{call_id.strip()}:{int(value)}"
+    return f"text:{text}"
+
+
+def _node_voice_transcript_idempotency_key(
+    *,
+    node_id: str,
+    session_key: str,
+    payload: dict[str, Any],
+    text: str,
+) -> str:
+    fingerprint = _node_voice_transcript_fingerprint(payload, text)
+    digest = hashlib.sha256(f"{node_id}\n{session_key}\n{fingerprint}".encode()).hexdigest()
+    return f"node-voice-{digest[:32]}"
+
+
+def _node_agent_request_idempotency_key(
+    *,
+    node_id: str,
+    session_key: str,
+    payload: dict[str, Any],
+    message: str,
+) -> str:
+    key = payload.get("key")
+    if isinstance(key, str) and key.strip():
+        return key.strip()
+    digest = hashlib.sha256(f"{node_id}\n{session_key}\n{message}".encode()).hexdigest()
+    return f"node-agent-request-{digest[:24]}"
+
+
+def _node_agent_request_receipt_idempotency_key(
+    *,
+    node_id: str,
+    session_key: str,
+    payload: dict[str, Any],
+    receipt_text: str,
+) -> str:
+    key = payload.get("key")
+    if isinstance(key, str) and key.strip():
+        return f"node-agent-receipt-{key.strip()}"
+    digest = hashlib.sha256(
+        f"{node_id}\n{session_key}\n{receipt_text}".encode()
+    ).hexdigest()
+    return f"node-agent-receipt-{digest[:24]}"
+
+
+def _node_agent_request_timeout_ms(raw: object) -> int | None:
+    if isinstance(raw, bool) or not isinstance(raw, int | float):
+        return None
+    if raw <= 0:
+        return None
+    return min(int(raw * 1000), 2_592_000_000)
+
+
+def _node_agent_request_delivery_route(payload: dict[str, Any]) -> tuple[str | None, str | None]:
+    channel_raw = payload.get("channel")
+    to_raw = payload.get("to")
+    channel = (
+        _normalize_gateway_chat_channel_id(channel_raw)
+        if isinstance(channel_raw, str)
+        else None
+    )
+    to = to_raw.strip() if isinstance(to_raw, str) and to_raw.strip() else None
+    if channel is None or to is None:
+        return None, None
+    return channel, to
 
 
 _NODE_PENDING_WAKE_RECONNECT_WAIT_MS = 3_000
 _NODE_PENDING_WAKE_RETRY_WAIT_MS = 12_000
+_NODE_EXEC_EVENTS = {"exec.started", "exec.finished", "exec.denied"}
+_MAX_NODE_EXEC_EVENT_OUTPUT_CHARS = 180
+_MAX_NODE_NOTIFICATION_EVENT_TEXT_CHARS = 120
+_DREAM_DIARY_FILE_NAMES = ("DREAMS.md", "dreams.md")
 
 
 class GatewayNodeMethodService:
@@ -333,7 +593,10 @@ class GatewayNodeMethodService:
         skill_status_service: GatewaySkillStatusService | None = None,
         send_channel_message_service: Callable[..., Awaitable[dict[str, object]]] | None = None,
         send_channel_poll_service: Callable[..., Awaitable[dict[str, object]]] | None = None,
+        send_apns_push_service: Callable[..., Awaitable[dict[str, object]]] | None = None,
+        send_apns_wake_service: Callable[..., Awaitable[dict[str, object]]] | None = None,
         chat_send_service: Callable[..., Awaitable[dict[str, object]]] | None = None,
+        chat_attachment_send_service: Callable[..., Awaitable[dict[str, object]]] | None = None,
         chat_abort_service: Callable[..., Awaitable[dict[str, object]]] | None = None,
         sleep: Callable[[float], Awaitable[None]] | None = None,
         status_service: Callable[[], Awaitable[dict[str, object]]] | None = None,
@@ -346,6 +609,10 @@ class GatewayNodeMethodService:
         sync: Callable[[], Awaitable[None]] | None = None,
         wake_node: Callable[[str], Awaitable[object]] | None = None,
         probe_secret: Callable[[int], Awaitable[str | None]] | None = None,
+        memory_doctor_workspace: Path | None = None,
+        node_allow_commands: Iterable[str] = (),
+        node_deny_commands: Iterable[str] = (),
+        browser_runtime_service: GatewayBrowserRuntimeService | None = None,
     ) -> None:
         self.registry = registry
         self._database = database
@@ -410,10 +677,16 @@ class GatewayNodeMethodService:
         )
         self._send_channel_message_service = send_channel_message_service
         self._send_channel_poll_service = send_channel_poll_service
+        self._send_apns_push_service = send_apns_push_service
+        self._send_apns_wake_service = send_apns_wake_service
         self._chat_send_service = chat_send_service
+        self._chat_attachment_send_service = chat_attachment_send_service
         self._chat_abort_service = chat_abort_service
         self._gateway_chat_run_ids_by_session_key: dict[str, str] = {}
         self._gateway_tracked_chat_runs_by_id: dict[str, GatewayTrackedChatRun] = {}
+        self._recent_node_voice_transcripts: dict[str, tuple[str, int]] = {}
+        self._recent_node_exec_finished_runs: dict[str, int] = {}
+        self._apns_wake_nudge_at_by_node_id: dict[str, int] = {}
         self._sleep = sleep or asyncio.sleep
         self._status_service = status_service
         self._runtime_update_tick = runtime_update_tick
@@ -425,6 +698,39 @@ class GatewayNodeMethodService:
         self._sync = sync
         self._wake_node = wake_node
         self._probe_secret = probe_secret
+        self._memory_doctor_workspace = memory_doctor_workspace or Path.cwd()
+        self._node_allow_commands = tuple(node_allow_commands)
+        self._node_deny_commands = tuple(node_deny_commands)
+        self._browser_runtime_service = browser_runtime_service or GatewayBrowserRuntimeService()
+
+    def _normalize_declared_commands_for_metadata(
+        self,
+        commands: Iterable[str] | None,
+        *,
+        platform: str | None,
+        device_family: str | None,
+    ) -> list[str]:
+        allowlist = resolve_node_command_allowlist(
+            platform=platform,
+            device_family=device_family,
+            allow_commands=self._node_allow_commands,
+            deny_commands=self._node_deny_commands,
+        )
+        return list(normalize_declared_node_commands(commands, allowlist=allowlist))
+
+    def _normalized_known_node_commands(self, node: KnownNode) -> list[str]:
+        return self._normalize_declared_commands_for_metadata(
+            node.commands,
+            platform=node.platform,
+            device_family=node.device_family,
+        )
+
+    def _normalized_paired_node_commands(self, node: GatewayPairedNode) -> list[str]:
+        return self._normalize_declared_commands_for_metadata(
+            node.commands,
+            platform=node.platform,
+            device_family=node.device_family,
+        )
 
     async def _wait_for_node_connection(
         self,
@@ -441,10 +747,144 @@ class GatewayNodeMethodService:
                 return self.registry.get(node_id) is not None
             await self._sleep(min(0.05, remaining_seconds))
 
+    async def _attempt_apns_node_wake(
+        self,
+        node_id: str,
+        *,
+        wake_reason: str,
+    ) -> GatewayNodeWakeAttempt | None:
+        if self._send_apns_wake_service is None or self._database is None:
+            return None
+        registration = await self._recorded_apns_registration(node_id)
+        if registration is None:
+            return None
+        result = await self._send_apns_wake_service(
+            node_id=node_id,
+            registration=registration,
+            wake_reason=wake_reason,
+        )
+        if _should_clear_recorded_apns_registration(registration, result=result):
+            await self._clear_recorded_apns_registration_if_current(
+                node_id=node_id,
+                registration=registration,
+                reason="apns-invalidated",
+            )
+        return _coerce_wake_attempt(result)
+
+    async def _attempt_disconnected_node_wake(
+        self,
+        node_id: str,
+        *,
+        wake_reason: str,
+    ) -> GatewayNodeWakeAttempt | None:
+        wake_attempt: GatewayNodeWakeAttempt | None = None
+        if self._wake_node is not None:
+            wake_attempt = _coerce_wake_attempt(await self._wake_node(node_id))
+        if (
+            (wake_attempt is None or not wake_attempt.available)
+            and self.registry.get(node_id) is None
+        ):
+            apns_wake_attempt = await self._attempt_apns_node_wake(
+                node_id,
+                wake_reason=wake_reason,
+            )
+            if apns_wake_attempt is not None:
+                wake_attempt = apns_wake_attempt
+        return wake_attempt
+
+    async def _wake_invoked_node_until_connected(
+        self,
+        node_id: str,
+        *,
+        now_ms: int | None,
+    ) -> GatewayNodeWakeAttempt | None:
+        wake_attempt = await self._attempt_disconnected_node_wake(
+            node_id,
+            wake_reason="node.invoke",
+        )
+        if (
+            wake_attempt is None
+            or not wake_attempt.available
+            or self.registry.get(node_id) is not None
+        ):
+            return wake_attempt
+
+        reconnected = await self._wait_for_node_connection(node_id)
+        wake_attempt = _wake_attempt_with_connection(
+            wake_attempt,
+            connected=reconnected,
+        )
+        if reconnected or self.registry.get(node_id) is not None:
+            return wake_attempt
+
+        retry_attempt = await self._attempt_disconnected_node_wake(
+            node_id,
+            wake_reason="node.invoke",
+        )
+        if retry_attempt is None:
+            return wake_attempt
+        if retry_attempt.available and self.registry.get(node_id) is None:
+            retry_reconnected = await self._wait_for_node_connection(node_id)
+            retry_attempt = _wake_attempt_with_connection(
+                retry_attempt,
+                connected=retry_reconnected,
+            )
+        if self.registry.get(node_id) is None:
+            await self._send_apns_node_wake_nudge(node_id, now_ms=now_ms)
+        return retry_attempt
+
+    async def _send_apns_node_wake_nudge(
+        self,
+        node_id: str,
+        *,
+        now_ms: int | None,
+    ) -> dict[str, object] | None:
+        if self._send_apns_push_service is None or self._database is None:
+            return None
+        timestamp_ms = _timestamp_ms(now_ms)
+        last_nudge_at_ms = self._apns_wake_nudge_at_by_node_id.get(node_id)
+        if (
+            last_nudge_at_ms is not None
+            and timestamp_ms - last_nudge_at_ms < _NODE_WAKE_NUDGE_THROTTLE_MS
+        ):
+            return {"sent": False, "throttled": True, "reason": "throttled"}
+        registration = await self._recorded_apns_registration(node_id)
+        if registration is None:
+            return {"sent": False, "throttled": False, "reason": "no-registration"}
+        try:
+            nudge_result = await self._send_apns_push_service(
+                node_id=node_id,
+                registration=registration,
+                title="OpenZues needs a quick reopen",
+                body="Tap to reopen OpenZues and restore the node connection.",
+                environment=None,
+            )
+        except Exception as exc:  # noqa: BLE001 - best-effort user-facing nudge.
+            return {
+                "sent": False,
+                "throttled": False,
+                "reason": "send-error",
+                "apnsReason": str(exc),
+            }
+        if _should_clear_recorded_apns_registration(registration, result=nudge_result):
+            await self._clear_recorded_apns_registration_if_current(
+                node_id=node_id,
+                registration=registration,
+                reason="apns-invalidated",
+            )
+        if _apns_result_ok(nudge_result):
+            self._apns_wake_nudge_at_by_node_id[node_id] = timestamp_ms
+        return nudge_result
+
     async def _wake_pending_node_until_connected(self, node_id: str) -> bool:
-        if self._wake_node is None or self.registry.get(node_id) is not None:
+        if self.registry.get(node_id) is not None:
             return False
-        wake_attempt = _coerce_wake_attempt(await self._wake_node(node_id))
+        wake_attempt = await self._attempt_disconnected_node_wake(
+            node_id,
+            wake_reason="node.pending",
+        )
+        if wake_attempt is None:
+            return False
         wake_triggered = _wake_attempt_available(wake_attempt)
         if not wake_triggered or self.registry.get(node_id) is not None:
             return wake_triggered
@@ -453,7 +893,12 @@ class GatewayNodeMethodService:
             timeout_ms=_NODE_PENDING_WAKE_RECONNECT_WAIT_MS,
         ):
             return True
-        retry_attempt = _coerce_wake_attempt(await self._wake_node(node_id))
+        retry_attempt = await self._attempt_disconnected_node_wake(
+            node_id,
+            wake_reason="node.pending",
+        )
+        if retry_attempt is None:
+            return wake_triggered
         retry_triggered = _wake_attempt_available(retry_attempt)
         if retry_triggered and self.registry.get(node_id) is None:
             await self._wait_for_node_connection(
@@ -523,6 +968,8 @@ class GatewayNodeMethodService:
         allowlist = resolve_node_command_allowlist(
             platform=node.platform or paired_node.platform,
             device_family=node.device_family or paired_node.device_family,
+            allow_commands=self._node_allow_commands,
+            deny_commands=self._node_deny_commands,
         )
         live_commands = list(
             normalize_declared_node_commands(
@@ -536,8 +983,31 @@ class GatewayNodeMethodService:
                 allowlist=allowlist,
             )
         )
-        if not live_commands or not any(command not in approved_commands for command in live_commands):
+        if not live_commands or not any(
+            command not in approved_commands for command in live_commands
+        ):
             return None
+        pending_requests = await self._pairing_service.list_pending()
+        live_command_set = set(live_commands)
+        for pending_request in pending_requests:
+            if pending_request.get("nodeId") != node.node_id:
+                continue
+            raw_pending_commands = pending_request.get("commands")
+            pending_commands = {
+                command
+                for command in (
+                    raw_pending_commands
+                    if isinstance(raw_pending_commands, (list, tuple))
+                    else []
+                )
+                if isinstance(command, str)
+            }
+            if live_command_set.issubset(pending_commands):
+                return {
+                    "status": "pending",
+                    "request": pending_request,
+                    "created": False,
+                }
         return await self._request_node_pairing(
             node_id=node.node_id,
             display_name=node.display_name or paired_node.display_name,
@@ -583,7 +1053,10 @@ class GatewayNodeMethodService:
             known_nodes = self.registry.list_known_nodes()
             known_nodes_by_id = {node.node_id: node for node in known_nodes}
             node_payloads: dict[str, dict[str, Any]] = {
-                node_id: _known_node_payload(node)
+                node_id: _known_node_payload(
+                    node,
+                    commands=self._normalized_known_node_commands(node),
+                )
                 for node_id, node in known_nodes_by_id.items()
             }
             if self._pairing_service is not None:
@@ -595,7 +1068,10 @@ class GatewayNodeMethodService:
                             paired_node=paired_node,
                             now_ms=now_ms,
                         )
-                    paired_payload = _known_paired_node_payload(paired_node)
+                    paired_payload = _known_paired_node_payload(
+                        paired_node,
+                        commands=self._normalized_paired_node_commands(paired_node),
+                    )
                     existing = node_payloads.get(paired_node.node_id)
                     node_payloads[paired_node.node_id] = (
                         paired_payload
@@ -660,6 +1136,852 @@ class GatewayNodeMethodService:
                 provider=_optional_non_empty_string(payload.get("provider"), label="provider"),
                 scope=cast(Literal["both", "native", "text"], scope or "both"),
             )
+
+        if resolved_method == "browser.status":
+            _validate_exact_keys(resolved_method, payload, allowed_keys=())
+            if self._status_service is None:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message="browser.status is unavailable until operator status is wired",
+                    status_code=503,
+                )
+            status_payload = await self._status_service()
+            browser_posture = status_payload.get("browser_posture")
+            if not isinstance(browser_posture, dict):
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message="browser.status is unavailable until browser posture is wired",
+                    status_code=503,
+                )
+            return cast(dict[str, Any], browser_posture)
+
+        if resolved_method == "browser.verify":
+            _validate_exact_keys(
+                resolved_method,
+                payload,
+                allowed_keys=("target", "url", "session"),
+            )
+            target = _optional_non_empty_string(payload.get("url"), label="url")
+            if target is None:
+                target = _require_non_empty_string(payload.get("target"), label="target")
+            session = _optional_non_empty_string(payload.get("session"), label="session")
+            try:
+                verification = self._browser_runtime_service.verify(
+                    target,
+                    session=session or DEFAULT_BROWSER_SESSION,
+                )
+            except GatewayBrowserRuntimeError as exc:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message=str(exc),
+                    status_code=503,
+                ) from exc
+            return _browser_verification_payload(
+                verification=verification,
+                resolved_url=target,
+                session=session or DEFAULT_BROWSER_SESSION,
+            )
+
+        if resolved_method == "browser.doctor":
+            _validate_exact_keys(
+                resolved_method,
+                payload,
+                allowed_keys=("target", "url", "session", "verify"),
+            )
+            if self._status_service is None:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message="browser.doctor is unavailable until operator status is wired",
+                    status_code=503,
+                )
+            status_payload = await self._status_service()
+            browser_posture = status_payload.get("browser_posture")
+            if not isinstance(browser_posture, dict):
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message="browser.doctor is unavailable until browser posture is wired",
+                    status_code=503,
+                )
+            doctor_payload: dict[str, Any] = cast(dict[str, Any], dict(browser_posture))
+            verify = (
+                bool(_optional_bool(payload.get("verify"), label="verify"))
+                if "verify" in payload
+                else False
+            )
+            if not verify:
+                doctor_payload["verification"] = None
+                return doctor_payload
+            target = _optional_non_empty_string(payload.get("url"), label="url")
+            if target is None:
+                target = _optional_non_empty_string(payload.get("target"), label="target")
+            if target is None:
+                target = _require_non_empty_string(
+                    doctor_payload.get("control_plane_url"),
+                    label="url",
+                )
+            session = _optional_non_empty_string(payload.get("session"), label="session")
+            try:
+                verification = self._browser_runtime_service.verify(
+                    target,
+                    session=session or DEFAULT_BROWSER_SESSION,
+                )
+            except GatewayBrowserRuntimeError as exc:
+                verification_payload: dict[str, Any] = {
+                    "ok": False,
+                    "status": "warn",
+                    "headline": "Browser verification needs attention",
+                    "summary": str(exc),
+                    "url": target,
+                    "session": session or DEFAULT_BROWSER_SESSION,
+                }
+            else:
+                verification_payload = _browser_verification_payload(
+                    verification=verification,
+                    resolved_url=target,
+                    session=session or DEFAULT_BROWSER_SESSION,
+                )
+            doctor_payload["verification"] = verification_payload
+            if not bool(verification_payload.get("ok")):
+                doctor_payload["status"] = "warn"
+                doctor_payload["headline"] = "Browser doctor found repair work"
+                doctor_payload["summary"] = str(verification_payload.get("summary") or "")
+            return doctor_payload
+
+        if resolved_method == "browser.start":
+            _validate_exact_keys(resolved_method, payload, allowed_keys=("session",))
+            session = _optional_non_empty_string(payload.get("session"), label="session")
+            try:
+                return self._browser_runtime_service.start(
+                    session=session or DEFAULT_BROWSER_SESSION,
+                )
+            except GatewayBrowserRuntimeError as exc:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message=str(exc),
+                    status_code=503,
+                ) from exc
+
+        if resolved_method == "browser.stop":
+            _validate_exact_keys(resolved_method, payload, allowed_keys=("session", "all"))
+            session = _optional_non_empty_string(payload.get("session"), label="session")
+            all_sessions = (
+                bool(_optional_bool(payload.get("all"), label="all"))
+                if "all" in payload
+                else False
+            )
+            try:
+                return self._browser_runtime_service.stop(
+                    session=session or DEFAULT_BROWSER_SESSION,
+                    all_sessions=all_sessions,
+                )
+            except GatewayBrowserRuntimeError as exc:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message=str(exc),
+                    status_code=503,
+                ) from exc
+
+        if resolved_method == "browser.get":
+            _validate_exact_keys(
+                resolved_method,
+                payload,
+                allowed_keys=("session", "what", "selector"),
+            )
+            what = _require_enum_value(
+                payload.get("what"),
+                label="what",
+                allowed_values={
+                    "text",
+                    "html",
+                    "value",
+                    "title",
+                    "url",
+                    "count",
+                    "box",
+                    "styles",
+                    "cdp-url",
+                },
+            )
+            selector = _optional_non_empty_string(payload.get("selector"), label="selector")
+            session = _optional_non_empty_string(payload.get("session"), label="session")
+            try:
+                return self._browser_runtime_service.get(
+                    what,
+                    session=session or DEFAULT_BROWSER_SESSION,
+                    selector=selector,
+                )
+            except GatewayBrowserRuntimeError as exc:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message=str(exc),
+                    status_code=503,
+                ) from exc
+
+        if resolved_method == "browser.is":
+            _validate_exact_keys(
+                resolved_method,
+                payload,
+                allowed_keys=("session", "state", "selector"),
+            )
+            state = _require_enum_value(
+                payload.get("state"),
+                label="state",
+                allowed_values={"visible", "enabled", "checked"},
+            )
+            selector = _require_non_empty_string(payload.get("selector"), label="selector")
+            session = _optional_non_empty_string(payload.get("session"), label="session")
+            try:
+                return self._browser_runtime_service.is_state(
+                    state,
+                    selector,
+                    session=session or DEFAULT_BROWSER_SESSION,
+                )
+            except GatewayBrowserRuntimeError as exc:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message=str(exc),
+                    status_code=503,
+                ) from exc
+
+        if resolved_method == "browser.stream.status":
+            _validate_exact_keys(resolved_method, payload, allowed_keys=("session",))
+            session = _optional_non_empty_string(payload.get("session"), label="session")
+            try:
+                return self._browser_runtime_service.stream_status(
+                    session=session or DEFAULT_BROWSER_SESSION,
+                )
+            except GatewayBrowserRuntimeError as exc:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message=str(exc),
+                    status_code=503,
+                ) from exc
+
+        if resolved_method == "browser.stream.enable":
+            _validate_exact_keys(resolved_method, payload, allowed_keys=("session", "port"))
+            session = _optional_non_empty_string(payload.get("session"), label="session")
+            port = _optional_bounded_int(
+                payload.get("port"),
+                label="port",
+                minimum=1,
+                maximum=65_535,
+            )
+            try:
+                return self._browser_runtime_service.stream_enable(
+                    session=session or DEFAULT_BROWSER_SESSION,
+                    port=port,
+                )
+            except GatewayBrowserRuntimeError as exc:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message=str(exc),
+                    status_code=503,
+                ) from exc
+
+        if resolved_method == "browser.stream.disable":
+            _validate_exact_keys(resolved_method, payload, allowed_keys=("session",))
+            session = _optional_non_empty_string(payload.get("session"), label="session")
+            try:
+                return self._browser_runtime_service.stream_disable(
+                    session=session or DEFAULT_BROWSER_SESSION,
+                )
+            except GatewayBrowserRuntimeError as exc:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message=str(exc),
+                    status_code=503,
+                ) from exc
+
+        if resolved_method == "browser.network.requests":
+            _validate_exact_keys(
+                resolved_method,
+                payload,
+                allowed_keys=("session", "filter", "type", "method", "status"),
+            )
+            session = _optional_non_empty_string(payload.get("session"), label="session")
+            filter_pattern = _optional_non_empty_string(payload.get("filter"), label="filter")
+            resource_type = _optional_non_empty_string(payload.get("type"), label="type")
+            http_method = _optional_non_empty_string(payload.get("method"), label="method")
+            request_status = _optional_non_empty_string(payload.get("status"), label="status")
+            try:
+                return self._browser_runtime_service.network_requests(
+                    session=session or DEFAULT_BROWSER_SESSION,
+                    filter_pattern=filter_pattern,
+                    resource_type=resource_type,
+                    method=http_method,
+                    status=request_status,
+                )
+            except GatewayBrowserRuntimeError as exc:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message=str(exc),
+                    status_code=503,
+                ) from exc
+
+        if resolved_method == "browser.network.request":
+            _validate_exact_keys(
+                resolved_method,
+                payload,
+                allowed_keys=("session", "requestId"),
+            )
+            request_id = _require_non_empty_string(payload.get("requestId"), label="requestId")
+            session = _optional_non_empty_string(payload.get("session"), label="session")
+            try:
+                return self._browser_runtime_service.network_request(
+                    request_id,
+                    session=session or DEFAULT_BROWSER_SESSION,
+                )
+            except GatewayBrowserRuntimeError as exc:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message=str(exc),
+                    status_code=503,
+                ) from exc
+
+        if resolved_method == "browser.cookies.get":
+            _validate_exact_keys(resolved_method, payload, allowed_keys=("session",))
+            session = _optional_non_empty_string(payload.get("session"), label="session")
+            try:
+                return self._browser_runtime_service.cookies_get(
+                    session=session or DEFAULT_BROWSER_SESSION,
+                )
+            except GatewayBrowserRuntimeError as exc:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message=str(exc),
+                    status_code=503,
+                ) from exc
+
+        if resolved_method == "browser.storage.get":
+            _validate_exact_keys(
+                resolved_method,
+                payload,
+                allowed_keys=("session", "type", "key"),
+            )
+            storage_type = _require_enum_value(
+                payload.get("type"),
+                label="type",
+                allowed_values={"local", "session"},
+            )
+            key = _optional_non_empty_string(payload.get("key"), label="key")
+            session = _optional_non_empty_string(payload.get("session"), label="session")
+            try:
+                return self._browser_runtime_service.storage_get(
+                    storage_type,
+                    session=session or DEFAULT_BROWSER_SESSION,
+                    key=key,
+                )
+            except GatewayBrowserRuntimeError as exc:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message=str(exc),
+                    status_code=503,
+                ) from exc
+
+        if resolved_method == "browser.session.current":
+            _validate_exact_keys(resolved_method, payload, allowed_keys=("session",))
+            session = _optional_non_empty_string(payload.get("session"), label="session")
+            try:
+                return self._browser_runtime_service.session_current(
+                    session=session or DEFAULT_BROWSER_SESSION,
+                )
+            except GatewayBrowserRuntimeError as exc:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message=str(exc),
+                    status_code=503,
+                ) from exc
+
+        if resolved_method == "browser.session.list":
+            _validate_exact_keys(resolved_method, payload, allowed_keys=("session",))
+            session = _optional_non_empty_string(payload.get("session"), label="session")
+            try:
+                return self._browser_runtime_service.session_list(
+                    session=session or DEFAULT_BROWSER_SESSION,
+                )
+            except GatewayBrowserRuntimeError as exc:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message=str(exc),
+                    status_code=503,
+                ) from exc
+
+        if resolved_method == "browser.diff.snapshot":
+            _validate_exact_keys(
+                resolved_method,
+                payload,
+                allowed_keys=("session", "selector", "compact", "depth"),
+            )
+            session = _optional_non_empty_string(payload.get("session"), label="session")
+            selector = _optional_non_empty_string(payload.get("selector"), label="selector")
+            compact = (
+                bool(_optional_bool(payload.get("compact"), label="compact"))
+                if "compact" in payload
+                else False
+            )
+            depth = _optional_bounded_int(
+                payload.get("depth"),
+                label="depth",
+                minimum=1,
+                maximum=20,
+            )
+            try:
+                return self._browser_runtime_service.diff_snapshot(
+                    session=session or DEFAULT_BROWSER_SESSION,
+                    selector=selector,
+                    compact=compact,
+                    depth=depth,
+                )
+            except GatewayBrowserRuntimeError as exc:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message=str(exc),
+                    status_code=503,
+                ) from exc
+
+        if resolved_method == "browser.diff.screenshot":
+            _validate_exact_keys(
+                resolved_method,
+                payload,
+                allowed_keys=(
+                    "session",
+                    "baselinePath",
+                    "threshold",
+                    "selector",
+                    "fullPage",
+                ),
+            )
+            baseline_path = _require_non_empty_string(
+                payload.get("baselinePath"),
+                label="baselinePath",
+            )
+            threshold = _optional_number(payload.get("threshold"), label="threshold")
+            if threshold is not None and (threshold < 0 or threshold > 1):
+                raise ValueError("threshold must be between 0 and 1")
+            selector = _optional_non_empty_string(payload.get("selector"), label="selector")
+            full_page = (
+                bool(_optional_bool(payload.get("fullPage"), label="fullPage"))
+                if "fullPage" in payload
+                else False
+            )
+            session = _optional_non_empty_string(payload.get("session"), label="session")
+            try:
+                return self._browser_runtime_service.diff_screenshot(
+                    session=session or DEFAULT_BROWSER_SESSION,
+                    baseline_path=baseline_path,
+                    threshold=threshold,
+                    selector=selector,
+                    full_page=full_page,
+                )
+            except GatewayBrowserRuntimeError as exc:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message=str(exc),
+                    status_code=503,
+                ) from exc
+
+        if resolved_method == "browser.diff.url":
+            _validate_exact_keys(
+                resolved_method,
+                payload,
+                allowed_keys=(
+                    "session",
+                    "url1",
+                    "url2",
+                    "screenshot",
+                    "fullPage",
+                    "waitUntil",
+                    "selector",
+                    "compact",
+                    "depth",
+                ),
+            )
+            url1 = _require_non_empty_string(payload.get("url1"), label="url1")
+            url2 = _require_non_empty_string(payload.get("url2"), label="url2")
+            session = _optional_non_empty_string(payload.get("session"), label="session")
+            screenshot = (
+                bool(_optional_bool(payload.get("screenshot"), label="screenshot"))
+                if "screenshot" in payload
+                else False
+            )
+            full_page = (
+                bool(_optional_bool(payload.get("fullPage"), label="fullPage"))
+                if "fullPage" in payload
+                else False
+            )
+            wait_until = _optional_enum_value(
+                payload.get("waitUntil"),
+                label="waitUntil",
+                allowed_values={"load", "domcontentloaded", "networkidle"},
+            )
+            selector = _optional_non_empty_string(payload.get("selector"), label="selector")
+            compact = (
+                bool(_optional_bool(payload.get("compact"), label="compact"))
+                if "compact" in payload
+                else False
+            )
+            depth = _optional_bounded_int(
+                payload.get("depth"),
+                label="depth",
+                minimum=1,
+                maximum=20,
+            )
+            try:
+                return self._browser_runtime_service.diff_url(
+                    url1,
+                    url2,
+                    session=session or DEFAULT_BROWSER_SESSION,
+                    screenshot=screenshot,
+                    full_page=full_page,
+                    wait_until=wait_until,
+                    selector=selector,
+                    compact=compact,
+                    depth=depth,
+                )
+            except GatewayBrowserRuntimeError as exc:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message=str(exc),
+                    status_code=503,
+                ) from exc
+
+        if resolved_method == "browser.download":
+            _validate_exact_keys(
+                resolved_method,
+                payload,
+                allowed_keys=("session", "selector", "filenameHint"),
+            )
+            selector = _require_non_empty_string(payload.get("selector"), label="selector")
+            filename_hint = _optional_non_empty_string(
+                payload.get("filenameHint"),
+                label="filenameHint",
+            )
+            session = _optional_non_empty_string(payload.get("session"), label="session")
+            try:
+                return self._browser_runtime_service.download(
+                    selector,
+                    session=session or DEFAULT_BROWSER_SESSION,
+                    filename_hint=filename_hint,
+                )
+            except GatewayBrowserRuntimeError as exc:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message=str(exc),
+                    status_code=503,
+                ) from exc
+
+        if resolved_method == "browser.upload":
+            _validate_exact_keys(
+                resolved_method,
+                payload,
+                allowed_keys=("session", "selector", "filePaths"),
+            )
+            selector = _require_non_empty_string(payload.get("selector"), label="selector")
+            file_paths = _require_string_list(payload.get("filePaths"), label="filePaths")
+            session = _optional_non_empty_string(payload.get("session"), label="session")
+            try:
+                return self._browser_runtime_service.upload(
+                    selector,
+                    file_paths,
+                    session=session or DEFAULT_BROWSER_SESSION,
+                )
+            except GatewayBrowserRuntimeError as exc:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message=str(exc),
+                    status_code=503,
+                ) from exc
+
+        if resolved_method == "browser.auth.list":
+            _validate_exact_keys(resolved_method, payload, allowed_keys=("session",))
+            session = _optional_non_empty_string(payload.get("session"), label="session")
+            try:
+                return self._browser_runtime_service.auth_list(
+                    session=session or DEFAULT_BROWSER_SESSION,
+                )
+            except GatewayBrowserRuntimeError as exc:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message=str(exc),
+                    status_code=503,
+                ) from exc
+
+        if resolved_method == "browser.auth.show":
+            _validate_exact_keys(resolved_method, payload, allowed_keys=("session", "name"))
+            name = _require_non_empty_string(payload.get("name"), label="name")
+            session = _optional_non_empty_string(payload.get("session"), label="session")
+            try:
+                return self._browser_runtime_service.auth_show(
+                    name,
+                    session=session or DEFAULT_BROWSER_SESSION,
+                )
+            except GatewayBrowserRuntimeError as exc:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message=str(exc),
+                    status_code=503,
+                ) from exc
+
+        if resolved_method == "browser.tabs":
+            _validate_exact_keys(resolved_method, payload, allowed_keys=("session",))
+            session = _optional_non_empty_string(payload.get("session"), label="session")
+            try:
+                return self._browser_runtime_service.tabs(
+                    session=session or DEFAULT_BROWSER_SESSION,
+                )
+            except GatewayBrowserRuntimeError as exc:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message=str(exc),
+                    status_code=503,
+                ) from exc
+
+        if resolved_method == "browser.profiles":
+            _validate_exact_keys(resolved_method, payload, allowed_keys=("session",))
+            session = _optional_non_empty_string(payload.get("session"), label="session")
+            try:
+                return self._browser_runtime_service.profiles(
+                    session=session or DEFAULT_BROWSER_SESSION,
+                )
+            except GatewayBrowserRuntimeError as exc:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message=str(exc),
+                    status_code=503,
+                ) from exc
+
+        if resolved_method == "browser.screenshot":
+            _validate_exact_keys(
+                resolved_method,
+                payload,
+                allowed_keys=("session", "fullPage"),
+            )
+            session = _optional_non_empty_string(payload.get("session"), label="session")
+            full_page = (
+                bool(_optional_bool(payload.get("fullPage"), label="fullPage"))
+                if "fullPage" in payload
+                else False
+            )
+            try:
+                return self._browser_runtime_service.screenshot(
+                    session=session or DEFAULT_BROWSER_SESSION,
+                    full_page=full_page,
+                )
+            except GatewayBrowserRuntimeError as exc:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message=str(exc),
+                    status_code=503,
+                ) from exc
+
+        if resolved_method == "browser.pdf":
+            _validate_exact_keys(resolved_method, payload, allowed_keys=("session",))
+            session = _optional_non_empty_string(payload.get("session"), label="session")
+            try:
+                return self._browser_runtime_service.pdf(
+                    session=session or DEFAULT_BROWSER_SESSION,
+                )
+            except GatewayBrowserRuntimeError as exc:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message=str(exc),
+                    status_code=503,
+                ) from exc
+
+        if resolved_method == "browser.navigate":
+            _validate_exact_keys(
+                resolved_method,
+                payload,
+                allowed_keys=("target", "url", "session"),
+            )
+            target = _optional_non_empty_string(payload.get("url"), label="url")
+            if target is None:
+                target = _require_non_empty_string(payload.get("target"), label="target")
+            session = _optional_non_empty_string(payload.get("session"), label="session")
+            try:
+                return self._browser_runtime_service.navigate(
+                    target,
+                    session=session or DEFAULT_BROWSER_SESSION,
+                )
+            except GatewayBrowserRuntimeError as exc:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message=str(exc),
+                    status_code=503,
+                ) from exc
+
+        if resolved_method in {"browser.back", "browser.forward", "browser.reload"}:
+            _validate_exact_keys(resolved_method, payload, allowed_keys=("session",))
+            session = _optional_non_empty_string(payload.get("session"), label="session")
+            action = resolved_method.removeprefix("browser.")
+            try:
+                return self._browser_runtime_service.history(
+                    action,
+                    session=session or DEFAULT_BROWSER_SESSION,
+                )
+            except GatewayBrowserRuntimeError as exc:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message=str(exc),
+                    status_code=503,
+                ) from exc
+
+        if resolved_method == "browser.close":
+            _validate_exact_keys(
+                resolved_method,
+                payload,
+                allowed_keys=("session", "all", "targetId"),
+            )
+            session = _optional_non_empty_string(payload.get("session"), label="session")
+            target_id = _optional_non_empty_string(payload.get("targetId"), label="targetId")
+            all_sessions = (
+                bool(_optional_bool(payload.get("all"), label="all"))
+                if "all" in payload
+                else False
+            )
+            if target_id is not None and all_sessions:
+                raise ValueError("browser.close cannot combine targetId with all=true")
+            try:
+                return self._browser_runtime_service.close(
+                    session=session or DEFAULT_BROWSER_SESSION,
+                    all_sessions=all_sessions,
+                    target_id=target_id,
+                )
+            except GatewayBrowserRuntimeError as exc:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message=str(exc),
+                    status_code=503,
+                ) from exc
+
+        if resolved_method == "browser.focus":
+            _validate_exact_keys(resolved_method, payload, allowed_keys=("session", "targetId"))
+            target_id = _require_non_empty_string(payload.get("targetId"), label="targetId")
+            session = _optional_non_empty_string(payload.get("session"), label="session")
+            try:
+                return self._browser_runtime_service.focus(
+                    target_id,
+                    session=session or DEFAULT_BROWSER_SESSION,
+                )
+            except GatewayBrowserRuntimeError as exc:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message=str(exc),
+                    status_code=503,
+                ) from exc
+
+        if resolved_method == "browser.act":
+            request_keys = (
+                "kind",
+                "ref",
+                "selector",
+                "targetId",
+                "element",
+                "text",
+                "key",
+                "timeMs",
+                "timeoutMs",
+                "fn",
+                "width",
+                "height",
+                "direction",
+                "px",
+                "value",
+                "values",
+            )
+            if "request" in payload:
+                _validate_exact_keys(
+                    resolved_method,
+                    payload,
+                    allowed_keys=("session", "request"),
+                )
+                request_payload = payload.get("request")
+                if not isinstance(request_payload, dict):
+                    raise ValueError("browser.act request must be an object")
+                _validate_exact_keys(
+                    "browser.act request",
+                    request_payload,
+                    allowed_keys=request_keys,
+                )
+                act_request = cast(dict[str, Any], dict(request_payload))
+            else:
+                _validate_exact_keys(
+                    resolved_method,
+                    payload,
+                    allowed_keys=("session", *request_keys),
+                )
+                act_request = {key: payload[key] for key in request_keys if key in payload}
+            _require_non_empty_string(act_request.get("kind"), label="kind")
+            session = _optional_non_empty_string(payload.get("session"), label="session")
+            try:
+                return self._browser_runtime_service.act(
+                    act_request,
+                    session=session or DEFAULT_BROWSER_SESSION,
+                )
+            except GatewayBrowserRuntimeError as exc:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message=str(exc),
+                    status_code=503,
+                ) from exc
+
+        if resolved_method == "browser.open":
+            _validate_exact_keys(resolved_method, payload, allowed_keys=("target", "session"))
+            target = _require_non_empty_string(payload.get("target"), label="target")
+            session = _optional_non_empty_string(payload.get("session"), label="session")
+            try:
+                return self._browser_runtime_service.open_page(
+                    target,
+                    session=session or DEFAULT_BROWSER_SESSION,
+                )
+            except GatewayBrowserRuntimeError as exc:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message=str(exc),
+                    status_code=503,
+                ) from exc
+
+        if resolved_method == "browser.snapshot":
+            _validate_exact_keys(resolved_method, payload, allowed_keys=("session",))
+            session = _optional_non_empty_string(payload.get("session"), label="session")
+            try:
+                return self._browser_runtime_service.snapshot(
+                    session=session or DEFAULT_BROWSER_SESSION,
+                )
+            except GatewayBrowserRuntimeError as exc:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message=str(exc),
+                    status_code=503,
+                ) from exc
+
+        if resolved_method == "browser.console":
+            _validate_exact_keys(resolved_method, payload, allowed_keys=("session",))
+            session = _optional_non_empty_string(payload.get("session"), label="session")
+            try:
+                return self._browser_runtime_service.console(
+                    session=session or DEFAULT_BROWSER_SESSION,
+                )
+            except GatewayBrowserRuntimeError as exc:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message=str(exc),
+                    status_code=503,
+                ) from exc
+
+        if resolved_method == "browser.errors":
+            _validate_exact_keys(resolved_method, payload, allowed_keys=("session",))
+            session = _optional_non_empty_string(payload.get("session"), label="session")
+            try:
+                return self._browser_runtime_service.errors(
+                    session=session or DEFAULT_BROWSER_SESSION,
+                )
+            except GatewayBrowserRuntimeError as exc:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message=str(exc),
+                    status_code=503,
+                ) from exc
 
         if resolved_method == "status":
             _validate_exact_keys(resolved_method, payload, allowed_keys=())
@@ -1180,17 +2502,21 @@ class GatewayNodeMethodService:
                         ),
                         status_code=503,
                     )
-                resolved_target = await self._sessions_service.resolve_key(
-                    key=None,
-                    session_id=None,
-                    label=None,
-                    agent_id=agent_id,
-                    spawned_by=None,
+                session_snapshot = await self._sessions_service.build_snapshot(
                     include_global=True,
                     include_unknown=False,
+                    limit=1,
+                    active_minutes=None,
+                    label=None,
+                    spawned_by=None,
+                    agent_id=agent_id,
+                    search=None,
+                    include_derived_titles=False,
+                    include_last_message=False,
+                    now_ms=_timestamp_ms(now_ms),
                 )
                 session_key = _require_non_empty_string(
-                    resolved_target.get("key"),
+                    session_snapshot.get("defaults", {}).get("mainSessionKey"),
                     label="sessionKey",
                 )
             if self._wake_service is None:
@@ -1268,11 +2594,50 @@ class GatewayNodeMethodService:
                 _require_string(payload.get("title"), label="title")
             if "body" in payload and payload.get("body") is not None:
                 _require_string(payload.get("body"), label="body")
-            _optional_enum_value(
+            environment = _optional_enum_value(
                 payload.get("environment"),
                 label="environment",
                 allowed_values={"sandbox", "production"},
             )
+            registration = await self._recorded_apns_registration(node_id)
+            if registration is not None:
+                title = (
+                    _require_string(payload.get("title"), label="title").strip()
+                    if "title" in payload and payload.get("title") is not None
+                    else "OpenZues"
+                ) or "OpenZues"
+                body = (
+                    _require_string(payload.get("body"), label="body").strip()
+                    if "body" in payload and payload.get("body") is not None
+                    else f"Push test for node {node_id}"
+                ) or f"Push test for node {node_id}"
+                if self._send_apns_push_service is not None:
+                    push_result = await self._send_apns_push_service(
+                        node_id=node_id,
+                        registration=registration,
+                        title=title,
+                        body=body,
+                        environment=environment,
+                    )
+                    if _should_clear_recorded_apns_registration(
+                        registration,
+                        result=push_result,
+                        override_environment=environment,
+                    ):
+                        await self._clear_recorded_apns_registration_if_current(
+                            node_id=node_id,
+                            registration=registration,
+                            reason="apns-invalidated",
+                        )
+                    return push_result
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message=(
+                        "APNs sender runtime is not configured for registered "
+                        f"node {node_id}"
+                    ),
+                    status_code=503,
+                )
             raise GatewayNodeMethodError(
                 code="INVALID_REQUEST",
                 message=f"node {node_id} has no APNs registration (connect iOS node first)",
@@ -1799,6 +3164,35 @@ class GatewayNodeMethodService:
                 )
             return await self._channels_service.build_snapshot()
 
+        if resolved_method == "channels.start":
+            _validate_exact_keys(
+                resolved_method,
+                payload,
+                allowed_keys=("channel", "accountId"),
+            )
+            raw_channel = payload.get("channel")
+            if not isinstance(raw_channel, str) or not raw_channel.strip():
+                raise GatewayNodeMethodError(
+                    code="INVALID_REQUEST",
+                    message="invalid channels.start params: channel must be a non-empty string",
+                    status_code=400,
+                )
+            channel = raw_channel.strip()
+            normalized_channel = _normalize_gateway_chat_channel_id(channel)
+            if normalized_channel is None:
+                raise GatewayNodeMethodError(
+                    code="INVALID_REQUEST",
+                    message="invalid channels.start channel",
+                    status_code=400,
+                )
+            if "accountId" in payload and payload.get("accountId") is not None:
+                _require_string(payload.get("accountId"), label="accountId")
+            raise GatewayNodeMethodError(
+                code="INVALID_REQUEST",
+                message=f"channel {normalized_channel} does not support runtime start",
+                status_code=400,
+            )
+
         if resolved_method == "channels.logout":
             _validate_exact_keys(
                 resolved_method,
@@ -2146,7 +3540,10 @@ class GatewayNodeMethodService:
                     "idempotencyKey",
                 ),
             )
-            if self._chat_send_service is None:
+            if (
+                self._chat_send_service is None
+                and self._chat_attachment_send_service is None
+            ):
                 raise GatewayNodeMethodError(
                     code="UNAVAILABLE",
                     message="chat.send is unavailable until control chat runtime is wired",
@@ -2243,24 +3640,45 @@ class GatewayNodeMethodService:
                     ),
                     status_code=503,
                 )
-            if has_effective_attachments:
-                raise GatewayNodeMethodError(
-                    code="UNAVAILABLE",
-                    message=(
-                        "chat.send attachments are unavailable until control chat "
-                        "attachment runtime is wired"
-                    ),
-                    status_code=503,
-                )
             timestamp_ms = _timestamp_ms(now_ms)
-            send_result = await self._chat_send_service(
-                session_key=session_key,
-                message=message,
-                idempotency_key=idempotency_key,
-                thinking=thinking,
-                deliver=deliver,
-                timeout_ms=timeout_ms,
-            )
+            if has_effective_attachments:
+                if self._chat_attachment_send_service is None:
+                    raise GatewayNodeMethodError(
+                        code="UNAVAILABLE",
+                        message=(
+                            "chat.send attachments are unavailable until control chat "
+                            "attachment runtime is wired"
+                        ),
+                        status_code=503,
+                    )
+                assert isinstance(attachments, list)
+                send_result = await self._chat_attachment_send_service(
+                    session_key=session_key,
+                    message=message,
+                    idempotency_key=idempotency_key,
+                    thinking=thinking,
+                    deliver=deliver,
+                    timeout_ms=timeout_ms,
+                    attachments=attachments,
+                    channel=None,
+                    to=None,
+                    node_id=None,
+                )
+            else:
+                if self._chat_send_service is None:
+                    raise GatewayNodeMethodError(
+                        code="UNAVAILABLE",
+                        message="chat.send is unavailable until control chat runtime is wired",
+                        status_code=503,
+                    )
+                send_result = await self._chat_send_service(
+                    session_key=session_key,
+                    message=message,
+                    idempotency_key=idempotency_key,
+                    thinking=thinking,
+                    deliver=deliver,
+                    timeout_ms=timeout_ms,
+                )
             self._remember_gateway_chat_run(
                 session_key,
                 send_result,
@@ -2319,7 +3737,10 @@ class GatewayNodeMethodService:
                     "idempotencyKey",
                 ),
             )
-            if self._chat_send_service is None:
+            if (
+                self._chat_send_service is None
+                and self._chat_attachment_send_service is None
+            ):
                 raise GatewayNodeMethodError(
                     code="UNAVAILABLE",
                     message="sessions.send is unavailable until control chat runtime is wired",
@@ -2363,29 +3784,50 @@ class GatewayNodeMethodService:
                     now_ms=now_ms,
                 )
                 return stop_result
-            if has_effective_attachments:
-                raise GatewayNodeMethodError(
-                    code="UNAVAILABLE",
-                    message=(
-                        "sessions.send attachments are unavailable until control chat "
-                        "attachment runtime is wired"
-                    ),
-                    status_code=503,
-                )
             pending_message_seq = (
                 await self._database.count_control_chat_messages(session_key=session_key) + 1
                 if self._database is not None
                 else None
             )
             timestamp_ms = _timestamp_ms(now_ms)
-            send_result = await self._chat_send_service(
-                session_key=session_key,
-                message=message,
-                idempotency_key=idempotency_key,
-                thinking=thinking,
-                deliver=None,
-                timeout_ms=timeout_ms,
-            )
+            if has_effective_attachments:
+                if self._chat_attachment_send_service is None:
+                    raise GatewayNodeMethodError(
+                        code="UNAVAILABLE",
+                        message=(
+                            "sessions.send attachments are unavailable until control chat "
+                            "attachment runtime is wired"
+                        ),
+                        status_code=503,
+                    )
+                assert isinstance(attachments, list)
+                send_result = await self._chat_attachment_send_service(
+                    session_key=session_key,
+                    message=message,
+                    idempotency_key=idempotency_key,
+                    thinking=thinking,
+                    deliver=None,
+                    timeout_ms=timeout_ms,
+                    attachments=attachments,
+                    channel=None,
+                    to=None,
+                    node_id=None,
+                )
+            else:
+                if self._chat_send_service is None:
+                    raise GatewayNodeMethodError(
+                        code="UNAVAILABLE",
+                        message="sessions.send is unavailable until control chat runtime is wired",
+                        status_code=503,
+                    )
+                send_result = await self._chat_send_service(
+                    session_key=session_key,
+                    message=message,
+                    idempotency_key=idempotency_key,
+                    thinking=thinking,
+                    deliver=None,
+                    timeout_ms=timeout_ms,
+                )
             if pending_message_seq is not None and _should_attach_pending_session_message_seq(
                 send_result
             ):
@@ -2475,28 +3917,43 @@ class GatewayNodeMethodService:
                     now_ms=now_ms,
                 )
                 return stop_result
-            if has_effective_attachments:
-                raise GatewayNodeMethodError(
-                    code="UNAVAILABLE",
-                    message=(
-                        "sessions.steer attachments are unavailable until control chat "
-                        "attachment runtime is wired"
-                    ),
-                    status_code=503,
-                )
             pending_message_seq = (
                 await self._database.count_control_chat_messages(session_key=session_key) + 1
                 if self._database is not None
                 else None
             )
-            steer_result = await self._chat_send_service(
-                session_key=session_key,
-                message=message,
-                idempotency_key=idempotency_key,
-                thinking=thinking,
-                deliver=None,
-                timeout_ms=timeout_ms,
-            )
+            if has_effective_attachments:
+                if self._chat_attachment_send_service is None:
+                    raise GatewayNodeMethodError(
+                        code="UNAVAILABLE",
+                        message=(
+                            "sessions.steer attachments are unavailable until control chat "
+                            "attachment runtime is wired"
+                        ),
+                        status_code=503,
+                    )
+                assert isinstance(attachments, list)
+                steer_result = await self._chat_attachment_send_service(
+                    session_key=session_key,
+                    message=message,
+                    idempotency_key=idempotency_key,
+                    thinking=thinking,
+                    deliver=None,
+                    timeout_ms=timeout_ms,
+                    attachments=attachments,
+                    channel=None,
+                    to=None,
+                    node_id=None,
+                )
+            else:
+                steer_result = await self._chat_send_service(
+                    session_key=session_key,
+                    message=message,
+                    idempotency_key=idempotency_key,
+                    thinking=thinking,
+                    deliver=None,
+                    timeout_ms=timeout_ms,
+                )
             if pending_message_seq is not None and _should_attach_pending_session_message_seq(
                 steer_result
             ):
@@ -3595,6 +5052,38 @@ class GatewayNodeMethodService:
             timestamp_ms = _timestamp_ms(now_ms)
             if requested_session_key is None and requested_session_id is None:
                 target_session_key = await self._sessions_service.main_session_key()
+            elif requested_session_key is not None and requested_session_id is not None:
+                resolved_session = await self._sessions_service.resolve_key(
+                    key=requested_session_key,
+                    session_id=None,
+                    label=None,
+                    agent_id=agent_id,
+                    spawned_by=None,
+                    include_global=True,
+                    include_unknown=False,
+                )
+                target_session_key = _canonical_session_key(
+                    _require_non_empty_string(
+                        resolved_session.get("key"),
+                        label="key",
+                    )
+                )
+                session_payload = await self._sessions_service.build_session_payload_for_key(
+                    session_key=target_session_key,
+                    now_ms=timestamp_ms,
+                )
+                normalized_session_id = str(requested_session_id).strip().lower()
+                session_id_matches = (
+                    session_payload is not None
+                    and str(session_payload.get("sessionId") or "").strip().lower()
+                    == normalized_session_id
+                )
+                session_key_matches = any(
+                    alias.strip().lower() == normalized_session_id
+                    for alias in session_key_lookup_aliases(target_session_key)
+                )
+                if not (session_id_matches or session_key_matches):
+                    raise ValueError("unknown sessionId")
             else:
                 resolved_session = await self._sessions_service.resolve_key(
                     key=requested_session_key,
@@ -3727,17 +5216,13 @@ class GatewayNodeMethodService:
 
         if resolved_method == "doctor.memory.status":
             _validate_exact_keys(resolved_method, payload, allowed_keys=())
-            raise GatewayNodeMethodError(
-                code="UNAVAILABLE",
-                message=(
-                    "doctor.memory.status is unavailable until gateway memory doctor runtime "
-                    "is wired"
-                ),
-                status_code=503,
-            )
+            return _build_doctor_memory_status_payload()
+
+        if resolved_method == "doctor.memory.dreamDiary":
+            _validate_exact_keys(resolved_method, payload, allowed_keys=())
+            return _build_doctor_memory_dream_diary_payload(self._memory_doctor_workspace)
 
         if resolved_method in {
-            "doctor.memory.dreamDiary",
             "doctor.memory.backfillDreamDiary",
             "doctor.memory.resetDreamDiary",
             "doctor.memory.resetGroundedShortTerm",
@@ -4182,13 +5667,19 @@ class GatewayNodeMethodService:
                             paired_node=stored_paired_node,
                             now_ms=now_ms,
                         )
-                    stored_payload = _stored_paired_node_payload(stored_paired_node)
+                    stored_payload = _stored_paired_node_payload(
+                        stored_paired_node,
+                        commands=self._normalized_paired_node_commands(stored_paired_node),
+                    )
                     paired_payloads[stored_paired_node.node_id] = (
                         stored_payload
                         if existing_node is None
                         else _merge_paired_node_payload(
                             stored_payload,
-                            _paired_node_payload(existing_node),
+                            _paired_node_payload(
+                                existing_node,
+                                commands=self._normalized_known_node_commands(existing_node),
+                            ),
                         )
                     )
                 pending_requests = await self._pairing_service.list_pending()
@@ -4222,13 +5713,29 @@ class GatewayNodeMethodService:
                     message="node pairing storage unavailable",
                     status_code=503,
                 )
+            platform = _optional_non_empty_string(payload.get("platform"), label="platform")
+            device_family = _optional_non_empty_string(
+                payload.get("deviceFamily"),
+                label="deviceFamily",
+            )
+            commands = (
+                _optional_string_list(payload.get("commands"), label="commands")
+                if "commands" in payload
+                else None
+            )
+            if commands is not None and (platform is not None or device_family is not None):
+                commands = self._normalize_declared_commands_for_metadata(
+                    commands,
+                    platform=platform,
+                    device_family=device_family,
+                )
             request_result = await self._request_node_pairing(
                 node_id=_require_non_empty_string(payload.get("nodeId"), label="nodeId"),
                 display_name=_optional_non_empty_string(
                     payload.get("displayName"),
                     label="displayName",
                 ),
-                platform=_optional_non_empty_string(payload.get("platform"), label="platform"),
+                platform=platform,
                 version=_optional_non_empty_string(payload.get("version"), label="version"),
                 core_version=_optional_non_empty_string(
                     payload.get("coreVersion"),
@@ -4238,10 +5745,7 @@ class GatewayNodeMethodService:
                     payload.get("uiVersion"),
                     label="uiVersion",
                 ),
-                device_family=_optional_non_empty_string(
-                    payload.get("deviceFamily"),
-                    label="deviceFamily",
-                ),
+                device_family=device_family,
                 model_identifier=_optional_non_empty_string(
                     payload.get("modelIdentifier"),
                     label="modelIdentifier",
@@ -4251,11 +5755,7 @@ class GatewayNodeMethodService:
                     if "caps" in payload
                     else None
                 ),
-                commands=(
-                    _optional_string_list(payload.get("commands"), label="commands")
-                    if "commands" in payload
-                    else None
-                ),
+                commands=commands,
                 remote_ip=_optional_non_empty_string(payload.get("remoteIp"), label="remoteIp"),
                 silent=_optional_bool(payload.get("silent"), label="silent"),
                 now_ms=now_ms,
@@ -4359,7 +5859,10 @@ class GatewayNodeMethodService:
             described_node = self.registry.describe_known_node(wanted_node_id)
             timestamp_ms = _timestamp_ms(now_ms)
             if described_node is not None:
-                payload_node = _known_node_payload(described_node)
+                payload_node = _known_node_payload(
+                    described_node,
+                    commands=self._normalized_known_node_commands(described_node),
+                )
                 if self._pairing_service is not None:
                     merged_paired_node = await self._pairing_service.get_paired_node(wanted_node_id)
                     if merged_paired_node is not None:
@@ -4369,7 +5872,12 @@ class GatewayNodeMethodService:
                             now_ms=now_ms,
                         )
                         payload_node = _merge_known_node_payload(
-                            _known_paired_node_payload(merged_paired_node),
+                            _known_paired_node_payload(
+                                merged_paired_node,
+                                commands=self._normalized_paired_node_commands(
+                                    merged_paired_node
+                                ),
+                            ),
                             payload_node,
                         )
                 return {"ts": timestamp_ms, **payload_node}
@@ -4380,7 +5888,12 @@ class GatewayNodeMethodService:
                 if fallback_paired_node is not None:
                     return {
                         "ts": timestamp_ms,
-                        **_known_paired_node_payload(fallback_paired_node),
+                        **_known_paired_node_payload(
+                            fallback_paired_node,
+                            commands=self._normalized_paired_node_commands(
+                                fallback_paired_node
+                            ),
+                        ),
                     }
             raise ValueError("unknown nodeId")
 
@@ -4468,6 +5981,41 @@ class GatewayNodeMethodService:
                         "createdAt": utcnow(),
                     }
                 )
+            if isinstance(parsed_payload, dict):
+                session_key = (
+                    parsed_payload["sessionKey"].strip()
+                    if isinstance(parsed_payload.get("sessionKey"), str)
+                    else ""
+                )
+                assert node_id is not None
+                if event_name == "chat.subscribe" and session_key:
+                    self.registry.subscribe_node_to_session(node_id, session_key)
+                elif event_name == "chat.unsubscribe" and session_key:
+                    self.registry.unsubscribe_node_from_session(node_id, session_key)
+                elif event_name in _NODE_EXEC_EVENTS:
+                    await self._queue_node_exec_system_event(
+                        event_name=event_name,
+                        node_id=node_id,
+                        payload=parsed_payload,
+                        now_ms=now_ms,
+                    )
+                elif event_name == "notifications.changed":
+                    await self._queue_node_notification_system_event(
+                        node_id=node_id,
+                        payload=parsed_payload,
+                    )
+                elif event_name == "voice.transcript":
+                    await self._route_node_voice_transcript(
+                        node_id=node_id,
+                        payload=parsed_payload,
+                        now_ms=now_ms,
+                    )
+                elif event_name == "agent.request":
+                    await self._route_node_agent_request(
+                        node_id=node_id,
+                        payload=parsed_payload,
+                        now_ms=now_ms,
+                    )
             return {"ok": True}
 
         if resolved_method == "node.invoke":
@@ -4493,14 +6041,11 @@ class GatewayNodeMethodService:
             if target_node is None:
                 raise ValueError("unknown nodeId")
             wake_attempt: GatewayNodeWakeAttempt | None = None
-            if self.registry.get(target_node_id) is None and self._wake_node is not None:
-                wake_attempt = _coerce_wake_attempt(await self._wake_node(target_node_id))
-                if wake_attempt.available and self.registry.get(target_node_id) is None:
-                    reconnected = await self._wait_for_node_connection(target_node_id)
-                    wake_attempt = _wake_attempt_with_connection(
-                        wake_attempt,
-                        connected=reconnected,
-                    )
+            if self.registry.get(target_node_id) is None:
+                wake_attempt = await self._wake_invoked_node_until_connected(
+                    target_node_id,
+                    now_ms=now_ms,
+                )
                 refreshed_node = self.registry.describe_known_node(target_node_id)
                 if refreshed_node is not None:
                     target_node = refreshed_node
@@ -4529,6 +6074,8 @@ class GatewayNodeMethodService:
                     target_node.device_family
                     or (paired_node_record.device_family if paired_node_record else None)
                 ),
+                allow_commands=self._node_allow_commands,
+                deny_commands=self._node_deny_commands,
             )
             live_declared_commands = normalize_declared_node_commands(
                 target_node.commands,
@@ -4598,7 +6145,7 @@ class GatewayNodeMethodService:
                             "queuedActionId": result.queued_action_id,
                             "nodeId": target_node_id,
                             "command": command,
-                            "nodeError": error_payload or None,
+                            "nodeError": result.node_error or error_payload or None,
                         },
                         retryable=True,
                     )
@@ -5324,6 +6871,374 @@ class GatewayNodeMethodService:
         if changed_payload is not None:
             await self._publish_gateway_event("sessions.changed", changed_payload)
 
+    async def _recorded_apns_registration(self, node_id: str) -> dict[str, Any] | None:
+        if self._database is None:
+            return None
+        for event in reversed(await self._database.list_events(limit=500)):
+            if event.get("method") != "node.event":
+                continue
+            event_payload = event.get("payload")
+            if not isinstance(event_payload, dict):
+                continue
+            if event_payload.get("nodeId") != node_id:
+                continue
+            event_name = event_payload.get("event")
+            if event_name in {"push.apns.unregister", "push.apns.clear"}:
+                return None
+            if event_name != "push.apns.register":
+                continue
+            registration = _recorded_node_event_payload(event_payload)
+            if _is_valid_recorded_apns_registration(registration):
+                assert isinstance(registration, dict)
+                return dict(registration)
+        return None
+
+    async def _clear_recorded_apns_registration_if_current(
+        self,
+        *,
+        node_id: str,
+        registration: dict[str, Any],
+        reason: str,
+    ) -> bool:
+        if self._database is None:
+            return False
+        current = await self._recorded_apns_registration(node_id)
+        if current is None or not _same_recorded_apns_registration(current, registration):
+            return False
+        await self._database.append_event(
+            instance_id=None,
+            thread_id=None,
+            method="node.event",
+            payload={
+                "nodeId": node_id,
+                "event": "push.apns.unregister",
+                "payload": {
+                    "reason": reason,
+                    "transport": _string_or_none(registration.get("transport")) or "direct",
+                },
+            },
+        )
+        return True
+
+    async def _queue_node_exec_system_event(
+        self,
+        *,
+        event_name: str,
+        node_id: str,
+        payload: dict[str, Any],
+        now_ms: int | None,
+    ) -> None:
+        text = _format_node_exec_system_event(
+            event_name=event_name,
+            node_id=node_id,
+            payload=payload,
+        )
+        if text is None:
+            return
+        session_key = (
+            payload["sessionKey"].strip()
+            if isinstance(payload.get("sessionKey"), str) and payload["sessionKey"].strip()
+            else f"node-{node_id}"
+        )
+        if event_name == "exec.finished":
+            run_id = _compact_node_exec_text(payload.get("runId"))
+            if run_id and self._should_drop_duplicate_node_exec_finished(
+                session_key=session_key,
+                run_id=run_id,
+                now_ms=_timestamp_ms(now_ms),
+            ):
+                return
+        if self._wake_service is not None:
+            await self._wake_service.wake(
+                mode="next-heartbeat",
+                text=text,
+                reason="node.exec",
+                session_key=session_key,
+            )
+            return
+        if self._database is not None:
+            await self._database.append_event(
+                instance_id=None,
+                thread_id=None,
+                method="system-event",
+                payload={"text": text, "reason": "node.exec", "sessionKey": session_key},
+            )
+
+    def _should_drop_duplicate_node_exec_finished(
+        self,
+        *,
+        session_key: str,
+        run_id: str,
+        now_ms: int,
+    ) -> bool:
+        fingerprint = f"{session_key}::{run_id}"
+        previous_ts = self._recent_node_exec_finished_runs.get(fingerprint)
+        if (
+            previous_ts is not None
+            and now_ms - previous_ts <= _NODE_EXEC_FINISHED_DEDUPE_WINDOW_MS
+        ):
+            return True
+        self._recent_node_exec_finished_runs[fingerprint] = now_ms
+        if len(self._recent_node_exec_finished_runs) > _MAX_RECENT_NODE_EXEC_FINISHED_RUNS:
+            cutoff = now_ms - _NODE_EXEC_FINISHED_DEDUPE_WINDOW_MS
+            stale_keys = [
+                key
+                for key, timestamp_ms in self._recent_node_exec_finished_runs.items()
+                if timestamp_ms < cutoff
+            ]
+            for key in stale_keys:
+                self._recent_node_exec_finished_runs.pop(key, None)
+            while (
+                len(self._recent_node_exec_finished_runs)
+                > _MAX_RECENT_NODE_EXEC_FINISHED_RUNS
+            ):
+                oldest_key = min(
+                    self._recent_node_exec_finished_runs,
+                    key=self._recent_node_exec_finished_runs.__getitem__,
+                )
+                self._recent_node_exec_finished_runs.pop(oldest_key, None)
+        return False
+
+    async def _queue_node_notification_system_event(
+        self,
+        *,
+        node_id: str,
+        payload: dict[str, Any],
+    ) -> None:
+        text = _format_node_notification_system_event(node_id=node_id, payload=payload)
+        if text is None:
+            return
+        session_key = (
+            payload["sessionKey"].strip()
+            if isinstance(payload.get("sessionKey"), str) and payload["sessionKey"].strip()
+            else f"node-{node_id}"
+        )
+        event_payload = {
+            "text": text,
+            "reason": "notifications-event",
+            "sessionKey": session_key,
+        }
+        if self._wake_service is not None:
+            await self._wake_service.wake(
+                mode="next-heartbeat",
+                text=text,
+                reason="notifications-event",
+                session_key=session_key,
+            )
+            return
+        if self._database is not None:
+            await self._database.append_event(
+                instance_id=None,
+                thread_id=None,
+                method="system-event",
+                payload=event_payload,
+            )
+
+    async def _route_node_voice_transcript(
+        self,
+        *,
+        node_id: str,
+        payload: dict[str, Any],
+        now_ms: int | None,
+    ) -> None:
+        if self._chat_send_service is None:
+            return
+        text = _sanitize_gateway_chat_send_message_input(
+            _compact_node_voice_transcript_text(payload.get("text"))
+        )
+        if not text or len(text) > 20_000:
+            return
+        session_key = (
+            payload["sessionKey"].strip()
+            if isinstance(payload.get("sessionKey"), str) and payload["sessionKey"].strip()
+            else f"node-{node_id}"
+        )
+        timestamp_ms = _timestamp_ms(now_ms)
+        fingerprint = _node_voice_transcript_fingerprint(payload, text)
+        if self._should_drop_duplicate_node_voice_transcript(
+            session_key=session_key,
+            fingerprint=fingerprint,
+            now_ms=timestamp_ms,
+        ):
+            return
+        idempotency_key = _node_voice_transcript_idempotency_key(
+            node_id=node_id,
+            session_key=session_key,
+            payload=payload,
+            text=text,
+        )
+        send_result = await self._chat_send_service(
+            session_key=session_key,
+            message=text,
+            idempotency_key=idempotency_key,
+            thinking="low",
+            deliver=False,
+            timeout_ms=None,
+        )
+        self._remember_gateway_chat_run(
+            session_key,
+            send_result,
+            started_at_ms=timestamp_ms,
+        )
+
+    def _should_drop_duplicate_node_voice_transcript(
+        self,
+        *,
+        session_key: str,
+        fingerprint: str,
+        now_ms: int,
+    ) -> bool:
+        previous = self._recent_node_voice_transcripts.get(session_key)
+        if (
+            previous is not None
+            and previous[0] == fingerprint
+            and now_ms - previous[1] <= _NODE_VOICE_TRANSCRIPT_DEDUPE_WINDOW_MS
+        ):
+            return True
+        self._recent_node_voice_transcripts[session_key] = (fingerprint, now_ms)
+        if len(self._recent_node_voice_transcripts) > _MAX_RECENT_NODE_VOICE_TRANSCRIPTS:
+            cutoff = now_ms - (_NODE_VOICE_TRANSCRIPT_DEDUPE_WINDOW_MS * 2)
+            stale_keys = [
+                key
+                for key, (_, timestamp_ms) in self._recent_node_voice_transcripts.items()
+                if timestamp_ms < cutoff
+            ]
+            for key in stale_keys:
+                self._recent_node_voice_transcripts.pop(key, None)
+            while len(self._recent_node_voice_transcripts) > _MAX_RECENT_NODE_VOICE_TRANSCRIPTS:
+                oldest_key = min(
+                    self._recent_node_voice_transcripts,
+                    key=lambda key: self._recent_node_voice_transcripts[key][1],
+                )
+                self._recent_node_voice_transcripts.pop(oldest_key, None)
+        return False
+
+    async def _route_node_agent_request(
+        self,
+        *,
+        node_id: str,
+        payload: dict[str, Any],
+        now_ms: int | None,
+    ) -> None:
+        if self._chat_send_service is None and self._chat_attachment_send_service is None:
+            return
+        attachments = payload.get("attachments")
+        has_effective_attachments = False
+        if attachments is not None:
+            if not isinstance(attachments, list):
+                raise ValueError("attachments must be an array")
+            has_effective_attachments = _has_effective_agent_attachments(attachments)
+        if has_effective_attachments and self._chat_attachment_send_service is None:
+            raise GatewayNodeMethodError(
+                code="UNAVAILABLE",
+                message=(
+                    "agent.request attachments are unavailable until control chat "
+                    "attachment runtime is wired"
+                ),
+                status_code=503,
+            )
+        message = _sanitize_gateway_chat_send_message_input(
+            _compact_node_voice_transcript_text(payload.get("message"))
+        )
+        if (not message and not has_effective_attachments) or len(message) > 20_000:
+            return
+        session_key = (
+            payload["sessionKey"].strip()
+            if isinstance(payload.get("sessionKey"), str) and payload["sessionKey"].strip()
+            else f"node-{node_id}"
+        )
+        idempotency_key = _node_agent_request_idempotency_key(
+            node_id=node_id,
+            session_key=session_key,
+            payload=payload,
+            message=message,
+        )
+        thinking = (
+            payload["thinking"].strip()
+            if isinstance(payload.get("thinking"), str) and payload["thinking"].strip()
+            else None
+        )
+        delivery_channel, delivery_to = _node_agent_request_delivery_route(payload)
+        deliver = payload.get("deliver") is True and delivery_channel is not None
+        timeout_ms = _node_agent_request_timeout_ms(payload.get("timeoutSeconds"))
+        timestamp_ms = _timestamp_ms(now_ms)
+        if (
+            payload.get("receipt") is True
+            and delivery_channel is not None
+            and delivery_to is not None
+        ):
+            await self._send_node_agent_request_receipt(
+                node_id=node_id,
+                session_key=session_key,
+                payload=payload,
+                channel=delivery_channel,
+                to=delivery_to,
+            )
+        if has_effective_attachments:
+            assert self._chat_attachment_send_service is not None
+            assert isinstance(attachments, list)
+            send_result = await self._chat_attachment_send_service(
+                session_key=session_key,
+                message=message,
+                idempotency_key=idempotency_key,
+                thinking=thinking,
+                deliver=deliver,
+                timeout_ms=timeout_ms,
+                attachments=attachments,
+                channel=delivery_channel,
+                to=delivery_to,
+                node_id=node_id,
+            )
+        else:
+            assert self._chat_send_service is not None
+            send_result = await self._chat_send_service(
+                session_key=session_key,
+                message=message,
+                idempotency_key=idempotency_key,
+                thinking=thinking,
+                deliver=deliver,
+                timeout_ms=timeout_ms,
+                channel=delivery_channel,
+                to=delivery_to,
+            )
+        self._remember_gateway_chat_run(
+            session_key,
+            send_result,
+            started_at_ms=timestamp_ms,
+        )
+
+    async def _send_node_agent_request_receipt(
+        self,
+        *,
+        node_id: str,
+        session_key: str,
+        payload: dict[str, Any],
+        channel: str,
+        to: str,
+    ) -> None:
+        if self._send_channel_message_service is None:
+            return
+        receipt_text = (
+            _compact_node_voice_transcript_text(payload.get("receiptText"))
+            or "Just received your iOS share + request, working on it."
+        )
+        idempotency_key = _node_agent_request_receipt_idempotency_key(
+            node_id=node_id,
+            session_key=session_key,
+            payload=payload,
+            receipt_text=receipt_text,
+        )
+        try:
+            await self._send_channel_message_service(
+                channel=channel,
+                to=to,
+                message=receipt_text,
+                session_key=session_key,
+                idempotency_key=idempotency_key,
+            )
+        except Exception:
+            return
+
     async def _publish_sessions_changed_event(
         self,
         *,
@@ -5563,6 +7478,130 @@ def _string_or_none(value: object) -> str | None:
         return None
     trimmed = value.strip()
     return trimmed or None
+
+
+def _recorded_node_event_payload(event_payload: dict[str, Any]) -> object:
+    declared_payload = event_payload.get("payload")
+    if isinstance(declared_payload, dict):
+        return declared_payload
+    payload_json = event_payload.get("payloadJSON")
+    if not isinstance(payload_json, str):
+        return None
+    try:
+        parsed_payload = json.loads(payload_json)
+    except json.JSONDecodeError:
+        return None
+    return parsed_payload if isinstance(parsed_payload, dict) else None
+
+
+def _is_valid_recorded_apns_registration(payload: object) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    transport = _string_or_none(payload.get("transport")) or "direct"
+    topic = _string_or_none(payload.get("topic"))
+    environment = _string_or_none(payload.get("environment"))
+    if environment is not None and environment not in _APNS_ENVIRONMENTS:
+        return False
+    if transport == "direct":
+        return _string_or_none(payload.get("token")) is not None and topic is not None
+    if transport == "relay":
+        return (
+            _string_or_none(payload.get("relayHandle")) is not None
+            and _string_or_none(payload.get("sendGrant")) is not None
+            and _string_or_none(payload.get("installationId")) is not None
+            and topic is not None
+        )
+    return False
+
+
+def _same_recorded_apns_registration(
+    first: dict[str, Any],
+    second: dict[str, Any],
+) -> bool:
+    transport = _string_or_none(first.get("transport")) or "direct"
+    if transport != (_string_or_none(second.get("transport")) or "direct"):
+        return False
+    if _string_or_none(first.get("topic")) != _string_or_none(second.get("topic")):
+        return False
+    first_environment = _string_or_none(first.get("environment")) or "sandbox"
+    second_environment = _string_or_none(second.get("environment")) or "sandbox"
+    if first_environment != second_environment:
+        return False
+    if transport == "direct":
+        return _string_or_none(first.get("token")) == _string_or_none(second.get("token"))
+    if transport == "relay":
+        compared_keys = (
+            "relayHandle",
+            "sendGrant",
+            "installationId",
+            "distribution",
+            "tokenDebugSuffix",
+        )
+        return all(
+            _string_or_none(first.get(key)) == _string_or_none(second.get(key))
+            for key in compared_keys
+        )
+    return False
+
+
+def _apns_result_status(result: object) -> int | None:
+    if isinstance(result, dict):
+        value = result.get("status")
+        if value is None:
+            value = result.get("apnsStatus")
+    else:
+        value = getattr(result, "status", None)
+        if value is None:
+            value = getattr(result, "apns_status", None)
+        if value is None:
+            value = getattr(result, "apnsStatus", None)
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    return None
+
+
+def _apns_result_reason(result: object) -> str | None:
+    if isinstance(result, dict):
+        value = result.get("reason")
+        if value is None:
+            value = result.get("apnsReason")
+    else:
+        value = getattr(result, "reason", None)
+        if value is None:
+            value = getattr(result, "apns_reason", None)
+        if value is None:
+            value = getattr(result, "apnsReason", None)
+    return _string_or_none(value)
+
+
+def _apns_result_ok(result: object) -> bool:
+    if isinstance(result, dict):
+        value = result.get("ok")
+        if value is None:
+            value = result.get("sent")
+    else:
+        value = getattr(result, "ok", None)
+        if value is None:
+            value = getattr(result, "sent", None)
+    return value is True
+
+
+def _should_clear_recorded_apns_registration(
+    registration: dict[str, Any],
+    *,
+    result: object,
+    override_environment: str | None = None,
+) -> bool:
+    if (_string_or_none(registration.get("transport")) or "direct") != "direct":
+        return False
+    registration_environment = _string_or_none(registration.get("environment")) or "sandbox"
+    if override_environment is not None and override_environment != registration_environment:
+        return False
+    status = _apns_result_status(result)
+    reason = _apns_result_reason(result)
+    return status == 410 or (status == 400 and reason == "BadDeviceToken")
 
 
 def _bool_or_none(value: object) -> bool | None:
@@ -6599,6 +8638,47 @@ def _build_canvas_scoped_host_url(base_url: str | None, capability: str) -> str 
     return urlunsplit((split_url.scheme, split_url.netloc, scoped_path, "", ""))
 
 
+def _build_doctor_memory_dream_diary_payload(workspace: Path) -> dict[str, object]:
+    for file_name in _DREAM_DIARY_FILE_NAMES:
+        diary_path = workspace / file_name
+        try:
+            stat_result = diary_path.stat()
+        except OSError:
+            continue
+        if not diary_path.is_file():
+            continue
+        try:
+            content = diary_path.read_text(encoding="utf-8")
+        except OSError:
+            return {
+                "agentId": "openzues",
+                "found": False,
+                "path": str(diary_path),
+            }
+        return {
+            "agentId": "openzues",
+            "found": True,
+            "path": str(diary_path),
+            "content": content,
+            "updatedAtMs": int(stat_result.st_mtime * 1000),
+        }
+    return {
+        "agentId": "openzues",
+        "found": False,
+        "path": str(workspace / _DREAM_DIARY_FILE_NAMES[0]),
+    }
+
+
+def _build_doctor_memory_status_payload() -> dict[str, object]:
+    return {
+        "agentId": "openzues",
+        "embedding": {
+            "ok": False,
+            "error": "memory search unavailable",
+        },
+    }
+
+
 def _validate_object_params(method: str, params: dict[str, Any] | None) -> dict[str, Any]:
     if params is None:
         return {}
@@ -7507,7 +9587,11 @@ def _pairing_request_id_from_result(result: object) -> str | None:
     return trimmed_request_id or None
 
 
-def _known_node_payload(node: KnownNode) -> dict[str, Any]:
+def _known_node_payload(
+    node: KnownNode,
+    *,
+    commands: Iterable[str] | None = None,
+) -> dict[str, Any]:
     return {
         "nodeId": node.node_id,
         "displayName": node.display_name,
@@ -7522,7 +9606,7 @@ def _known_node_payload(node: KnownNode) -> dict[str, Any]:
         "modelIdentifier": node.model_identifier,
         "pathEnv": node.path_env,
         "caps": list(node.caps),
-        "commands": list(node.commands),
+        "commands": list(commands if commands is not None else node.commands),
         "permissions": node.permissions,
         "paired": node.paired,
         "connected": node.connected,
@@ -7531,7 +9615,11 @@ def _known_node_payload(node: KnownNode) -> dict[str, Any]:
     }
 
 
-def _known_paired_node_payload(node: GatewayPairedNode) -> dict[str, Any]:
+def _known_paired_node_payload(
+    node: GatewayPairedNode,
+    *,
+    commands: Iterable[str] | None = None,
+) -> dict[str, Any]:
     return {
         "nodeId": node.node_id,
         "displayName": node.display_name,
@@ -7546,7 +9634,7 @@ def _known_paired_node_payload(node: GatewayPairedNode) -> dict[str, Any]:
         "modelIdentifier": node.model_identifier,
         "pathEnv": None,
         "caps": list(node.caps),
-        "commands": list(node.commands),
+        "commands": list(commands if commands is not None else node.commands),
         "permissions": node.permissions,
         "paired": True,
         "connected": False,
@@ -7611,12 +9699,12 @@ def _visible_paired_commands(
 ) -> list[str] | None:
     approved = (
         [command for command in persisted_commands if isinstance(command, str)]
-        if isinstance(persisted_commands, list)
+        if isinstance(persisted_commands, (list, tuple))
         else None
     )
     live = (
         [command for command in observed_commands if isinstance(command, str)]
-        if isinstance(observed_commands, list)
+        if isinstance(observed_commands, (list, tuple))
         else None
     )
     if live is None:
@@ -7627,7 +9715,11 @@ def _visible_paired_commands(
     return [command for command in live if command in approved_set]
 
 
-def _paired_node_payload(node: KnownNode) -> dict[str, Any]:
+def _paired_node_payload(
+    node: KnownNode,
+    *,
+    commands: Iterable[str] | None = None,
+) -> dict[str, Any]:
     return {
         "nodeId": node.node_id,
         "displayName": node.display_name,
@@ -7638,7 +9730,7 @@ def _paired_node_payload(node: KnownNode) -> dict[str, Any]:
         "deviceFamily": node.device_family,
         "modelIdentifier": node.model_identifier,
         "caps": list(node.caps),
-        "commands": list(node.commands),
+        "commands": list(commands if commands is not None else node.commands),
         "remoteIp": node.remote_ip,
         "permissions": node.permissions,
         "createdAtMs": None,
@@ -7647,7 +9739,11 @@ def _paired_node_payload(node: KnownNode) -> dict[str, Any]:
     }
 
 
-def _stored_paired_node_payload(node: GatewayPairedNode) -> dict[str, Any]:
+def _stored_paired_node_payload(
+    node: GatewayPairedNode,
+    *,
+    commands: Iterable[str] | None = None,
+) -> dict[str, Any]:
     return {
         "nodeId": node.node_id,
         "token": node.token,
@@ -7659,7 +9755,7 @@ def _stored_paired_node_payload(node: GatewayPairedNode) -> dict[str, Any]:
         "deviceFamily": node.device_family,
         "modelIdentifier": node.model_identifier,
         "caps": list(node.caps),
-        "commands": list(node.commands),
+        "commands": list(commands if commands is not None else node.commands),
         "remoteIp": node.remote_ip,
         "permissions": node.permissions,
         "createdAtMs": node.created_at_ms,

@@ -356,7 +356,7 @@ async def test_gateway_models_build_catalog_infers_provider_for_unprefixed_confi
 
 
 @pytest.mark.asyncio
-async def test_gateway_models_build_catalog_infers_provider_for_unprefixed_object_configured_primary(
+async def test_gateway_models_infers_provider_for_unprefixed_object_primary(
 ) -> None:
     async def list_instance_views() -> list[InstanceView]:
         return [
@@ -393,6 +393,167 @@ async def test_gateway_models_build_catalog_infers_provider_for_unprefixed_objec
     assert [model["id"] for model in payload["models"] if model.get("isDefault")] == [
         "gpt-5.4-mini"
     ]
+
+
+@pytest.mark.asyncio
+async def test_gateway_models_build_catalog_filters_to_allowlisted_configured_models_by_default(
+) -> None:
+    async def list_instance_views() -> list[InstanceView]:
+        return [
+            _instance_view(
+                [
+                    {"id": "openai/gpt-test-z"},
+                    {
+                        "id": "anthropic/claude-test-a",
+                        "displayName": "A-Model",
+                        "contextWindow": 200_000,
+                    },
+                    {
+                        "id": "openrouter/deepseek-chat",
+                        "displayName": "DeepSeek Chat",
+                    },
+                ],
+                config={
+                    "agents": {
+                        "defaults": {
+                            "model": {"primary": "openai/gpt-test-z"},
+                            "models": {
+                                "openai/gpt-test-z": {},
+                                "anthropic/claude-test-a": {},
+                            },
+                        }
+                    }
+                },
+            )
+        ]
+
+    payload = await GatewayModelsService(
+        list_instance_views=list_instance_views
+    ).build_catalog()
+
+    assert payload == {
+        "models": [
+            {
+                "id": "claude-test-a",
+                "name": "A-Model",
+                "provider": "anthropic",
+                "contextWindow": 200_000,
+            },
+            {
+                "id": "gpt-test-z",
+                "name": "gpt-test-z",
+                "provider": "openai",
+            },
+        ]
+    }
+
+
+@pytest.mark.asyncio
+async def test_gateway_models_build_catalog_keeps_configured_fallbacks_visible_with_allowlist(
+) -> None:
+    async def list_instance_views() -> list[InstanceView]:
+        return [
+            _instance_view(
+                [
+                    {
+                        "id": "openai/gpt-5.4-mini",
+                        "displayName": "GPT 5.4 Mini",
+                    },
+                    {
+                        "id": "anthropic/claude-3.7-sonnet",
+                        "displayName": "Claude 3.7 Sonnet",
+                    },
+                    {
+                        "id": "openrouter/deepseek-chat",
+                        "displayName": "DeepSeek Chat",
+                    },
+                ],
+                config={
+                    "agents": {
+                        "defaults": {
+                            "model": {
+                                "primary": "openai/gpt-5.4-mini",
+                                "fallbacks": ["anthropic/claude-3.7-sonnet"],
+                            },
+                            "models": {
+                                "openai/gpt-5.4-mini": {},
+                            },
+                        }
+                    }
+                },
+            )
+        ]
+
+    payload = await GatewayModelsService(
+        list_instance_views=list_instance_views
+    ).build_catalog()
+
+    assert payload == {
+        "models": [
+            {
+                "id": "claude-3.7-sonnet",
+                "name": "Claude 3.7 Sonnet",
+                "provider": "anthropic",
+            },
+            {
+                "id": "gpt-5.4-mini",
+                "name": "GPT 5.4 Mini",
+                "provider": "openai",
+            },
+        ]
+    }
+
+
+@pytest.mark.asyncio
+async def test_gateway_models_applies_configured_metadata_to_synthetic_allowlist(
+) -> None:
+    async def list_instance_views() -> list[InstanceView]:
+        return [
+            _instance_view(
+                [],
+                config={
+                    "agents": {
+                        "defaults": {
+                            "model": {"primary": "nvidia/moonshotai/kimi-k2.5"},
+                            "models": {
+                                "nvidia/moonshotai/kimi-k2.5": {
+                                    "alias": "Kimi K2.5 (NVIDIA)"
+                                }
+                            },
+                        }
+                    },
+                    "models": {
+                        "providers": {
+                            "nvidia": {
+                                "models": [
+                                    {
+                                        "id": "moonshotai/kimi-k2.5",
+                                        "name": "Kimi K2.5 (Configured)",
+                                        "contextWindow": 32_000,
+                                    }
+                                ]
+                            }
+                        }
+                    },
+                },
+            )
+        ]
+
+    payload = await GatewayModelsService(
+        list_instance_views=list_instance_views
+    ).build_catalog()
+
+    assert payload == {
+        "models": [
+            {
+                "id": "moonshotai/kimi-k2.5",
+                "name": "Kimi K2.5 (Configured)",
+                "alias": "Kimi K2.5 (NVIDIA)",
+                "provider": "nvidia",
+                "contextWindow": 32_000,
+            }
+        ]
+    }
 
 
 @pytest.mark.asyncio
@@ -478,7 +639,7 @@ async def test_gateway_models_build_catalog_resolves_configured_aliases_for_prim
 
 
 @pytest.mark.asyncio
-async def test_gateway_models_build_catalog_overlays_configured_provider_metadata_on_discovered_models(
+async def test_gateway_models_overlays_configured_provider_metadata(
 ) -> None:
     async def list_instance_views() -> list[InstanceView]:
         return [

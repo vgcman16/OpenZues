@@ -9,7 +9,6 @@ from openzues.database import utcnow
 
 _SCHEMA_VERSION = "openzues-control-ui-bootstrap-v1"
 _PATH_INDEX_RE = re.compile(r"\[(\*|\d*)\]")
-_LOOKUP_PATH_MAX_LENGTH = 1024
 _LOOKUP_PATH_MAX_SEGMENTS = 32
 _FORBIDDEN_LOOKUP_SEGMENTS = frozenset({"__proto__", "constructor", "prototype"})
 _LOOKUP_SCHEMA_STRING_KEYS = frozenset(
@@ -163,8 +162,6 @@ def _normalize_generated_at(value: str) -> str:
 def _normalize_lookup_path(path: str) -> str | None:
     normalized = path.strip()
     if not normalized:
-        return None
-    if len(normalized) > _LOOKUP_PATH_MAX_LENGTH:
         return None
 
     normalized = _PATH_INDEX_RE.sub(lambda match: f".{match.group(1) or '*'}", normalized)

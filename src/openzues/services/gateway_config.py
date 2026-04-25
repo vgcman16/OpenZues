@@ -19,9 +19,9 @@ def resolve_gateway_config_open_command(
     *,
     platform: str | None = None,
 ) -> tuple[str, list[str]]:
-    target = str(path)
     normalized_platform = platform or sys.platform
     if normalized_platform.startswith("win"):
+        target = str(path)
         return (
             "powershell.exe",
             [
@@ -34,6 +34,7 @@ def resolve_gateway_config_open_command(
                 ),
             ],
         )
+    target = path.as_posix()
     if normalized_platform == "darwin":
         return ("open", [target])
     return ("xdg-open", [target])

@@ -106,6 +106,7 @@ class NodeInvokeResult:
     payload_json: str | None = None
     error: dict[str, str | None] | None = None
     queued_action_id: str | None = None
+    node_error: dict[str, str | None] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -254,6 +255,8 @@ class GatewayNodeRegistry:
         self._pending_invokes: dict[str, _PendingInvoke] = {}
         self._pending_work = GatewayNodePendingWorkStore()
         self._pending_actions = GatewayNodePendingActionQueue()
+        self._node_session_subscriptions: dict[str, set[str]] = {}
+        self._session_node_subscribers: dict[str, set[str]] = {}
 
     def remember(self, node: KnownNode) -> None:
         self._remembered_nodes_by_id[node.node_id] = _normalize_known_node(node)
@@ -307,6 +310,7 @@ class GatewayNodeRegistry:
         if node_id is None:
             return None
         self._nodes_by_id.pop(node_id, None)
+        self.unsubscribe_node_from_all_sessions(node_id)
         for request_id, pending in list(self._pending_invokes.items()):
             if pending.node_id != node_id:
                 continue
@@ -422,6 +426,7 @@ class GatewayNodeRegistry:
                 "message": "node command queued until iOS returns to foreground",
             },
             queued_action_id=queued.id,
+            node_error=result.error,
         )
 
     def handle_invoke_result(
@@ -455,6 +460,69 @@ class GatewayNodeRegistry:
         if node is None:
             return False
         return self._send_event_to_session(node, event, payload)
+
+    def subscribe_node_to_session(self, node_id: str, session_key: str) -> bool:
+        normalized_node_id = node_id.strip()
+        normalized_session_key = session_key.strip()
+        if not normalized_node_id or not normalized_session_key:
+            return False
+        node_sessions = self._node_session_subscriptions.setdefault(
+            normalized_node_id,
+            set(),
+        )
+        node_sessions.add(normalized_session_key)
+        session_nodes = self._session_node_subscribers.setdefault(
+            normalized_session_key,
+            set(),
+        )
+        session_nodes.add(normalized_node_id)
+        return True
+
+    def unsubscribe_node_from_session(self, node_id: str, session_key: str) -> bool:
+        normalized_node_id = node_id.strip()
+        normalized_session_key = session_key.strip()
+        if not normalized_node_id or not normalized_session_key:
+            return False
+        node_sessions = self._node_session_subscriptions.get(normalized_node_id)
+        session_nodes = self._session_node_subscribers.get(normalized_session_key)
+        removed = False
+        if node_sessions is not None:
+            removed = normalized_session_key in node_sessions
+            node_sessions.discard(normalized_session_key)
+            if not node_sessions:
+                self._node_session_subscriptions.pop(normalized_node_id, None)
+        if session_nodes is not None:
+            session_nodes.discard(normalized_node_id)
+            if not session_nodes:
+                self._session_node_subscribers.pop(normalized_session_key, None)
+        return removed
+
+    def unsubscribe_node_from_all_sessions(self, node_id: str) -> None:
+        normalized_node_id = node_id.strip()
+        if not normalized_node_id:
+            return
+        session_keys = self._node_session_subscriptions.pop(normalized_node_id, set())
+        for session_key in session_keys:
+            session_nodes = self._session_node_subscribers.get(session_key)
+            if session_nodes is None:
+                continue
+            session_nodes.discard(normalized_node_id)
+            if not session_nodes:
+                self._session_node_subscribers.pop(session_key, None)
+
+    def send_to_session(self, session_key: str, event: str, payload: object | None) -> int:
+        normalized_session_key = session_key.strip()
+        event_name = event.strip()
+        if not normalized_session_key or not event_name:
+            return 0
+        node_ids = self._session_node_subscribers.get(normalized_session_key)
+        if not node_ids:
+            return 0
+        sent_count = 0
+        for node_id in sorted(node_ids):
+            if self.send_event(node_id, event_name, payload):
+                sent_count += 1
+        return sent_count
 
     def enqueue_pending_work(
         self,

@@ -10,11 +10,12 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal, cast
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlencode, urlparse
 from urllib.request import Request, urlopen
 
 from openzues.database import Database, utcnow
 from openzues.schemas import (
+    ConversationTargetPeerKind,
     ConversationTargetView,
     DashboardAccessPostureView,
     DashboardAuthPostureView,
@@ -65,7 +66,10 @@ from openzues.schemas import (
 )
 from openzues.services.continuity import build_continuity_packet
 from openzues.services.ecc_catalog import build_ecc_workspace_lines
+from openzues.services.gateway_canvas_documents import resolve_canvas_http_path_to_local_path
 from openzues.services.gateway_outbound_runtime import (
+    GatewayOutboundRuntimeMessageRequest,
+    GatewayOutboundRuntimePollRequest,
     GatewayOutboundRuntimeService,
     GatewayOutboundRuntimeUnavailableError,
 )
@@ -128,6 +132,9 @@ OPENCLAW_PARITY_BASELINE_TOOLSETS = (
 )
 OUTBOUND_DELIVERY_MAX_RETRIES = 5
 OUTBOUND_DELIVERY_BACKOFF_SECONDS = (5, 25, 120, 600)
+SLACK_API_BASE_URL = "https://slack.com/api"
+TELEGRAM_API_BASE_URL = "https://api.telegram.org"
+NATIVE_PROVIDER_ROUTE_KINDS = {"slack", "telegram", "discord", "whatsapp"}
 OUTBOUND_DELIVERY_PERMANENT_ERROR_PATTERNS = (
     re.compile(r"chat not found", re.IGNORECASE),
     re.compile(r"user not found", re.IGNORECASE),
@@ -367,7 +374,7 @@ def _build_explicit_announce_conversation_target(
     return ConversationTargetView(
         channel=normalized_channel,
         account_id=normalized_account_id,
-        peer_kind="channel" if peer_id else None,
+        peer_kind=_provider_peer_kind_from_target(peer_id) if peer_id else None,
         peer_id=peer_id,
     )
 
@@ -439,6 +446,300 @@ def _normalized_http_webhook_url(value: str | None) -> str | None:
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         return None
     return normalized
+
+
+def _http_error_detail(exc: HTTPError) -> str | None:
+    try:
+        body = exc.read().strip()
+    except Exception:
+        return None
+    if not body:
+        return None
+    try:
+        payload = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        detail = body.decode("utf-8", errors="replace").strip()
+        return detail[:180] if detail else None
+    if isinstance(payload, dict):
+        error = payload.get("error")
+        if isinstance(error, dict):
+            for key in ("message", "code", "type"):
+                detail = str(error.get(key) or "").strip()
+                if detail:
+                    return detail[:180]
+        if error not in (None, "", [], {}):
+            return str(error).strip()[:180]
+        for key in ("message", "detail", "description"):
+            detail = str(payload.get(key) or "").strip()
+            if detail:
+                return detail[:180]
+    return str(payload).strip()[:180]
+
+
+def _http_error_message(prefix: str, exc: HTTPError) -> str:
+    detail = _http_error_detail(exc)
+    message = f"{prefix} {exc.code}"
+    return f"{message}: {detail}" if detail else message
+
+
+def _slack_api_endpoint(target: str | None, method: str) -> str:
+    normalized = str(target or "").strip() or SLACK_API_BASE_URL
+    if normalized.rstrip("/").endswith(f"/{method}"):
+        endpoint = normalized
+    else:
+        endpoint = f"{normalized.rstrip('/')}/{method}"
+    if _normalized_http_webhook_url(endpoint) is None:
+        raise RuntimeError("Slack route target must be an http(s) Slack API base URL.")
+    return endpoint
+
+
+def _slack_bearer_token(secret_token: str | None) -> str:
+    token = str(secret_token or "").strip()
+    if not token:
+        raise RuntimeError("Slack route is missing a bot token secret.")
+    if token.lower().startswith("bearer "):
+        return token
+    return f"Bearer {token}"
+
+
+def _slack_channel_id(target: str | None) -> str | None:
+    normalized = str(target or "").strip()
+    while ":" in normalized:
+        prefix, suffix = normalized.split(":", 1)
+        if prefix.strip().lower() in {"channel", "group", "dm", "direct", "slack"}:
+            normalized = suffix.strip()
+            continue
+        break
+    return normalized or None
+
+
+def _provider_peer_kind_from_target(target: str | None) -> ConversationTargetPeerKind:
+    normalized = str(target or "").strip().lower()
+    if normalized.startswith(("direct:", "dm:")):
+        return "direct"
+    if normalized.startswith("group:"):
+        return "group"
+    return "channel"
+
+
+def _slack_message_id(result: object) -> str | None:
+    if not isinstance(result, dict):
+        return None
+    candidate = result.get("ts")
+    message = result.get("message")
+    if candidate is None and isinstance(message, dict):
+        candidate = message.get("ts")
+    if candidate is None:
+        return None
+    return str(candidate).strip() or None
+
+
+def _slack_channel_from_result(result: object, fallback: str) -> str:
+    if isinstance(result, dict):
+        candidate = result.get("channel")
+        message = result.get("message")
+        if candidate is None and isinstance(message, dict):
+            candidate = message.get("channel")
+        normalized = str(candidate or "").strip()
+        if normalized:
+            return normalized
+    return fallback
+
+
+def _slack_media_filename(media_url: str, index: int) -> str:
+    parsed = urlparse(media_url)
+    name = unquote(Path(parsed.path).name).strip()
+    if name and "." in name:
+        return name[:120]
+    return f"openzues-media-{index}.bin"
+
+
+def _telegram_bot_token(secret_token: str | None) -> str:
+    token = str(secret_token or "").strip()
+    if token.lower().startswith("bot"):
+        token = token[3:].strip()
+    if not token:
+        raise RuntimeError("Telegram route is missing a bot token secret.")
+    return token
+
+
+def _telegram_api_endpoint(target: str | None, token: str, method: str) -> str:
+    base_url = str(target or "").strip() or TELEGRAM_API_BASE_URL
+    if f"/bot{token}/" in base_url:
+        endpoint = f"{base_url.rstrip('/')}/{method}"
+    else:
+        endpoint = f"{base_url.rstrip('/')}/bot{token}/{method}"
+    if _normalized_http_webhook_url(endpoint) is None:
+        raise RuntimeError("Telegram route target must be an http(s) Bot API base URL.")
+    return endpoint
+
+
+def _telegram_chat_id(target: str | None) -> str | None:
+    normalized = str(target or "").strip()
+    while ":" in normalized:
+        prefix, suffix = normalized.split(":", 1)
+        if prefix.strip().lower() in {"channel", "group", "dm", "direct", "telegram"}:
+            normalized = suffix.strip()
+            continue
+        break
+    return normalized or None
+
+
+def _telegram_result_items(result: object) -> list[dict[str, Any]]:
+    if not isinstance(result, dict):
+        return []
+    payload = result.get("result")
+    if isinstance(payload, dict):
+        return [cast(dict[str, Any], payload)]
+    if isinstance(payload, list):
+        return [cast(dict[str, Any], item) for item in payload if isinstance(item, dict)]
+    return []
+
+
+def _telegram_result_payload(result: object) -> dict[str, Any]:
+    items = _telegram_result_items(result)
+    return items[0] if items else {}
+
+
+def _telegram_message_id(result: object) -> str | None:
+    payload = _telegram_result_payload(result)
+    candidate = payload.get("message_id")
+    if candidate is None:
+        return None
+    return str(candidate).strip() or None
+
+
+def _telegram_chat_from_result(result: object, fallback: str) -> str:
+    payload = _telegram_result_payload(result)
+    chat = payload.get("chat")
+    if isinstance(chat, dict):
+        candidate = chat.get("id") or chat.get("username")
+        normalized = str(candidate or "").strip()
+        if normalized:
+            return normalized
+    return fallback
+
+
+def _telegram_poll_id(result: object) -> str | None:
+    payload = _telegram_result_payload(result)
+    poll = payload.get("poll")
+    if isinstance(poll, dict):
+        candidate = poll.get("id")
+        if candidate is not None:
+            return str(candidate).strip() or None
+    return None
+
+
+def _telegram_media_ids(result: object) -> list[str]:
+    media_ids: list[str] = []
+    for payload in _telegram_result_items(result):
+        photos = payload.get("photo")
+        photo_ids: list[str] = []
+        if not isinstance(photos, list):
+            continue
+        for photo in photos:
+            if not isinstance(photo, dict):
+                continue
+            file_id = str(photo.get("file_id") or "").strip()
+            if file_id:
+                photo_ids.append(file_id)
+        if photo_ids:
+            media_ids.append(photo_ids[-1])
+    return media_ids
+
+
+def _discord_webhook_url(target: str | None) -> str:
+    normalized = str(target or "").strip()
+    if _normalized_http_webhook_url(normalized) is None:
+        raise RuntimeError("Discord route target must be an http(s) webhook URL.")
+    if "wait=" in (urlparse(normalized).query or ""):
+        return normalized
+    separator = "&" if "?" in normalized else "?"
+    return f"{normalized}{separator}wait=true"
+
+
+def _discord_message_id(result: object) -> str | None:
+    if not isinstance(result, dict):
+        return None
+    candidate = result.get("id")
+    if candidate is None:
+        return None
+    return str(candidate).strip() or None
+
+
+def _discord_channel_id(result: object, fallback: str) -> str:
+    if isinstance(result, dict):
+        normalized = str(result.get("channel_id") or "").strip()
+        if normalized:
+            return normalized
+    return fallback
+
+
+def _discord_poll_duration_hours(event: dict[str, Any]) -> int:
+    duration_hours = _optional_int_payload_value(event, "durationHours")
+    if duration_hours is not None:
+        return max(1, duration_hours)
+    duration_seconds = _optional_int_payload_value(event, "durationSeconds")
+    if duration_seconds is not None:
+        return max(1, (duration_seconds + 3599) // 3600)
+    return 24
+
+
+def _whatsapp_messages_endpoint(target: str | None) -> str:
+    normalized = str(target or "").strip()
+    if _normalized_http_webhook_url(normalized) is None:
+        raise RuntimeError("WhatsApp route target must be an http(s) messages endpoint.")
+    if normalized.rstrip("/").endswith("/messages"):
+        return normalized
+    return f"{normalized.rstrip('/')}/messages"
+
+
+def _whatsapp_bearer_token(secret_token: str | None) -> str:
+    token = str(secret_token or "").strip()
+    if not token:
+        raise RuntimeError("WhatsApp route is missing an access token secret.")
+    if token.lower().startswith("bearer "):
+        return token
+    return f"Bearer {token}"
+
+
+def _whatsapp_recipient_id(target: str | None) -> str | None:
+    normalized = str(target or "").strip()
+    while ":" in normalized:
+        prefix, suffix = normalized.split(":", 1)
+        if prefix.strip().lower() in {"whatsapp", "wa", "dm", "direct", "phone"}:
+            normalized = suffix.strip()
+            continue
+        break
+    normalized = normalized.replace(" ", "")
+    return normalized or None
+
+
+def _whatsapp_message_id(result: object) -> str | None:
+    if not isinstance(result, dict):
+        return None
+    messages = result.get("messages")
+    if isinstance(messages, list):
+        for message in messages:
+            if not isinstance(message, dict):
+                continue
+            message_id = str(message.get("id") or "").strip()
+            if message_id:
+                return message_id
+    return None
+
+
+def _whatsapp_contact_id(result: object, fallback: str) -> str:
+    if isinstance(result, dict):
+        contacts = result.get("contacts")
+        if isinstance(contacts, list):
+            for contact in contacts:
+                if not isinstance(contact, dict):
+                    continue
+                candidate = str(contact.get("wa_id") or contact.get("input") or "").strip()
+                if candidate:
+                    return candidate
+    return fallback
 
 
 def _cron_delivery_summary(mission: dict[str, Any]) -> str | None:
@@ -578,6 +879,18 @@ def _normalize_direct_channel_media_urls(
     return normalized
 
 
+def _optional_int_payload_value(payload: dict[str, Any], key: str) -> int | None:
+    value = payload.get(key)
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    return None
+
+
+def _optional_bool_payload_value(payload: dict[str, Any], key: str) -> bool | None:
+    value = payload.get(key)
+    return value if isinstance(value, bool) else None
+
+
 def _summarize_direct_channel_media(media_urls: list[str]) -> str:
     item_label = "item" if len(media_urls) == 1 else "items"
     return f"Media delivery ({len(media_urls)} {item_label})"
@@ -708,8 +1021,9 @@ def _build_direct_channel_transport(
     account_id: str | None,
     thread_id: str | int | None,
     session_key: str | None,
+    runtime: str = "session-backed",
 ) -> dict[str, str]:
-    transport: dict[str, str] = {"runtime": "session-backed"}
+    transport: dict[str, str] = {"runtime": str(runtime or "session-backed")}
     normalized_channel = str(channel or "").strip().lower()
     if normalized_channel:
         transport["channel"] = normalized_channel
@@ -759,12 +1073,14 @@ def _direct_channel_transport_from_delivery_row(
     if thread_id is None:
         thread_id = route_scope.get("thread_id")
     session_key = str(delivery_row.get("session_key") or "").strip() or None
+    runtime = str(route_scope.get("transport_runtime") or "").strip() or "session-backed"
     return _build_direct_channel_transport(
         channel=channel,
         target=target,
         account_id=account_id,
         thread_id=thread_id,
         session_key=session_key,
+        runtime=runtime,
     )
 
 
@@ -789,6 +1105,72 @@ def _serialize_gateway_direct_channel_transport(
     session_key = str(transport.get("session_key") or "").strip()
     if session_key:
         payload["sessionKey"] = session_key
+    return payload
+
+
+def _serialize_gateway_provider_result(result: dict[str, Any]) -> dict[str, object]:
+    payload: dict[str, object] = {}
+    for key in (
+        "chatId",
+        "channelId",
+        "toJid",
+        "conversationId",
+        "pollId",
+        "mediaId",
+        "mediaIds",
+        "mediaUrl",
+        "mediaUrls",
+    ):
+        value = result.get(key)
+        if value in (None, "", [], {}):
+            continue
+        if isinstance(value, (str, int, float, bool, list, dict)):
+            payload[key] = value
+        else:
+            payload[key] = str(value)
+    return payload
+
+
+def _direct_channel_provider_result_from_delivery_row(
+    delivery_row: dict[str, Any],
+) -> dict[str, object] | None:
+    route_scope = delivery_row.get("route_scope")
+    if not isinstance(route_scope, dict):
+        return None
+    provider_result = route_scope.get("provider_result")
+    if not isinstance(provider_result, dict):
+        return None
+    payload = _serialize_gateway_provider_result(provider_result)
+    return payload or None
+
+
+def _saved_provider_route_event_payload(
+    *,
+    event_type: str,
+    event_payload: dict[str, Any],
+    conversation_target: dict[str, Any] | None,
+) -> dict[str, Any]:
+    payload = dict(event_payload)
+    if conversation_target is not None:
+        payload.setdefault("conversationTarget", conversation_target)
+        payload.setdefault("routeConversationTarget", conversation_target)
+        payload.setdefault("to", conversation_target.get("peer_id"))
+        if conversation_target.get("account_id") and "accountId" not in payload:
+            payload["accountId"] = conversation_target.get("account_id")
+    summary = str(payload.get("summary") or "OpenZues test delivery ping.").strip()
+    if event_type == "gateway/send" and not str(payload.get("message") or "").strip():
+        payload["message"] = summary
+    if event_type == "gateway/poll":
+        if not str(payload.get("question") or "").strip():
+            payload["question"] = summary
+        raw_options = payload.get("options")
+        options = (
+            [str(option).strip() for option in raw_options if str(option).strip()]
+            if isinstance(raw_options, list)
+            else []
+        )
+        if not options:
+            payload["options"] = ["Acknowledged", "Needs attention"]
     return payload
 
 
@@ -875,6 +1257,18 @@ def _serialize_outbound_delivery(row: dict[str, Any]) -> OutboundDeliveryView:
             "max_retries_reached": max_retries_reached,
         }
     )
+
+
+def _saved_delivery_is_ad_hoc_webhook(row: dict[str, Any]) -> bool:
+    route_scope = row.get("route_scope")
+    if not isinstance(route_scope, dict):
+        return False
+    if str(row.get("route_kind") or "").strip().lower() != "webhook":
+        return False
+    if "route_match" in route_scope or "matched_value" in route_scope:
+        return False
+    route_target = str(route_scope.get("route_target") or row.get("route_target") or "")
+    return bool(route_target.strip())
 
 
 def _saved_outbound_delivery_route_view(
@@ -3006,6 +3400,7 @@ class OpsMeshService:
     parity_checkpoint_path: Path | None = None
     outbound_runtime_service: GatewayOutboundRuntimeService | None = None
     session_delivery_service: Callable[[str, str], Awaitable[object]] | None = None
+    canvas_state_dir: Path | None = None
     _task: asyncio.Task[None] | None = field(init=False, default=None)
     _stop_event: asyncio.Event = field(init=False, default_factory=asyncio.Event)
     _notified_inbox_items: dict[str, str] = field(init=False, default_factory=dict)
@@ -3038,20 +3433,30 @@ class OpsMeshService:
     def _resolve_outbound_runtime_service(self) -> GatewayOutboundRuntimeService | None:
         runtime = self.outbound_runtime_service
         if runtime is None:
-            if self.session_delivery_service is None:
-                return None
             runtime = GatewayOutboundRuntimeService(
-                session_deliverer=self.session_delivery_service
+                session_deliverer=self.session_delivery_service,
+                provider_message_deliverer=self._deliver_route_backed_provider_message,
+                provider_poll_deliverer=self._deliver_route_backed_provider_poll,
             )
             self.outbound_runtime_service = runtime
             return runtime
-        if self.session_delivery_service is not None and not runtime.is_available():
+        if self.session_delivery_service is not None and not runtime.is_message_available():
             runtime.bind_session_deliverer(self.session_delivery_service)
+        if not runtime.has_provider_message_deliverer():
+            runtime.bind_provider_message_deliverer(
+                self._deliver_route_backed_provider_message
+            )
+        if not runtime.has_provider_poll_deliverer():
+            runtime.bind_provider_poll_deliverer(self._deliver_route_backed_provider_poll)
         return runtime
 
     def _outbound_runtime_available(self) -> bool:
         runtime = self._resolve_outbound_runtime_service()
         return runtime is not None and runtime.is_available()
+
+    def _session_outbound_runtime_available(self) -> bool:
+        runtime = self._resolve_outbound_runtime_service()
+        return runtime is not None and runtime.has_session_deliverer()
 
     async def list_task_blueprint_views(self) -> list[TaskBlueprintView]:
         projects = {int(project["id"]): project for project in await self.database.list_projects()}
@@ -3147,12 +3552,21 @@ class OpsMeshService:
         route_id = int(route["id"])
         event_type = str(delivery_row.get("event_type") or "")
         event_payload = dict(delivery_row.get("event_payload") or {})
+        route_kind = str(route.get("kind") or delivery_row.get("route_kind") or "").strip().lower()
+        route_conversation_target = _normalize_conversation_target(
+            route.get("conversation_target")
+        ) or _normalize_conversation_target(delivery_row.get("conversation_target"))
         attempt_started_at = utcnow()
         existing_attempts = max(0, int(delivery_row.get("attempt_count") or 0))
         await self.database.update_outbound_delivery(
             delivery_id,
             last_attempt_at=attempt_started_at,
         )
+        native_provider_delivery = (
+            route_kind in NATIVE_PROVIDER_ROUTE_KINDS
+            and event_type in {"gateway/send", "gateway/poll"}
+        )
+        result: object | None = None
         try:
             secret_id = route.get("vault_secret_id")
             secret_token = (
@@ -3160,8 +3574,16 @@ class OpsMeshService:
                 if secret_id is not None
                 else (str(route.get("secret_token")) if route.get("secret_token") else None)
             )
-            await asyncio.to_thread(
-                self._post_webhook,
+            if native_provider_delivery:
+                event_payload = _saved_provider_route_event_payload(
+                    event_type=event_type,
+                    event_payload=event_payload,
+                    conversation_target=route_conversation_target,
+                )
+            result = await asyncio.to_thread(
+                self._provider_event_poster(route_kind)
+                if native_provider_delivery
+                else self._post_webhook,
                 route,
                 event_type,
                 event_payload,
@@ -3187,6 +3609,14 @@ class OpsMeshService:
                 last_error=error,
             )
             return False, error
+        route_scope = dict(delivery_row.get("route_scope") or {})
+        delivery_message_id = _session_delivery_message_id(result)
+        if native_provider_delivery:
+            route_scope["transport_runtime"] = "native-provider-backed"
+            if isinstance(result, dict):
+                provider_result = _serialize_gateway_provider_result(result)
+                if provider_result:
+                    route_scope["provider_result"] = provider_result
         await self.database.update_notification_route(
             route_id,
             last_delivery_at=utcnow(),
@@ -3200,6 +3630,8 @@ class OpsMeshService:
             last_attempt_at=attempt_started_at,
             delivered_at=utcnow(),
             last_error=None,
+            delivery_message_id=delivery_message_id,
+            route_scope=route_scope,
         )
         return True, None
 
@@ -3403,7 +3835,13 @@ class OpsMeshService:
             attempted += 1
             route_id = row.get("route_id")
             route_kind = str(row.get("route_kind") or "").strip().lower()
-            if route_id is None and route_kind in {"announce", "session", "webhook"}:
+            if route_id is None and (
+                route_kind in {"announce", "session"}
+                or (
+                    route_kind == "webhook"
+                    and _saved_delivery_is_ad_hoc_webhook(row)
+                )
+            ):
                 if route_kind == "webhook":
                     ok, delivery_error = await self._deliver_saved_ad_hoc_webhook_delivery_row(
                         row
@@ -4349,6 +4787,191 @@ class OpsMeshService:
             peer_id=resolved_target.peer_id,
         )
 
+    async def _provider_route_for_target(
+        self,
+        *,
+        event_type: str,
+        conversation_target: dict[str, Any],
+    ) -> tuple[dict[str, Any], str | None] | None:
+        for route in await self.database.list_notification_routes():
+            if not bool(route.get("enabled")):
+                continue
+            route_kind = str(route.get("kind") or "").strip().lower()
+            if route_kind not in {"webhook", *NATIVE_PROVIDER_ROUTE_KINDS}:
+                continue
+            events = route.get("events", [])
+            if not isinstance(events, list) or not any(
+                _matches_event(str(pattern), event_type) for pattern in events
+            ):
+                continue
+            route_conversation_target = _normalize_conversation_target(
+                route.get("conversation_target")
+            )
+            if route_conversation_target is None:
+                return route, None
+            route_match = _conversation_target_route_match(
+                route_conversation_target,
+                conversation_target,
+            )
+            if route_match is not None:
+                return route, route_match
+        return None
+
+    async def _notification_route_secret_token(self, route: dict[str, Any]) -> str | None:
+        secret_id = route.get("vault_secret_id")
+        if secret_id is not None:
+            return await self.vault.get_secret_value(int(secret_id))
+        secret_token = route.get("secret_token")
+        return str(secret_token) if secret_token else None
+
+    def _provider_event_poster(
+        self,
+        route_kind: str,
+    ) -> Callable[[dict[str, Any], str, dict[str, Any], str | None], object | None]:
+        if route_kind == "slack":
+            return self._post_slack_provider_event
+        if route_kind == "telegram":
+            return self._post_telegram_provider_event
+        if route_kind == "discord":
+            return self._post_discord_provider_event
+        if route_kind == "whatsapp":
+            return self._post_whatsapp_provider_event
+        return self._post_webhook
+
+    async def _post_provider_route_event(
+        self,
+        *,
+        event_type: str,
+        conversation_target: dict[str, Any],
+        payload: dict[str, Any],
+    ) -> object:
+        route_entry = await self._provider_route_for_target(
+            event_type=event_type,
+            conversation_target=conversation_target,
+        )
+        if route_entry is None:
+            channel = str(conversation_target.get("channel") or "").strip() or "unknown"
+            peer_id = str(conversation_target.get("peer_id") or "").strip() or "unknown"
+            raise GatewayOutboundRuntimeUnavailableError(
+                f"No provider route is subscribed to {event_type} for {channel}:{peer_id}."
+            )
+        route, route_match = route_entry
+        route_id = int(route["id"])
+        event_payload = dict(payload)
+        event_payload["conversationTarget"] = conversation_target
+        if route_match is not None:
+            event_payload["routeMatch"] = route_match
+        secret_token = await self._notification_route_secret_token(route)
+        route_kind = str(route.get("kind") or "").strip().lower()
+        try:
+            result = await asyncio.to_thread(
+                self._provider_event_poster(route_kind),
+                route,
+                event_type,
+                event_payload,
+                secret_token,
+            )
+        except Exception as exc:
+            await self.database.update_notification_route(
+                route_id,
+                last_delivery_at=utcnow(),
+                last_result=f"Failed {event_type} provider runtime",
+                last_error=str(exc)[:240],
+            )
+            raise
+        await self.database.update_notification_route(
+            route_id,
+            last_delivery_at=utcnow(),
+            last_result=f"Delivered {event_type} provider runtime",
+            last_error=None,
+        )
+        return result
+
+    async def _deliver_route_backed_provider_message(
+        self,
+        request: GatewayOutboundRuntimeMessageRequest,
+    ) -> object:
+        conversation_target = _normalize_conversation_target(
+            ConversationTargetView(
+                channel=request.channel,
+                account_id=request.account_id,
+                peer_kind=_provider_peer_kind_from_target(request.target),
+                peer_id=request.target,
+            )
+        )
+        if conversation_target is None:
+            raise GatewayOutboundRuntimeUnavailableError(
+                "gateway outbound provider route is missing a conversation target"
+            )
+        payload: dict[str, Any] = {
+            "channel": request.channel,
+            "to": request.target,
+            "message": request.message,
+        }
+        if request.media_urls:
+            if len(request.media_urls) == 1:
+                payload["mediaUrl"] = request.media_urls[0]
+            payload["mediaUrls"] = list(request.media_urls)
+        if request.gif_playback is not None:
+            payload["gifPlayback"] = request.gif_playback
+        if request.account_id is not None:
+            payload["accountId"] = request.account_id
+        if request.thread_id is not None:
+            payload["threadId"] = request.thread_id
+        if request.session_key is not None:
+            payload["sessionKey"] = request.session_key
+        if request.agent_id is not None:
+            payload["agentId"] = request.agent_id
+        return await self._post_provider_route_event(
+            event_type="gateway/send",
+            conversation_target=conversation_target,
+            payload=payload,
+        )
+
+    async def _deliver_route_backed_provider_poll(
+        self,
+        request: GatewayOutboundRuntimePollRequest,
+    ) -> object:
+        conversation_target = _normalize_conversation_target(
+            ConversationTargetView(
+                channel=request.channel,
+                account_id=request.account_id,
+                peer_kind=_provider_peer_kind_from_target(request.target),
+                peer_id=request.target,
+            )
+        )
+        if conversation_target is None:
+            raise GatewayOutboundRuntimeUnavailableError(
+                "gateway outbound provider route is missing a conversation target"
+            )
+        payload: dict[str, Any] = {
+            "channel": request.channel,
+            "to": request.target,
+            "question": request.question,
+            "options": list(request.options),
+        }
+        if request.max_selections is not None:
+            payload["maxSelections"] = request.max_selections
+        if request.duration_seconds is not None:
+            payload["durationSeconds"] = request.duration_seconds
+        if request.duration_hours is not None:
+            payload["durationHours"] = request.duration_hours
+        if request.silent is not None:
+            payload["silent"] = request.silent
+        if request.is_anonymous is not None:
+            payload["isAnonymous"] = request.is_anonymous
+        if request.account_id is not None:
+            payload["accountId"] = request.account_id
+        if request.thread_id is not None:
+            payload["threadId"] = request.thread_id
+        if request.session_key is not None:
+            payload["sessionKey"] = request.session_key
+        return await self._post_provider_route_event(
+            event_type="gateway/poll",
+            conversation_target=conversation_target,
+            payload=payload,
+        )
+
     def _cached_direct_channel_delivery_result(
         self,
         delivery_row: dict[str, Any],
@@ -4358,6 +4981,7 @@ class OpsMeshService:
         message_id = str(delivery_row.get("delivery_message_id") or "").strip() or None
         run_id = str(delivery_row.get("request_idempotency_key") or "").strip() or None
         transport = _direct_channel_transport_from_delivery_row(delivery_row)
+        provider_result = _direct_channel_provider_result_from_delivery_row(delivery_row)
         channel = (
             str((transport or {}).get("channel") or "").strip().lower()
             if transport is not None
@@ -4375,6 +4999,8 @@ class OpsMeshService:
             base_result["channel"] = channel
         if transport is not None:
             base_result["transport"] = transport
+        if provider_result is not None:
+            base_result["provider_result"] = provider_result
         if delivery_state == "delivered" and session_key:
             return {"ok": True, **base_result}
         error = str(delivery_row.get("last_error") or "").strip()
@@ -4481,7 +5107,7 @@ class OpsMeshService:
         route_target = (
             str(serialized_target.get("summary") or "").strip() or announce_session_key
         )
-        route_scope = {
+        route_scope: dict[str, Any] = {
             "route_name": route_name,
             "route_kind": "announce",
             "route_target": route_target,
@@ -4523,20 +5149,65 @@ class OpsMeshService:
             delivery_id,
             last_attempt_at=attempt_started_at,
         )
+        runtime_target = (
+            str(payload.get("to") or resolved_target.peer_id or "").strip() or None
+        )
         try:
             runtime = self._resolve_outbound_runtime_service()
             if runtime is None:
                 raise GatewayOutboundRuntimeUnavailableError(
                     "gateway outbound runtime is unavailable"
                 )
-            runtime_result = await runtime.deliver_message(
-                session_key=announce_session_key,
-                message=message,
-                channel=resolved_target.channel,
-                target=str(payload.get("to") or resolved_target.peer_id or "").strip() or None,
-                account_id=resolved_target.account_id,
-                thread_id=normalized_thread_id,
-            )
+            if event_type == "gateway/poll":
+                raw_options = payload.get("options")
+                poll_options = (
+                    tuple(str(option).strip() for option in raw_options if str(option).strip())
+                    if isinstance(raw_options, list)
+                    else ()
+                )
+                runtime_result = await runtime.deliver_poll(
+                    session_key=announce_session_key,
+                    message=message,
+                    channel=resolved_target.channel,
+                    target=runtime_target,
+                    question=str(payload.get("question") or payload.get("summary") or ""),
+                    options=poll_options,
+                    max_selections=_optional_int_payload_value(payload, "maxSelections"),
+                    duration_seconds=_optional_int_payload_value(
+                        payload,
+                        "durationSeconds",
+                    ),
+                    duration_hours=_optional_int_payload_value(payload, "durationHours"),
+                    silent=_optional_bool_payload_value(payload, "silent"),
+                    is_anonymous=_optional_bool_payload_value(payload, "isAnonymous"),
+                    account_id=resolved_target.account_id,
+                    thread_id=normalized_thread_id,
+                )
+            else:
+                raw_media_url = payload.get("mediaUrl")
+                raw_media_urls = payload.get("mediaUrls")
+                media_url = raw_media_url if isinstance(raw_media_url, str) else None
+                media_urls = (
+                    [str(media_url) for media_url in raw_media_urls]
+                    if isinstance(raw_media_urls, list)
+                    else None
+                )
+                runtime_result = await runtime.deliver_message(
+                    session_key=announce_session_key,
+                    message=message,
+                    channel=resolved_target.channel,
+                    target=runtime_target,
+                    media_urls=tuple(
+                        _normalize_direct_channel_media_urls(
+                            media_url=media_url,
+                            media_urls=media_urls,
+                        )
+                    ),
+                    gif_playback=_optional_bool_payload_value(payload, "gifPlayback"),
+                    account_id=resolved_target.account_id,
+                    thread_id=normalized_thread_id,
+                    agent_id=str(payload.get("agentId") or "").strip() or None,
+                )
         except (GatewayOutboundRuntimeUnavailableError, Exception) as exc:
             error = str(exc)[:240]
             await self.database.update_outbound_delivery(
@@ -4556,7 +5227,7 @@ class OpsMeshService:
                 "channel": resolved_target.channel,
                 "transport": _build_direct_channel_transport(
                     channel=resolved_target.channel,
-                    target=str(payload.get("to") or resolved_target.peer_id or "").strip() or None,
+                    target=runtime_target,
                     account_id=resolved_target.account_id,
                     thread_id=normalized_thread_id,
                     session_key=announce_session_key,
@@ -4565,6 +5236,11 @@ class OpsMeshService:
             }
         message_id = runtime_result.message_id
         transport = runtime_result.transport.as_payload()
+        provider_result = _serialize_gateway_provider_result(runtime_result.native_result)
+        delivered_route_scope = dict(route_scope)
+        delivered_route_scope["transport_runtime"] = runtime_result.transport.runtime
+        if provider_result:
+            delivered_route_scope["provider_result"] = provider_result
         await self.database.update_outbound_delivery(
             delivery_id,
             delivery_state="delivered",
@@ -4573,8 +5249,9 @@ class OpsMeshService:
             delivered_at=utcnow(),
             last_error=None,
             delivery_message_id=message_id,
+            route_scope=delivered_route_scope,
         )
-        return {
+        result: dict[str, object] = {
             "ok": True,
             "delivery_id": delivery_id,
             "session_key": announce_session_key,
@@ -4583,6 +5260,9 @@ class OpsMeshService:
             "channel": resolved_target.channel,
             "transport": transport,
         }
+        if provider_result:
+            result["provider_result"] = provider_result
+        return result
 
     async def send_direct_channel_message(
         self,
@@ -4669,6 +5349,9 @@ class OpsMeshService:
         transport = result.get("transport")
         if isinstance(transport, dict):
             response["transport"] = _serialize_gateway_direct_channel_transport(transport)
+        provider_result = result.get("provider_result")
+        if isinstance(provider_result, dict):
+            response.update(_serialize_gateway_provider_result(provider_result))
         message_id = str(result.get("message_id") or "").strip()
         if message_id:
             response["messageId"] = message_id
@@ -4760,6 +5443,9 @@ class OpsMeshService:
         transport = result.get("transport")
         if isinstance(transport, dict):
             response["transport"] = _serialize_gateway_direct_channel_transport(transport)
+        provider_result = result.get("provider_result")
+        if isinstance(provider_result, dict):
+            response.update(_serialize_gateway_provider_result(provider_result))
         message_id = str(result.get("message_id") or "").strip()
         if message_id:
             response["messageId"] = message_id
@@ -4847,7 +5533,7 @@ class OpsMeshService:
             if failure_destination_mode != "webhook":
                 if (
                     failure_destination_target is not None
-                    and self._outbound_runtime_available()
+                    and self._session_outbound_runtime_available()
                 ):
                     await self._send_ad_hoc_announce_delivery(
                         route_name=(
@@ -4863,7 +5549,7 @@ class OpsMeshService:
                     failure_destination_mode == "announce"
                     and failure_destination_channel == "last"
                     and delivery_session_key is not None
-                    and self._outbound_runtime_available()
+                    and self._session_outbound_runtime_available()
                 ):
                     session_payload = dict(payload)
                     session_payload["sessionKey"] = delivery_session_key
@@ -4878,7 +5564,7 @@ class OpsMeshService:
                     return
                 if (
                     explicit_announce_target is not None
-                    and self._outbound_runtime_available()
+                    and self._session_outbound_runtime_available()
                 ):
                     await self._send_ad_hoc_announce_delivery(
                         route_name=f"Announce delivery for {task.name}",
@@ -4894,7 +5580,7 @@ class OpsMeshService:
                     and _task_cron_delivery_mode(task) != "webhook"
                     and _task_cron_delivery_channel(task) == "last"
                     and delivery_session_key is not None
-                    and self._outbound_runtime_available()
+                    and self._session_outbound_runtime_available()
                 ):
                     session_payload = dict(payload)
                     session_payload["sessionKey"] = delivery_session_key
@@ -5505,7 +6191,7 @@ class OpsMeshService:
         *,
         secret_header_name: str | None = None,
         secret_token: str | None = None,
-    ) -> None:
+    ) -> object | None:
         body = json.dumps(payload).encode("utf-8")
         headers = {"Content-Type": "application/json"}
         if secret_header_name and secret_token:
@@ -5520,10 +6206,633 @@ class OpsMeshService:
             with urlopen(request, timeout=10) as response:
                 if response.status >= 400:
                     raise RuntimeError(f"Webhook returned {response.status}")
+                response_body = response.read().strip()
+                if not response_body:
+                    return {"status": response.status}
+                try:
+                    return json.loads(response_body.decode("utf-8"))
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    return {"status": response.status}
         except HTTPError as exc:
-            raise RuntimeError(f"Webhook returned {exc.code}") from exc
+            raise RuntimeError(_http_error_message("Webhook returned", exc)) from exc
         except URLError as exc:
             raise RuntimeError(f"Webhook failed: {exc.reason}") from exc
+
+    def _post_slack_form(
+        self,
+        target: str,
+        payload: dict[str, Any],
+        *,
+        secret_token: str,
+    ) -> dict[str, Any]:
+        body = urlencode(payload).encode("utf-8")
+        request = Request(
+            target,
+            data=body,
+            headers={
+                "Authorization": _slack_bearer_token(secret_token),
+                "Content-Type": "application/x-www-form-urlencoded",
+            },
+            method="POST",
+        )
+        try:
+            with urlopen(request, timeout=30) as response:
+                if response.status >= 400:
+                    raise RuntimeError(f"Slack API returned HTTP {response.status}")
+                response_body = response.read().strip()
+        except HTTPError as exc:
+            raise RuntimeError(_http_error_message("Slack API returned HTTP", exc)) from exc
+        except URLError as exc:
+            raise RuntimeError(f"Slack API failed: {exc.reason}") from exc
+        try:
+            result = json.loads(response_body.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise RuntimeError("Slack API returned a non-JSON response.") from exc
+        if not isinstance(result, dict):
+            raise RuntimeError("Slack API returned a non-object response.")
+        if result.get("ok") is False:
+            error = str(result.get("error") or "unknown_error")
+            raise RuntimeError(f"Slack API returned {error}.")
+        return result
+
+    def _download_slack_media_url(self, media_url: str) -> bytes:
+        if self.canvas_state_dir is not None:
+            local_path = resolve_canvas_http_path_to_local_path(
+                media_url,
+                state_dir=self.canvas_state_dir,
+            )
+            if local_path is not None and local_path.is_file():
+                return local_path.read_bytes()
+        request = Request(media_url, method="GET")
+        try:
+            with urlopen(request, timeout=30) as response:
+                if response.status >= 400:
+                    raise RuntimeError(f"Media URL returned HTTP {response.status}")
+                return response.read()
+        except HTTPError as exc:
+            raise RuntimeError(_http_error_message("Media URL returned HTTP", exc)) from exc
+        except URLError as exc:
+            raise RuntimeError(f"Media URL failed: {exc.reason}") from exc
+
+    def _upload_slack_file_bytes(
+        self,
+        *,
+        upload_url: str,
+        file_bytes: bytes,
+    ) -> None:
+        request = Request(
+            upload_url,
+            data=file_bytes,
+            headers={"Content-Type": "application/octet-stream"},
+            method="POST",
+        )
+        try:
+            with urlopen(request, timeout=30) as response:
+                if response.status >= 400:
+                    raise RuntimeError(f"Slack upload URL returned HTTP {response.status}")
+        except HTTPError as exc:
+            raise RuntimeError(
+                _http_error_message("Slack upload URL returned HTTP", exc)
+            ) from exc
+        except URLError as exc:
+            raise RuntimeError(f"Slack upload URL failed: {exc.reason}") from exc
+
+    def _upload_slack_media_files(
+        self,
+        *,
+        route: dict[str, Any],
+        media_urls: list[str],
+        channel_id: str,
+        initial_comment: str,
+        thread_id: str | None,
+        secret_token: str,
+    ) -> list[str]:
+        files: list[dict[str, str]] = []
+        for index, media_url in enumerate(media_urls, start=1):
+            filename = _slack_media_filename(media_url, index)
+            file_bytes = self._download_slack_media_url(media_url)
+            ticket = self._post_slack_form(
+                _slack_api_endpoint(str(route.get("target") or ""), "files.getUploadURLExternal"),
+                {
+                    "filename": filename,
+                    "length": str(len(file_bytes)),
+                },
+                secret_token=secret_token,
+            )
+            upload_url = str(ticket.get("upload_url") or "").strip()
+            file_id = str(ticket.get("file_id") or "").strip()
+            if not upload_url or not file_id:
+                raise RuntimeError("Slack upload URL response is missing upload_url or file_id.")
+            self._upload_slack_file_bytes(
+                upload_url=upload_url,
+                file_bytes=file_bytes,
+            )
+            files.append({"id": file_id, "title": filename})
+        complete_payload: dict[str, Any] = {
+            "files": json.dumps(files),
+            "channel_id": channel_id,
+        }
+        if initial_comment:
+            complete_payload["initial_comment"] = initial_comment
+        if thread_id:
+            complete_payload["thread_ts"] = thread_id
+        self._post_slack_form(
+            _slack_api_endpoint(str(route.get("target") or ""), "files.completeUploadExternal"),
+            complete_payload,
+            secret_token=secret_token,
+        )
+        return [file["id"] for file in files]
+
+    def _post_slack_provider_event(
+        self,
+        route: dict[str, Any],
+        event_type: str,
+        event: dict[str, Any],
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        conversation_target = _normalize_conversation_target(event.get("conversationTarget"))
+        channel_id = _slack_channel_id(
+            str(event.get("to") or (conversation_target or {}).get("peer_id") or "")
+        )
+        if channel_id is None:
+            raise RuntimeError("Slack route is missing a channel target.")
+        if event_type == "gateway/poll":
+            text = _format_direct_channel_poll_message(
+                question=str(event.get("question") or event.get("summary") or ""),
+                options=[
+                    str(option)
+                    for option in event.get("options", [])
+                    if str(option).strip()
+                ],
+                max_selections=_optional_int_payload_value(event, "maxSelections"),
+                duration_seconds=_optional_int_payload_value(event, "durationSeconds"),
+                duration_hours=_optional_int_payload_value(event, "durationHours"),
+                silent=_optional_bool_payload_value(event, "silent"),
+                is_anonymous=_optional_bool_payload_value(event, "isAnonymous"),
+            )
+        else:
+            text = str(event.get("message") or "").strip()
+        if not text:
+            raise RuntimeError("Slack route is missing message text.")
+        raw_media_urls = event.get("mediaUrls")
+        media_urls = _normalize_direct_channel_media_urls(
+            media_url=event.get("mediaUrl") if isinstance(event.get("mediaUrl"), str) else None,
+            media_urls=(
+                [str(media_url) for media_url in raw_media_urls]
+                if isinstance(raw_media_urls, list)
+                else None
+            ),
+        )
+        thread_id = str(event.get("threadId") or "").strip()
+        if media_urls and event_type == "gateway/send":
+            media_ids = self._upload_slack_media_files(
+                route=route,
+                media_urls=media_urls,
+                channel_id=channel_id,
+                initial_comment=text,
+                thread_id=thread_id or None,
+                secret_token=_slack_bearer_token(secret_token),
+            )
+            return {
+                "runtime": "native-provider-backed",
+                "messageId": media_ids[0],
+                "chatId": channel_id,
+                "channelId": channel_id,
+                "mediaIds": media_ids,
+                "mediaUrls": media_urls,
+            }
+        payload: dict[str, Any] = {
+            "channel": channel_id,
+            "text": text,
+        }
+        if thread_id:
+            payload["thread_ts"] = thread_id
+        if media_urls:
+            blocks: list[dict[str, Any]] = [
+                {
+                    "type": "section",
+                    "text": {"type": "mrkdwn", "text": text[:3000]},
+                }
+            ]
+            blocks.extend(
+                {
+                    "type": "image",
+                    "image_url": media_url,
+                    "alt_text": f"OpenZues media {index}",
+                }
+                for index, media_url in enumerate(media_urls, start=1)
+            )
+            payload["blocks"] = blocks
+        result = self._post_json_webhook(
+            _slack_api_endpoint(str(route.get("target") or ""), "chat.postMessage"),
+            payload,
+            secret_header_name="Authorization",
+            secret_token=_slack_bearer_token(secret_token),
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Slack API returned a non-JSON response.")
+        if result.get("ok") is False:
+            error = str(result.get("error") or "unknown_error")
+            raise RuntimeError(f"Slack API returned {error}.")
+        message_id = _slack_message_id(result)
+        if message_id is None:
+            raise RuntimeError("Slack API response did not include a message timestamp.")
+        delivered_channel = _slack_channel_from_result(result, channel_id)
+        native_result: dict[str, object] = {
+            "runtime": "native-provider-backed",
+            "messageId": message_id,
+            "chatId": delivered_channel,
+            "channelId": delivered_channel,
+        }
+        if event_type == "gateway/poll":
+            native_result["conversationId"] = delivered_channel
+            native_result["pollId"] = message_id
+        if media_urls:
+            native_result["mediaUrls"] = media_urls
+        return native_result
+
+    def _post_telegram_provider_event(
+        self,
+        route: dict[str, Any],
+        event_type: str,
+        event: dict[str, Any],
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        conversation_target = _normalize_conversation_target(event.get("conversationTarget"))
+        chat_id = _telegram_chat_id(
+            str(event.get("to") or (conversation_target or {}).get("peer_id") or "")
+        )
+        if chat_id is None:
+            raise RuntimeError("Telegram route is missing a chat target.")
+        token = _telegram_bot_token(secret_token)
+        thread_id = str(event.get("threadId") or "").strip()
+        if event_type == "gateway/poll":
+            options = [str(option).strip() for option in event.get("options", [])]
+            options = [option for option in options if option]
+            payload: dict[str, Any] = {
+                "chat_id": chat_id,
+                "question": str(event.get("question") or event.get("summary") or ""),
+                "options": options,
+            }
+            if _optional_bool_payload_value(event, "isAnonymous") is not None:
+                payload["is_anonymous"] = _optional_bool_payload_value(
+                    event,
+                    "isAnonymous",
+                )
+            if _optional_int_payload_value(event, "durationSeconds") is not None:
+                payload["open_period"] = _optional_int_payload_value(
+                    event,
+                    "durationSeconds",
+                )
+            if _optional_bool_payload_value(event, "silent") is not None:
+                payload["disable_notification"] = _optional_bool_payload_value(
+                    event,
+                    "silent",
+                )
+            if thread_id:
+                payload["message_thread_id"] = thread_id
+            result = self._post_json_webhook(
+                _telegram_api_endpoint(str(route.get("target") or ""), token, "sendPoll"),
+                payload,
+            )
+        else:
+            raw_media_urls = event.get("mediaUrls")
+            media_urls = _normalize_direct_channel_media_urls(
+                media_url=(
+                    event.get("mediaUrl") if isinstance(event.get("mediaUrl"), str) else None
+                ),
+                media_urls=(
+                    [str(media_url) for media_url in raw_media_urls]
+                    if isinstance(raw_media_urls, list)
+                    else None
+                ),
+            )
+            text = str(event.get("message") or "").strip()
+            payload = {"chat_id": chat_id}
+            if thread_id:
+                payload["message_thread_id"] = thread_id
+            if len(media_urls) > 1:
+                media: list[dict[str, str]] = []
+                for index, media_url in enumerate(media_urls[:10]):
+                    item = {"type": "photo", "media": media_url}
+                    if index == 0 and text:
+                        item["caption"] = text[:1024]
+                    media.append(item)
+                payload["media"] = media
+                result = self._post_json_webhook(
+                    _telegram_api_endpoint(
+                        str(route.get("target") or ""),
+                        token,
+                        "sendMediaGroup",
+                    ),
+                    payload,
+                )
+            elif media_urls:
+                payload["photo"] = media_urls[0]
+                if text:
+                    payload["caption"] = text[:1024]
+                result = self._post_json_webhook(
+                    _telegram_api_endpoint(
+                        str(route.get("target") or ""),
+                        token,
+                        "sendPhoto",
+                    ),
+                    payload,
+                )
+            else:
+                payload["text"] = text
+                result = self._post_json_webhook(
+                    _telegram_api_endpoint(
+                        str(route.get("target") or ""),
+                        token,
+                        "sendMessage",
+                    ),
+                    payload,
+                )
+        if not isinstance(result, dict):
+            raise RuntimeError("Telegram API returned a non-JSON response.")
+        if result.get("ok") is False:
+            error = str(result.get("description") or result.get("error_code") or "unknown")
+            raise RuntimeError(f"Telegram API returned {error}.")
+        message_id = _telegram_message_id(result)
+        if message_id is None:
+            raise RuntimeError("Telegram API response did not include a message id.")
+        delivered_chat = _telegram_chat_from_result(result, chat_id)
+        native_result: dict[str, object] = {
+            "runtime": "native-provider-backed",
+            "messageId": message_id,
+            "chatId": delivered_chat,
+            "channelId": delivered_chat,
+        }
+        poll_id = _telegram_poll_id(result)
+        if poll_id is not None:
+            native_result["pollId"] = poll_id
+            native_result["conversationId"] = delivered_chat
+        if event_type == "gateway/send":
+            raw_media_urls = event.get("mediaUrls")
+            media_urls = _normalize_direct_channel_media_urls(
+                media_url=(
+                    event.get("mediaUrl") if isinstance(event.get("mediaUrl"), str) else None
+                ),
+                media_urls=(
+                    [str(media_url) for media_url in raw_media_urls]
+                    if isinstance(raw_media_urls, list)
+                    else None
+                ),
+            )
+            if media_urls:
+                native_result["mediaUrls"] = media_urls
+                media_ids = _telegram_media_ids(result)
+                if media_ids:
+                    native_result["mediaIds"] = media_ids
+        return native_result
+
+    def _post_discord_provider_event(
+        self,
+        route: dict[str, Any],
+        event_type: str,
+        event: dict[str, Any],
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del secret_token
+        conversation_target = _normalize_conversation_target(event.get("conversationTarget"))
+        fallback_channel = str(
+            event.get("to") or (conversation_target or {}).get("peer_id") or ""
+        ).strip()
+        thread_id = str(event.get("threadId") or "").strip()
+        if event_type == "gateway/poll":
+            options = [str(option).strip() for option in event.get("options", [])]
+            options = [option for option in options if option]
+            payload: dict[str, Any] = {
+                "poll": {
+                    "question": {
+                        "text": str(event.get("question") or event.get("summary") or ""),
+                    },
+                    "answers": [
+                        {"poll_media": {"text": option}}
+                        for option in options
+                    ],
+                    "duration": _discord_poll_duration_hours(event),
+                    "allow_multiselect": (
+                        _optional_int_payload_value(event, "maxSelections") or 1
+                    )
+                    > 1,
+                }
+            }
+        else:
+            raw_media_urls = event.get("mediaUrls")
+            media_urls = _normalize_direct_channel_media_urls(
+                media_url=(
+                    event.get("mediaUrl") if isinstance(event.get("mediaUrl"), str) else None
+                ),
+                media_urls=(
+                    [str(media_url) for media_url in raw_media_urls]
+                    if isinstance(raw_media_urls, list)
+                    else None
+                ),
+            )
+            text = str(event.get("message") or "").strip()
+            payload = {"content": text[:2000] if text else ""}
+            if media_urls:
+                payload["embeds"] = [
+                    {"image": {"url": media_url}}
+                    for media_url in media_urls[:10]
+                ]
+        if thread_id:
+            payload["thread_id"] = thread_id
+        result = self._post_json_webhook(
+            _discord_webhook_url(str(route.get("target") or "")),
+            payload,
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Discord webhook returned a non-JSON response.")
+        message_id = _discord_message_id(result)
+        if message_id is None:
+            raise RuntimeError("Discord webhook response did not include a message id.")
+        delivered_channel = _discord_channel_id(result, fallback_channel)
+        native_result: dict[str, object] = {
+            "runtime": "native-provider-backed",
+            "messageId": message_id,
+            "chatId": delivered_channel,
+            "channelId": delivered_channel,
+        }
+        if event_type == "gateway/poll":
+            native_result["conversationId"] = delivered_channel
+            native_result["pollId"] = message_id
+        else:
+            raw_media_urls = event.get("mediaUrls")
+            media_urls = _normalize_direct_channel_media_urls(
+                media_url=(
+                    event.get("mediaUrl") if isinstance(event.get("mediaUrl"), str) else None
+                ),
+                media_urls=(
+                    [str(media_url) for media_url in raw_media_urls]
+                    if isinstance(raw_media_urls, list)
+                    else None
+                ),
+            )
+            if media_urls:
+                native_result["mediaUrls"] = media_urls
+        return native_result
+
+    def _post_whatsapp_provider_event(
+        self,
+        route: dict[str, Any],
+        event_type: str,
+        event: dict[str, Any],
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        conversation_target = _normalize_conversation_target(event.get("conversationTarget"))
+        recipient_id = _whatsapp_recipient_id(
+            str(event.get("to") or (conversation_target or {}).get("peer_id") or "")
+        )
+        if recipient_id is None:
+            raise RuntimeError("WhatsApp route is missing a recipient target.")
+        if event_type == "gateway/poll":
+            question = str(event.get("question") or event.get("summary") or "").strip()
+            options = [str(option).strip() for option in event.get("options", [])]
+            options = [option for option in options if option][:3]
+            payload: dict[str, Any] = {
+                "messaging_product": "whatsapp",
+                "to": recipient_id,
+                "type": "interactive",
+                "interactive": {
+                    "type": "button",
+                    "body": {"text": question[:1024]},
+                    "action": {
+                        "buttons": [
+                            {
+                                "type": "reply",
+                                "reply": {
+                                    "id": f"option-{index}",
+                                    "title": option[:20],
+                                },
+                            }
+                            for index, option in enumerate(options, start=1)
+                        ],
+                    },
+                },
+            }
+        else:
+            raw_media_urls = event.get("mediaUrls")
+            media_urls = _normalize_direct_channel_media_urls(
+                media_url=(
+                    event.get("mediaUrl") if isinstance(event.get("mediaUrl"), str) else None
+                ),
+                media_urls=(
+                    [str(media_url) for media_url in raw_media_urls]
+                    if isinstance(raw_media_urls, list)
+                    else None
+                ),
+            )
+            text = str(event.get("message") or "").strip()
+            if media_urls:
+                if len(media_urls) > 1:
+                    endpoint = _whatsapp_messages_endpoint(str(route.get("target") or ""))
+                    bearer_token = _whatsapp_bearer_token(secret_token)
+                    message_ids: list[str] = []
+                    delivered_contact = recipient_id
+                    for index, media_url in enumerate(media_urls):
+                        image_payload: dict[str, Any] = {"link": media_url}
+                        if index == 0 and text:
+                            image_payload["caption"] = text[:1024]
+                        result = self._post_json_webhook(
+                            endpoint,
+                            {
+                                "messaging_product": "whatsapp",
+                                "to": recipient_id,
+                                "type": "image",
+                                "image": image_payload,
+                            },
+                            secret_header_name="Authorization",
+                            secret_token=bearer_token,
+                        )
+                        if not isinstance(result, dict):
+                            raise RuntimeError("WhatsApp API returned a non-JSON response.")
+                        if result.get("error"):
+                            error = result.get("error")
+                            if isinstance(error, dict):
+                                detail = str(
+                                    error.get("message") or error.get("code") or "unknown"
+                                )
+                            else:
+                                detail = str(error)
+                            raise RuntimeError(f"WhatsApp API returned {detail}.")
+                        message_id = _whatsapp_message_id(result)
+                        if message_id is None:
+                            raise RuntimeError(
+                                "WhatsApp API response did not include a message id."
+                            )
+                        message_ids.append(message_id)
+                        delivered_contact = _whatsapp_contact_id(result, delivered_contact)
+                    return {
+                        "runtime": "native-provider-backed",
+                        "messageId": message_ids[0],
+                        "chatId": delivered_contact,
+                        "channelId": delivered_contact,
+                        "mediaIds": message_ids,
+                        "mediaUrls": media_urls,
+                    }
+                payload = {
+                    "messaging_product": "whatsapp",
+                    "to": recipient_id,
+                    "type": "image",
+                    "image": {
+                        "link": media_urls[0],
+                    },
+                }
+                if text:
+                    payload["image"]["caption"] = text[:1024]
+            else:
+                payload = {
+                    "messaging_product": "whatsapp",
+                    "to": recipient_id,
+                    "type": "text",
+                    "text": {"body": text[:4096]},
+                }
+        result = self._post_json_webhook(
+            _whatsapp_messages_endpoint(str(route.get("target") or "")),
+            payload,
+            secret_header_name="Authorization",
+            secret_token=_whatsapp_bearer_token(secret_token),
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("WhatsApp API returned a non-JSON response.")
+        if result.get("error"):
+            error = result.get("error")
+            if isinstance(error, dict):
+                detail = str(error.get("message") or error.get("code") or "unknown")
+            else:
+                detail = str(error)
+            raise RuntimeError(f"WhatsApp API returned {detail}.")
+        message_id = _whatsapp_message_id(result)
+        if message_id is None:
+            raise RuntimeError("WhatsApp API response did not include a message id.")
+        delivered_contact = _whatsapp_contact_id(result, recipient_id)
+        native_result: dict[str, object] = {
+            "runtime": "native-provider-backed",
+            "messageId": message_id,
+            "chatId": delivered_contact,
+            "channelId": delivered_contact,
+        }
+        if event_type == "gateway/poll":
+            native_result["conversationId"] = delivered_contact
+            native_result["pollId"] = message_id
+        else:
+            raw_media_urls = event.get("mediaUrls")
+            media_urls = _normalize_direct_channel_media_urls(
+                media_url=(
+                    event.get("mediaUrl") if isinstance(event.get("mediaUrl"), str) else None
+                ),
+                media_urls=(
+                    [str(media_url) for media_url in raw_media_urls]
+                    if isinstance(raw_media_urls, list)
+                    else None
+                ),
+            )
+            if media_urls:
+                native_result["mediaUrls"] = media_urls
+        return native_result
 
     def _post_webhook(
         self,
@@ -5531,8 +6840,8 @@ class OpsMeshService:
         event_type: str,
         event: dict[str, Any],
         secret_token: str | None,
-    ) -> None:
-        self._post_json_webhook(
+    ) -> object | None:
+        return self._post_json_webhook(
             str(route["target"]),
             {"eventType": event_type, "payload": event},
             secret_header_name=(

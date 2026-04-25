@@ -44,6 +44,16 @@ class Settings(BaseSettings):
     websocket_ping_interval_seconds: int = 20
     auto_self_update_enabled: bool = True
     auto_self_update_poll_interval_seconds: int = 20
+    apns_team_id: str | None = None
+    apns_key_id: str | None = None
+    apns_private_key_p8: str | None = None
+    apns_private_key_path: Path | None = None
+    apns_timeout_ms: int = 10_000
+    apns_relay_base_url: str | None = None
+    apns_relay_timeout_ms: int = 10_000
+    apns_relay_allow_http: bool = False
+    gateway_node_allow_commands: tuple[str, ...] = ()
+    gateway_node_deny_commands: tuple[str, ...] = ()
     hermes_learning_poll_interval_seconds: int = 300
     hermes_source_path: Path | None = Field(default_factory=_default_hermes_source_path)
     ecc_source_path: Path | None = Field(default_factory=_default_ecc_source_path)

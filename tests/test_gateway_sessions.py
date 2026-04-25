@@ -1054,6 +1054,31 @@ async def test_resolve_key_key_lookup_ignores_agent_filter_like_openclaw(
 
 
 @pytest.mark.asyncio
+async def test_resolve_key_key_lookup_rejects_global_session_for_spawned_by_filter_like_openclaw(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "gateway-sessions.db")
+    await database.initialize()
+
+    global_key = "launch:mode:workspace_affinity"
+    await database.upsert_gateway_session_metadata(
+        session_key=global_key,
+        metadata={"spawnedBy": "controller"},
+    )
+
+    with pytest.raises(ValueError, match="unknown session key"):
+        await GatewaySessionsService(database).resolve_key(
+            key=global_key,
+            session_id=None,
+            label=None,
+            agent_id=None,
+            spawned_by="controller",
+            include_global=True,
+            include_unknown=True,
+        )
+
+
+@pytest.mark.asyncio
 async def test_resolve_key_key_lookup_allows_legacy_launch_session_with_agent_filter(
     tmp_path: Path,
 ) -> None:
@@ -1357,6 +1382,54 @@ async def test_build_snapshot_label_filter_trims_whitespace_like_openclaw(
 
     assert snapshot["count"] == 1
     assert snapshot["sessions"][0]["key"] == visible_key
+
+
+@pytest.mark.asyncio
+async def test_build_snapshot_spawned_by_filter_excludes_global_and_unknown_sessions_like_openclaw(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "gateway-sessions.db")
+    await database.initialize()
+
+    global_key = "launch:mode:workspace_affinity"
+    child_key = "launch:mode:workspace_affinity:task:99:operator:1:thread:visible-child"
+
+    await database.append_control_chat_message(
+        role="assistant",
+        content="Unknown session transcript",
+        mission_id=None,
+        session_key="unknown",
+        created_at="2026-01-02T03:04:05Z",
+    )
+    await database.append_control_chat_message(
+        role="assistant",
+        content="Visible child transcript",
+        mission_id=None,
+        session_key=child_key,
+        created_at="2026-01-02T03:05:06Z",
+    )
+    for session_key in (global_key, "unknown", child_key):
+        await database.upsert_gateway_session_metadata(
+            session_key=session_key,
+            metadata={"spawnedBy": "controller"},
+        )
+
+    snapshot = await GatewaySessionsService(database).build_snapshot(
+        include_global=True,
+        include_unknown=True,
+        limit=None,
+        active_minutes=None,
+        label=None,
+        spawned_by="controller",
+        agent_id=None,
+        search=None,
+        include_derived_titles=False,
+        include_last_message=False,
+        now_ms=1_700_000_001_000,
+    )
+
+    assert snapshot["count"] == 1
+    assert [session["key"] for session in snapshot["sessions"]] == [child_key]
 
 
 @pytest.mark.asyncio

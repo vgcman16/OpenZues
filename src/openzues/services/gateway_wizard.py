@@ -4,6 +4,7 @@ import inspect
 from dataclasses import dataclass, field
 from uuid import uuid4
 
+_DEFAULT_LOCAL_INSTANCE_MODE = "quick_connect_desktop"
 _DEFAULT_SETUP_INSTANCE_NAME = "Local Codex Desktop"
 
 
@@ -187,6 +188,10 @@ class GatewayWizardService:
                 if base_mode != "remote":
                     session.patch["instance_id"] = None
                     session.patch["instance_name"] = _DEFAULT_SETUP_INSTANCE_NAME
+            elif base_mode == "remote":
+                session.patch["instance_mode"] = _DEFAULT_LOCAL_INSTANCE_MODE
+                session.patch["instance_id"] = None
+                session.patch["instance_name"] = _DEFAULT_SETUP_INSTANCE_NAME
         if normalized_flow is not None and normalized_mode != "remote":
             session.patch["flow"] = normalized_flow
         if workspace is not None:
@@ -589,6 +594,10 @@ def _apply_dependent_defaults(
             if _normalized_mode_value(previous_value) != "remote":
                 session.patch["instance_id"] = None
                 session.patch["instance_name"] = _DEFAULT_SETUP_INSTANCE_NAME
+        elif _normalized_mode_value(previous_value) == "remote":
+            session.patch["instance_mode"] = _DEFAULT_LOCAL_INSTANCE_MODE
+            session.patch["instance_id"] = None
+            session.patch["instance_name"] = _DEFAULT_SETUP_INSTANCE_NAME
         return
     if field != "instance_id":
         return

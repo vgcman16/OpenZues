@@ -187,7 +187,7 @@ async def test_gateway_logs_tail_redacts_multiline_private_key_blocks(
 
 
 @pytest.mark.asyncio
-async def test_gateway_logs_tail_falls_back_to_latest_rolling_log_when_configured_daily_file_is_missing(
+async def test_gateway_logs_tail_uses_latest_roll_when_daily_file_missing(
     tmp_path: Path,
 ) -> None:
     logs_root = tmp_path / "logs"

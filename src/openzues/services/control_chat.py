@@ -30,6 +30,7 @@ from openzues.services.followups import (
     operator_blocked_missions,
     operator_ready_handoff_missions,
 )
+from openzues.services.gateway_canvas_render import extract_canvas_shortcodes
 from openzues.services.gateway_sessions import GatewaySessionsService
 from openzues.services.gateway_wake import GatewayWakeService
 from openzues.services.hub import BroadcastHub
@@ -1345,6 +1346,33 @@ def _same_control_chat_message(
         and left.opportunity_id == right.opportunity_id
         and left.target_label == right.target_label
         and left.content == right.content
+        and left.canvas_previews == right.canvas_previews
+    )
+
+
+def _attach_canvas_previews(message: ControlChatMessageView) -> ControlChatMessageView:
+    if message.role != "assistant":
+        return message
+
+    extracted = extract_canvas_shortcodes(message.content)
+    raw_previews = extracted.get("previews")
+    if not isinstance(raw_previews, list) or not raw_previews:
+        return message
+
+    previews: list[dict[str, Any]] = []
+    for preview in raw_previews:
+        if isinstance(preview, dict):
+            previews.append({str(key): value for key, value in preview.items()})
+    if not previews:
+        return message
+
+    text = extracted.get("text")
+    content = text if isinstance(text, str) else message.content
+    return message.model_copy(
+        update={
+            "content": content,
+            "canvas_previews": previews,
+        }
     )
 
 
@@ -1458,6 +1486,7 @@ class ControlChatService:
             ControlChatMessageView.model_validate(row)
             for row in await self.database.list_control_chat_messages(limit=limit)
         ]
+        messages = [_attach_canvas_previews(message) for message in messages]
         messages = [
             message
             for message in messages
@@ -1771,6 +1800,7 @@ class ControlChatService:
         if self._wake_retry_due_at is not None:
             now = time.monotonic()
             if now < self._wake_retry_due_at:
+                self._schedule_wake_retry(dashboard, modes=modes)
                 return False
             self._wake_retry_due_at = None
         dispatched_any = False
@@ -1842,6 +1872,7 @@ class ControlChatService:
         )
         if dashboard is None:
             return
+        self._wake_retry_due_at = None
         if modes == ("now",):
             await self.dispatch_immediate_wakes(dashboard)
             return
@@ -2104,7 +2135,7 @@ class ControlChatService:
         row = await self.database.get_control_chat_message(message_id)
         assert row is not None
         await self._publish_session_message_event(row)
-        return ControlChatMessageView.model_validate(row)
+        return _attach_canvas_previews(ControlChatMessageView.model_validate(row))
 
     async def _publish_session_message_event(self, message_row: dict[str, Any]) -> None:
         now_ms = int(datetime.now(UTC).timestamp() * 1000)
