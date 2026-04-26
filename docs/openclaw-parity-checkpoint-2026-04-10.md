@@ -1,11 +1,12 @@
 ﻿# OpenClaw Parity Checkpoint
 
-## Current Rollup (through 2026-04-25 addenda)
+## Current Rollup (through 2026-04-26 addenda)
 
-- Estimated parity progress: roughly `25-35%` of the full OpenClaw product surface is now covered, with gateway/control-plane seams materially further along than whole-product parity. Registry, routing/session-key, large parts of gateway session/usage/cron compatibility, and operator-control seams have moved forward; channels, nodes, browser-control, canvas, voice, packaging, and companion apps still dominate the remaining gap.
-- Active feature family progress: the live queue is the gateway/cron/session-delivery family, and it is roughly `75-85%` complete along the current bounded local parity path. The latest addenda moved that family from session-target normalization into delivery metadata, runtime delivery ownership, webhook/session fallback behavior, preserved `sessionKey` wake routing, shared session-backed direct poll delivery, saved direct poll replay reconstruction, locked the hot session inventory/compaction surfacing shard, idempotent retry collapse on the shared direct send/poll owner, honest direct transport metadata on fresh responses plus saved outbound delivery views, one shared outbound runtime owner spanning direct send/poll, explicit announce, and saved session-like replays, one hot control-plane regression fix that keeps wrapped live MCP tool catalogs classified instead of dropping bare string plugin methods from the gateway capability scope summary, one adjacent gateway/session/node/wizard cleanup that locks remote saved-lane wizard progression, owner-session alias canonicalization, configured fallback model synthesis, and wake-triggered pending-work reconnect waits, and now one adjacent bootstrap/node/config-schema pass that locks bootstrap repair degradation for broken saved defaults plus `node.invoke` guard rails for `system.execApprovals.*` and persistent browser-profile `browser.proxy` mutations without changing the provider-runtime queue head.
-- Latest completed seams: the freshest landed seams are `bootstrap degraded-state repair for broken saved lane/workspace references`, `node.invoke guard rails for system.execApprovals and persistent browser.proxy mutations`, `punctuation-rich config.schema.lookup path support`, `remote wizard optional saved-lane staging and skip progression`, `gateway session owner-alias canonicalization`, `pending node-work wake reconnect wait`, `object-shaped configured model fallback synthesis`, `capability inventory classification for wrapped live MCP tool catalogs`, `shared outbound runtime owner for direct send/poll plus explicit announce and saved session-like replays`, `gateway session discovery truth under compaction inventory surfacing`, `task blueprint enabled-state read-model truth under bootstrap/setup`, `shared direct channel-target send owner`, `shared direct channel-target poll owner`, `direct send/poll idempotent retry collapse`, `direct send/poll session-backed transport metadata surfacing`, `saved direct poll replay message reconstruction`, `saved direct replay transport identity surfacing`, `cron runtime delivery-status`, `cron announce fallback and delivery.threadId`, `cron session delivery fallback`, and `cron system-event sessionKey wake` parity, layered on top of the already-locked gateway method registry seam and the `usage.cost` / `usage.status` bridge. This run also integrated the hot node/pairing, setup, bootstrap, and config-schema shards: paired catalogs now pin approved commands until a silent scope-upgrade request is staged, pending-work wakes wait through reconnect before returning, failed managed wakes keep the truthful `NOT_CONNECTED` boundary instead of leaking a platform allowlist error, broken saved lane/workspace defaults keep bootstrap on the truthful `degraded` state, punctuation-rich plugin ids still resolve through config lookup, and remote setup/bootstrap keeps workspace-affinity routing honest while the optional saved-lane wizard step advances cleanly after answer or skip.
-- Current queue head: provider-native outbound implementation behind the shared direct/announce runtime owner remains the next honest seam. OpenZues now covers webhook delivery, notification-route delivery, `sessionKey` / `channel="last"` fallback, shared explicit-target text send, shared explicit-target poll delivery, explicit announce plus saved session-like replay delivery through that same owner, and honest `runId` / `channel` / session-backed transport metadata on fresh and saved direct-delivery surfaces, but it still does not match OpenClaw's real outbound provider runtime for `channel` / `to` / `accountId`. This run reverified that the local generic node/runtime seams still do not advertise a provider-owned outbound `send` / `poll` / `announce` command, so the honest next move is to wire that provider-native implementation behind the new owner rather than land another session-backed detour.
+- Estimated parity progress: roughly `43%` of the full OpenClaw product surface is now covered, with a reasonable confidence band of `38-48%`. Gateway/control-plane, session/chat contracts, direct history, cron, browser/canvas command bridges, and bounded tool invocation are materially further along than whole-product parity; packaging, companion apps, provider-native runtimes, ACP harness spawning, and broad CLI/TUI parity still keep the repo-wide percentage conservative.
+- Active feature family progress: the live queue is now the gateway/session/tool-contract family, and it is roughly `94%` complete along the current bounded local parity path. The chat/session contract subfamily is roughly `96%` after closing `chat.send` timeout/session-key/provenance schema parity, `chat.inject` schema parity, `chat.abort` run-id validation, `sessions.create` key/run-error behavior, `sessions.patch` lineage/normalization guards, `sessions.delete deleteTranscript=false`, and `tools.invoke` session-tool projection/visibility seams.
+- Fully completed bounded slices: gateway method registry and policy wiring; config lookup/mutation; node invoke guard rails; device pair/token lifecycle; plugin and exec approval lifecycles; cron expression/due-run/session-wake behavior; browser/canvas/nodes/voice bounded command bridges; direct session history REST/SSE; transcript projection/sanitization/usage-cost metadata; custom-agent registry/identity/files/session ownership; and core `tools.invoke` allow/deny/hook/plugin-envelope behavior are locked for the OpenZues-local contract.
+- Latest completed seams: the freshest landed seams are `chat.abort empty runId rejection`, `chat.inject non-empty message and label cap`, `chat.send strict systemInputProvenance schema validation`, `chat.send 512-character sessionKey cap`, `chat.send timer-safe timeoutMs clamping`, `sessions.delete retained-transcript delete/archive split`, `sessions.patch groupActivation/sendPolicy/elevatedLevel/exec* normalization`, `sessions.patch lineage support/immutability/duplicate-label guards`, `sessions.create key-agent mismatch and initial-run error shape`, `sessions.spawn accepted note/modelApplied/requester lineage`, and `tools.invoke` projection hardening for `sessions_spawn`, `sessions_send`, `sessions_yield`, `session_status`, `sessions_history`, and `sessions_list`.
+- Current queue head: continue source-backed `sessions.*` / gateway tool-runtime parity. The strongest remaining gaps are ACP-backed `sessions.spawn` harness execution, sandboxed target runtimes, persistent thread-binding/lifecycle hooks, provider-native outbound delivery behind the shared direct/poll/announce owner, richer native plugin executor ordering, and broader companion/CLI/runtime surfaces.
 - How to read this checkpoint: treat the dated checkpoint sections near the top as seam locks and re-anchors, then use the newest `Recovery addendum` entries later in the file for the live edge. The final addendum's "Next exact seam" callout is the current queue head unless a newer dated section overrides it.
 
 ## 2026-04-25 Sessions History Tool Addendum
@@ -15649,7 +15650,7 @@ Next best slice:
   - `GatewayNodeMethodService` now recognizes `chat.subscribe` and `chat.unsubscribe` inside `node.event` payloads.
   - a focused regression proof shows a node receives a routed `chat` payload after subscribing and stops receiving it after unsubscribing.
 - Product effect:
-  - the browser/canvas/nodes/voice queue head is no longer untouched; OpenZues now has the first upstream-shaped node subscription primitive needed by mobile/canvas companions.
+  - the browser/canvas/nodes/voice bounded family is no longer untouched; OpenZues now has the first upstream-shaped node subscription primitive needed by mobile/canvas companions.
   - remaining queue head is deeper node-event/runtime behavior such as `exec.*`, `notifications.changed`, `voice.transcript`, and `agent.request`.
 - Verified this continuation with:
   - `ruff check src/openzues/services/gateway_node_registry.py src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py`: clean
@@ -20965,3 +20966,2145 @@ Next best slice:
   - bounded high-risk override coverage now includes native `sessions_send`.
   - remaining `tools.invoke` parity is mostly real plugin HTTP handler ordering
     and any additional intentionally-opened high-risk mappings.
+
+### Recovery addendum 2026-04-26 tools invoke sessions_spawn route header parity America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw direct `/tools/invoke` resolves message route headers into the
+    tool execution context, so an explicitly allowed `sessions_spawn` can bind
+    spawned subagent work to the caller's external route.
+  - OpenZues accepted the same direct HTTP body, but route headers did not
+    survive into `GatewayNodeMethodRequester` or the native `sessions.spawn`
+    child-session metadata.
+- Landed the bounded OpenZues route-context slice:
+  - `GatewayNodeMethodRequester` now carries `message_channel`,
+    `message_account_id`, `message_to`, and `message_thread_id` from
+    `x-openclaw-*` route headers.
+  - `sessions.spawn` now stores that route as durable `requesterOrigin` and
+    child `deliveryContext` / `last*` route metadata, and echoes
+    `requesterOrigin` in the spawn result for direct evidence.
+- Product effect:
+  - spawned OpenZues child sessions keep the same external route context that
+    OpenClaw gives subagent tools, which protects later announcements, delivery
+    inheritance, and route-aware session display.
+- Verified this continuation with:
+  - red proof:
+    `test_tools_invoke_endpoint_propagates_route_headers_to_sessions_spawn`
+    first failed with missing `requesterOrigin`.
+  - `python -m pytest tests\test_gateway_nodes_api.py -q -k "tools_invoke_endpoint_propagates_route_headers_to_sessions_spawn"`:
+    `1 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "tools_invoke or sessions_spawn"`:
+    `33 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py src\openzues\app.py tests\test_gateway_nodes_api.py`:
+    clean
+  - `mypy src\openzues\services\gateway_node_methods.py src\openzues\app.py`:
+    clean
+- Queue effect from this run:
+  - direct tools-invoke route context is no longer a `sessions_spawn` gap.
+  - next nearby session-runtime seams remain route-aware `sessions_send`
+    context/provenance and broader `chat.*` / `sessions.*` runtime edges.
+
+### Recovery addendum 2026-04-26 tools invoke sessions_spawn requester session parity America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw direct `/tools/invoke` uses body `sessionKey` as the active tool
+    requester session, so `sessions_spawn` creates child work beneath that
+    requester instead of beneath the default main session.
+  - OpenZues accepted body `sessionKey` for `tools.invoke`, but only forwarded
+    it to read-style session-key methods; native `sessions.spawn` therefore
+    defaulted `spawnedBy` / `parentSessionKey` back to
+    `launch:mode:workspace_affinity`.
+- Landed the bounded requester-session slice:
+  - `tools.invoke` now maps body `sessionKey` to `requesterSessionKey` before
+    dispatching native `sessions.spawn`, unless the tool args already supplied
+    an explicit requester override.
+- Product effect:
+  - route-aware subagent creation now preserves the correct parent lineage,
+    which protects depth limits, child caps, lifecycle metadata, and downstream
+    session discovery.
+- Verified this continuation with:
+  - red proof:
+    `test_tools_invoke_sessions_spawn_uses_body_session_key_as_requester`
+    first failed because the child metadata recorded
+    `launch:mode:workspace_affinity` as its parent.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "tools_invoke_sessions_spawn_uses_body_session_key_as_requester"`:
+    `1 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "tools_invoke or sessions_spawn"`:
+    `34 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py src\openzues\app.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`:
+    clean
+  - `mypy src\openzues\services\gateway_node_methods.py src\openzues\app.py`:
+    clean
+- Queue effect from this run:
+  - direct tools-invoke requester-session context is no longer a
+    `sessions_spawn` gap.
+  - next nearby session-runtime seam remains `sessions_send` requester
+    context/provenance through direct tools invocation.
+
+### Recovery addendum 2026-04-26 tools invoke sessions_send provenance parity America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw `sessions_send` receives tool requester context and sends
+    inter-session provenance to the target runtime (`sourceSessionKey`,
+    `sourceChannel`, `sourceTool`).
+  - OpenZues could invoke native `sessions.send` through `tools.invoke`, but
+    the target runtime received only the raw message; body `sessionKey` and
+    route channel were lost as source provenance.
+- Landed the bounded requester-provenance slice:
+  - `tools.invoke` now maps body `sessionKey` to internal
+    `requesterSessionKey` for native `sessions.send`.
+  - the requester route channel is mapped to internal `requesterChannel`.
+  - `sessions.send` now wraps submitted runtime text in the existing
+    `[OpenClaw input provenance]` envelope when requester context exists.
+- Product effect:
+  - target agents can distinguish inter-session messages from ordinary user
+    prompts and see the source session/channel, matching the OpenClaw
+    agent-to-agent messaging contract more closely.
+- Verified this continuation with:
+  - red proof:
+    `test_tools_invoke_sessions_send_preserves_requester_provenance`
+    first failed because the target runtime saw only the raw message.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "tools_invoke_sessions_send_preserves_requester_provenance"`:
+    `1 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "tools_invoke or sessions_send or sessions_spawn"`:
+    `61 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py src\openzues\app.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`:
+    clean
+  - `mypy src\openzues\services\gateway_node_methods.py src\openzues\app.py`:
+    clean
+- Queue effect from this run:
+  - direct tools-invoke `sessions_send` requester provenance is now covered.
+  - next nearby session-runtime seams are remaining route-aware wait/announce
+    behavior and broader `chat.*` / `sessions.*` runtime edges.
+
+### Recovery addendum 2026-04-26 tools invoke sessions_send timeout alias parity America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw's `sessions_send` tool accepts `timeoutSeconds` as the wait
+    budget argument.
+  - OpenZues' native `sessions.send` accepted only `timeoutMs`, so
+    `tools.invoke` calls using OpenClaw-shaped arguments failed validation
+    before reaching the runtime dispatcher.
+- Landed the bounded compatibility slice:
+  - `sessions.send` now whitelists `timeoutSeconds`.
+  - when `timeoutMs` is absent, `timeoutSeconds` is converted to milliseconds
+    before dispatch to the existing control-chat runtime adapter.
+- Product effect:
+  - direct OpenClaw-style `sessions_send` tool calls can use the upstream
+    argument shape without special client-side translation.
+- Verified this continuation with:
+  - red proof:
+    `test_tools_invoke_sessions_send_accepts_timeout_seconds_alias` first
+    failed with `sessions.send does not accept: timeoutSeconds`.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "tools_invoke_sessions_send_accepts_timeout_seconds_alias"`:
+    `1 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "tools_invoke or sessions_send or sessions_spawn"`:
+    `62 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py src\openzues\app.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`:
+    clean
+  - `mypy src\openzues\services\gateway_node_methods.py src\openzues\app.py`:
+    clean
+- Queue effect from this run:
+  - `sessions_send` timeout argument compatibility is no longer a
+    tools-invoke gap.
+  - next nearby session-runtime seams remain route-aware wait/announce result
+    shaping and broader `chat.*` / `sessions.*` runtime edges.
+
+### Recovery addendum 2026-04-26 tools invoke sessions_send no-wait result parity America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw's `sessions_send timeoutSeconds=0` starts the target run and
+    returns immediately with `status: accepted`, target `sessionKey`, and a
+    pending announce `delivery` marker.
+  - OpenZues routed the call to native `sessions.send`, but leaked the raw
+    internal chat runtime result such as `status: ok` and `messageSeq`.
+- Landed the bounded no-wait result slice:
+  - `tools.invoke` now normalizes successful `sessions_send` results only when
+    the OpenClaw caller provided `timeoutSeconds: 0`.
+  - error/timeout results and ordinary native `sessions.send` responses remain
+    unchanged.
+- Product effect:
+  - no-wait inter-session sends now match the OpenClaw tool contract well
+    enough for callers to treat them as fire-and-announce operations.
+- Verified this continuation with:
+  - red proof:
+    `test_tools_invoke_sessions_send_zero_timeout_returns_accepted_shape`
+    first failed because the bridge returned raw `status: ok` plus
+    `messageSeq`.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "tools_invoke_sessions_send_zero_timeout_returns_accepted_shape"`:
+    `1 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "tools_invoke or sessions_send or sessions_spawn"`:
+    `63 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py src\openzues\app.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`:
+    clean
+  - `mypy src\openzues\services\gateway_node_methods.py src\openzues\app.py`:
+    clean
+- Queue effect from this run:
+  - no-wait accepted shape is no longer a `sessions_send` tools-invoke gap.
+  - next nearby session-runtime seam is nonzero wait/reply shaping, where
+    OpenClaw returns `status: ok`, `reply`, target `sessionKey`, and delivery
+    metadata after the agent run produces a fresh assistant reply.
+
+### Recovery addendum 2026-04-26 tools invoke sessions_send sessionKey arg parity America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw's `sessions_send` public tool schema names the target session
+    argument `sessionKey`.
+  - OpenZues' native `sessions.send` method names the same target `key`, so
+    OpenClaw-shaped `tools.invoke` calls failed validation with
+    `sessions.send does not accept: sessionKey`.
+- Landed the bounded argument-compatibility slice:
+  - `tools.invoke` now translates `sessions_send args.sessionKey` into native
+    `sessions.send key` before dispatch.
+  - mixed internal callers that also send `key` keep the native `key` value.
+- Product effect:
+  - OpenClaw-compatible clients can call `sessions_send` with the upstream
+    public argument shape without knowing OpenZues' internal method naming.
+- Verified this continuation with:
+  - red proof:
+    `test_tools_invoke_sessions_send_accepts_openclaw_session_key_arg` first
+    failed with `sessions.send does not accept: sessionKey`.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "tools_invoke_sessions_send_accepts_openclaw_session_key_arg"`:
+    `1 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "tools_invoke or sessions_send or sessions_spawn"`:
+    `64 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py src\openzues\app.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`:
+    clean
+  - `mypy src\openzues\services\gateway_node_methods.py src\openzues\app.py`:
+    clean
+- Queue effect from this run:
+  - target `sessionKey` compatibility is no longer a `sessions_send`
+    tools-invoke gap.
+  - next nearby session-runtime seam remains nonzero wait/reply result
+    shaping for successful inter-session replies.
+
+### Recovery addendum 2026-04-26 tools invoke sessions_send reply result parity America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw's nonzero `sessions_send timeoutSeconds` path returns a public
+    tool result shaped as `status: ok`, optional `reply`, target `sessionKey`,
+    and pending announce `delivery` after a fresh assistant reply is available.
+  - OpenZues could pass through a runtime-provided `reply`, but leaked raw
+    internal fields such as `messageSeq` and omitted the public target/delivery
+    metadata.
+- Landed the bounded reply-result slice:
+  - successful `tools.invoke sessions_send` calls with nonzero
+    `timeoutSeconds` now normalize runtime replies into OpenClaw-shaped tool
+    results.
+  - the patch intentionally does not claim full async wait-loop parity; it
+    shapes the result when the runtime adapter supplies the reply.
+- Product effect:
+  - callers consuming `sessions_send` through the OpenClaw tool surface get the
+    same result envelope for successful waited replies, while native
+    `sessions.send timeoutMs` callers keep the internal response shape.
+- Verified this continuation with:
+  - red proof:
+    `test_tools_invoke_sessions_send_reply_result_is_openclaw_shaped` first
+    failed because the bridge returned raw `reply` plus `messageSeq`.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "tools_invoke_sessions_send_reply_result_is_openclaw_shaped"`:
+    `1 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "tools_invoke or sessions_send or sessions_spawn"`:
+    `65 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py src\openzues\app.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`:
+    clean
+  - `mypy src\openzues\services\gateway_node_methods.py src\openzues\app.py`:
+    clean
+- Queue effect from this run:
+  - OpenClaw result-envelope compatibility is covered for no-wait accepted and
+    runtime-supplied successful replies.
+  - remaining deeper seam: active async wait-loop parity, where OpenZues would
+    need to wait for a new assistant transcript after dispatch rather than
+    relying on the current chat runtime adapter to provide `reply`.
+
+### Recovery addendum 2026-04-26 tools invoke sessions_send async wait parity America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw's waited `sessions_send` path snapshots the target assistant
+    transcript before dispatch, starts the target run, then waits for a fresh
+    assistant reply before returning `status: ok` with `reply`.
+  - OpenZues could shape a reply if the runtime adapter returned one inline,
+    but returned before collecting a new transcript row written just after
+    dispatch.
+- Landed the bounded transcript-wait slice:
+  - `tools.invoke sessions_send` now snapshots the latest target transcript id
+    before native dispatch when nonzero `timeoutSeconds` is used.
+  - after dispatch, if the runtime result has no inline reply, the bridge polls
+    the target session transcript until a fresh assistant row appears or the
+    timeout expires.
+  - fresh assistant replies are injected before the OpenClaw result-envelope
+    normalizer runs.
+- Product effect:
+  - inter-session sends can now behave like OpenClaw's waited send path even
+    when the runtime writes the assistant reply to transcript asynchronously.
+- Verified this continuation with:
+  - red proof:
+    `test_tools_invoke_sessions_send_waits_for_fresh_assistant_reply` first
+    failed because the bridge returned `status: ok` without the fresh reply.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "tools_invoke_sessions_send_waits_for_fresh_assistant_reply"`:
+    `1 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "tools_invoke or sessions_send or sessions_spawn"`:
+    `66 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py src\openzues\app.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`:
+    clean
+  - `mypy src\openzues\services\gateway_node_methods.py src\openzues\app.py`:
+    clean
+- Queue effect from this run:
+  - waited successful reply parity is now covered for transcript-written
+    replies.
+  - next nearby seam: waited `sessions_send` timeout/error shaping when no
+    fresh assistant reply appears before the timeout budget.
+
+### Recovery addendum 2026-04-26 tools invoke sessions_send numeric timeout parity America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw's `sessions_send` schema accepts numeric `timeoutSeconds` values
+    and floors them to whole seconds before computing the wait budget.
+  - OpenZues accepted only integer `timeoutSeconds`, so values such as `1.9`
+    failed validation before dispatch.
+- Landed the bounded timeout parser slice:
+  - native `sessions.send` now accepts finite numeric `timeoutSeconds` values,
+    validates the bounded range, floors to whole seconds, and converts to
+    milliseconds when `timeoutMs` is absent.
+- Product effect:
+  - OpenClaw-shaped tool callers can reuse upstream numeric timeout values
+    without client-side integer coercion.
+- Verified this continuation with:
+  - red proof:
+    `test_tools_invoke_sessions_send_floors_numeric_timeout_seconds` first
+    failed with `timeoutSeconds must be an integer`.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "tools_invoke_sessions_send_floors_numeric_timeout_seconds"`:
+    `1 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "tools_invoke or sessions_send or sessions_spawn"`:
+    `67 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py src\openzues\app.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`:
+    clean
+  - `mypy src\openzues\services\gateway_node_methods.py src\openzues\app.py`:
+    clean
+- Queue effect from this run:
+  - numeric timeout compatibility is no longer a `sessions_send`
+    tools-invoke gap.
+  - remaining deeper seams include timeout/error status mapping when the
+    underlying run-wait signal is available, plus broader `chat.*` /
+    `sessions.*` runtime edges.
+
+### Recovery addendum 2026-04-26 tools invoke sessions_send timeout envelope parity America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw `sessions_send` timeout/error results include the target
+    `sessionKey` alongside `runId`, `status`, and optional `error`.
+  - OpenZues preserved raw timeout/error runtime results, which could omit the
+    target session key from the public tool envelope.
+- Landed the bounded timeout/error envelope slice:
+  - `tools.invoke sessions_send` now enriches timeout/error results with the
+    target `sessionKey` when the runtime result does not already include one.
+  - status and error text remain unchanged.
+- Product effect:
+  - OpenClaw-compatible callers can correlate timeout/error results back to the
+    target session without relying on request-local state.
+- Verified this continuation with:
+  - red proof:
+    `test_tools_invoke_sessions_send_timeout_result_includes_session_key`
+    first failed because the raw timeout result omitted `sessionKey`.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "tools_invoke_sessions_send_timeout_result_includes_session_key"`:
+    `1 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "tools_invoke or sessions_send or sessions_spawn"`:
+    `68 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py src\openzues\app.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`:
+    clean
+  - `mypy src\openzues\services\gateway_node_methods.py src\openzues\app.py`:
+    clean
+- Queue effect from this run:
+  - timeout/error result-envelope correlation is no longer a `sessions_send`
+    tools-invoke gap.
+  - remaining nearby `sessions_send` parity is mostly higher-order A2A
+    announce/reply ping-pong flow, while broader queue items remain in
+    `chat.*`, `sessions.*`, and plugin/runtime integration.
+
+### Recovery addendum 2026-04-26 tools invoke sessions_spawn numeric timeout parity America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw `sessions_spawn` accepts numeric `runTimeoutSeconds` and
+    back-compat `timeoutSeconds`, floors them to whole seconds, and converts
+    them to the runtime wait budget.
+  - OpenZues accepted only integer values in the native spawn path, so numeric
+    OpenClaw-shaped calls such as `timeoutSeconds: 1.9` failed validation.
+- Landed the bounded spawn timeout parser slice:
+  - `sessions.spawn` now accepts finite numeric `runTimeoutSeconds` /
+    `timeoutSeconds`, rejects negative values, floors to whole seconds, and
+    converts to milliseconds for runtime dispatch.
+- Product effect:
+  - OpenClaw-compatible `sessions_spawn` callers can reuse upstream numeric
+    timeout values without client-side coercion.
+- Verified this continuation with:
+  - red proof:
+    `test_tools_invoke_sessions_spawn_floors_numeric_timeout_seconds` first
+    failed with `timeoutSeconds must be an integer`.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "tools_invoke_sessions_spawn_floors_numeric_timeout_seconds"`:
+    `1 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "tools_invoke or sessions_send or sessions_spawn"`:
+    `69 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py src\openzues\app.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`:
+    clean
+  - `mypy src\openzues\services\gateway_node_methods.py src\openzues\app.py`:
+    clean
+- Queue effect from this run:
+  - numeric timeout compatibility is no longer a `sessions_spawn`
+    tools-invoke gap.
+  - remaining nearby spawn/send parity is mostly higher-order A2A flow and
+    runtime integration rather than public argument-shape mismatches.
+
+### Recovery addendum 2026-04-26 tools invoke sessions_send A2A context parity America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw `sessions_send` sends `extraSystemPrompt` context to the target
+    run with `Agent-to-agent message context`, requester session/channel, and
+    target session.
+  - OpenZues preserved input provenance, but the target runtime saw no A2A
+    role/session context block before the message.
+- Landed the bounded A2A context slice:
+  - `sessions.send` now wraps inter-session messages with an
+    `Agent-to-agent message context` block when requester session or channel
+    context is present.
+  - ordinary `sessions.send` calls without requester context remain unchanged.
+- Product effect:
+  - target agents can see not only that a message came from `sessions_send`,
+    but which session/channel is requester vs. target, matching OpenClaw's
+    first-round A2A prompt contract more closely.
+- Verified this continuation with:
+  - red proof:
+    `test_tools_invoke_sessions_send_preserves_requester_provenance` first
+    failed after the expected A2A context block was added to the proof.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "tools_invoke_sessions_send_preserves_requester_provenance"`:
+    `1 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "tools_invoke or sessions_send or sessions_spawn"`:
+    `69 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py src\openzues\app.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`:
+    clean
+  - `mypy src\openzues\services\gateway_node_methods.py src\openzues\app.py`:
+    clean
+- Queue effect from this run:
+  - first-round A2A target context is no longer a `sessions_send`
+    tools-invoke gap.
+  - remaining higher-order A2A seams include reply/announce ping-pong steps
+    and external announce delivery after the target reply.
+
+### Recovery addendum 2026-04-26 tools invoke sessions_send A2A announce parity America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw `sessions_send` starts `runSessionsSendA2AFlow` after a fresh
+    target reply, asks the target agent for an `Agent-to-agent announce step`,
+    suppresses literal `ANNOUNCE_SKIP`, and posts non-skip announce replies to
+    the target session's channel/thread route.
+  - OpenZues returned the first target reply and pending announce marker, but
+    never ran the announce prompt or delivered the target's announcement back
+    to the saved external route.
+- Landed the bounded A2A announce slice:
+  - waited successful `tools.invoke sessions_send` calls now schedule a guarded
+    background announce flow after the first reply.
+  - the announce prompt includes requester session/channel, target
+    session/channel, original request, round-one/latest reply, and the
+    `ANNOUNCE_SKIP` contract.
+  - non-skip announce replies are delivered through the existing `send` method
+    to the target session's `deliveryContext`, preserving account and thread
+    ids.
+- Product effect:
+  - target agents can now complete the OpenClaw A2A loop by explicitly
+    deciding whether to stay silent or post a concise completion/update back to
+    the original channel thread.
+- Verified this continuation with:
+  - red proof:
+    `test_tools_invoke_sessions_send_runs_announce_step_after_reply` first
+    failed because only the first target send happened.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "tools_invoke_sessions_send_runs_announce_step_after_reply"`:
+    `1 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "tools_invoke or sessions_send or sessions_spawn"`:
+    `70 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py src\openzues\app.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`:
+    clean
+  - `mypy src\openzues\services\gateway_node_methods.py src\openzues\app.py`:
+    clean
+- Queue effect from this run:
+  - successful waited `sessions_send` announce prompt and delivery are no
+    longer a `tools.invoke` gap.
+  - remaining nearby A2A seams are zero-timeout background run waiting and
+    multi-turn requester/target reply ping-pong before final announce.
+
+### Recovery addendum 2026-04-26 tools invoke sessions_send no-wait announce parity America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw `sessions_send timeoutSeconds=0` returns an immediate accepted
+    envelope, then starts A2A announce work in the background after the target
+    run later produces an assistant reply.
+  - OpenZues returned the accepted envelope but did not watch for the later
+    transcript reply, so no announce prompt could run for no-wait sends.
+- Landed the bounded no-wait announce slice:
+  - `tools.invoke sessions_send` now snapshots the target transcript before a
+    zero-timeout dispatch and starts a guarded background wait for a fresh
+    assistant reply.
+  - when a reply appears, OpenZues runs the same structured announce prompt and
+    uses OpenClaw's 30s announce wait budget.
+  - the public no-wait result remains immediate `status: accepted` with target
+    `sessionKey` and pending announce delivery metadata.
+- Product effect:
+  - agents can fire-and-forget work into another session and still get the
+    later OpenClaw-style announce behavior once the target session answers.
+- Verified this continuation with:
+  - red proof:
+    `test_tools_invoke_sessions_send_zero_timeout_announces_after_later_reply`
+    first failed because only the initial no-wait send happened.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "tools_invoke_sessions_send_zero_timeout_announces_after_later_reply"`:
+    `1 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "tools_invoke or sessions_send or sessions_spawn"`:
+    `71 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py src\openzues\app.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`:
+    clean
+  - `mypy src\openzues\services\gateway_node_methods.py src\openzues\app.py`:
+    clean
+- Queue effect from this run:
+  - no-wait `sessions_send` announce-after-later-reply is no longer a
+    `tools.invoke` gap.
+  - remaining nearby A2A seam is multi-turn requester/target reply ping-pong
+    before final announce.
+
+### Recovery addendum 2026-04-26 tools invoke sessions_send A2A ping-pong parity America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw `runSessionsSendA2AFlow` alternates requester and target reply
+    steps before final announce, with `Agent-to-agent reply step` context,
+    source provenance, a default five-turn cap, and literal `REPLY_SKIP`
+    termination.
+  - OpenZues ran the first target reply and final announce, but skipped the
+    requester/target ping-pong phase.
+- Landed the bounded ping-pong slice:
+  - the guarded A2A announce flow now alternates requester and target runtime
+    sends before final announce when requester and target sessions differ.
+  - reply-step prompts include current agent, turn count, requester/target
+    session/channel context, and the `REPLY_SKIP` contract.
+  - final announce uses the original round-one reply and the latest non-skip
+    ping-pong reply, matching OpenClaw's `latestReply` behavior.
+- Product effect:
+  - session-to-session work can now get one or more clarification/follow-up
+    turns between agents before the target posts its final channel announce.
+- Verified this continuation with:
+  - red proof:
+    `test_tools_invoke_sessions_send_runs_a2a_reply_ping_pong_before_announce`
+    first failed because only the first target send and final announce ran.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "tools_invoke_sessions_send_runs_a2a_reply_ping_pong_before_announce"`:
+    `1 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "tools_invoke or sessions_send or sessions_spawn"`:
+    `72 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py src\openzues\app.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`:
+    clean
+  - `mypy src\openzues\services\gateway_node_methods.py src\openzues\app.py`:
+    clean
+- Queue effect from this run:
+  - the nearby `sessions_send` A2A send/reply/announce stack is now covered for
+    successful waited sends and no-wait transcript replies.
+  - next queue head should move back to broader `tools.invoke` executor parity
+    or the adjacent `chat.*` / `sessions.*` runtime methods.
+
+### Recovery addendum 2026-04-26 sessions_send ping-pong config parity America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw exposes `session.agentToAgent.maxPingPongTurns` so operators can
+    cap A2A reply ping-pong below the default five turns.
+  - OpenZues' runtime helper looked for that setting, but the control config
+    schema dropped the `session.agentToAgent` section during validation, so the
+    value could not be configured.
+- Landed the bounded config slice:
+  - `ControlUiBootstrapConfigView` now accepts `session.agentToAgent` with
+    `maxPingPongTurns` bounded from 0 to 5.
+  - the `sessions_send` A2A reply loop honors the persisted cap.
+  - the Hermes toolset warning for `sessions_send` now reflects that
+    announce/ping-pong runtime parity is present while broader sandbox/tool
+    executor parity remains partial.
+- Product effect:
+  - operators can tune or disable the A2A reply loop without code changes,
+    matching OpenClaw's public config surface.
+- Verified this continuation with:
+  - red proof:
+    `test_tools_invoke_sessions_send_honors_configured_ping_pong_turn_cap`
+    first failed because the config schema stripped `session.agentToAgent`.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "tools_invoke_sessions_send_honors_configured_ping_pong_turn_cap"`:
+    `1 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "tools_invoke or sessions_send or sessions_spawn"`:
+    `73 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py src\openzues\app.py src\openzues\schemas.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`:
+    clean
+  - `mypy src\openzues\services\gateway_node_methods.py src\openzues\app.py src\openzues\schemas.py`:
+    clean
+- Queue effect from this run:
+  - the bounded `sessions_send` A2A runtime/control-config seam is no longer
+    the queue head.
+  - next queue head is broader `tools.invoke` executor parity or adjacent
+    `chat.*` / `sessions.*` runtime-method parity.
+
+### Recovery addendum 2026-04-26 sessions_send cross-agent policy parity America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw gates cross-agent session sends behind
+    `tools.agentToAgent.enabled` and returns a forbidden tool result when the
+    requester and target agent ids differ while A2A is disabled.
+  - OpenZues exposed `sessions_send` through `gateway.tools.allow` but did not
+    honor the separate cross-agent policy, so cross-agent sends could reach the
+    runtime once the tool itself was allowed.
+- Landed the bounded disabled-policy slice:
+  - control config now accepts top-level `tools.agentToAgent.enabled/allow`.
+  - `tools.invoke sessions_send` checks requester and target agent ids before
+    native runtime dispatch.
+  - disabled cross-agent sends return OpenClaw-style `status: forbidden`,
+    `error`, and target `sessionKey` in the tool result envelope.
+- Product effect:
+  - opening the high-risk `sessions_send` tool no longer implicitly opens
+    cross-agent messaging; operators must deliberately enable
+    `tools.agentToAgent`.
+- Verified this continuation with:
+  - red proof:
+    `test_tools_invoke_sessions_send_blocks_cross_agent_when_a2a_disabled`
+    first failed because the call reached the chat runtime.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "tools_invoke_sessions_send_blocks_cross_agent_when_a2a_disabled"`:
+    `1 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "tools_invoke or sessions_send or sessions_spawn"`:
+    `74 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py src\openzues\app.py src\openzues\schemas.py src\openzues\services\hermes_toolsets.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`:
+    clean
+  - `mypy src\openzues\services\gateway_node_methods.py src\openzues\app.py src\openzues\schemas.py src\openzues\services\hermes_toolsets.py`:
+    clean
+- Queue effect from this run:
+  - cross-agent disabled policy is no longer a `sessions_send` gap.
+  - next bounded policy seam is `tools.sessions.visibility`, then broader
+    `tools.invoke` executor/runtime parity.
+
+### Recovery addendum 2026-04-26 sessions_send visibility policy parity America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw's `createSessionVisibilityGuard` defaults
+    `tools.sessions.visibility` to `tree`, blocks cross-agent sends unless
+    visibility is `all`, blocks same-agent non-current sends under explicit
+    `self`, blocks unrelated same-agent sessions under `tree`, and allows
+    spawned child sessions in the requester's tree.
+  - OpenZues had the A2A allow/block gate, but did not preserve
+    `tools.sessions.visibility` in config or enforce the self/tree/agent/all
+    access split before dispatch.
+- Landed the bounded visibility slice:
+  - control config now accepts top-level `tools.sessions.visibility`.
+  - `tools.invoke sessions_send` checks visibility before native runtime
+    dispatch, returning OpenClaw-style `status: forbidden` tool results with
+    target `sessionKey`.
+  - default `tree` blocks cross-agent sends before the A2A policy unless
+    visibility is `all`; explicit `self` blocks same-agent non-current sends;
+    default `tree` allows direct spawned child sessions via persisted
+    `spawnedBy` / `parentSessionKey` metadata while blocking unrelated
+    same-agent sessions.
+  - older A2A announce/ping-pong proofs now declare
+    `tools.sessions.visibility=agent` when they intentionally exercise
+    broader same-agent session messaging instead of visibility policy.
+- Product effect:
+  - opening `sessions_send` now respects OpenClaw's session visibility model;
+    operators must deliberately widen visibility before unrelated same-agent or
+    cross-agent session messaging can run.
+- Verified this continuation with:
+  - red proofs:
+    `test_tools_invoke_sessions_send_enforces_self_visibility`,
+    `test_tools_invoke_sessions_send_defaults_to_tree_visibility_for_cross_agent`,
+    and
+    `test_tools_invoke_sessions_send_default_tree_blocks_unspawned_same_agent_session`
+    first failed because calls reached the runtime or returned the older A2A
+    error.
+  - positive proof:
+    `test_tools_invoke_sessions_send_default_tree_allows_spawned_child_session`.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "spawned_child_session or unspawned_same_agent or tree_visibility or a2a_disabled or self_visibility"`:
+    `5 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "tools_invoke and sessions_send"`:
+    `19 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "tools_invoke or sessions_send or sessions_spawn"`:
+    `78 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py src\openzues\schemas.py src\openzues\services\hermes_toolsets.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`:
+    clean
+  - `mypy src\openzues\services\gateway_node_methods.py src\openzues\schemas.py src\openzues\services\hermes_toolsets.py`:
+    clean
+- Queue effect from this run:
+  - `sessions_send` now has the bounded OpenClaw A2A and session visibility
+    guard stack.
+  - next adjacent access-policy seam is applying the same
+    `tools.sessions.visibility` / A2A guard to the remaining session tools
+    (`sessions_history`, `sessions_status`, and `sessions_list`), then the
+    broader `tools.invoke` executor/runtime queue.
+
+### Recovery addendum 2026-04-26 session tools visibility policy parity America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw's `sessions_history`, `session_status`, and `sessions_list` tools
+    share the same `createSessionVisibilityGuard` contract as `sessions_send`.
+  - OpenZues enforced the new visibility/A2A guard for `sessions_send`, but
+    `tools.invoke sessions_history` and `session_status` could still read
+    invisible targets, and `sessions_list` could leak invisible rows.
+- Landed the bounded neighboring-tool slice:
+  - `tools.invoke sessions_history` and `session_status` now use the top-level
+    tool `sessionKey` as requester context and the tool arg `sessionKey` as the
+    target context before lookup.
+  - forbidden history/status reads return OpenClaw-style tool results with
+    `status: forbidden` and the matching visibility/A2A error text.
+  - `tools.invoke sessions_list` now filters each returned row through the same
+    visibility/A2A guard, matching OpenClaw's row-level list behavior instead
+    of failing the whole list call.
+- Product effect:
+  - the `tools.sessions.visibility` setting now protects read/status/list
+    surfaces as well as send, so opening session tools does not leak
+    cross-agent or out-of-tree session state.
+- Verified this continuation with:
+  - red proofs:
+    `test_tools_invoke_sessions_history_defaults_to_tree_visibility_for_cross_agent`,
+    `test_tools_invoke_session_status_enforces_self_visibility`, and
+    `test_tools_invoke_sessions_list_filters_default_tree_cross_agent_rows`
+    first failed because invisible history/status/list rows were returned.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_history_defaults_to_tree_visibility or session_status_enforces_self_visibility or sessions_list_filters_default_tree"`:
+    `3 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "tools_invoke or sessions_history or session_status or sessions_list"`:
+    `71 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py src\openzues\schemas.py src\openzues\services\hermes_toolsets.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`:
+    clean
+  - `mypy src\openzues\services\gateway_node_methods.py src\openzues\schemas.py src\openzues\services\hermes_toolsets.py`:
+    clean
+- Queue effect from this run:
+  - the advertised `tools.invoke` session access-policy cluster is covered for
+    send/history/status/list.
+  - next adjacent seam is the `sessions_send label + agentId` pre-resolution
+    A2A gate, then the broader native tool-executor/runtime parity queue.
+
+### Recovery addendum 2026-04-26 sessions_send label A2A policy parity America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw checks cross-agent `sessions_send` label lookups before resolving
+    the target session: when `label` and a different `agentId` are supplied,
+    disabled or denied A2A returns a forbidden result before lookup/runtime
+    dispatch.
+  - OpenZues supported `sessions.send` label lookup, but the new policy guard
+    only saw already-resolved `key` targets; `label + agentId` could resolve to
+    another agent and reach the target runtime while A2A was disabled.
+- Landed the bounded label-policy slice:
+  - `tools.invoke sessions_send` now checks requester session agent id against
+    the requested label `agentId` before native label resolution.
+  - disabled/denied A2A returns OpenClaw-style forbidden tool results without a
+    target `sessionKey`, matching the unresolved-label phase.
+  - if A2A is allowed but `tools.sessions.visibility` is not `all`, the same
+    pre-resolution path returns the send cross-visibility error before runtime.
+- Product effect:
+  - cross-agent session sends cannot bypass the access model by using a label
+    selector instead of a canonical session key.
+- Verified this continuation with:
+  - red proof:
+    `test_tools_invoke_sessions_send_blocks_cross_agent_label_lookup_when_a2a_disabled`
+    first failed because the call resolved `Ops` and reached the chat runtime.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "cross_agent_label_lookup"`:
+    `1 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "tools_invoke or sessions_send or sessions_history or session_status or sessions_list or sessions_spawn"`:
+    `113 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py src\openzues\schemas.py src\openzues\services\hermes_toolsets.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`:
+    clean
+  - `mypy src\openzues\services\gateway_node_methods.py src\openzues\schemas.py src\openzues\services\hermes_toolsets.py`:
+    clean
+- Queue effect from this run:
+  - key-based and label-based `sessions_send` access policy are both covered
+    for the current `tools.invoke` bridge.
+  - next queue head should move to the broader native tool-executor/runtime
+    parity queue or another concrete upstream `chat.*` / `sessions.*` method
+    gap with a fresh red proof.
+
+### Recovery addendum 2026-04-26 sessions_send label wait parity America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw resolves a `sessions_send` label target into a canonical
+    `sessionKey` before taking the target transcript baseline, starting the
+    nested run, waiting for a fresh reply, and shaping the public result.
+  - OpenZues native `sessions.send` resolved labels internally, but the
+    `tools.invoke` bridge only captured a wait baseline when the caller had
+    supplied a raw `key`; label sends could dispatch successfully while
+    returning no target `sessionKey` and no fresh reply.
+- Landed the bounded label-wait slice:
+  - `tools.invoke sessions_send` now promotes a label target to canonical
+    `key` before visibility/A2A enforcement, wait snapshotting, runtime
+    dispatch, and result normalization.
+  - the bridge removes the label after resolution so the native method still
+    receives the same key-only payload shape as an already-resolved call.
+- Product effect:
+  - label-based `sessions_send` now has the same observable wait/result
+    behavior as key-based sends: target `sessionKey`, fresh reply, and pending
+    announce delivery are all present in the OpenClaw-shaped result.
+- Verified this continuation with:
+  - red proof:
+    `test_tools_invoke_sessions_send_label_waits_for_fresh_assistant_reply`
+    first failed with no `reply` and no `sessionKey`.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "label_waits_for_fresh_assistant_reply"`:
+    `1 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "tools_invoke or sessions_send or sessions_history or session_status or sessions_list or sessions_spawn"`:
+    `114 passed` with one unrelated aiosqlite thread-close warning from an
+    adjacent announce test.
+  - `ruff check src\openzues\services\gateway_node_methods.py src\openzues\schemas.py src\openzues\services\hermes_toolsets.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`:
+    clean
+  - `mypy src\openzues\services\gateway_node_methods.py src\openzues\schemas.py src\openzues\services\hermes_toolsets.py`:
+    clean
+- Queue effect from this run:
+  - label-based `sessions_send` is now aligned with OpenClaw for both the
+    pre-resolution policy gate and nonzero wait/result shaping.
+  - next adjacent seam is label-based `timeoutSeconds=0` announce parity, then
+    the broader native tool-executor/runtime queue.
+
+### Recovery addendum 2026-04-26 sessions_send label no-wait announce parity America/Chicago
+
+- Queue-head seam before proof:
+  - OpenClaw resolves a label target before the `timeoutSeconds=0` branch, so
+    the accepted result contains the target display key and the later A2A
+    announce flow watches the resolved target transcript.
+  - this was the adjacent branch to the label wait fix; it needed its own
+    regression proof because no-wait scheduling uses the pre-dispatch baseline
+    and a background announce task.
+- Landed proof:
+  - `test_tools_invoke_sessions_send_label_zero_timeout_announces_after_later_reply`
+    covers a label-targeted spawned child session with saved route metadata,
+    immediate `accepted` result shaping, later assistant transcript detection,
+    reply-step prompt, and final announce prompt.
+  - no additional production edit was required after the canonical-key
+    promotion landed for label waits.
+- Verified this continuation with:
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "label_zero_timeout_announces_after_later_reply"`:
+    `1 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "tools_invoke or sessions_send or sessions_history or session_status or sessions_list or sessions_spawn"`:
+    `115 passed` with the same unrelated aiosqlite thread-close warning from
+    an adjacent announce test.
+  - `ruff check src\openzues\services\gateway_node_methods.py src\openzues\schemas.py src\openzues\services\hermes_toolsets.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`:
+    clean
+  - `mypy src\openzues\services\gateway_node_methods.py src\openzues\schemas.py src\openzues\services\hermes_toolsets.py`:
+    clean
+- Queue effect from this run:
+  - the label-targeted `sessions_send` branch is covered for A2A policy,
+    nonzero wait/result shaping, and no-wait announce scheduling.
+  - next queue head moves to another concrete upstream `sessions.*` tool seam,
+    starting with `sessions_history` argument parity.
+
+### Recovery addendum 2026-04-26 sessions_history toolResult filtering parity America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw's shared `stripToolMessages` helper hides both `tool` and
+    `toolResult` messages by default in `sessions_history`.
+  - OpenZues only hid normalized `tool` rows; persisted `toolResult` rows were
+    projected as `other` and leaked into default session history.
+- Landed the bounded history slice:
+  - `sessions.history` now recognizes `toolResult` as a tool role for default
+    filtering.
+  - when `includeTools=true`, the projector preserves `toolResult` instead of
+    lowercasing or rewriting it to `other`.
+- Product effect:
+  - agent history recall no longer leaks OpenClaw tool-result chatter unless
+    the caller explicitly opts into tool messages.
+- Verified this continuation with:
+  - red proof:
+    `test_sessions_history_filters_openclaw_tool_result_role_by_default` first
+    failed because the `toolResult` row appeared as `other`.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "tool_result_role_by_default"`:
+    `1 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_history"`:
+    `6 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "tools_invoke or sessions_send or sessions_history or session_status or sessions_list or sessions_spawn"`:
+    `116 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py src\openzues\schemas.py src\openzues\services\hermes_toolsets.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`:
+    clean
+  - `mypy src\openzues\services\gateway_node_methods.py src\openzues\schemas.py src\openzues\services\hermes_toolsets.py`:
+    clean
+- Queue effect from this run:
+  - `sessions_history` now covers redaction, truncation, tool opt-in, alias
+    resolution, visibility, and OpenClaw `toolResult` filtering.
+  - next queue head stays in upstream `sessions.*`, with `sessions_list`
+    preview filtering/projection as the next concrete comparison target.
+
+### Recovery addendum 2026-04-26 sessions_list numeric filter parity America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw's `sessions_list` tool accepts `limit`, `activeMinutes`, and
+    `messageLimit` as numbers, floors finite values, applies lower bounds, and
+    clamps `messageLimit` to 20.
+  - OpenZues' native `sessions.list` still used integer-only validators for
+    those fields, so `1.9` failed before the listing logic could run.
+- Landed the bounded numeric-filter slice:
+  - `sessions.list` now uses an OpenClaw-style floor helper for `limit`,
+    `activeMinutes`, and `messageLimit`.
+  - capped fields clamp at the existing local/OpenClaw-safe maxima instead of
+    failing after a valid finite number is supplied.
+- Product effect:
+  - callers using OpenClaw tool schemas can pass numeric JSON values through
+    the OpenZues gateway without parity-breaking integer strictness.
+- Verified this continuation with:
+  - red proof:
+    `test_sessions_list_floors_numeric_openclaw_filters` first failed with
+    `ValueError: limit must be an integer`.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_list_floors_numeric_openclaw_filters"`:
+    `1 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_list"`:
+    `14 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "tools_invoke or sessions_send or sessions_history or session_status or sessions_list or sessions_spawn"`:
+    `117 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py src\openzues\schemas.py src\openzues\services\hermes_toolsets.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`:
+    clean
+  - `mypy src\openzues\services\gateway_node_methods.py src\openzues\schemas.py src\openzues\services\hermes_toolsets.py`:
+    clean
+- Queue effect from this run:
+  - `sessions_list` now covers kind/message filters, visibility filtering,
+    OpenClaw numeric parsing, and message preview projection.
+  - next queue head moves to `session.status` numeric/model/default result
+    parity against upstream `session-status-tool.ts`.
+
+### Recovery addendum 2026-04-26 session_status model reset parity America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw's `session_status model=default` path uses
+    `applyModelOverrideToSessionEntry`, which removes provider/model override
+    fields, auth-profile override fields, stale model/cache fallback fields,
+    and marks `liveModelSwitchPending` when the effective model selection
+    changed.
+  - OpenZues cleared only provider/model override fields, left auth-profile
+    override metadata behind, did not mark the live switch, and reported
+    `changedModel=True` for any payload containing `model`.
+- Landed the bounded model-reset slice:
+  - `_apply_session_status_model_override` now returns whether metadata
+    actually changed.
+  - `session.status` uses that return value for `details.changedModel`.
+  - `model=default` now clears model/source/auth/fallback/cache metadata and
+    sets `liveModelSwitchPending` when the selected model changed.
+- Product effect:
+  - resetting a session model through `session_status` no longer leaves stale
+    auth/model state attached to the lane, and the status card's change flag is
+    tied to real persisted state.
+- Verified this continuation with:
+  - red proof:
+    `test_session_status_model_default_resets_auth_and_marks_live_switch`
+    first failed because `liveModelSwitchPending` was missing.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "model_default_resets_auth"`:
+    `1 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "session_status"`:
+    `5 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "tools_invoke or sessions_send or sessions_history or session_status or sessions_list or sessions_spawn"`:
+    `118 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py src\openzues\schemas.py src\openzues\services\hermes_toolsets.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`:
+    clean
+  - `mypy src\openzues\services\gateway_node_methods.py src\openzues\schemas.py src\openzues\services\hermes_toolsets.py`:
+    clean
+- Queue effect from this run:
+  - `session_status` now covers status card shape, explicit model override,
+    default reset cleanup, access visibility, and adjacent tool bridge
+    behavior.
+  - next queue head moves to transcript sanitizer parity in `chat.history` /
+    `sessions_history`, especially assistant-visible tool-result XML removal.
+
+### Recovery addendum 2026-04-26 history assistant-visible sanitizer parity America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw's shared assistant-visible history sanitizer removes
+    `<tool_result>...</tool_result>` blocks and dangling thinking/tool-result
+    payloads before history text is returned to agents.
+  - OpenZues stripped inline reply/audio directives and trailing untrusted
+    metadata, but still returned raw `<tool_result>` XML inside `chat.history`
+    and `sessions.history`.
+- Landed the bounded sanitizer slice:
+  - shared `_chat_history_display_text` now removes closed or dangling
+    `<tool_result>` blocks and dangling `<think>` blocks before projection.
+  - because `chat.history`, `sessions.history`, and fresh-reply waits use the
+    same display helper, the sanitizer protects all three readback paths.
+- Product effect:
+  - agent history recall no longer exposes raw tool-result XML payloads as
+    assistant-visible context.
+- Verified this continuation with:
+  - red proof:
+    `test_chat_and_sessions_history_strip_tool_result_xml_blocks` first failed
+    because `chat.history` returned the raw `<tool_result>` block.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "strip_tool_result_xml_blocks"`:
+    `1 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history or sessions_history"`:
+    `18 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "tools_invoke or sessions_send or sessions_history or session_status or sessions_list or sessions_spawn or chat_history"`:
+    `131 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py src\openzues\schemas.py src\openzues\services\hermes_toolsets.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`:
+    clean
+  - `mypy src\openzues\services\gateway_node_methods.py src\openzues\schemas.py src\openzues\services\hermes_toolsets.py`:
+    clean
+- Queue effect from this run:
+  - `chat.history` / `sessions_history` now cover shaping, byte caps,
+    redaction, tool filtering, and assistant-visible tool-result sanitization.
+  - next queue head should move to remaining upstream session/runtime method
+    gaps outside the now-covered history/send/list/status cluster.
+
+### Recovery addendum 2026-04-26 sessions_yield parity America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw exposes `sessions_yield`, allowing an agent to end the current
+    turn with a default/custom message and wait for sub-agent or external
+    results.
+  - OpenZues had no native `sessions.yield`, no `tools.invoke` alias, and no
+    catalog/toolset entry.
+- Landed the bounded yield slice:
+  - native `sessions.yield` returns OpenClaw-compatible error/result payloads:
+    `No session context`, `Yield not supported in this context`, or
+    `status: yielded`.
+  - an injected `sessions_yield_service` callback receives the yielded message.
+  - `tools.invoke sessions_yield` maps top-level requester `sessionKey` into
+    the native method, and `sessions_yield` is listed in Hermes/tool catalog
+    surfaces.
+- Product effect:
+  - OpenZues can now advertise and exercise the same turn-yield control
+    contract used by OpenClaw sub-agent orchestration, while still requiring
+    the embedding runtime to wire the actual resume supervisor.
+- Verified this continuation with:
+  - red proofs:
+    the catalog test first missed `sessions_yield`, and native/tool-invoke
+    tests failed because the constructor hook and method alias did not exist.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_yield or tools_catalog_returns"`:
+    `3 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "tools_catalog or tools_effective or sessions_yield"`:
+    `8 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "tools_invoke or tools_catalog or tools_effective or sessions_yield or sessions_send or sessions_history or session_status or sessions_list or sessions_spawn"`:
+    `128 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py src\openzues\schemas.py src\openzues\services\hermes_toolsets.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`:
+    clean
+  - `mypy src\openzues\services\gateway_node_methods.py src\openzues\schemas.py src\openzues\services\hermes_toolsets.py`:
+    clean
+- Queue effect from this run:
+  - the upstream session tool family now includes list/history/status/send/
+    spawn/yield coverage on the OpenZues side.
+  - next queue head should compare upstream `sessions_spawn` lifecycle cleanup
+    and sandbox-routing behavior against the local spawn bridge.
+
+### Recovery addendum 2026-04-26 sessions_spawn provisional cleanup parity America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw deletes provisional child sessions when a subagent runtime start
+    fails, preventing failed starts from becoming visible ghost sessions.
+  - OpenZues provisioned child metadata before dispatch and let runtime
+    exceptions bubble out, leaving the cleanup contract unproven.
+- Landed the bounded cleanup slice:
+  - `sessions.spawn` now catches runtime start exceptions and converts them to
+    structured OpenClaw-style error results with the provisional
+    `childSessionKey`.
+  - failed starts best-effort delete child transcript rows, child metadata,
+    remembered run state, and materialized attachment directories.
+  - runtime responses with non-accepted status now follow the same cleanup path.
+- Product effect:
+  - failed local subagent starts no longer pollute `sessions.list`,
+    `sessions.resolve`, or child-count accounting with dead provisional
+    sessions.
+- Verified this continuation with:
+  - red proof:
+    `test_sessions_spawn_cleans_up_provisional_child_when_runtime_start_fails`
+    first failed because the runtime exception escaped from `sessions.spawn`.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "provisional_child_when_runtime_start_fails"`:
+    `1 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "tools_invoke or sessions_spawn"`:
+    `60 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py src\openzues\schemas.py src\openzues\services\hermes_toolsets.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`:
+    clean
+  - `mypy src\openzues\services\gateway_node_methods.py src\openzues\schemas.py src\openzues\services\hermes_toolsets.py`:
+    clean
+- Queue effect from this run:
+  - spawn lifecycle cleanup is covered for local subagent dispatch failures.
+  - remaining spawn hard gaps are actual ACP harness spawning and full
+    thread/lifecycle hook integration; next bounded seam should move to an
+    adjacent runtime/tool-executor gap if ACP remains intentionally unavailable.
+
+### Recovery addendum 2026-04-26 sessions_spawn ACP preflight parity America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw validates `lightContext` and ACP inline attachments before ACP
+    runtime dispatch.
+  - OpenZues returned the generic ACP-unavailable boundary first, hiding the
+    more specific caller errors.
+- Landed the bounded preflight slice:
+  - `sessions.spawn runtime=acp lightContext=true` now raises the same
+    upstream-shaped `lightContext is only supported for runtime='subagent'.`
+    error before runtime dispatch.
+  - `sessions.spawn runtime=acp` with inline attachments now returns the
+    OpenClaw unsupported-attachments result, preserving requested `role`.
+- Product effect:
+  - callers get actionable argument feedback even before full local ACP spawn
+    support exists.
+- Verified this continuation with:
+  - red proofs:
+    `test_sessions_spawn_rejects_light_context_for_acp_before_runtime_boundary`
+    and `test_sessions_spawn_rejects_acp_attachments_before_runtime_boundary`
+    first failed against the generic ACP-unavailable boundary.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "light_context_for_acp or acp_attachments_before_runtime_boundary"`:
+    `2 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "tools_invoke or sessions_spawn"`:
+    `62 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`:
+    clean
+  - `mypy src\openzues\services\gateway_node_methods.py`:
+    clean
+- Queue effect from this run:
+  - ACP preflight fidelity is covered, but actual ACP harness spawning remains
+    a larger runtime integration gap.
+  - next queue head should pivot to a neighboring `tools.invoke` executor or
+    session runtime method gap unless the ACP harness is explicitly targeted.
+
+### Recovery addendum 2026-04-26 history numeric-limit parity America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw session-history tooling accepts numeric `limit` values and floors
+    them before dispatching the bounded history read.
+  - OpenZues still used integer-only validation for `sessions.history`, and the
+    adjacent `chat.history` gateway read had the same narrower parser.
+- Landed the bounded numeric-limit slice:
+  - `sessions.history limit=1.9` now floors to `1`.
+  - `chat.history limit=1.9` now follows the same finite-number floor path.
+- Product effect:
+  - direct JSON callers and `tools.invoke sessions_history` callers no longer
+    fail on valid OpenClaw-style numeric JSON inputs.
+- Verified this continuation with:
+  - red proof:
+    `test_sessions_history_floors_numeric_openclaw_limit` first failed with
+    `limit must be an integer`.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "numeric_openclaw_limit or sessions_history or chat_history"`:
+    `20 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "tools_invoke or sessions_history or chat_history or sessions_send or sessions_list or session_status"`:
+    `119 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`:
+    clean
+  - `mypy src\openzues\services\gateway_node_methods.py`:
+    clean
+- Queue effect from this run:
+  - history read limit parsing now aligns with the rest of the recently closed
+    numeric OpenClaw session-tool input paths.
+  - next queue head remains another concrete upstream `chat.*` / `sessions.*`
+    mismatch or broader native tool-executor parity.
+
+### Recovery addendum 2026-04-26 sessions_get numeric-limit parity America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw's gateway `sessions.get` method accepts finite numeric `limit`
+    values and floors them, defaulting to 200 when no finite number is passed.
+  - OpenZues rejected non-integer JSON numbers for `sessions.get`.
+- Landed the bounded `sessions.get` slice:
+  - `sessions.get limit=1.9` now floors to `1`.
+  - existing explicit large-limit transcript reads still work.
+- Product effect:
+  - ACP/session-runtime callers sending normal JSON numbers now hit the same
+    bounded transcript-read behavior as OpenClaw.
+- Verified this continuation with:
+  - red proof:
+    `test_sessions_get_floors_numeric_openclaw_limit` first failed with
+    `limit must be an integer`.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_get"`:
+    `7 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "sessions_get or chat_history or sessions_history"`:
+    `31 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`:
+    clean
+  - `mypy src\openzues\services\gateway_node_methods.py`:
+    clean
+- Queue effect from this run:
+  - `sessions.get` now matches the same numeric limit semantics as
+    `sessions.history` and `chat.history`.
+  - next queue head should inspect the remaining upstream `sessions.*`
+    mutation input parsing and preview/runtime edges.
+
+### Recovery addendum 2026-04-26 sessions_preview key-normalization parity America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw `sessions.preview` normalizes the requested `keys` by trimming
+    and filtering whitespace-only values, preserving duplicate keys, and
+    processing only the first 64 normalized keys.
+  - OpenZues reused the generic string-list helper, which raised when trimming
+    left no keys and deduped repeated keys before preview generation.
+- Landed the bounded preview-normalization slice:
+  - `sessions.preview keys=["  ", "\t"]` now returns an empty preview list
+    rather than a validation error.
+  - duplicate keys now produce duplicate preview entries, matching the
+    OpenClaw handler's ordered map behavior.
+  - preview key processing is capped at 64 normalized keys.
+- Product effect:
+  - gateway callers that pass UI-derived whitespace or duplicate preview
+    requests now receive OpenClaw-shaped preview results instead of a narrower
+    local validation outcome.
+- Verified this continuation with:
+  - red proof:
+    `test_sessions_preview_filters_blank_keys_like_openclaw` first failed with
+    `keys must be a non-empty string array`.
+  - red proof:
+    `test_sessions_preview_preserves_duplicate_keys_like_openclaw` first
+    collapsed two requested keys into one preview.
+  - cap proof:
+    `test_sessions_preview_caps_keys_like_openclaw` verifies only the first 64
+    normalized keys are processed.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_preview_filters_blank_keys_like_openclaw or sessions_preview_preserves_duplicate_keys_like_openclaw"`:
+    `2 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "sessions_preview"`:
+    `8 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`:
+    clean
+  - `mypy src\openzues\services\gateway_node_methods.py`:
+    clean
+- Queue effect from this run:
+  - `sessions.preview` key normalization is no longer a session-runtime gap.
+  - next queue head should stay on concrete `chat.*` / `sessions.*` public
+    gateway or tool-boundary mismatches, with direct RPC schema validation
+    checked before assuming numeric coercion behavior.
+
+### Recovery addendum 2026-04-26 sessions_list post-filter count parity America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw's `sessions_list` agent tool builds its final `rows` after
+    sandbox, visibility, and kind filtering, then returns `count: rows.length`.
+  - OpenZues applied equivalent visibility filtering after native
+    `sessions.list`, but preserved the native pre-filter `count`, so callers
+    could receive one visible row with a larger count.
+- Landed the bounded tool-result slice:
+  - `_filter_tools_invoke_sessions_list_result` now recomputes `count` from the
+    visible `sessions` list after filtering.
+- Product effect:
+  - agent/tool callers can trust `count` as the number of visible rows they are
+    actually allowed to inspect, matching OpenClaw's post-filter result shape.
+- Verified this continuation with:
+  - red proof:
+    `test_tools_invoke_sessions_list_filters_default_tree_cross_agent_rows`
+    first failed with `count == 3` while only one session row remained visible.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_list_filters_default_tree_cross_agent_rows"`:
+    `1 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "tools_invoke or sessions_list or sessions_history or session_status"`:
+    `80 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`:
+    clean
+  - `mypy src\openzues\services\gateway_node_methods.py`:
+    clean
+- Queue effect from this run:
+  - `sessions_list` count/result consistency is no longer a tool-boundary gap.
+  - next queue head should continue through the session tool result shapes
+    before broad ACP/runtime harness work.
+
+### Recovery addendum 2026-04-26 sessions_list global-row filter parity America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw's `sessions_list` agent tool drops `unknown` rows and hides the
+    `global` row unless the requester alias is itself `global`.
+  - OpenZues only applied visibility/A2A filtering after native
+    `sessions.list`, so explicit `includeGlobal=true` calls could leak
+    `global` into normal agent tool results.
+- Landed the bounded row-filter slice:
+  - `_filter_tools_invoke_sessions_list_result` now skips `unknown`.
+  - it also skips `global` unless the requester session key is `global`.
+  - post-filter `count` continues to match the visible row list.
+- Product effect:
+  - normal agent/session callers see the same scoped session inventory shape as
+    OpenClaw, with no global control row blended into their local session list.
+- Verified this continuation with:
+  - red proof:
+    `test_tools_invoke_sessions_list_hides_global_for_non_global_requester`
+    first failed because `global` appeared in the returned keys.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_list_hides_global_for_non_global_requester or sessions_list_filters_default_tree_cross_agent_rows"`:
+    `2 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "tools_invoke or sessions_list or sessions_history or session_status"`:
+    `81 passed`, with one aiosqlite event-loop-close warning in an async
+    announce test and no failures.
+  - `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`:
+    clean
+  - `mypy src\openzues\services\gateway_node_methods.py`:
+    clean
+- Queue effect from this run:
+  - `sessions_list` global/unknown post-filter parity is now covered.
+  - next queue head should inspect remaining `sessions_list` row projection
+    differences, especially display-key rewriting and transcript-path fields.
+
+### Recovery addendum 2026-04-26 sessions_list unsupported-kind parity America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw's `sessions_list` agent tool recognizes only `main`, `group`,
+    `cron`, `hook`, `node`, and `other` as `kinds` filters; unsupported kind
+    values are ignored before the gateway call.
+  - OpenZues forwarded all `tools.invoke sessions_list args.kinds` values to
+    native `sessions.list`, where extra local kinds such as `global` could
+    become real filters and remove otherwise visible rows.
+- Landed the bounded tool-boundary slice:
+  - `tools.invoke sessions_list` now normalizes the `kinds` list before native
+    dispatch, preserving only the OpenClaw tool-supported kind set.
+  - if no supported kind remains, the native `kinds` filter is omitted.
+- Product effect:
+  - OpenClaw-shaped callers can pass unsupported kind values without changing
+    the visible session result set.
+- Verified this continuation with:
+  - red proof:
+    `test_tools_invoke_sessions_list_ignores_unsupported_openclaw_kinds` first
+    failed because `kinds=["global"]` removed the requester session row.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_list_ignores_unsupported_openclaw_kinds"`:
+    `1 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "tools_invoke or sessions_list or sessions_history or session_status"`:
+    `82 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`:
+    clean
+  - `mypy src\openzues\services\gateway_node_methods.py`:
+    clean
+- Queue effect from this run:
+  - `sessions_list` kind-filter normalization now matches the OpenClaw agent
+    tool boundary.
+  - next queue head should continue through list row projection differences or
+    move to the neighboring `sessions_history` / `session_status` tool results.
+
+### Recovery addendum 2026-04-26 sessions_list argument-projection parity America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw's `sessions_list` agent tool only reads `kinds`, `limit`,
+    `activeMinutes`, and `messageLimit`; local-only gateway filters such as
+    `label`, `search`, `agentId`, `spawnedBy`, `includeGlobal`, and
+    `includeUnknown` do not affect the agent-tool result.
+  - OpenZues forwarded all `tools.invoke sessions_list args` into native
+    `sessions.list`, so unsupported args like `label` could suppress otherwise
+    visible sessions.
+- Landed the bounded argument-projection slice:
+  - `tools.invoke sessions_list` now builds a native parameter payload from
+    only the OpenClaw-supported tool inputs.
+  - unsupported `kinds` are still ignored, and native include flags are set to
+    allow the post-filter stage to apply OpenClaw's global/unknown row rules.
+- Product effect:
+  - agent-tool callers get stable OpenClaw-shaped session lists even when extra
+    local gateway fields are present in the request payload.
+- Verified this continuation with:
+  - red proof:
+    `test_tools_invoke_sessions_list_ignores_unsupported_openclaw_args` first
+    failed because `args.label` filtered out the requester row.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_list_ignores_unsupported_openclaw_args or sessions_list_ignores_unsupported_openclaw_kinds or sessions_list_hides_global_for_non_global_requester"`:
+    `3 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "tools_invoke or sessions_list or sessions_history or session_status"`:
+    `83 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`:
+    clean
+  - `mypy src\openzues\services\gateway_node_methods.py`:
+    clean
+- Queue effect from this run:
+  - `sessions_list` argument projection now matches OpenClaw's tool boundary.
+  - next queue head should inspect `sessions_history` / `session_status` tool
+    argument projection and result shape before broad runtime work.
+
+### Recovery addendum 2026-04-26 sessions_history argument-projection parity America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw's `sessions_history` agent tool reads only `sessionKey`, `limit`,
+    and `includeTools`; unsupported local fields are ignored before gateway
+    dispatch.
+  - OpenZues forwarded all `tools.invoke sessions_history args` into strict
+    native `sessions.history`, so fields like `maxChars` caused validation
+    errors instead of being ignored at the tool boundary.
+- Landed the bounded argument-projection slice:
+  - `tools.invoke sessions_history` now builds native params from only the
+    OpenClaw-supported history tool fields.
+- Product effect:
+  - agent-tool callers can send OpenClaw-shaped history requests with extra
+    local/UI fields present without tripping native gateway validation.
+- Verified this continuation with:
+  - red proof:
+    `test_tools_invoke_sessions_history_ignores_unsupported_openclaw_args`
+    first failed with `sessions.history does not accept: maxChars`.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_history_ignores_unsupported_openclaw_args"`:
+    `1 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "tools_invoke or sessions_list or sessions_history or session_status"`:
+    `84 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`:
+    clean
+  - `mypy src\openzues\services\gateway_node_methods.py`:
+    clean
+- Queue effect from this run:
+  - `sessions_history` tool argument projection now matches OpenClaw.
+  - next queue head should inspect `session_status` and `sessions_yield`
+    projection/result differences before broad ACP/runtime work.
+
+### Recovery addendum 2026-04-26 session_status argument-projection parity America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw's `session_status` agent tool reads only `sessionKey` and
+    `model`; extra local/UI fields do not affect the gateway call.
+  - OpenZues forwarded all `tools.invoke session_status args` into strict
+    native `session.status`, so unsupported fields such as `includeDebug`
+    caused validation errors.
+- Landed the bounded argument-projection slice:
+  - `tools.invoke session_status` now builds native params from only
+    `sessionKey` and `model`.
+- Product effect:
+  - status tool calls are tolerant of extra local metadata while preserving the
+    strict native method contract.
+- Verified this continuation with:
+  - red proof:
+    `test_tools_invoke_session_status_ignores_unsupported_openclaw_args` first
+    failed with `session.status does not accept: includeDebug`.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "session_status_ignores_unsupported_openclaw_args"`:
+    `1 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "tools_invoke or sessions_list or sessions_history or session_status"`:
+    `85 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`:
+    clean
+  - `mypy src\openzues\services\gateway_node_methods.py`:
+    clean
+- Queue effect from this run:
+  - `session_status` tool argument projection now matches OpenClaw.
+  - next queue head should inspect `sessions_yield`, then the high-risk
+    `sessions_send` / `sessions_spawn` tool argument surfaces.
+
+### Recovery addendum 2026-04-26 sessions_yield context-projection parity America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw's `sessions_yield` tool accepts only an optional `message`
+    argument and gets session context from the active runtime, not from
+    `args.sessionKey`.
+  - OpenZues allowed `args.sessionKey` to create context by itself and passed
+    unsupported args into strict native `sessions.yield` validation.
+- Landed the bounded context/projection slice:
+  - `tools.invoke sessions_yield` now uses only top-level requester
+    `sessionKey` as the native session context.
+  - the native argument payload is projected to that context plus the optional
+    string `message`; unsupported fields are ignored.
+- Product effect:
+  - yield calls now match OpenClaw's current-session contract: without runtime
+    context they report `No session context`, and extra payload fields do not
+    break valid yields.
+- Verified this continuation with:
+  - red proof:
+    `test_tools_invoke_sessions_yield_ignores_session_key_arg_without_context`
+    first yielded even though only `args.sessionKey` was present.
+  - red proof:
+    `test_tools_invoke_sessions_yield_ignores_unsupported_openclaw_args` first
+    failed with `sessions.yield does not accept: extra`.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_yield_ignores_session_key_arg_without_context or sessions_yield_ignores_unsupported_openclaw_args or sessions_yield_uses_requester_session_context"`:
+    `3 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "tools_invoke or sessions_list or sessions_history or session_status or sessions_yield"`:
+    `88 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`:
+    clean
+  - `mypy src\openzues\services\gateway_node_methods.py`:
+    clean
+- Queue effect from this run:
+  - `sessions_yield` context and argument projection now match OpenClaw.
+  - next queue head should inspect high-risk `sessions_send` and
+    `sessions_spawn` projection edges before ACP harness work.
+
+### Recovery addendum 2026-04-26 sessions_send unknown-arg parity America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw's `sessions_send` tool executor reads its supported fields and
+    ignores payload fields it does not consume.
+  - OpenZues translated the OpenClaw `sessionKey` alias but then forwarded the
+    whole tool payload into strict native `sessions.send`, so unknown extras
+    failed validation.
+- Landed the bounded send-projection slice:
+  - after target `sessionKey` and requester context translation, `tools.invoke
+    sessions_send` now keeps only supported OpenClaw/local compatibility
+    fields before native dispatch.
+- Product effect:
+  - high-risk send calls still require explicit `gateway.tools.allow`, but
+    extra local/UI metadata no longer breaks otherwise valid OpenClaw-shaped
+    sends.
+- Verified this continuation with:
+  - red proof:
+    `test_tools_invoke_sessions_send_ignores_unknown_openclaw_args` first
+    failed with `sessions.send does not accept: unknownLocalField`.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_send_ignores_unknown_openclaw_args or sessions_send_accepts_openclaw_session_key_arg or sessions_send_preserves_requester_provenance"`:
+    `3 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "tools_invoke or sessions_send or sessions_list or sessions_history or session_status or sessions_yield"`:
+    `115 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`:
+    clean
+  - `mypy src\openzues\services\gateway_node_methods.py`:
+    clean
+- Queue effect from this run:
+  - `sessions_send` unknown-arg projection is covered without loosening
+    high-risk default-deny policy.
+  - next queue head should inspect `sessions_spawn` unknown-arg and context
+    projection before ACP harness parity.
+
+### Recovery addendum 2026-04-26 sessions_spawn unknown-arg parity America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw's `sessions_spawn` tool executor reads supported spawn fields,
+    explicitly rejects known delivery params such as `target` / `channel`, and
+    otherwise ignores unrelated payload metadata.
+  - OpenZues forwarded all `tools.invoke sessions_spawn args` into strict
+    native `sessions.spawn`, so unrelated extras failed validation before the
+    spawn bridge could run.
+- Landed the bounded spawn-projection slice:
+  - `tools.invoke sessions_spawn` now projects tool args to the
+    OpenClaw-supported/native compatibility fields before dispatch.
+  - the projection intentionally preserves upstream unsupported delivery-param
+    keys so the native OpenClaw-style error still fires for `target`,
+    `channel`, `replyTo`, and related delivery fields.
+- Product effect:
+  - high-risk spawn calls still require explicit `gateway.tools.allow`, but
+    local/UI metadata no longer breaks valid OpenClaw-shaped spawn requests.
+- Verified this continuation with:
+  - red proof:
+    `test_tools_invoke_sessions_spawn_ignores_unknown_openclaw_args` first
+    failed with `sessions.spawn does not accept: unknownLocalField`.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_spawn_ignores_unknown_openclaw_args or allows_sessions_spawn_when_gateway_tools_allow_configured or sessions_spawn_floors_numeric_timeout_seconds"`:
+    `3 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "tools_invoke or sessions_spawn or sessions_send or sessions_list or sessions_history or session_status or sessions_yield"`:
+    `134 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`:
+    clean
+  - `mypy src\openzues\services\gateway_node_methods.py`:
+    clean
+- Queue effect from this run:
+  - `sessions_spawn` unknown-arg projection is covered without loosening the
+    native `sessions.spawn` contract.
+  - next queue head should inspect remaining `sessions_spawn` context edges,
+    then ACP spawn harness parity.
+
+### Recovery addendum 2026-04-26 sessions_spawn requester-context parity America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw's `sessions_spawn` receives requester lineage from tool runtime
+    options (`agentSessionKey`), not from a `requesterSessionKey` tool
+    argument.
+  - OpenZues already mapped top-level `tools.invoke sessionKey` into native
+    spawn lineage, but also allowed raw `args.requesterSessionKey` to spoof the
+    parent session.
+- Landed the bounded context-projection slice:
+  - `tools.invoke sessions_spawn` now removes raw `args.requesterSessionKey`
+    during OpenClaw argument projection.
+  - after projection, top-level requester context still injects native
+    `requesterSessionKey`, preserving the already-verified body `sessionKey`
+    behavior.
+- Product effect:
+  - agent-tool payload metadata can no longer forge spawn parent lineage,
+    while legitimate requester context continues to drive depth limits,
+    child caps, and parent metadata.
+- Verified this continuation with:
+  - red proof:
+    `test_tools_invoke_sessions_spawn_ignores_arg_requester_session_key`
+    first failed because the child metadata recorded the raw arg as
+    `spawnedBy`.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_spawn_ignores_arg_requester_session_key or sessions_spawn_uses_body_session_key_as_requester or sessions_spawn_ignores_unknown_openclaw_args"`:
+    `3 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "tools_invoke or sessions_spawn or sessions_send or sessions_list or sessions_history or session_status or sessions_yield"`:
+    `135 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`:
+    clean
+  - `mypy src\openzues\services\gateway_node_methods.py`:
+    clean
+- Queue effect from this run:
+  - `sessions_spawn` argument/context projection is now covered for the
+    high-risk bridge.
+  - next queue head should inspect ACP spawn harness parity and any remaining
+    `sessions_spawn` result-shape gaps.
+
+### Recovery addendum 2026-04-26 sessions_spawn accepted-note parity America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw accepted subagent spawns return a `note` telling callers that
+    auto-announce is push-based and they must wait for completion events
+    instead of polling `sessions_list`, `sessions_history`, or sleep loops.
+  - OpenZues returned the accepted child/run envelope, but omitted that
+    operator-facing instruction.
+- Landed the bounded result-shape slice:
+  - successful run-mode `sessions.spawn` responses now include OpenClaw's
+    push-not-poll accepted note.
+  - cron requester sessions are suppressed the same way OpenClaw suppresses
+    the run-mode note for cron context.
+- Product effect:
+  - spawned-agent orchestration gets the same anti-polling guidance that
+    OpenClaw gives agents, reducing commentary orbit and wasteful session
+    polling after a child spawn.
+- Verified this continuation with:
+  - red proof:
+    `test_sessions_spawn_returns_openclaw_accepted_note_for_run_mode` first
+    failed with missing `note`.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_spawn_returns_openclaw_accepted_note_for_run_mode or sessions_spawn_creates_openclaw_style_subagent_session"`:
+    `2 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "tools_invoke or sessions_spawn or sessions_send or sessions_list or sessions_history or session_status or sessions_yield"`:
+    `136 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`:
+    clean
+  - `mypy src\openzues\services\gateway_node_methods.py`:
+    clean
+- Queue effect from this run:
+  - run-mode `sessions_spawn` accepted result guidance now matches OpenClaw.
+  - next queue head should inspect remaining session runtime method seams
+    around `chat.*`, `sessions.*`, and ACP spawn harness behavior.
+
+### Recovery addendum 2026-04-26 sessions_spawn model-applied parity America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw accepted spawn results expose `modelApplied` when a resolved model
+    override is applied to the child session.
+  - OpenZues persisted explicit child model metadata but did not expose the
+    result flag.
+- Landed the bounded result-shape slice:
+  - accepted `sessions.spawn` responses now include `modelApplied: true` when
+    a local explicit `model` override was accepted and persisted.
+- Product effect:
+  - callers can distinguish "model override applied" from "spawn accepted with
+    default model" without re-reading child session metadata.
+- Verified this continuation with:
+  - red proof:
+    `test_sessions_spawn_reports_model_applied_for_model_override` first
+    failed with missing `modelApplied`.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_spawn_reports_model_applied_for_model_override or sessions_spawn_creates_openclaw_style_subagent_session"`:
+    `2 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "tools_invoke or sessions_spawn or sessions_send or sessions_list or sessions_history or session_status or sessions_yield"`:
+    `137 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`:
+    clean
+  - `mypy src\openzues\services\gateway_node_methods.py`:
+    clean
+- Queue effect from this run:
+  - explicit-model accepted result parity is now covered for local spawn.
+  - next queue head should continue into direct session runtime methods
+    (`sessions.create`, `sessions.patch`, `sessions.delete`, `chat.*`) or ACP
+    spawn harness parity.
+
+### Recovery addendum 2026-04-26 sessions_create key-agent mismatch parity America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw validates explicit `sessions.create key` agent scope before
+    canonical creation and reports
+    `sessions.create key agent (<key-agent>) does not match agentId (<agentId>)`.
+  - OpenZues detected the same mismatch later, but returned a generic
+    `agentId does not match sessionKey` error.
+- Landed the bounded validation-message slice:
+  - `sessions.create` now parses explicit agent-scoped keys before
+    canonicalization and raises the OpenClaw-specific mismatch text when
+    `agentId` disagrees.
+- Product effect:
+  - callers get the actionable upstream error message and can see exactly
+    which side of the request was mismatched.
+- Verified this continuation with:
+  - red proof:
+    `test_sessions_create_reports_openclaw_key_agent_mismatch` first failed
+    because the error was `agentId does not match sessionKey`.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_create_reports_openclaw_key_agent_mismatch or sessions_create_scopes_custom_agent_request_key or sessions_create_scopes_main_alias_to_requested_agent"`:
+    `3 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "sessions_create or sessions_spawn or tools_invoke"`:
+    `83 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`:
+    clean
+  - `mypy src\openzues\services\gateway_node_methods.py`:
+    clean
+- Queue effect from this run:
+  - one direct `sessions.create` validation mismatch is closed.
+  - next queue head should inspect initial-send error/result behavior and
+    neighboring `sessions.patch` / `sessions.delete` contracts.
+
+### Recovery addendum 2026-04-26 sessions_create initial-send error parity America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw `sessions.create` can create the session and then attempt an
+    initial `chat.send`; if that send reports an error, the create response
+    still succeeds and includes `runError`.
+  - OpenZues let an initial-send exception abort `sessions.create` after the
+    session metadata had already been written.
+- Landed the bounded failure-envelope slice:
+  - initial-send exceptions are now captured as `runError` with
+    `runStarted: false`.
+  - the created session remains durable.
+  - the `sessions.changed` send event is emitted only when a run actually
+    starts.
+- Product effect:
+  - dashboard/session creation is resilient to a first-turn runtime failure;
+    callers can still open or retry the created session.
+- Verified this continuation with:
+  - red proof:
+    `test_sessions_create_returns_run_error_when_initial_send_fails` first
+    failed because the injected runtime exception escaped the create call.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_create_returns_run_error_when_initial_send_fails or sessions_create_registers_metadata_session_and_sends_initial_message"`:
+    `2 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "sessions_create or sessions_spawn or tools_invoke"`:
+    `84 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`:
+    clean
+  - `mypy src\openzues\services\gateway_node_methods.py`:
+    clean
+- Queue effect from this run:
+  - `sessions.create` now covers key-agent mismatch and initial-send failure
+    behavior.
+  - next queue head should inspect `sessions.patch` validation/result parity
+    and deletion/lifecycle behavior.
+
+### Recovery addendum 2026-04-26 sessions_patch lineage-support parity America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw only permits spawn-lineage patch fields (`spawnedBy`,
+    `spawnedWorkspaceDir`, `spawnDepth`, `subagentRole`,
+    `subagentControlScope`) on `subagent:*` or `acp:*` sessions.
+  - OpenZues accepted those fields on a main dashboard session.
+- Landed the bounded lineage-support slice:
+  - `sessions.patch` now rejects non-null spawn-lineage patches when the
+    canonical session key is not a subagent or ACP session.
+  - metadata-backed child sessions still accept those fields.
+- Product effect:
+  - normal dashboard sessions can no longer be mislabeled as spawned children,
+    protecting list/filter/depth semantics from forged lineage metadata.
+- Verified this continuation with:
+  - red proof:
+    `test_sessions_patch_rejects_spawn_lineage_on_main_session` first failed
+    because no error was raised.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_patch_rejects_spawn_lineage_on_main_session or sessions_patch_persists_metadata_backed_child_session"`:
+    `2 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "sessions_patch or sessions_create or sessions_spawn or tools_invoke"`:
+    `91 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`:
+    clean
+  - `mypy src\openzues\services\gateway_node_methods.py`:
+    clean
+- Queue effect from this run:
+  - `sessions.patch` now has the upstream lineage support gate.
+  - next queue head should inspect OpenClaw's lineage immutability rules for
+    spawned session metadata.
+
+### Recovery addendum 2026-04-26 sessions_patch lineage-immutability parity America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw refuses to change or clear already-set spawn-lineage fields such
+    as `spawnedBy`.
+  - OpenZues allowed a subagent session's `spawnedBy` metadata to be replaced.
+- Landed the bounded immutability slice:
+  - `sessions.patch` now rejects clearing or changing already-set
+    spawn-lineage fields (`spawnedBy`, `spawnedWorkspaceDir`, `spawnDepth`,
+    `subagentRole`, `subagentControlScope`).
+- Product effect:
+  - spawned child lineage stays durable after creation, protecting parent-child
+    discovery, depth limits, and orchestration bookkeeping.
+- Verified this continuation with:
+  - red proof:
+    `test_sessions_patch_rejects_changed_spawned_by` first failed because the
+    patch changed existing `spawnedBy`.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_patch_rejects_changed_spawned_by or sessions_patch_persists_metadata_backed_child_session"`:
+    `2 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "sessions_patch or sessions_create or sessions_spawn or tools_invoke"`:
+    `92 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`:
+    clean
+  - `mypy src\openzues\services\gateway_node_methods.py`:
+    clean
+- Queue effect from this run:
+  - `sessions.patch` now covers lineage support and immutability.
+  - next queue head should inspect remaining normalization rules such as
+    label uniqueness, thinking/model validation, and delete/reset lifecycle
+    behavior.
+
+### Recovery addendum 2026-04-26 sessions_patch duplicate-label parity America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw rejects `sessions.patch label` when another session already uses
+    that label.
+  - OpenZues overwrote metadata and allowed duplicate labels.
+- Landed the bounded label-uniqueness slice:
+  - `sessions.patch` now scans metadata-backed sessions before applying a
+    non-null label patch and raises `label already in use: <label>` when
+    another session owns the label.
+- Product effect:
+  - label-based session targeting remains unambiguous after patch operations.
+- Verified this continuation with:
+  - red proof:
+    `test_sessions_patch_rejects_duplicate_label` first failed because no
+    error was raised.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_patch_rejects_duplicate_label or sessions_patch_persists_current_session_metadata_and_surfaces_it"`:
+    `2 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "sessions_patch or sessions_create or sessions_spawn or tools_invoke"`:
+    `93 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`:
+    clean
+  - `mypy src\openzues\services\gateway_node_methods.py`:
+    clean
+- Queue effect from this run:
+  - `sessions.patch` now covers lineage support, lineage immutability, and
+    label uniqueness.
+  - next queue head should inspect remaining patch normalization and direct
+    delete/reset lifecycle parity.
+
+### Recovery addendum 2026-04-26 sessions_patch response-usage parity America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw normalizes `responseUsage` aliases: `"on"` / truthy aliases map
+    to `"tokens"`, `"off"` / falsey aliases clear the override, and invalid
+    values report `invalid responseUsage (use "off"|"tokens"|"full")`.
+  - OpenZues accepted `"on"` but persisted it literally and used the older
+    local enum error text.
+- Landed the bounded normalization slice:
+  - `sessions.patch` now routes `responseUsage` through an OpenClaw-style
+    normalizer before validation and metadata persistence.
+- Product effect:
+  - session response-usage controls now round-trip in the same values
+    OpenClaw agents and dashboards expect.
+- Verified this continuation with:
+  - red proof:
+    `test_sessions_patch_normalizes_response_usage_on_to_tokens` first failed
+    because the entry returned `"on"` instead of `"tokens"`.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_patch_normalizes_response_usage_on_to_tokens or sessions_patch_persists_current_session_metadata_and_surfaces_it"`:
+    `2 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "sessions_patch or sessions_create or sessions_spawn or tools_invoke"`:
+    `94 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`:
+    clean
+  - `mypy src\openzues\services\gateway_node_methods.py`:
+    clean
+- Queue effect from this run:
+  - `sessions.patch` now covers response-usage alias normalization.
+  - next queue head should inspect remaining `execHost`, `execSecurity`,
+    `execAsk`, `elevatedLevel`, `sendPolicy`, and `groupActivation`
+    normalization.
+
+### Recovery addendum 2026-04-26 sessions_patch exec-security parity America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw normalizes `execSecurity` case and accepts only `deny`,
+    `allowlist`, or `full`.
+  - OpenZues accepted any non-empty string and persisted values such as
+    `ALLOWLIST` literally.
+- Landed the bounded exec-security normalization slice:
+  - `sessions.patch` now validates and lower-normalizes `execSecurity` before
+    persistence.
+- Product effect:
+  - execution security policy metadata now stays in the canonical values that
+    OpenClaw clients and policy checks expect.
+- Verified this continuation with:
+  - red proof:
+    `test_sessions_patch_normalizes_exec_security_case` first failed because
+    `ALLOWLIST` was returned unchanged.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_patch_normalizes_exec_security_case or sessions_patch_persists_current_session_metadata_and_surfaces_it"`:
+    `2 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "sessions_patch or sessions_create or sessions_spawn or tools_invoke"`:
+    `95 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`:
+    clean
+  - `mypy src\openzues\services\gateway_node_methods.py`:
+    clean
+- Queue effect from this run:
+  - `sessions.patch execSecurity` normalization is closed.
+  - next queue head should continue with `execAsk`, `execHost`,
+    `elevatedLevel`, `sendPolicy`, and `groupActivation` normalization.
+
+### Recovery addendum 2026-04-26 sessions_patch exec-ask parity America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw normalizes `execAsk` case and accepts only `off`, `on-miss`, or
+    `always`.
+  - OpenZues accepted any non-empty string and persisted values such as
+    `ON-MISS` literally.
+- Landed the bounded exec-ask normalization slice:
+  - `sessions.patch` now validates and lower-normalizes `execAsk` before
+    persistence.
+- Product effect:
+  - execution approval metadata now stays in canonical OpenClaw values.
+- Verified this continuation with:
+  - red proof:
+    `test_sessions_patch_normalizes_exec_ask_case` first failed because
+    `ON-MISS` was returned unchanged.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_patch_normalizes_exec_ask_case or sessions_patch_persists_current_session_metadata_and_surfaces_it"`:
+    `2 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "sessions_patch or sessions_create or sessions_spawn or tools_invoke"`:
+    `96 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`:
+    clean
+  - `mypy src\openzues\services\gateway_node_methods.py`:
+    clean
+- Queue effect from this run:
+  - `sessions.patch execAsk` normalization is closed.
+  - next queue head should continue with `execHost`, `elevatedLevel`,
+    `sendPolicy`, and `groupActivation` normalization.
+
+### Recovery addendum 2026-04-26 sessions_patch exec-host parity America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw normalizes `execHost` case and accepts only `auto`, `sandbox`,
+    `gateway`, or `node`.
+  - OpenZues accepted any non-empty string and persisted values such as
+    `SANDBOX` literally.
+- Landed the bounded exec-host normalization slice:
+  - `sessions.patch` now validates and lower-normalizes `execHost` before
+    persistence.
+- Product effect:
+  - execution routing metadata now stays in canonical OpenClaw values.
+- Verified this continuation with:
+  - red proof:
+    `test_sessions_patch_normalizes_exec_host_case` first failed because
+    `SANDBOX` was returned unchanged.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_patch_normalizes_exec_host_case or sessions_patch_persists_current_session_metadata_and_surfaces_it"`:
+    `2 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "sessions_patch or sessions_create or sessions_spawn or tools_invoke"`:
+    `97 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`:
+    clean
+  - `mypy src\openzues\services\gateway_node_methods.py`:
+    clean
+- Queue effect from this run:
+  - `sessions.patch execHost` normalization is closed.
+  - next queue head should continue with `elevatedLevel`, `sendPolicy`, and
+    `groupActivation` normalization.
+
+### Recovery addendum 2026-04-26 sessions_patch elevated-level parity America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw normalizes `elevatedLevel` aliases, including `auto-approve` and
+    `autoapprove` to `full`.
+  - OpenZues accepted any non-empty string and persisted `auto-approve`
+    literally.
+- Landed the bounded elevated-level normalization slice:
+  - `sessions.patch` now maps OpenClaw elevated-level aliases to canonical
+    `off`, `on`, `ask`, and `full` values.
+- Product effect:
+  - elevated execution/approval metadata now stays compatible with OpenClaw
+    clients and runtime policy interpretation.
+- Verified this continuation with:
+  - red proof:
+    `test_sessions_patch_normalizes_elevated_level_alias` first failed because
+    `auto-approve` was returned unchanged.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_patch_normalizes_elevated_level_alias or sessions_patch_persists_current_session_metadata_and_surfaces_it"`:
+    `2 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "sessions_patch or sessions_create or sessions_spawn or tools_invoke"`:
+    `98 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`:
+    clean
+  - `mypy src\openzues\services\gateway_node_methods.py`:
+    clean
+- Queue effect from this run:
+  - `sessions.patch elevatedLevel` normalization is closed.
+  - next queue head should continue with `sendPolicy` and `groupActivation`
+    normalization.
+
+### Recovery addendum 2026-04-26 sessions_patch send-policy parity America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw normalizes `sendPolicy` case and accepts only `allow` or `deny`.
+  - OpenZues rejected uppercase `ALLOW` at enum validation time instead of
+    normalizing it.
+- Landed the bounded send-policy normalization slice:
+  - `sessions.patch` now validates and lower-normalizes `sendPolicy` before
+    persistence.
+- Product effect:
+  - session send-policy overrides now use canonical OpenClaw values regardless
+    of caller casing.
+- Verified this continuation with:
+  - red proof:
+    `test_sessions_patch_normalizes_send_policy_case` first failed at
+    validation for `ALLOW`.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_patch_normalizes_send_policy_case or sessions_patch_persists_metadata_backed_child_session"`:
+    `2 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "sessions_patch or sessions_create or sessions_spawn or tools_invoke"`:
+    `99 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`:
+    clean
+  - `mypy src\openzues\services\gateway_node_methods.py`:
+    clean
+- Queue effect from this run:
+  - `sessions.patch sendPolicy` normalization is closed.
+  - next queue head should close `groupActivation` normalization, then inspect
+    direct delete/reset lifecycle parity.
+
+### Recovery addendum 2026-04-26 sessions_patch group-activation parity America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw normalizes `groupActivation` case and accepts only `mention` or
+    `always`.
+  - OpenZues rejected uppercase `ALWAYS` at enum validation time instead of
+    normalizing it.
+- Landed the bounded group-activation normalization slice:
+  - `sessions.patch` now validates and lower-normalizes `groupActivation`
+    before persistence.
+- Product effect:
+  - group activation metadata now uses canonical OpenClaw values regardless of
+    caller casing.
+- Verified this continuation with:
+  - red proof:
+    `test_sessions_patch_normalizes_group_activation_case` first failed at
+    validation for `ALWAYS`.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_patch_normalizes_group_activation_case or sessions_patch_persists_current_session_metadata_and_surfaces_it"`:
+    `2 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "sessions_patch or sessions_create or sessions_spawn or tools_invoke"`:
+    `100 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`:
+    clean
+  - `mypy src\openzues\services\gateway_node_methods.py`:
+    clean
+- Queue effect from this run:
+  - `sessions.patch` now covers lineage gates, immutability, label uniqueness,
+    and the patch-normalization family for response usage, exec routing,
+    elevated mode, send policy, and group activation.
+  - next queue head should inspect direct `sessions.delete` / `sessions.reset`
+    lifecycle parity.
+
+### Recovery addendum 2026-04-26 sessions_delete retained-transcript parity America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw `sessions.delete` deletes the session entry regardless of
+    `deleteTranscript`; `deleteTranscript=false` only skips transcript archival
+    and deletion.
+  - OpenZues returned `deleted: false` when messages existed and
+    `deleteTranscript=false`, leaving metadata/session entry intact.
+- Landed the bounded delete/archive split slice:
+  - `sessions.delete deleteTranscript=false` now deletes session metadata,
+    keeps transcript messages, returns `deleted: true`, and leaves
+    `archived: []`.
+- Product effect:
+  - callers can remove a session from inventory without destroying transcript
+    history, matching OpenClaw's delete/archive separation.
+- Verified this continuation with:
+  - red proof:
+    `test_sessions_delete_false_deletes_entry_and_retains_transcript` first
+    failed because the method returned `deleted: false`.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_delete_false_deletes_entry_and_retains_transcript or sessions_delete_removes_metadata_backed_session_and_transcript"`:
+    `2 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "sessions_delete or sessions_reset or sessions_patch or sessions_create or sessions_spawn or tools_invoke"`:
+    `111 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`:
+    clean
+  - `mypy src\openzues\services\gateway_node_methods.py`:
+    clean
+- Queue effect from this run:
+  - retained-transcript delete parity is closed.
+  - next queue head should inspect remaining reset/delete lifecycle hooks and
+    then resume broader `chat.*` / runtime seams.
+
+### Recovery addendum 2026-04-26 chat_send timeout clamp parity America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw `chat.send` validates `timeoutMs` as a non-negative integer and
+    then resolves it through the shared timer-safe timeout helper.
+  - OpenZues rejected very large `timeoutMs` values with its local 30-day cap,
+    while OpenClaw clamps values such as `9_999_999_999` to `2_147_000_000`.
+- Landed the bounded timeout-normalization slice:
+  - `chat.send timeoutMs` now maps `0` to OpenClaw's no-timeout sentinel and
+    clamps oversized values to the timer-safe ceiling before dispatch.
+- Product effect:
+  - long-running chat sends now accept the same timeout shape as OpenClaw and
+    avoid false validation failures for large-but-valid JSON-RPC requests.
+- Verified this continuation with:
+  - red proof:
+    `test_chat_send_clamps_large_timeout_ms_like_openclaw` first failed with
+    `timeoutMs must be between 0 and 2592000000`.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_send_clamps_large_timeout_ms_like_openclaw or chat_send_returns_run_ack_from_injected_control_chat_bridge"`:
+    `2 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "chat_send or chat_history"`:
+    `61 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`:
+    clean
+  - `mypy src\openzues\services\gateway_node_methods.py`:
+    clean
+- Queue effect from this run:
+  - direct `chat.send` timeout-clamp parity is closed.
+  - next queue head should continue inside `chat.*`, especially validation,
+    lifecycle-event, and result-shape gaps that still differ from OpenClaw.
+
+### Recovery addendum 2026-04-26 chat_send session-key cap parity America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw defines `ChatSendSessionKeyString` with `maxLength: 512`.
+  - OpenZues only required a non-empty `chat.send.sessionKey`, so a 513-byte
+    key reached the chat runtime instead of failing validation.
+- Landed the bounded session-key validation slice:
+  - `chat.send` now rejects session keys longer than 512 characters before
+    resolving or dispatching the runtime send.
+- Product effect:
+  - oversized `chat.send` keys fail fast at the gateway boundary like
+    OpenClaw, preventing invalid runtime calls and preserving protocol shape.
+- Verified this continuation with:
+  - red proof:
+    `test_chat_send_rejects_session_key_above_openclaw_limit` first failed by
+    reaching the fake chat runtime.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_send_rejects_session_key_above_openclaw_limit or chat_send_returns_run_ack_from_injected_control_chat_bridge"`:
+    `2 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "chat_send or chat_history"`:
+    `62 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`:
+    clean
+  - `mypy src\openzues\services\gateway_node_methods.py`:
+    clean
+- Queue effect from this run:
+  - direct `chat.send` session-key cap parity is closed.
+  - next queue head remains inside `chat.*`, with likely work around remaining
+    request validation and lifecycle/result-shape edge cases.
+
+### Recovery addendum 2026-04-26 chat_send provenance validation parity America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw's `ChatSendParamsSchema` validates `systemInputProvenance` as an
+    object with a known `kind` before the handler reaches scope checks.
+  - OpenZues treated invalid provenance objects and falsey scalar values as
+    omitted, allowing some malformed requests to reach runtime dispatch.
+- Landed the bounded provenance-validation slice:
+  - `chat.send` now invokes the strict input-provenance validator when
+    `systemInputProvenance` is present, before admin-scope gating.
+  - API tests now expect invalid provenance shape/kind to fail without
+    writing transcript messages.
+- Product effect:
+  - malformed provenance payloads now fail at the gateway boundary, matching
+    OpenClaw's JSON-RPC schema behavior and preventing silent provenance loss.
+- Verified this continuation with:
+  - red proof:
+    `test_chat_send_rejects_invalid_system_input_provenance_kind` and
+    `test_chat_send_rejects_non_object_system_input_provenance` first failed
+    by reaching the fake chat runtime.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_send_rejects_invalid_system_input_provenance_kind or chat_send_rejects_non_object_system_input_provenance or chat_send_system_provenance_fields_require_admin_scope_before_runtime or chat_send_system_provenance_fields_preserve_runtime_context"`:
+    `6 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "system_input_provenance or system_provenance"`:
+    `11 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "chat_send or chat_history"`:
+    `62 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`:
+    clean
+  - `mypy src\openzues\services\gateway_node_methods.py`:
+    clean
+- Queue effect from this run:
+  - direct `chat.send` provenance schema parity is closed.
+  - next queue head remains inside `chat.*`, then should return to
+    `sessions.*` lifecycle hooks if no smaller chat validation gaps remain.
+
+### Recovery addendum 2026-04-26 chat_inject schema parity America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw `ChatInjectParamsSchema` requires non-empty `message` and caps
+    optional `label` at 100 characters.
+  - OpenZues accepted empty injected messages and overlong labels before
+    appending assistant transcript rows.
+- Landed the bounded chat-inject validation slice:
+  - `chat.inject` now validates `message` as non-empty and rejects labels above
+    OpenClaw's 100-character cap before persistence.
+- Product effect:
+  - injected assistant transcript entries now obey OpenClaw's gateway schema
+    and cannot create empty or over-labelled rows through the node-method API.
+- Verified this continuation with:
+  - red proof:
+    the existing `test_chat_inject_appends_assistant_message_and_publishes_session_message_event`
+    first failed because empty `message` did not raise.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_inject"`:
+    `4 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "chat_inject or chat_send or chat_history"`:
+    `67 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`:
+    clean
+  - `mypy src\openzues\services\gateway_node_methods.py`:
+    clean
+- Queue effect from this run:
+  - direct `chat.inject` schema parity is closed.
+  - next queue head should inspect `chat.abort` validation/result-shape gaps
+    before returning to `sessions.*` lifecycle seams.
+
+### Recovery addendum 2026-04-26 chat_abort run-id validation parity America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw `ChatAbortParamsSchema` allows omitted `runId`, but when present
+    it must be a non-empty string.
+  - OpenZues treated `runId: ""` as a session-scoped abort, widening an
+    invalid request into a broad cancellation.
+- Landed the bounded abort-validation slice:
+  - `chat.abort` now rejects empty `runId` values and preserves omitted
+    `runId` as the only session-scoped abort path.
+- Product effect:
+  - malformed abort requests no longer accidentally cancel the active session
+    run, matching OpenClaw's JSON-RPC schema contract.
+- Verified this continuation with:
+  - red proof:
+    `test_chat_abort_rejects_empty_run_id_like_openclaw` and the API
+    `rejects_empty_chat_abort_run_id` check first failed because empty
+    `runId` was accepted.
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "chat_abort_rejects_empty_run_id_like_openclaw or rejects_empty_chat_abort_run_id or chat_abort_interrupts_tracked_gateway_run_with_injected_runtime"`:
+    `3 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "chat_abort or chat_inject or chat_send or chat_history"`:
+    `74 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`:
+    clean
+  - `mypy src\openzues\services\gateway_node_methods.py`:
+    clean
+- Queue effect from this run:
+  - direct `chat.abort` run-id validation parity is closed.
+  - next queue head should resume `sessions.*` lifecycle/method gaps unless a
+    smaller remaining `chat.history` schema gap is proven.

@@ -1701,6 +1701,47 @@ class ControlUiGatewayConfigView(BaseModel):
     tools: ControlUiGatewayToolsConfigView | None = None
 
 
+class ControlUiSessionAgentToAgentConfigView(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    max_ping_pong_turns: int | None = Field(
+        default=None,
+        alias="maxPingPongTurns",
+        ge=0,
+        le=5,
+    )
+
+
+class ControlUiSessionConfigView(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    agent_to_agent: ControlUiSessionAgentToAgentConfigView | None = Field(
+        default=None,
+        alias="agentToAgent",
+    )
+
+
+class ControlUiToolsAgentToAgentConfigView(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    enabled: bool = False
+    allow: list[str] = Field(default_factory=list)
+
+
+class ControlUiToolsSessionsConfigView(BaseModel):
+    visibility: Literal["self", "tree", "agent", "all"] | None = None
+
+
+class ControlUiToolsConfigView(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    agent_to_agent: ControlUiToolsAgentToAgentConfigView | None = Field(
+        default=None,
+        alias="agentToAgent",
+    )
+    sessions: ControlUiToolsSessionsConfigView | None = None
+
+
 class ControlUiBootstrapConfigView(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -1719,6 +1760,8 @@ class ControlUiBootstrapConfigView(BaseModel):
     )
     allow_external_embed_urls: bool = Field(default=False, alias="allowExternalEmbedUrls")
     gateway: ControlUiGatewayConfigView | None = None
+    session: ControlUiSessionConfigView | None = None
+    tools: ControlUiToolsConfigView | None = None
 
 
 class SetupFootprintResourceView(BaseModel):

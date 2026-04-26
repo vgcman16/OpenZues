@@ -2,29 +2,53 @@
 
 ## Snapshot
 
-- Estimated repo-wide parity: ~35% overall, with a reasonable band of ~30-40%.
-- Estimated active-family parity: ~99% for the browser/canvas/nodes/voice queue head.
+- Updated: 2026-04-26.
+- Estimated repo-wide parity: ~43% overall, with a reasonable band of ~38-48%.
+- Estimated active gateway/session/tool-contract family parity: ~94% for the bounded local OpenZues path.
+- Estimated chat/session contract subfamily parity: ~96% after the latest `chat.send`, `chat.inject`, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.delete`, and `tools.invoke` slices.
+- Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
 - This is a planning rollup, not a generated metric or a claim of feature-complete parity.
 
 ## Methodology Note
 
 - Estimates are hand-scored from the primary parity ledger and the unresolved seam queue.
-- Repo-wide parity is breadth-weighted. Packaging, companion apps, and remaining browser/node risk surfaces still keep the overall number low.
-- Active-family parity tracks the current browser/canvas/nodes/voice family, not the whole product.
+- Repo-wide parity is breadth-weighted. Packaging, companion apps, broader provider runtimes, ACP harness spawning, and full OpenClaw runtime/CLI breadth still keep the overall number below the local gateway/control-plane score.
+- Active-family parity tracks the current source-backed gateway/session/tool-contract family, not the whole product.
+
+## Fully Completed / Locked Bounded Slices
+
+These are complete within the bounded OpenZues-local parity contract verified in this repo. They are not a claim that every OpenClaw product behavior is finished.
+
+- Gateway method registry, method policy wiring, strict parameter guards, config lookup/mutation, node invoke guard rails, device pairing, device-token rotation/revoke, plugin approval lifecycle, exec approval lifecycle, and node/global exec approval policy are landed and verified.
+- Cron local scheduling now covers expression schedules, due-run detection, delivery status, fallback announcement, session delivery fallback, and system-event session-key wake routing.
+- Browser/canvas/nodes/voice bounded command coverage is effectively locked for the local bridge: native browser commands, action grammar, storage/cookies/HAR, auth profile login/delete/save, batch execution, dashboard lifecycle, canvas/A2UI/live reload, APNS wake paths, managed attachments, scoped capability URLs, and iOS provider command bridges all have concrete gateway runtimes or honest unavailable boundaries.
+- Chat transcript contracts are locked for the current SQLite-backed store: `chat.history` projection, usage/cost metadata, text caps, oversized payload placeholders, untrusted suffix stripping, skip-only hiding, directive cleanup, `chat.send` schema/provenance/timeout/session-key guards, `chat.inject` schema guards, and `chat.abort` run-id validation.
+- Session tool contracts are locked across the bounded local path for `sessions_history`, `session_status`, `sessions_list`, `sessions_send`, `sessions_yield`, `sessions.create`, `sessions.patch`, `sessions.delete`, `sessions.preview`, and direct session-history REST/SSE behavior.
+- Custom-agent control-plane ownership is landed for persisted agent create/update/delete, identity lookup, workspace file ownership, session creation/filtering, alias resolution, and deleted-agent send/steer guards.
+- `tools.invoke` core bridge is landed for allow/deny policy, owner-only controls, before-call hooks, plugin executor envelopes, safe core mappings, and OpenClaw-style projection/visibility for neighboring session tools.
 
 ## Feature Families
 
 | Family | Status | Estimate | Current Read |
 | --- | --- | --- | --- |
-| Gateway + gateway methods | Strong partial | ~98% | Gateway method registry, config lookups/mutation, model/session inventory, node invoke guards, native browser command productization, plugin/exec approval lifecycles, exec approval policy config, device-pair lifecycle, device token rotate/revoke, agent registry mutation, memory-doctor mutation, and OpenClaw bootstrap/memory agent files are now heavily covered. |
-| Cron wake/delivery | Strong partial | ~94% | Direct send/poll, provider route callbacks, native route setup, replay/test dispatch, provider error/result metadata, and OpenClaw-style cron-expression schedules are verified. |
-| Onboarding + setup | Partial | ~65% | QuickStart, gateway bootstrap, saved-lane handling, and degraded bootstrap boundaries are real, with broader OpenClaw setup breadth still open. |
-| CLI + operator control plane | Partial | ~62% | Status, continue, queue, recover/harden, gateway doctor, delivery replay, and route creation exist; broader runtime CLI breadth remains. |
-| Routing + session identity | Partial | ~63% | Session keys, routed targeting, custom-agent session creation/filtering/identity/workspace files, snapshot filtering, compaction inventory, and spawned-session visibility are real; provider-owned routing remains open. |
-| Skills + Ops Mesh | Partial | ~70% | Skill pins, skillbooks, inbox/snapshots/inventory, and lane-aware supervision are useful but not complete OpenClaw parity. |
-| Channels + direct announce delivery | Partial | ~88% | Shared outbound runtime ownership now spans direct send/poll, explicit announce, saved replays, native adapters, Slack/Telegram/Discord/WhatsApp routes, admin-scoped chat origin/system provenance, and idle `sessions.steer` runtime sends. |
-| Browser/canvas/nodes/voice | Active | ~99% | Canvas documents/A2UI/live-reload/capability routing, node event wakes, APNS wake paths, managed attachments, native browser runtimes, guarded artifacts, action grammar, scoped settings, batch execution, dashboard lifecycle, AI chat command routing, iOS provider command bridges, clipboard controls, storage/cookie mutation, HAR capture, confirmation handling, auth profile login/delete, and password-safe auth save are now landed. |
+| Gateway + gateway methods | Near-complete bounded local path | ~99% | Gateway method registry, config lookups/mutation, model/session inventory, node invoke guards, native browser command productization, plugin/exec approval lifecycles, exec approval policy config, device-pair lifecycle, device token rotate/revoke, agent registry mutation, memory-doctor mutation, OpenClaw bootstrap/memory agent files, and strict chat/session validation are heavily covered. |
+| Gateway session/tool contracts | Active | ~94% | `sessions_history`, `session_status`, `sessions_list`, `sessions_send`, `sessions_spawn`, `sessions_yield`, `sessions.create`, `sessions.patch`, `sessions.delete`, `tools.invoke` projections, visibility policy, and chat/session transcript contracts are now the live queue head; ACP harness spawning and deeper native executor/provider hooks remain. |
+| Chat + transcript contracts | Strong partial | ~96% | `chat.history`, direct session history REST/SSE, `chat.send`, `chat.inject`, `chat.abort`, live `session.message`, `sessions.changed`, transcript metadata, usage/cost, text caps, and sanitizer parity are verified against OpenClaw-shaped behavior where they map to SQLite-backed storage. |
+| Cron wake/delivery | Strong partial | ~96% | Direct send/poll, provider route callbacks, native route setup, replay/test dispatch, provider error/result metadata, OpenClaw-style cron-expression schedules, due-run behavior, and session-key wake routing are verified. |
+| Onboarding + setup | Partial | ~70% | QuickStart, gateway bootstrap, saved-lane handling, degraded bootstrap boundaries, remote saved-lane wizard progression, and broken-default repair posture are real, with broader OpenClaw setup breadth still open. |
+| CLI + operator control plane | Partial | ~66% | Status, continue, queue, recover/harden, gateway doctor, delivery replay, route creation, and operator monitor surfaces exist; broader runtime CLI/TUI breadth remains. |
+| Routing + session identity | Strong partial | ~84% | Session keys, routed targeting, custom-agent session creation/filtering/identity/workspace files, snapshot filtering, compaction inventory, spawned-session visibility, parent/child aliases, and direct session-history replay are real; provider-owned routing remains open. |
+| Skills + Ops Mesh | Partial | ~72% | Skill pins, skillbooks, inbox/snapshots/inventory, Hermes-inspired toolsets, recall/learning surfaces, and lane-aware supervision are useful but not complete OpenClaw/Hermes parity. |
+| Channels + direct announce delivery | Strong partial | ~91% | Shared outbound runtime ownership spans direct send/poll, explicit announce, saved replays, native adapters, Slack/Telegram/Discord/WhatsApp routes, admin-scoped chat origin/system provenance, A2A announce/reply loops, and idle `sessions.steer` runtime sends; provider-native outbound parity is still open. |
+| Browser/canvas/nodes/voice | Locked bounded family | ~99% | Canvas documents/A2UI/live-reload/capability routing, node event wakes, APNS wake paths, managed attachments, native browser runtimes, guarded artifacts, action grammar, scoped settings, batch execution, dashboard lifecycle, AI chat command routing, iOS provider command bridges, clipboard controls, storage/cookie mutation, HAR capture, confirmation handling, auth profile login/delete, and password-safe auth save are now landed. |
 | Packaging + companion apps | Minimal | ~5% | Still largely outside the current shipped OpenZues surface. |
+
+## Remaining Not-Fully-Complete Areas
+
+- ACP-backed `sessions.spawn` harness execution, sandboxed target runtimes, persistent thread-binding hooks, and lifecycle cleanup beyond the bounded local implementation.
+- Provider-native outbound runtime behind the shared direct/poll/announce owner for real `channel` / `to` / `accountId` delivery, beyond the verified session-backed/local adapters.
+- Broader OpenClaw companion apps, packaging/distribution, full CLI/TUI ergonomics, and non-Windows host parity.
+- OpenClaw file-store-only edge cases that do not cleanly map to OpenZues' current SQLite-backed transcript source of truth.
 
 ## Latest Browser Family Evidence
 
@@ -491,6 +515,183 @@
 - Webchat `chat.send deliver=true` callers no longer inherit external delivery routes from channel-scoped sessions, preventing browser-origin cross-posts.
 - `tools.invoke` now opens native `sessions_spawn` only when `gateway.tools.allow` explicitly allows it, while default-deny behavior remains intact.
 - `tools.invoke` now opens native `sessions_send` only when `gateway.tools.allow` explicitly allows it, preserving default high-risk hiding.
+- Direct `/tools/invoke` now propagates OpenClaw route headers
+  (`x-openclaw-message-channel`, `x-openclaw-account-id`, `x-openclaw-message-to`,
+  `x-openclaw-thread-id`) into allowed `sessions_spawn` calls, preserving
+  `requesterOrigin` and child-session `deliveryContext`.
+- Direct `/tools/invoke` now treats body `sessionKey` as the requester context
+  for allowed `sessions_spawn`, so child sessions preserve the real
+  `spawnedBy` / `parentSessionKey` instead of falling back to main.
+- Direct `/tools/invoke` now preserves requester provenance for allowed
+  `sessions_send`, mapping body `sessionKey` and route channel into the
+  OpenClaw input-provenance envelope sent to the target runtime.
+- `sessions_send` invoked through `/tools/invoke` now accepts OpenClaw's
+  `timeoutSeconds` argument and converts it into native millisecond runtime
+  dispatch timeouts, while preserving existing `timeoutMs` behavior.
+- `sessions_send` with `timeoutSeconds: 0` now returns OpenClaw's no-wait
+  accepted tool shape (`status: accepted`, target `sessionKey`, pending
+  announce `delivery`) instead of leaking the raw internal chat runtime result.
+- `sessions_send` through `tools.invoke` now accepts OpenClaw's target
+  `sessionKey` argument and translates it to OpenZues' native `key` before
+  dispatch.
+- successful nonzero `sessions_send timeoutSeconds` calls now return
+  OpenClaw-shaped `status: ok` results with optional `reply`, target
+  `sessionKey`, and pending announce `delivery` when the runtime adapter
+  supplies a fresh reply.
+- nonzero `sessions_send timeoutSeconds` calls now wait for a fresh assistant
+  transcript row after dispatch and return that reply in the OpenClaw-shaped
+  tool result, instead of only succeeding when the runtime adapter inlines
+  `reply`.
+- `sessions_send timeoutSeconds` now accepts numeric OpenClaw values and floors
+  them to whole seconds before converting to native milliseconds.
+- `sessions_send` timeout/error results now preserve OpenClaw's target
+  `sessionKey` envelope when the runtime returns timeout or error status.
+- `sessions_spawn` now accepts numeric `runTimeoutSeconds` / `timeoutSeconds`
+  values and floors them to whole seconds before runtime dispatch.
+- `sessions_send` inter-session runtime prompts now include OpenClaw's
+  agent-to-agent message context, naming requester session/channel and target
+  session in addition to the provenance envelope.
+- waited successful `sessions_send` calls now schedule OpenClaw-style
+  agent-to-agent announce work after the target reply: the target receives the
+  structured announce prompt, `ANNOUNCE_SKIP` suppresses output, and non-skip
+  announce replies deliver to the target session's saved channel/thread route.
+- no-wait `sessions_send timeoutSeconds=0` calls now start the same announce
+  flow after a later assistant transcript reply appears, using OpenClaw's 30s
+  announce wait budget while still returning the immediate accepted result.
+- `sessions_send` A2A announce flow now runs OpenClaw's requester/target
+  reply ping-pong loop before final announce, honoring `REPLY_SKIP` and the
+  default five-turn cap.
+- `session.agentToAgent.maxPingPongTurns` is now accepted by the control
+  config schema and honored by the `sessions_send` A2A reply loop.
+- top-level `tools.agentToAgent.enabled` now gates cross-agent
+  `sessions_send` calls before runtime dispatch, returning OpenClaw-style
+  forbidden results when cross-agent messaging is disabled.
+- top-level `tools.sessions.visibility` is now accepted by the control config
+  schema and enforced for `tools.invoke sessions_send`: the OpenClaw default
+  `tree` visibility blocks cross-agent sends unless visibility is `all`, blocks
+  unrelated same-agent sessions, allows spawned child sessions, and explicit
+  `self` / `agent` visibility behaves distinctly before runtime dispatch.
+- the same `tools.sessions.visibility` / `tools.agentToAgent` access guard now
+  applies to neighboring `tools.invoke` session tools: `sessions_history` and
+  `session_status` return OpenClaw-style forbidden results before lookup, while
+  `sessions_list` filters invisible rows instead of leaking cross-agent
+  sessions.
+- `tools.invoke sessions_send` now applies OpenClaw's pre-resolution
+  cross-agent `label + agentId` policy gate, so disabled A2A blocks label-based
+  cross-agent sends before session lookup or runtime dispatch.
+- `tools.invoke sessions_send` now resolves label targets before capturing the
+  wait baseline, so label-based sends return the canonical target `sessionKey`
+  and wait for the fresh target reply just like key-based sends.
+- label-based `sessions_send timeoutSeconds=0` now uses the same resolved
+  target key for the immediate accepted result and the later A2A announce flow.
+- `sessions.history` now matches OpenClaw `sessions_history` tool-message
+  filtering for `toolResult`: hidden by default and preserved only when
+  `includeTools=true`.
+- `sessions.list` now accepts OpenClaw numeric filters for `limit`,
+  `activeMinutes`, and `messageLimit`, flooring/clamping them instead of
+  rejecting non-integer numbers.
+- `session.status model=default` now mirrors OpenClaw reset semantics by
+  clearing model/auth-profile override metadata, marking a live model switch
+  pending when selection changed, and reporting `changedModel` from the actual
+  metadata delta.
+- `chat.history` and `sessions.history` now strip assistant-visible
+  `<tool_result>...</tool_result>` XML blocks and dangling thinking blocks at
+  the shared transcript display boundary.
+- `sessions_yield` is now present in the native gateway, `tools.invoke`, and
+  tool catalog surfaces with OpenClaw-compatible context/error/callback result
+  shapes.
+- `sessions.spawn` now cleans up provisional child sessions when runtime start
+  fails: the failed child metadata/transcript/remembered run state are removed,
+  attachment materialization is best-effort deleted, and the caller receives an
+  OpenClaw-shaped error with the provisional `childSessionKey`.
+- `sessions.spawn` now preserves OpenClaw's ACP preflight error order for
+  unsupported `lightContext` and inline attachments before falling back to the
+  local ACP-unavailable boundary.
+- `chat.history` and `sessions.history` now accept finite numeric `limit`
+  values and floor them like OpenClaw's session-history paths, instead of
+  rejecting non-integer JSON numbers.
+- `sessions.get` now matches OpenClaw's finite numeric `limit` behavior too,
+  flooring values like `1.9` while preserving the existing high explicit-limit
+  transcript read path.
+- `sessions.preview` now mirrors OpenClaw key normalization: whitespace-only
+  keys are filtered into an empty preview result, duplicate keys are preserved,
+  and preview requests are capped to the first 64 normalized keys.
+- `tools.invoke sessions_list` now recomputes `count` after OpenZues applies
+  OpenClaw-style visibility filtering, so the result count matches the visible
+  rows returned to the caller.
+- `tools.invoke sessions_list` now also applies OpenClaw's agent-tool global
+  row filter, dropping `unknown` and hiding `global` unless the requester is the
+  global alias.
+- `tools.invoke sessions_list` now ignores unsupported OpenClaw tool `kinds`
+  values before native dispatch, so values like `global` do not accidentally
+  filter away normal visible sessions.
+- `tools.invoke sessions_list` now projects only OpenClaw-supported tool args
+  (`limit`, `activeMinutes`, `messageLimit`, supported `kinds`) before native
+  dispatch, so local-only filters such as `label` do not change agent-tool
+  results.
+- `tools.invoke sessions_history` now projects only OpenClaw-supported tool
+  args (`sessionKey`, `limit`, `includeTools`) before native dispatch, ignoring
+  local-only fields such as `maxChars`.
+- `tools.invoke session_status` now projects only OpenClaw-supported tool args
+  (`sessionKey`, `model`) before native dispatch, ignoring local-only fields
+  such as `includeDebug`.
+- `tools.invoke sessions_yield` now matches OpenClaw's context contract: only
+  the requester session context can provide `sessionKey`, while tool args are
+  projected down to the optional `message`.
+- `tools.invoke sessions_send` now drops unknown tool args after session-key
+  and requester-context translation, preserving supported OpenClaw/local
+  compatibility fields while ignoring extra payload metadata.
+- `tools.invoke sessions_spawn` now drops unknown tool args before native
+  dispatch while preserving OpenClaw's explicit unsupported delivery-param
+  errors for keys such as `target`.
+- `tools.invoke sessions_spawn` now treats requester lineage like OpenClaw:
+  only top-level runtime/requester context can supply `requesterSessionKey`,
+  while raw tool args cannot spoof spawn parent metadata.
+- accepted `sessions.spawn` results now include OpenClaw's push-based
+  subagent note for run-mode spawns, reminding callers to wait for completion
+  events instead of polling session tools.
+- accepted `sessions.spawn` results now report `modelApplied: true` when an
+  explicit model override is persisted for the child session.
+- `sessions.create` now reports OpenClaw's specific key-agent mismatch error
+  when an explicit `key` belongs to a different agent than `agentId`.
+- `sessions.create` now keeps the created session durable and returns
+  `runError` when the optional initial agent turn fails, instead of aborting
+  the create call.
+- `sessions.patch` now rejects spawn-lineage fields such as `spawnedBy` on
+  non-subagent/non-ACP sessions, matching OpenClaw's lineage support gate.
+- `sessions.patch` now preserves OpenClaw's spawn-lineage immutability, so
+  already-set lineage fields cannot be changed or cleared.
+- `sessions.patch` now rejects duplicate session labels before updating
+  metadata, matching OpenClaw's `label already in use` guard.
+- `sessions.patch` now normalizes `responseUsage` like OpenClaw, mapping
+  `"on"` and aliases to `"tokens"` and using the upstream invalid-value
+  message.
+- `sessions.patch` now normalizes `execSecurity` case and rejects unsupported
+  values with OpenClaw's `deny` / `allowlist` / `full` contract.
+- `sessions.patch` now normalizes `execAsk` case and rejects unsupported
+  values with OpenClaw's `off` / `on-miss` / `always` contract.
+- `sessions.patch` now normalizes `execHost` case and rejects unsupported
+  values with OpenClaw's `auto` / `sandbox` / `gateway` / `node` contract.
+- `sessions.patch` now normalizes `elevatedLevel` aliases such as
+  `auto-approve` to `full`, matching OpenClaw elevated-mode semantics.
+- `sessions.patch` now normalizes `sendPolicy` case and rejects unsupported
+  values with OpenClaw's `allow` / `deny` contract.
+- `sessions.patch` now normalizes `groupActivation` case and rejects
+  unsupported values with OpenClaw's `mention` / `always` contract.
+- `sessions.delete deleteTranscript=false` now deletes the session entry while
+  retaining transcript messages, matching OpenClaw's archive/delete split.
+- `chat.send timeoutMs` now mirrors OpenClaw's timer-safe timeout resolver:
+  zero becomes the no-timeout sentinel and oversized values clamp to
+  `2_147_000_000` instead of being rejected.
+- `chat.send sessionKey` now honors OpenClaw's 512-character protocol cap,
+  rejecting oversized keys before they reach the chat runtime.
+- `chat.send systemInputProvenance` now uses OpenClaw's strict schema
+  validation, rejecting non-object values and unknown `kind` values before
+  admin-scope checks or runtime dispatch.
+- `chat.inject` now mirrors OpenClaw's compact schema by rejecting empty
+  `message` values and labels longer than 100 characters.
+- `chat.abort` now rejects present-but-empty `runId` values instead of
+  treating them as broad session aborts.
 - Next repo-level parity work should continue outside the browser command family, with remaining channel/session transcript/runtime gaps (`chat.*`, `sessions.*`) now the strongest nearby seam.
 
 ## References

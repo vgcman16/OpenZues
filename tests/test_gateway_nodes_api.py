@@ -35,6 +35,7 @@ from openzues.database import Database, utcnow
 from openzues.schemas import ConversationTargetView, DashboardView
 from openzues.services import gateway_config_schema as gateway_config_schema_module
 from openzues.services.ecc_catalog import configure_ecc_catalog
+from openzues.services.gateway_config import GatewayConfigService
 from openzues.services.gateway_cron import build_gateway_cron_task_blueprint
 from openzues.services.gateway_node_methods import GatewayNodeMethodService
 from openzues.services.gateway_node_registry import (
@@ -4783,6 +4784,111 @@ def test_tools_invoke_endpoint_allows_cron_when_gateway_tools_allow_configured(
     assert payload["result"]["enabled"] is True
 
 
+def test_tools_invoke_endpoint_propagates_route_headers_to_sessions_spawn(
+    tmp_path,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "tools-invoke-spawn-route-headers"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    database = Database(app_settings.db_path)
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=app_settings.data_dir,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["sessions_spawn"]}},
+            }
+        )
+    )
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        del session_key, message, idempotency_key, thinking, deliver, timeout_ms
+        return {"runId": "run-tools-spawn-route-1", "status": "ok"}
+
+    app = create_app(
+        app_settings,
+        database=database,
+        gateway_node_method_service=GatewayNodeMethodService(
+            GatewayNodeRegistry(),
+            database=database,
+            config_service=config_service,
+            chat_send_service=fake_chat_send_service,
+            sessions_service=GatewaySessionsService(database),
+        ),
+    )
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/tools/invoke",
+            headers={
+                "x-openclaw-message-channel": "slack",
+                "x-openclaw-account-id": "T123",
+                "x-openclaw-message-to": "channel:C123",
+                "x-openclaw-thread-id": "1714000000.000100",
+            },
+            json={
+                "tool": "sessions_spawn",
+                "args": {"task": "Spawn with route context."},
+                "sessionKey": "main",
+            },
+        )
+        payload = response.json()
+        child_session_key = payload["result"]["childSessionKey"]
+
+    metadata_row = asyncio.run(database.get_gateway_session_metadata(child_session_key))
+    entry = asyncio.run(
+        GatewaySessionsService(database).build_session_payload_for_key(
+            session_key=child_session_key,
+            now_ms=1234,
+        )
+    )
+
+    assert response.status_code == 200
+    assert payload["ok"] is True
+    assert payload["result"]["requesterOrigin"] == {
+        "channel": "slack",
+        "accountId": "T123",
+        "to": "channel:C123",
+        "threadId": "1714000000.000100",
+    }
+    assert metadata_row is not None
+    assert metadata_row["metadata"]["requesterOrigin"] == {
+        "channel": "slack",
+        "accountId": "T123",
+        "to": "channel:C123",
+        "threadId": "1714000000.000100",
+    }
+    assert entry is not None
+    assert entry["deliveryContext"] == {
+        "channel": "slack",
+        "to": "channel:C123",
+        "accountId": "T123",
+        "threadId": "1714000000.000100",
+    }
+
+
 def test_gateway_node_method_call_endpoint_supports_tools_effective_with_bootstrap_toolsets(
     tmp_path,
 ) -> None:
@@ -5558,7 +5664,7 @@ def test_remote_chat_send_blank_message_with_provenance_requires_message_or_atta
     assert receipt_response.json()["detail"] == "message or attachment required"
 
 
-def test_remote_chat_send_invalid_system_input_provenance_honors_scope_and_omission() -> None:
+def test_remote_chat_send_invalid_system_input_provenance_uses_protocol_validation() -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-chat-send-invalid-provenance-api"
     shutil.rmtree(tmp_path, ignore_errors=True)
     tmp_path.mkdir(parents=True, exist_ok=True)
@@ -5624,22 +5730,14 @@ def test_remote_chat_send_invalid_system_input_provenance_honors_scope_and_omiss
         messages = asyncio.run(client.app.state.database.list_control_chat_messages())
 
     assert operator_send_response.status_code == 400
-    assert operator_send_response.json()["detail"] == "system provenance fields require admin scope"
-    assert owner_send_response.status_code == 200
-    assert owner_send_response.json() == {
-        "runId": "run-chat-send-invalid-provenance-owner-api-1",
-        "status": "ok",
-    }
-    assert [message["role"] for message in messages[-2:]] == ["user", "assistant"]
-    assert messages[-2]["content"] == "status"
-    assert [message["session_key"] for message in messages[-2:]] == [
-        "openzues:thread:demo",
-        "openzues:thread:demo",
-    ]
+    assert "systemInputProvenance.kind must be one of" in operator_send_response.json()["detail"]
+    assert owner_send_response.status_code == 400
+    assert "systemInputProvenance.kind must be one of" in owner_send_response.json()["detail"]
+    assert messages == []
 
 
 @pytest.mark.parametrize(("raw_value",), [("",), (0,), (False,)])
-def test_remote_chat_send_falsey_scalar_system_input_provenance_is_omitted_before_scope_gate(
+def test_remote_chat_send_rejects_non_object_system_input_provenance(
     raw_value: object,
 ) -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-chat-send-falsey-provenance-api"
@@ -5683,17 +5781,9 @@ def test_remote_chat_send_falsey_scalar_system_input_provenance_is_omitted_befor
         )
         messages = asyncio.run(client.app.state.database.list_control_chat_messages())
 
-    assert response.status_code == 200
-    assert response.json() == {
-        "runId": "run-chat-send-falsey-provenance-operator-api-1",
-        "status": "ok",
-    }
-    assert [message["role"] for message in messages[-2:]] == ["user", "assistant"]
-    assert messages[-2]["content"] == "status"
-    assert [message["session_key"] for message in messages[-2:]] == [
-        "openzues:thread:demo",
-        "openzues:thread:demo",
-    ]
+    assert response.status_code == 400
+    assert response.json()["detail"] == "systemInputProvenance must be an object"
+    assert messages == []
 
 
 @pytest.mark.parametrize(
@@ -11713,7 +11803,7 @@ def test_gateway_node_method_call_endpoint_chat_abort_interrupts_tracked_runtime
     }
 
 
-def test_gateway_node_method_call_endpoint_treats_empty_chat_abort_run_id_as_session_abort(
+def test_gateway_node_method_call_endpoint_rejects_empty_chat_abort_run_id(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -11778,12 +11868,8 @@ def test_gateway_node_method_call_endpoint_treats_empty_chat_abort_run_id_as_ses
             },
         )
 
-    assert response.status_code == 200
-    assert response.json() == {
-        "ok": True,
-        "aborted": True,
-        "runIds": ["run-chat-send-1"],
-    }
+    assert response.status_code == 400
+    assert response.json()["detail"] == "runId must be a non-empty string"
 
 
 def test_gateway_node_method_call_endpoint_supports_cron_list() -> None:

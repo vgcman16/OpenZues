@@ -3066,19 +3066,45 @@ def create_app(
                 return header_value
         return None
 
+    def extract_gateway_message_route_from_request(
+        request: Request,
+    ) -> dict[str, str | None]:
+        def header_value(name: str) -> str | None:
+            value = str(request.headers.get(name) or "").strip()
+            return value or None
+
+        return {
+            "message_channel": header_value("x-openclaw-message-channel"),
+            "message_account_id": header_value("x-openclaw-account-id"),
+            "message_to": header_value("x-openclaw-message-to"),
+            "message_thread_id": header_value("x-openclaw-thread-id"),
+        }
+
     async def resolve_gateway_node_method_requester(
         request: Request,
     ) -> GatewayNodeMethodRequester:
         client_id = extract_gateway_client_id_from_request(request)
         client_mode = extract_gateway_client_mode_from_request(request)
+        message_route = extract_gateway_message_route_from_request(request)
         host = request.client.host if request.client is not None else None
         if _is_loopback_host(host):
-            return GatewayNodeMethodRequester(client_id=client_id, client_mode=client_mode)
+            return GatewayNodeMethodRequester(
+                client_id=client_id,
+                client_mode=client_mode,
+                message_channel=message_route["message_channel"],
+                message_account_id=message_route["message_account_id"],
+                message_to=message_route["message_to"],
+                message_thread_id=message_route["message_thread_id"],
+            )
         auth = await require_remote_operator(request, "dashboard.read")
         return GatewayNodeMethodRequester(
             caller_scopes=resolve_gateway_method_scopes_for_role(auth.operator.role),
             client_id=client_id,
             client_mode=client_mode,
+            message_channel=message_route["message_channel"],
+            message_account_id=message_route["message_account_id"],
+            message_to=message_route["message_to"],
+            message_thread_id=message_route["message_thread_id"],
         )
 
     def extract_gateway_node_token(headers: dict[str, str]) -> str | None:
@@ -3097,12 +3123,17 @@ def create_app(
     ) -> GatewayNodeMethodRequester:
         client_id = extract_gateway_client_id_from_request(request)
         client_mode = extract_gateway_client_mode_from_request(request)
+        message_route = extract_gateway_message_route_from_request(request)
         host = request.client.host if request.client is not None else None
         if _is_loopback_host(host):
             return GatewayNodeMethodRequester(
                 node_id=node_id,
                 client_id=client_id,
                 client_mode=client_mode,
+                message_channel=message_route["message_channel"],
+                message_account_id=message_route["message_account_id"],
+                message_to=message_route["message_to"],
+                message_thread_id=message_route["message_thread_id"],
             )
         token = extract_gateway_node_token(dict(request.headers))
         if not token:
@@ -3120,6 +3151,10 @@ def create_app(
             node_id=node_id,
             client_id=client_id,
             client_mode=client_mode,
+            message_channel=message_route["message_channel"],
+            message_account_id=message_route["message_account_id"],
+            message_to=message_route["message_to"],
+            message_thread_id=message_route["message_thread_id"],
         )
 
     def build_readiness_payload() -> dict[str, Any]:

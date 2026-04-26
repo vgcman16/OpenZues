@@ -1918,6 +1918,7 @@ async def test_tools_catalog_returns_bounded_openzues_toolset_inventory() -> Non
         "agents_list",
         "sessions_list",
         "sessions_history",
+        "sessions_yield",
         "session_status",
         "sessions_send",
         "sessions_spawn",
@@ -1961,6 +1962,10 @@ async def test_tools_catalog_returns_bounded_openzues_toolset_inventory() -> Non
     )
     assert sessions_history_tool["description"] == (
         "Read bounded, redaction-ready transcript history for a visible session."
+    )
+    sessions_yield_tool = next(tool for tool in group["tools"] if tool["id"] == "sessions_yield")
+    assert sessions_yield_tool["description"] == (
+        "Yield the current session turn until sub-agent or external results arrive."
     )
     session_status_tool = next(tool for tool in group["tools"] if tool["id"] == "session_status")
     assert session_status_tool["description"] == (
@@ -2303,6 +2308,249 @@ async def test_tools_invoke_allows_sessions_spawn_when_gateway_tools_allow_confi
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_sessions_spawn_ignores_unknown_openclaw_args(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-tools-invoke-sessions-spawn-extra.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["sessions_spawn"]}},
+            }
+        )
+    )
+
+    async def fake_chat_send_service(**_kwargs: object) -> dict[str, object]:
+        return {"runId": "run-tools-invoke-spawn-extra-1", "status": "ok"}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        sessions_service=GatewaySessionsService(database),
+        chat_send_service=fake_chat_send_service,
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "sessions_spawn",
+            "args": {
+                "task": "Ship this through tools.invoke.",
+                "unknownLocalField": True,
+            },
+        },
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"]["status"] == "accepted"
+    assert payload["result"]["runId"] == "run-tools-invoke-spawn-extra-1"
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_sessions_spawn_floors_numeric_timeout_seconds(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-tools-invoke-spawn-numeric-timeout.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["sessions_spawn"]}},
+            }
+        )
+    )
+    observed_send: dict[str, object | None] = {}
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        del session_key, message, idempotency_key, thinking, deliver
+        observed_send["timeout_ms"] = timeout_ms
+        return {"runId": "run-tools-invoke-spawn-numeric-timeout-1", "status": "ok"}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        sessions_service=GatewaySessionsService(database),
+        chat_send_service=fake_chat_send_service,
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "sessions_spawn",
+            "args": {
+                "task": "Spawn with numeric timeout.",
+                "timeoutSeconds": 1.9,
+            },
+        },
+    )
+
+    assert payload["ok"] is True
+    assert observed_send["timeout_ms"] == 1_000
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_sessions_spawn_uses_body_session_key_as_requester(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-tools-invoke-spawn-requester.db")
+    await database.initialize()
+    parent_session_key = "agent:main:subagent:parent"
+    await database.upsert_gateway_session_metadata(
+        session_key=parent_session_key,
+        metadata={"label": "Parent Session"},
+    )
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["sessions_spawn"]}},
+            }
+        )
+    )
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        del session_key, message, idempotency_key, thinking, deliver, timeout_ms
+        return {"runId": "run-tools-invoke-spawn-requester-1", "status": "ok"}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        sessions_service=GatewaySessionsService(database),
+        chat_send_service=fake_chat_send_service,
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "sessions_spawn",
+            "sessionKey": parent_session_key,
+            "args": {"task": "Spawn from parent context."},
+        },
+    )
+
+    child_session_key = str(payload["result"]["childSessionKey"])
+    metadata_row = await database.get_gateway_session_metadata(child_session_key)
+    assert metadata_row is not None
+    assert metadata_row["metadata"]["spawnedBy"] == parent_session_key
+    assert metadata_row["metadata"]["parentSessionKey"] == parent_session_key
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_sessions_spawn_ignores_arg_requester_session_key(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-tools-invoke-spawn-arg-requester.db")
+    await database.initialize()
+    parent_session_key = "agent:main:subagent:parent"
+    await database.upsert_gateway_session_metadata(
+        session_key=parent_session_key,
+        metadata={"label": "Parent Session"},
+    )
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["sessions_spawn"]}},
+            }
+        )
+    )
+
+    async def fake_chat_send_service(**_kwargs: object) -> dict[str, object]:
+        return {"runId": "run-tools-invoke-spawn-arg-requester-1", "status": "ok"}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        sessions_service=GatewaySessionsService(database),
+        chat_send_service=fake_chat_send_service,
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "sessions_spawn",
+            "args": {
+                "task": "Spawn without runtime requester context.",
+                "requesterSessionKey": parent_session_key,
+            },
+        },
+    )
+
+    child_session_key = str(payload["result"]["childSessionKey"])
+    metadata_row = await database.get_gateway_session_metadata(child_session_key)
+    assert metadata_row is not None
+    assert metadata_row["metadata"]["spawnedBy"] != parent_session_key
+    assert metadata_row["metadata"]["parentSessionKey"] != parent_session_key
+    assert metadata_row["metadata"]["spawnedBy"].startswith("launch:mode:workspace_affinity")
+    assert metadata_row["metadata"]["parentSessionKey"].startswith(
+        "launch:mode:workspace_affinity"
+    )
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_allows_sessions_send_when_gateway_tools_allow_configured(
     tmp_path,
 ) -> None:
@@ -2323,6 +2571,7 @@ async def test_tools_invoke_allows_sessions_send_when_gateway_tools_allow_config
                 "assistantAgentId": "assistant-control-ui",
                 "serverVersion": "9.9.9",
                 "gateway": {"tools": {"allow": ["sessions_send"]}},
+                "tools": {"sessions": {"visibility": "agent"}},
             }
         )
     )
@@ -2383,6 +2632,2366 @@ async def test_tools_invoke_allows_sessions_send_when_gateway_tools_allow_config
         "deliver": None,
         "timeout_ms": 5000,
     }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_sessions_send_accepts_openclaw_session_key_arg(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-tools-invoke-sessions-send-session-key.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["sessions_send"]}},
+                "tools": {"sessions": {"visibility": "agent"}},
+            }
+        )
+    )
+    observed_send: dict[str, object | None] = {}
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        observed_send.update(
+            {
+                "session_key": session_key,
+                "message": message,
+                "idempotency_key": idempotency_key,
+                "thinking": thinking,
+                "deliver": deliver,
+                "timeout_ms": timeout_ms,
+            }
+        )
+        return {"runId": idempotency_key, "status": "ok"}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        sessions_service=GatewaySessionsService(database),
+        chat_send_service=fake_chat_send_service,
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "sessions_send",
+            "args": {
+                "sessionKey": "agent:main:main",
+                "message": "Ping through the upstream argument shape.",
+                "timeoutSeconds": 3,
+                "idempotencyKey": "run-tools-invoke-send-session-key-1",
+            },
+        },
+    )
+
+    assert payload["ok"] is True
+    assert observed_send == {
+        "session_key": "agent:main:main",
+        "message": "Ping through the upstream argument shape.",
+        "idempotency_key": "run-tools-invoke-send-session-key-1",
+        "thinking": None,
+        "deliver": None,
+        "timeout_ms": 3000,
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_sessions_send_ignores_unknown_openclaw_args(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-tools-invoke-sessions-send-extra.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["sessions_send"]}},
+                "tools": {"sessions": {"visibility": "agent"}},
+            }
+        )
+    )
+    observed_send: dict[str, object | None] = {}
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        observed_send.update(
+            {
+                "session_key": session_key,
+                "message": message,
+                "idempotency_key": idempotency_key,
+                "thinking": thinking,
+                "deliver": deliver,
+                "timeout_ms": timeout_ms,
+            }
+        )
+        return {"runId": idempotency_key, "status": "ok"}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        sessions_service=GatewaySessionsService(database),
+        chat_send_service=fake_chat_send_service,
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "sessions_send",
+            "args": {
+                "sessionKey": "agent:main:main",
+                "message": "Ping through tools.invoke.",
+                "unknownLocalField": True,
+            },
+        },
+    )
+
+    assert payload["ok"] is True
+    assert observed_send["session_key"] == "agent:main:main"
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_sessions_send_preserves_requester_provenance(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-tools-invoke-sessions-send-provenance.db")
+    await database.initialize()
+    requester_session_key = "agent:main:subagent:caller"
+    target_session_key = "agent:main:subagent:target"
+    await database.upsert_gateway_session_metadata(
+        session_key=requester_session_key,
+        metadata={"label": "Caller"},
+    )
+    await database.upsert_gateway_session_metadata(
+        session_key=target_session_key,
+        metadata={"label": "Target"},
+    )
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["sessions_send"]}},
+                "tools": {"sessions": {"visibility": "agent"}},
+            }
+        )
+    )
+    observed_send: dict[str, object | None] = {}
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        observed_send.update(
+            {
+                "session_key": session_key,
+                "message": message,
+                "idempotency_key": idempotency_key,
+                "thinking": thinking,
+                "deliver": deliver,
+                "timeout_ms": timeout_ms,
+            }
+        )
+        return {"runId": idempotency_key, "status": "ok"}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        sessions_service=GatewaySessionsService(database),
+        chat_send_service=fake_chat_send_service,
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "sessions_send",
+            "sessionKey": requester_session_key,
+            "args": {
+                "key": target_session_key,
+                "message": "Ping target with provenance.",
+                "idempotencyKey": "run-tools-invoke-send-provenance-1",
+            },
+        },
+        requester=GatewayNodeMethodRequester(message_channel="slack"),
+    )
+
+    assert payload["ok"] is True
+    assert observed_send["session_key"] == target_session_key
+    assert observed_send["message"] == "\n".join(
+        [
+            "[OpenClaw input provenance]",
+            "Kind: inter_session",
+            f"sourceSessionKey: {requester_session_key}",
+            "sourceChannel: slack",
+            "sourceTool: sessions_send",
+            "",
+            "Agent-to-agent message context:",
+            f"Agent 1 (requester) session: {requester_session_key}.",
+            "Agent 1 (requester) channel: slack.",
+            f"Agent 2 (target) session: {target_session_key}.",
+            "",
+            "Ping target with provenance.",
+        ]
+    )
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_sessions_send_accepts_timeout_seconds_alias(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-tools-invoke-sessions-send-timeout-seconds.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["sessions_send"]}},
+                "tools": {"sessions": {"visibility": "agent"}},
+            }
+        )
+    )
+    observed_send: dict[str, object | None] = {}
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        observed_send.update(
+            {
+                "session_key": session_key,
+                "message": message,
+                "idempotency_key": idempotency_key,
+                "thinking": thinking,
+                "deliver": deliver,
+                "timeout_ms": timeout_ms,
+            }
+        )
+        return {"runId": idempotency_key, "status": "ok"}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        sessions_service=GatewaySessionsService(database),
+        chat_send_service=fake_chat_send_service,
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "sessions_send",
+            "args": {
+                "key": "agent:main:main",
+                "message": "Ping with timeout seconds.",
+                "timeoutSeconds": 5,
+                "idempotencyKey": "run-tools-invoke-send-timeout-seconds-1",
+            },
+        },
+    )
+
+    assert payload["ok"] is True
+    assert observed_send["timeout_ms"] == 5_000
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_sessions_send_floors_numeric_timeout_seconds(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-tools-invoke-sessions-send-numeric-timeout.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["sessions_send"]}},
+                "tools": {"sessions": {"visibility": "agent"}},
+            }
+        )
+    )
+    observed_send: dict[str, object | None] = {}
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        del session_key, message, thinking, deliver
+        observed_send["timeout_ms"] = timeout_ms
+        return {"runId": idempotency_key, "status": "ok"}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        sessions_service=GatewaySessionsService(database),
+        chat_send_service=fake_chat_send_service,
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "sessions_send",
+            "args": {
+                "sessionKey": "agent:main:main",
+                "message": "Ping with numeric timeout seconds.",
+                "timeoutSeconds": 1.9,
+                "idempotencyKey": "run-tools-invoke-send-numeric-timeout-1",
+            },
+        },
+    )
+
+    assert payload["ok"] is True
+    assert observed_send["timeout_ms"] == 1_000
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_sessions_send_zero_timeout_returns_accepted_shape(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-tools-invoke-sessions-send-zero-timeout.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["sessions_send"]}},
+                "tools": {"sessions": {"visibility": "agent"}},
+            }
+        )
+    )
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        del session_key, message, thinking, deliver
+        assert timeout_ms == 0
+        return {"runId": idempotency_key, "status": "ok", "messageSeq": 1}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        sessions_service=GatewaySessionsService(database),
+        chat_send_service=fake_chat_send_service,
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "sessions_send",
+            "args": {
+                "key": "agent:main:main",
+                "message": "Kick this session without waiting.",
+                "timeoutSeconds": 0,
+                "idempotencyKey": "run-tools-invoke-send-zero-timeout-1",
+            },
+        },
+    )
+
+    assert payload == {
+        "ok": True,
+        "result": {
+            "runId": "run-tools-invoke-send-zero-timeout-1",
+            "status": "accepted",
+            "sessionKey": "agent:main:main",
+            "delivery": {"status": "pending", "mode": "announce"},
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_sessions_send_reply_result_is_openclaw_shaped(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-tools-invoke-sessions-send-reply-result.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["sessions_send"]}},
+                "tools": {"sessions": {"visibility": "agent"}},
+            }
+        )
+    )
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        del session_key, message, thinking, deliver
+        assert timeout_ms == 5000
+        return {
+            "runId": idempotency_key,
+            "status": "ok",
+            "reply": "Pong from the target session.",
+            "messageSeq": 2,
+        }
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        sessions_service=GatewaySessionsService(database),
+        chat_send_service=fake_chat_send_service,
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "sessions_send",
+            "args": {
+                "sessionKey": "agent:main:main",
+                "message": "Wait for the target reply.",
+                "timeoutSeconds": 5,
+                "idempotencyKey": "run-tools-invoke-send-reply-result-1",
+            },
+        },
+    )
+
+    assert payload == {
+        "ok": True,
+        "result": {
+            "runId": "run-tools-invoke-send-reply-result-1",
+            "status": "ok",
+            "reply": "Pong from the target session.",
+            "sessionKey": "agent:main:main",
+            "delivery": {"status": "pending", "mode": "announce"},
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_sessions_send_timeout_result_includes_session_key(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-tools-invoke-sessions-send-timeout-result.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["sessions_send"]}},
+            }
+        )
+    )
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        del session_key, message, thinking, deliver, timeout_ms
+        return {
+            "runId": idempotency_key,
+            "status": "timeout",
+            "error": "still running",
+        }
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        sessions_service=GatewaySessionsService(database),
+        chat_send_service=fake_chat_send_service,
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "sessions_send",
+            "args": {
+                "sessionKey": "agent:main:main",
+                "message": "Wait for timeout shape.",
+                "timeoutSeconds": 5,
+                "idempotencyKey": "run-tools-invoke-send-timeout-result-1",
+            },
+        },
+    )
+
+    assert payload == {
+        "ok": True,
+        "result": {
+            "runId": "run-tools-invoke-send-timeout-result-1",
+            "status": "timeout",
+            "error": "still running",
+            "sessionKey": "agent:main:main",
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_sessions_send_waits_for_fresh_assistant_reply(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-tools-invoke-sessions-send-wait-reply.db")
+    await database.initialize()
+    target_session_key = "agent:main:main"
+    await database.append_control_chat_message(
+        role="assistant",
+        content="Old reply must not be reused.",
+        session_key=target_session_key,
+    )
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["sessions_send"]}},
+            }
+        )
+    )
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        del message, thinking, deliver
+        assert session_key == target_session_key
+        assert timeout_ms == 1000
+
+        async def append_reply() -> None:
+            await asyncio.sleep(0.01)
+            await database.append_control_chat_message(
+                role="assistant",
+                content="Fresh reply after dispatch.",
+                session_key=session_key,
+            )
+
+        asyncio.create_task(append_reply())
+        return {"runId": idempotency_key, "status": "ok"}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        sessions_service=GatewaySessionsService(database),
+        chat_send_service=fake_chat_send_service,
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "sessions_send",
+            "args": {
+                "sessionKey": target_session_key,
+                "message": "Wait for a new target reply.",
+                "timeoutSeconds": 1,
+                "idempotencyKey": "run-tools-invoke-send-wait-reply-1",
+            },
+        },
+    )
+
+    assert payload == {
+        "ok": True,
+        "result": {
+            "runId": "run-tools-invoke-send-wait-reply-1",
+            "status": "ok",
+            "reply": "Fresh reply after dispatch.",
+            "sessionKey": target_session_key,
+            "delivery": {"status": "pending", "mode": "announce"},
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_sessions_send_label_waits_for_fresh_assistant_reply(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-tools-invoke-sessions-send-label-wait.db")
+    await database.initialize()
+    requester_session_key = "agent:main:main"
+    target_session_key = "agent:main:subagent:child"
+    await database.upsert_gateway_session_metadata(
+        session_key=requester_session_key,
+        metadata={"label": "Main"},
+    )
+    await database.upsert_gateway_session_metadata(
+        session_key=target_session_key,
+        metadata={"label": "Child", "spawnedBy": requester_session_key},
+    )
+    await database.append_control_chat_message(
+        role="assistant",
+        content="Old label reply must not be reused.",
+        session_key=target_session_key,
+    )
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["sessions_send"]}},
+            }
+        )
+    )
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        del message, thinking, deliver
+        assert session_key == target_session_key
+        assert timeout_ms == 1000
+
+        async def append_reply() -> None:
+            await asyncio.sleep(0.01)
+            await database.append_control_chat_message(
+                role="assistant",
+                content="Fresh label target reply.",
+                session_key=session_key,
+            )
+
+        asyncio.create_task(append_reply())
+        return {"runId": idempotency_key, "status": "ok", "messageSeq": 1}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        sessions_service=GatewaySessionsService(database),
+        chat_send_service=fake_chat_send_service,
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "sessions_send",
+            "sessionKey": requester_session_key,
+            "args": {
+                "label": "Child",
+                "message": "Wait for a new label target reply.",
+                "timeoutSeconds": 1,
+                "idempotencyKey": "run-tools-invoke-send-label-wait-1",
+            },
+        },
+    )
+
+    assert payload == {
+        "ok": True,
+        "result": {
+            "runId": "run-tools-invoke-send-label-wait-1",
+            "status": "ok",
+            "reply": "Fresh label target reply.",
+            "sessionKey": target_session_key,
+            "delivery": {"status": "pending", "mode": "announce"},
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_sessions_send_runs_announce_step_after_reply(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-tools-invoke-sessions-send-announce.db")
+    await database.initialize()
+    requester_session_key = "agent:main:subagent:caller"
+    target_session_key = "agent:main:slack:channel:C123"
+    await database.upsert_gateway_session_metadata(
+        session_key=requester_session_key,
+        metadata={"label": "Caller"},
+    )
+    await database.upsert_gateway_session_metadata(
+        session_key=target_session_key,
+        metadata={
+            "label": "Slack Target",
+            "deliveryContext": {
+                "channel": "slack",
+                "to": "C123",
+                "accountId": "T999",
+                "threadId": "1710000000.9999",
+            },
+            "lastChannel": "slack",
+            "lastTo": "C123",
+            "lastAccountId": "T999",
+            "lastThreadId": "1710000000.9999",
+        },
+    )
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["sessions_send"]}},
+                "tools": {"sessions": {"visibility": "agent"}},
+            }
+        )
+    )
+    observed_chat_sends: list[dict[str, object | None]] = []
+    observed_channel_sends: list[dict[str, object | None]] = []
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        observed_chat_sends.append(
+            {
+                "session_key": session_key,
+                "message": message,
+                "idempotency_key": idempotency_key,
+                "thinking": thinking,
+                "deliver": deliver,
+                "timeout_ms": timeout_ms,
+            }
+        )
+        if len(observed_chat_sends) == 1:
+            return {
+                "runId": idempotency_key,
+                "status": "ok",
+                "reply": "Target worker completed the request.",
+            }
+        if len(observed_chat_sends) == 2:
+            return {
+                "runId": idempotency_key,
+                "status": "ok",
+                "reply": "REPLY_SKIP",
+            }
+        return {
+            "runId": idempotency_key,
+            "status": "ok",
+            "reply": "Announcement for the original Slack thread.",
+        }
+
+    async def fake_send_channel_message_service(
+        *,
+        channel: str,
+        to: str,
+        message: str,
+        account_id: str | None,
+        agent_id: str | None,
+        thread_id: str | None,
+        session_key: str | None,
+        idempotency_key: str,
+        media_urls: list[str] | None = None,
+        gif_playback: bool | None = None,
+    ) -> dict[str, object]:
+        observed_channel_sends.append(
+            {
+                "channel": channel,
+                "to": to,
+                "message": message,
+                "account_id": account_id,
+                "agent_id": agent_id,
+                "thread_id": thread_id,
+                "session_key": session_key,
+                "idempotency_key": idempotency_key,
+                "media_urls": media_urls,
+                "gif_playback": gif_playback,
+            }
+        )
+        return {"ok": True, "id": "slack-message-1"}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        sessions_service=GatewaySessionsService(database),
+        chat_send_service=fake_chat_send_service,
+        send_channel_message_service=fake_send_channel_message_service,
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "sessions_send",
+            "sessionKey": requester_session_key,
+            "args": {
+                "key": target_session_key,
+                "message": "Run the target work.",
+                "timeoutSeconds": 5,
+                "idempotencyKey": "run-tools-invoke-send-announce-1",
+            },
+        },
+        requester=GatewayNodeMethodRequester(message_channel="slack"),
+    )
+
+    if service._background_tasks:
+        await asyncio.gather(*tuple(service._background_tasks))
+
+    assert payload == {
+        "ok": True,
+        "result": {
+            "runId": "run-tools-invoke-send-announce-1",
+            "status": "ok",
+            "reply": "Target worker completed the request.",
+            "sessionKey": target_session_key,
+            "delivery": {"status": "pending", "mode": "announce"},
+        },
+    }
+    assert len(observed_chat_sends) == 3
+    assert "Agent-to-agent reply step:" in str(observed_chat_sends[1]["message"])
+    announce_send = observed_chat_sends[2]
+    assert announce_send["session_key"] == target_session_key
+    assert announce_send["timeout_ms"] == 5_000
+    assert announce_send["deliver"] is None
+    assert announce_send["message"] == "\n".join(
+        [
+            "[OpenClaw input provenance]",
+            "Kind: inter_session",
+            f"sourceSessionKey: {requester_session_key}",
+            "sourceChannel: slack",
+            "sourceTool: sessions_send",
+            "",
+            "Agent-to-agent announce step:",
+            f"Agent 1 (requester) session: {requester_session_key}.",
+            "Agent 1 (requester) channel: slack.",
+            f"Agent 2 (target) session: {target_session_key}.",
+            "Agent 2 (target) channel: slack.",
+            "Original request: Run the target work.",
+            "Round 1 reply: Target worker completed the request.",
+            "Latest reply: Target worker completed the request.",
+            'If you want to remain silent, reply exactly "ANNOUNCE_SKIP".',
+            "Any other reply will be posted to the target channel.",
+            "After this reply, the agent-to-agent conversation is over.",
+            "",
+            "Agent-to-agent announce step.",
+        ]
+    )
+    assert observed_channel_sends == [
+        {
+            "channel": "slack",
+            "to": "C123",
+            "message": "Announcement for the original Slack thread.",
+            "account_id": "T999",
+            "agent_id": None,
+            "thread_id": "1710000000.9999",
+            "session_key": target_session_key,
+            "idempotency_key": observed_channel_sends[0]["idempotency_key"],
+            "media_urls": None,
+            "gif_playback": None,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_sessions_send_zero_timeout_announces_after_later_reply(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-tools-invoke-sessions-send-zero-announce.db")
+    await database.initialize()
+    requester_session_key = "agent:main:subagent:caller"
+    target_session_key = "agent:main:slack:channel:C123"
+    await database.upsert_gateway_session_metadata(
+        session_key=target_session_key,
+        metadata={
+            "deliveryContext": {
+                "channel": "slack",
+                "to": "C123",
+            },
+            "lastChannel": "slack",
+            "lastTo": "C123",
+        },
+    )
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["sessions_send"]}},
+                "tools": {"sessions": {"visibility": "agent"}},
+            }
+        )
+    )
+    observed_chat_sends: list[dict[str, object | None]] = []
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        observed_chat_sends.append(
+            {
+                "session_key": session_key,
+                "message": message,
+                "idempotency_key": idempotency_key,
+                "thinking": thinking,
+                "deliver": deliver,
+                "timeout_ms": timeout_ms,
+            }
+        )
+        if len(observed_chat_sends) == 1:
+            assert timeout_ms == 0
+
+            async def append_later_reply() -> None:
+                await asyncio.sleep(0.01)
+                await database.append_control_chat_message(
+                    role="assistant",
+                    content="Delayed target reply for no-wait send.",
+                    session_key=session_key,
+                )
+
+            asyncio.create_task(append_later_reply())
+            return {
+                "runId": idempotency_key,
+                "status": "ok",
+                "messageSeq": 1,
+            }
+        if len(observed_chat_sends) == 2:
+            return {
+                "runId": idempotency_key,
+                "status": "ok",
+                "reply": "REPLY_SKIP",
+            }
+        return {
+            "runId": idempotency_key,
+            "status": "ok",
+            "reply": "ANNOUNCE_SKIP",
+        }
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        sessions_service=GatewaySessionsService(database),
+        chat_send_service=fake_chat_send_service,
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "sessions_send",
+            "sessionKey": requester_session_key,
+            "args": {
+                "key": target_session_key,
+                "message": "Run without waiting.",
+                "timeoutSeconds": 0,
+                "idempotencyKey": "run-tools-invoke-send-zero-announce-1",
+            },
+        },
+        requester=GatewayNodeMethodRequester(message_channel="slack"),
+    )
+
+    if service._background_tasks:
+        await asyncio.gather(*tuple(service._background_tasks))
+
+    assert payload == {
+        "ok": True,
+        "result": {
+            "runId": "run-tools-invoke-send-zero-announce-1",
+            "status": "accepted",
+            "sessionKey": target_session_key,
+            "delivery": {"status": "pending", "mode": "announce"},
+        },
+    }
+    assert len(observed_chat_sends) == 3
+    assert "Agent-to-agent reply step:" in str(observed_chat_sends[1]["message"])
+    announce_send = observed_chat_sends[2]
+    assert announce_send["session_key"] == target_session_key
+    assert announce_send["timeout_ms"] == 30_000
+    assert "Agent-to-agent announce step:" in str(announce_send["message"])
+    assert "Round 1 reply: Delayed target reply for no-wait send." in str(
+        announce_send["message"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_sessions_send_label_zero_timeout_announces_after_later_reply(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-tools-invoke-sessions-send-label-zero.db")
+    await database.initialize()
+    requester_session_key = "agent:main:main"
+    target_session_key = "agent:main:slack:channel:C123"
+    await database.upsert_gateway_session_metadata(
+        session_key=target_session_key,
+        metadata={
+            "label": "Slack Child",
+            "spawnedBy": requester_session_key,
+            "deliveryContext": {
+                "channel": "slack",
+                "to": "C123",
+            },
+            "lastChannel": "slack",
+            "lastTo": "C123",
+        },
+    )
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["sessions_send"]}},
+            }
+        )
+    )
+    observed_chat_sends: list[dict[str, object | None]] = []
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        observed_chat_sends.append(
+            {
+                "session_key": session_key,
+                "message": message,
+                "idempotency_key": idempotency_key,
+                "thinking": thinking,
+                "deliver": deliver,
+                "timeout_ms": timeout_ms,
+            }
+        )
+        if len(observed_chat_sends) == 1:
+            assert session_key == target_session_key
+            assert timeout_ms == 0
+
+            async def append_later_reply() -> None:
+                await asyncio.sleep(0.01)
+                await database.append_control_chat_message(
+                    role="assistant",
+                    content="Delayed label target reply for no-wait send.",
+                    session_key=session_key,
+                )
+
+            asyncio.create_task(append_later_reply())
+            return {
+                "runId": idempotency_key,
+                "status": "ok",
+                "messageSeq": 1,
+            }
+        if len(observed_chat_sends) == 2:
+            return {
+                "runId": idempotency_key,
+                "status": "ok",
+                "reply": "REPLY_SKIP",
+            }
+        return {
+            "runId": idempotency_key,
+            "status": "ok",
+            "reply": "ANNOUNCE_SKIP",
+        }
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        sessions_service=GatewaySessionsService(database),
+        chat_send_service=fake_chat_send_service,
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "sessions_send",
+            "sessionKey": requester_session_key,
+            "args": {
+                "label": "Slack Child",
+                "message": "Run label target without waiting.",
+                "timeoutSeconds": 0,
+                "idempotencyKey": "run-tools-invoke-send-label-zero-1",
+            },
+        },
+        requester=GatewayNodeMethodRequester(message_channel="slack"),
+    )
+
+    if service._background_tasks:
+        await asyncio.gather(*tuple(service._background_tasks))
+
+    assert payload == {
+        "ok": True,
+        "result": {
+            "runId": "run-tools-invoke-send-label-zero-1",
+            "status": "accepted",
+            "sessionKey": target_session_key,
+            "delivery": {"status": "pending", "mode": "announce"},
+        },
+    }
+    assert len(observed_chat_sends) == 3
+    assert "Agent-to-agent reply step:" in str(observed_chat_sends[1]["message"])
+    announce_send = observed_chat_sends[2]
+    assert announce_send["session_key"] == target_session_key
+    assert announce_send["timeout_ms"] == 30_000
+    assert "Round 1 reply: Delayed label target reply for no-wait send." in str(
+        announce_send["message"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_sessions_send_runs_a2a_reply_ping_pong_before_announce(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-tools-invoke-sessions-send-ping-pong.db")
+    await database.initialize()
+    requester_session_key = "agent:main:subagent:caller"
+    target_session_key = "agent:main:slack:channel:C123"
+    await database.upsert_gateway_session_metadata(
+        session_key=requester_session_key,
+        metadata={"label": "Caller"},
+    )
+    await database.upsert_gateway_session_metadata(
+        session_key=target_session_key,
+        metadata={
+            "deliveryContext": {
+                "channel": "slack",
+                "to": "C123",
+            },
+            "lastChannel": "slack",
+            "lastTo": "C123",
+        },
+    )
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["sessions_send"]}},
+                "tools": {"sessions": {"visibility": "agent"}},
+            }
+        )
+    )
+    observed_chat_sends: list[dict[str, object | None]] = []
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        observed_chat_sends.append(
+            {
+                "session_key": session_key,
+                "message": message,
+                "idempotency_key": idempotency_key,
+                "thinking": thinking,
+                "deliver": deliver,
+                "timeout_ms": timeout_ms,
+            }
+        )
+        if len(observed_chat_sends) == 1:
+            return {
+                "runId": idempotency_key,
+                "status": "ok",
+                "reply": "Target first reply.",
+            }
+        if len(observed_chat_sends) == 2:
+            return {
+                "runId": idempotency_key,
+                "status": "ok",
+                "reply": "Requester follow-up reply.",
+            }
+        if len(observed_chat_sends) == 3:
+            return {
+                "runId": idempotency_key,
+                "status": "ok",
+                "reply": "REPLY_SKIP",
+            }
+        return {
+            "runId": idempotency_key,
+            "status": "ok",
+            "reply": "ANNOUNCE_SKIP",
+        }
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        sessions_service=GatewaySessionsService(database),
+        chat_send_service=fake_chat_send_service,
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "sessions_send",
+            "sessionKey": requester_session_key,
+            "args": {
+                "key": target_session_key,
+                "message": "Start ping-pong work.",
+                "timeoutSeconds": 5,
+                "idempotencyKey": "run-tools-invoke-send-ping-pong-1",
+            },
+        },
+        requester=GatewayNodeMethodRequester(message_channel="slack"),
+    )
+
+    if service._background_tasks:
+        await asyncio.gather(*tuple(service._background_tasks))
+
+    assert payload["result"]["reply"] == "Target first reply."
+    assert len(observed_chat_sends) == 4
+    requester_reply = observed_chat_sends[1]
+    assert requester_reply["session_key"] == requester_session_key
+    assert requester_reply["message"] == "\n".join(
+        [
+            "[OpenClaw input provenance]",
+            "Kind: inter_session",
+            f"sourceSessionKey: {target_session_key}",
+            "sourceChannel: slack",
+            "sourceTool: sessions_send",
+            "",
+            "Agent-to-agent reply step:",
+            "Current agent: Agent 1 (requester).",
+            "Turn 1 of 5.",
+            f"Agent 1 (requester) session: {requester_session_key}.",
+            "Agent 1 (requester) channel: slack.",
+            f"Agent 2 (target) session: {target_session_key}.",
+            "Agent 2 (target) channel: slack.",
+            'If you want to stop the ping-pong, reply exactly "REPLY_SKIP".',
+            "",
+            "Target first reply.",
+        ]
+    )
+    target_reply = observed_chat_sends[2]
+    assert target_reply["session_key"] == target_session_key
+    assert "Current agent: Agent 2 (target)." in str(target_reply["message"])
+    assert "Turn 2 of 5." in str(target_reply["message"])
+    announce_send = observed_chat_sends[3]
+    assert announce_send["session_key"] == target_session_key
+    assert "Round 1 reply: Target first reply." in str(announce_send["message"])
+    assert "Latest reply: Requester follow-up reply." in str(announce_send["message"])
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_sessions_send_honors_configured_ping_pong_turn_cap(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-tools-invoke-sessions-send-ping-pong-cap.db")
+    await database.initialize()
+    requester_session_key = "agent:main:subagent:caller"
+    target_session_key = "agent:main:slack:channel:C123"
+    await database.upsert_gateway_session_metadata(
+        session_key=target_session_key,
+        metadata={
+            "deliveryContext": {
+                "channel": "slack",
+                "to": "C123",
+            },
+            "lastChannel": "slack",
+            "lastTo": "C123",
+        },
+    )
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["sessions_send"]}},
+                "session": {
+                    "agentToAgent": {
+                        "maxPingPongTurns": 1,
+                    },
+                },
+                "tools": {"sessions": {"visibility": "agent"}},
+            }
+        )
+    )
+    observed_chat_sends: list[dict[str, object | None]] = []
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        observed_chat_sends.append(
+            {
+                "session_key": session_key,
+                "message": message,
+                "idempotency_key": idempotency_key,
+                "thinking": thinking,
+                "deliver": deliver,
+                "timeout_ms": timeout_ms,
+            }
+        )
+        if len(observed_chat_sends) == 1:
+            return {
+                "runId": idempotency_key,
+                "status": "ok",
+                "reply": "Target first reply.",
+            }
+        if len(observed_chat_sends) == 2:
+            return {
+                "runId": idempotency_key,
+                "status": "ok",
+                "reply": "Requester capped follow-up.",
+            }
+        return {
+            "runId": idempotency_key,
+            "status": "ok",
+            "reply": "ANNOUNCE_SKIP",
+        }
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        sessions_service=GatewaySessionsService(database),
+        chat_send_service=fake_chat_send_service,
+    )
+
+    await service.call(
+        "tools.invoke",
+        {
+            "tool": "sessions_send",
+            "sessionKey": requester_session_key,
+            "args": {
+                "key": target_session_key,
+                "message": "Start capped ping-pong work.",
+                "timeoutSeconds": 5,
+                "idempotencyKey": "run-tools-invoke-send-ping-pong-cap-1",
+            },
+        },
+        requester=GatewayNodeMethodRequester(message_channel="slack"),
+    )
+
+    if service._background_tasks:
+        await asyncio.gather(*tuple(service._background_tasks))
+
+    assert len(observed_chat_sends) == 3
+    assert "Turn 1 of 1." in str(observed_chat_sends[1]["message"])
+    assert "Agent-to-agent announce step:" in str(observed_chat_sends[2]["message"])
+    assert "Latest reply: Requester capped follow-up." in str(
+        observed_chat_sends[2]["message"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_sessions_send_blocks_cross_agent_when_a2a_disabled(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-tools-invoke-sessions-send-a2a-disabled.db")
+    await database.initialize()
+    requester_session_key = "agent:main:main"
+    target_session_key = "agent:ops:main"
+    await database.upsert_gateway_session_metadata(
+        session_key=requester_session_key,
+        metadata={"label": "Main"},
+    )
+    await database.upsert_gateway_session_metadata(
+        session_key=target_session_key,
+        metadata={"label": "Ops"},
+    )
+    await database.create_gateway_agent(
+        agent_id="ops",
+        name="Ops",
+        workspace=str(tmp_path),
+        model=None,
+        emoji=None,
+        avatar=None,
+    )
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["sessions_send"]}},
+                "tools": {
+                    "sessions": {"visibility": "all"},
+                    "agentToAgent": {
+                        "enabled": False,
+                    },
+                },
+            }
+        )
+    )
+
+    async def fail_chat_send_service(**_kwargs: object) -> dict[str, object]:
+        raise AssertionError("cross-agent sessions_send should be blocked before runtime")
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        sessions_service=GatewaySessionsService(database),
+        chat_send_service=fail_chat_send_service,
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "sessions_send",
+            "sessionKey": requester_session_key,
+            "args": {
+                "key": target_session_key,
+                "message": "Ping ops.",
+                "timeoutSeconds": 5,
+                "idempotencyKey": "run-tools-invoke-send-a2a-disabled-1",
+            },
+        },
+    )
+
+    assert payload == {
+        "ok": True,
+        "result": {
+            "runId": "run-tools-invoke-send-a2a-disabled-1",
+            "status": "forbidden",
+            "error": (
+                "Agent-to-agent messaging is disabled. Set "
+                "tools.agentToAgent.enabled=true to allow cross-agent sends."
+            ),
+            "sessionKey": target_session_key,
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_sessions_send_blocks_cross_agent_label_lookup_when_a2a_disabled(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-tools-invoke-sessions-send-a2a-label.db")
+    await database.initialize()
+    requester_session_key = "agent:main:main"
+    target_session_key = "agent:ops:main"
+    await database.upsert_gateway_session_metadata(
+        session_key=target_session_key,
+        metadata={"label": "Ops"},
+    )
+    await database.create_gateway_agent(
+        agent_id="ops",
+        name="Ops",
+        workspace=str(tmp_path),
+        model=None,
+        emoji=None,
+        avatar=None,
+    )
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["sessions_send"]}},
+            }
+        )
+    )
+
+    async def fail_chat_send_service(**_kwargs: object) -> dict[str, object]:
+        raise AssertionError("cross-agent label sessions_send should be blocked before runtime")
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        sessions_service=GatewaySessionsService(database),
+        chat_send_service=fail_chat_send_service,
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "sessions_send",
+            "sessionKey": requester_session_key,
+            "args": {
+                "label": "Ops",
+                "agentId": "ops",
+                "message": "Ping ops by label.",
+                "timeoutSeconds": 5,
+                "idempotencyKey": "run-tools-invoke-send-a2a-label-disabled-1",
+            },
+        },
+    )
+
+    assert payload == {
+        "ok": True,
+        "result": {
+            "runId": "run-tools-invoke-send-a2a-label-disabled-1",
+            "status": "forbidden",
+            "error": (
+                "Agent-to-agent messaging is disabled. Set "
+                "tools.agentToAgent.enabled=true to allow cross-agent sends."
+            ),
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_sessions_send_defaults_to_tree_visibility_for_cross_agent(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-tools-invoke-sessions-send-tree-visibility.db")
+    await database.initialize()
+    requester_session_key = "agent:main:main"
+    target_session_key = "agent:ops:main"
+    await database.upsert_gateway_session_metadata(
+        session_key=requester_session_key,
+        metadata={"label": "Main"},
+    )
+    await database.upsert_gateway_session_metadata(
+        session_key=target_session_key,
+        metadata={"label": "Ops"},
+    )
+    await database.create_gateway_agent(
+        agent_id="ops",
+        name="Ops",
+        workspace=str(tmp_path),
+        model=None,
+        emoji=None,
+        avatar=None,
+    )
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["sessions_send"]}},
+            }
+        )
+    )
+
+    async def fail_chat_send_service(**_kwargs: object) -> dict[str, object]:
+        raise AssertionError("tree-visibility sessions_send should be blocked before runtime")
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        sessions_service=GatewaySessionsService(database),
+        chat_send_service=fail_chat_send_service,
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "sessions_send",
+            "sessionKey": requester_session_key,
+            "args": {
+                "key": target_session_key,
+                "message": "Ping ops.",
+                "timeoutSeconds": 5,
+                "idempotencyKey": "run-tools-invoke-send-tree-visibility-1",
+            },
+        },
+    )
+
+    assert payload == {
+        "ok": True,
+        "result": {
+            "runId": "run-tools-invoke-send-tree-visibility-1",
+            "status": "forbidden",
+            "error": (
+                "Session send visibility is restricted. Set "
+                "tools.sessions.visibility=all to allow cross-agent access."
+            ),
+            "sessionKey": target_session_key,
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_sessions_send_default_tree_blocks_unspawned_same_agent_session(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-tools-invoke-sessions-send-tree-same-agent.db")
+    await database.initialize()
+    requester_session_key = "agent:main:main"
+    target_session_key = "agent:main:forum:group:1"
+    await database.upsert_gateway_session_metadata(
+        session_key=requester_session_key,
+        metadata={"label": "Main"},
+    )
+    await database.upsert_gateway_session_metadata(
+        session_key=target_session_key,
+        metadata={"label": "Forum"},
+    )
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["sessions_send"]}},
+            }
+        )
+    )
+
+    async def fail_chat_send_service(**_kwargs: object) -> dict[str, object]:
+        raise AssertionError("tree-visibility sessions_send should be blocked before runtime")
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        sessions_service=GatewaySessionsService(database),
+        chat_send_service=fail_chat_send_service,
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "sessions_send",
+            "sessionKey": requester_session_key,
+            "args": {
+                "key": target_session_key,
+                "message": "Ping forum.",
+                "timeoutSeconds": 5,
+                "idempotencyKey": "run-tools-invoke-send-tree-same-agent-1",
+            },
+        },
+    )
+
+    assert payload == {
+        "ok": True,
+        "result": {
+            "runId": "run-tools-invoke-send-tree-same-agent-1",
+            "status": "forbidden",
+            "error": (
+                "Session send visibility is restricted to the current session tree "
+                "(tools.sessions.visibility=tree)."
+            ),
+            "sessionKey": target_session_key,
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_sessions_send_default_tree_allows_spawned_child_session(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-tools-invoke-sessions-send-tree-child.db")
+    await database.initialize()
+    requester_session_key = "agent:main:main"
+    target_session_key = "agent:main:subagent:child"
+    await database.upsert_gateway_session_metadata(
+        session_key=requester_session_key,
+        metadata={"label": "Main"},
+    )
+    await database.upsert_gateway_session_metadata(
+        session_key=target_session_key,
+        metadata={"label": "Child", "spawnedBy": requester_session_key},
+    )
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["sessions_send"]}},
+            }
+        )
+    )
+    observed_send: dict[str, object | None] = {}
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        observed_send.update(
+            {
+                "session_key": session_key,
+                "message": message,
+                "idempotency_key": idempotency_key,
+                "thinking": thinking,
+                "deliver": deliver,
+                "timeout_ms": timeout_ms,
+            }
+        )
+        return {"runId": idempotency_key, "status": "ok"}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        sessions_service=GatewaySessionsService(database),
+        chat_send_service=fake_chat_send_service,
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "sessions_send",
+            "sessionKey": requester_session_key,
+            "args": {
+                "key": target_session_key,
+                "message": "Ping child.",
+                "timeoutSeconds": 5,
+                "idempotencyKey": "run-tools-invoke-send-tree-child-1",
+            },
+        },
+    )
+
+    assert payload["ok"] is True
+    assert observed_send["session_key"] == target_session_key
+    assert observed_send["idempotency_key"] == "run-tools-invoke-send-tree-child-1"
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_sessions_send_enforces_self_visibility(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-tools-invoke-sessions-send-self-visibility.db")
+    await database.initialize()
+    requester_session_key = "agent:main:main"
+    target_session_key = "agent:main:forum:group:1"
+    await database.upsert_gateway_session_metadata(
+        session_key=requester_session_key,
+        metadata={"label": "Main"},
+    )
+    await database.upsert_gateway_session_metadata(
+        session_key=target_session_key,
+        metadata={"label": "Forum"},
+    )
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["sessions_send"]}},
+                "tools": {"sessions": {"visibility": "self"}},
+            }
+        )
+    )
+
+    async def fail_chat_send_service(**_kwargs: object) -> dict[str, object]:
+        raise AssertionError("self-visibility sessions_send should be blocked before runtime")
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        sessions_service=GatewaySessionsService(database),
+        chat_send_service=fail_chat_send_service,
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "sessions_send",
+            "sessionKey": requester_session_key,
+            "args": {
+                "key": target_session_key,
+                "message": "Ping forum.",
+                "timeoutSeconds": 5,
+                "idempotencyKey": "run-tools-invoke-send-self-visibility-1",
+            },
+        },
+    )
+
+    assert payload == {
+        "ok": True,
+        "result": {
+            "runId": "run-tools-invoke-send-self-visibility-1",
+            "status": "forbidden",
+            "error": (
+                "Session send visibility is restricted to the current session "
+                "(tools.sessions.visibility=self)."
+            ),
+            "sessionKey": target_session_key,
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_sessions_history_defaults_to_tree_visibility_for_cross_agent(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-tools-invoke-sessions-history-tree.db")
+    await database.initialize()
+    requester_session_key = "agent:main:main"
+    target_session_key = "agent:ops:main"
+    await database.upsert_gateway_session_metadata(
+        session_key=target_session_key,
+        metadata={"label": "Ops"},
+    )
+    await database.append_control_chat_message(
+        role="assistant",
+        content="Cross-agent history should stay hidden.",
+        session_key=target_session_key,
+    )
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+            }
+        )
+    )
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "sessions_history",
+            "sessionKey": requester_session_key,
+            "args": {"sessionKey": target_session_key},
+        },
+    )
+
+    assert payload == {
+        "ok": True,
+        "result": {
+            "status": "forbidden",
+            "error": (
+                "Session history visibility is restricted. Set "
+                "tools.sessions.visibility=all to allow cross-agent access."
+            ),
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_sessions_history_ignores_unsupported_openclaw_args(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-tools-invoke-sessions-history-args.db")
+    await database.initialize()
+    session_key = "agent:main:main"
+    await database.append_control_chat_message(
+        role="assistant",
+        content="History remains visible.",
+        session_key=session_key,
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "sessions_history",
+            "sessionKey": session_key,
+            "args": {"sessionKey": session_key, "maxChars": 999},
+        },
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"]["messages"][0]["content"][0]["text"] == "History remains visible."
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_session_status_enforces_self_visibility(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-tools-invoke-session-status-self.db")
+    await database.initialize()
+    requester_session_key = "agent:main:main"
+    target_session_key = "agent:main:forum:group:1"
+    await database.upsert_gateway_session_metadata(
+        session_key=target_session_key,
+        metadata={"label": "Forum"},
+    )
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "tools": {"sessions": {"visibility": "self"}},
+            }
+        )
+    )
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "session_status",
+            "sessionKey": requester_session_key,
+            "args": {"sessionKey": target_session_key},
+        },
+    )
+
+    assert payload == {
+        "ok": True,
+        "result": {
+            "status": "forbidden",
+            "error": (
+                "Session status visibility is restricted to the current session "
+                "(tools.sessions.visibility=self)."
+            ),
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_session_status_ignores_unsupported_openclaw_args(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-tools-invoke-session-status-args.db")
+    await database.initialize()
+    session_key = "agent:main:main"
+    await database.upsert_gateway_session_metadata(
+        session_key=session_key,
+        metadata={"label": "Status"},
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "session_status",
+            "sessionKey": session_key,
+            "args": {"sessionKey": session_key, "includeDebug": True},
+        },
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"]["details"]["sessionKey"] == session_key
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_sessions_list_filters_default_tree_cross_agent_rows(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-tools-invoke-sessions-list-tree.db")
+    await database.initialize()
+    requester_session_key = "agent:main:main"
+    target_session_key = "agent:ops:main"
+    await database.upsert_gateway_session_metadata(
+        session_key=requester_session_key,
+        metadata={"label": "Main"},
+    )
+    await database.upsert_gateway_session_metadata(
+        session_key=target_session_key,
+        metadata={"label": "Ops"},
+    )
+    await database.create_gateway_agent(
+        agent_id="ops",
+        name="Ops",
+        workspace=str(tmp_path),
+        model=None,
+        emoji=None,
+        avatar=None,
+    )
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+            }
+        )
+    )
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "sessions_list",
+            "sessionKey": requester_session_key,
+            "args": {"includeUnknown": False},
+        },
+    )
+
+    sessions = payload["result"]["sessions"]
+    keys = {entry["key"] for entry in sessions}
+    assert requester_session_key in keys
+    assert target_session_key not in keys
+    assert payload["result"]["count"] == len(sessions) == 1
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_sessions_list_hides_global_for_non_global_requester(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-tools-invoke-sessions-list-global.db")
+    await database.initialize()
+    requester_session_key = "agent:main:main"
+    await database.upsert_gateway_session_metadata(
+        session_key=requester_session_key,
+        metadata={"label": "Main"},
+    )
+    await database.upsert_gateway_session_metadata(
+        session_key="global",
+        metadata={"label": "Global"},
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "sessions_list",
+            "sessionKey": requester_session_key,
+            "args": {"includeGlobal": True, "includeUnknown": False},
+        },
+    )
+
+    sessions = payload["result"]["sessions"]
+    keys = {entry["key"] for entry in sessions}
+    assert requester_session_key in keys
+    assert "global" not in keys
+    assert payload["result"]["count"] == len(sessions)
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_sessions_list_ignores_unsupported_openclaw_kinds(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-tools-invoke-sessions-list-kinds.db")
+    await database.initialize()
+    requester_session_key = "agent:main:main"
+    await database.upsert_gateway_session_metadata(
+        session_key=requester_session_key,
+        metadata={"label": "Main"},
+    )
+    await database.upsert_gateway_session_metadata(
+        session_key="global",
+        metadata={"label": "Global"},
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "sessions_list",
+            "sessionKey": requester_session_key,
+            "args": {"includeGlobal": True, "includeUnknown": False, "kinds": ["global"]},
+        },
+    )
+
+    keys = {entry["key"] for entry in payload["result"]["sessions"]}
+    assert requester_session_key in keys
+    assert "global" not in keys
+    assert payload["result"]["count"] == len(payload["result"]["sessions"])
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_sessions_list_ignores_unsupported_openclaw_args(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-tools-invoke-sessions-list-args.db")
+    await database.initialize()
+    requester_session_key = "agent:main:main"
+    await database.upsert_gateway_session_metadata(
+        session_key=requester_session_key,
+        metadata={"label": "Main"},
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "sessions_list",
+            "sessionKey": requester_session_key,
+            "args": {"label": "not-the-openclaw-tool-contract"},
+        },
+    )
+
+    keys = {entry["key"] for entry in payload["result"]["sessions"]}
+    assert requester_session_key in keys
+    assert payload["result"]["count"] == len(payload["result"]["sessions"])
 
 
 @pytest.mark.asyncio
@@ -3252,6 +5861,69 @@ async def test_chat_history_hides_skip_only_assistant_entries_and_inline_directi
 
 
 @pytest.mark.asyncio
+async def test_chat_and_sessions_history_strip_tool_result_xml_blocks() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-chat-history-tool-result-xml"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-chat-history-tool-result-xml.db")
+    await database.initialize()
+    session_key = "agent:main:main"
+    await database.append_control_chat_message(
+        role="assistant",
+        content='Prefix\n<tool_result>{"output":"hidden"}</tool_result>\nSuffix',
+        session_key=session_key,
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    chat_payload = await service.call("chat.history", {"sessionKey": session_key})
+    sessions_payload = await service.call("sessions.history", {"sessionKey": session_key})
+
+    assert chat_payload["messages"] == [
+        {
+            "role": "assistant",
+            "content": [{"type": "text", "text": "Prefix\n\nSuffix"}],
+        }
+    ]
+    assert sessions_payload["messages"] == [
+        {
+            "role": "assistant",
+            "content": [{"type": "text", "text": "Prefix\n\nSuffix"}],
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_chat_history_floors_numeric_openclaw_limit(tmp_path) -> None:
+    database = Database(tmp_path / "gateway-chat-history-numeric-limit.db")
+    await database.initialize()
+    session_key = "agent:main:main"
+    await database.append_control_chat_message(
+        role="user",
+        content="Older chat message.",
+        session_key=session_key,
+    )
+    await database.append_control_chat_message(
+        role="assistant",
+        content="Newest chat message.",
+        session_key=session_key,
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    payload = await service.call("chat.history", {"sessionKey": session_key, "limit": 1.9})
+
+    assert len(payload["messages"]) == 1
+    assert payload["messages"][0]["content"][0]["text"] == "Newest chat message."
+
+
+@pytest.mark.asyncio
 async def test_chat_history_preserves_assistant_usage_and_cost_metadata() -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-chat-history-usage-cost"
     shutil.rmtree(tmp_path, ignore_errors=True)
@@ -3326,6 +5998,48 @@ async def test_sessions_history_returns_redacted_agent_tool_projection(tmp_path)
 
 
 @pytest.mark.asyncio
+async def test_sessions_history_filters_openclaw_tool_result_role_by_default(tmp_path) -> None:
+    database = Database(tmp_path / "gateway-sessions-history-tool-result.db")
+    await database.initialize()
+    session_key = "agent:main:main"
+    await database.append_control_chat_message(
+        role="toolResult",
+        content="tool result chatter should be hidden by default",
+        session_key=session_key,
+    )
+    await database.append_control_chat_message(
+        role="assistant",
+        content="assistant answer stays visible",
+        session_key=session_key,
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    payload = await service.call("sessions.history", {"sessionKey": session_key})
+
+    assert payload["messages"] == [
+        {
+            "role": "assistant",
+            "content": [{"type": "text", "text": "assistant answer stays visible"}],
+        }
+    ]
+
+    with_tools = await service.call(
+        "sessions.history",
+        {"sessionKey": session_key, "includeTools": True},
+    )
+    assert with_tools["messages"][0] == {
+        "role": "toolResult",
+        "content": [
+            {"type": "text", "text": "tool result chatter should be hidden by default"}
+        ],
+    }
+
+
+@pytest.mark.asyncio
 async def test_sessions_history_supports_tool_opt_in_and_text_truncation(tmp_path) -> None:
     database = Database(tmp_path / "gateway-sessions-history-tools.db")
     await database.initialize()
@@ -3364,6 +6078,33 @@ async def test_sessions_history_supports_tool_opt_in_and_text_truncation(tmp_pat
 
 
 @pytest.mark.asyncio
+async def test_sessions_history_floors_numeric_openclaw_limit(tmp_path) -> None:
+    database = Database(tmp_path / "gateway-sessions-history-numeric-limit.db")
+    await database.initialize()
+    session_key = "agent:main:main"
+    await database.append_control_chat_message(
+        role="user",
+        content="Older message.",
+        session_key=session_key,
+    )
+    await database.append_control_chat_message(
+        role="assistant",
+        content="Newest message.",
+        session_key=session_key,
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    payload = await service.call("sessions.history", {"sessionKey": session_key, "limit": 1.9})
+
+    assert len(payload["messages"]) == 1
+    assert payload["messages"][0]["content"][0]["text"] == "Newest message."
+
+
+@pytest.mark.asyncio
 async def test_sessions_history_uses_resolved_subagent_store_key(tmp_path) -> None:
     database = Database(tmp_path / "gateway-sessions-history-subagent.db")
     await database.initialize()
@@ -3389,6 +6130,127 @@ async def test_sessions_history_uses_resolved_subagent_store_key(tmp_path) -> No
     assert payload["messages"] == [
         {"role": "assistant", "content": [{"type": "text", "text": "Child transcript."}]}
     ]
+
+
+@pytest.mark.asyncio
+async def test_sessions_yield_matches_openclaw_context_and_callback_results() -> None:
+    yielded_messages: list[str] = []
+
+    async def on_yield(message: str) -> None:
+        yielded_messages.append(message)
+
+    no_context_service = GatewayNodeMethodService(GatewayNodeRegistry())
+    no_callback_service = GatewayNodeMethodService(GatewayNodeRegistry())
+    callback_service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        sessions_yield_service=on_yield,
+    )
+
+    assert await no_context_service.call("sessions.yield", {}) == {
+        "status": "error",
+        "error": "No session context",
+    }
+    assert await no_callback_service.call(
+        "sessions.yield",
+        {"sessionKey": "agent:main:main"},
+    ) == {
+        "status": "error",
+        "error": "Yield not supported in this context",
+    }
+    assert await callback_service.call(
+        "sessions.yield",
+        {"sessionKey": "agent:main:main", "message": "Waiting for fact-checker"},
+    ) == {
+        "status": "yielded",
+        "message": "Waiting for fact-checker",
+    }
+    assert yielded_messages == ["Waiting for fact-checker"]
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_sessions_yield_uses_requester_session_context() -> None:
+    yielded_messages: list[str] = []
+
+    async def on_yield(message: str) -> None:
+        yielded_messages.append(message)
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        sessions_yield_service=on_yield,
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "sessions_yield",
+            "sessionKey": "agent:main:main",
+            "args": {"message": "Waiting for children"},
+        },
+    )
+
+    assert payload == {
+        "ok": True,
+        "result": {
+            "status": "yielded",
+            "message": "Waiting for children",
+        },
+    }
+    assert yielded_messages == ["Waiting for children"]
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_sessions_yield_ignores_session_key_arg_without_context() -> None:
+    yielded_messages: list[str] = []
+
+    async def on_yield(message: str) -> None:
+        yielded_messages.append(message)
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        sessions_yield_service=on_yield,
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "sessions_yield",
+            "args": {"sessionKey": "agent:main:main", "message": "Waiting for children"},
+        },
+    )
+
+    assert payload == {
+        "ok": True,
+        "result": {"status": "error", "error": "No session context"},
+    }
+    assert yielded_messages == []
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_sessions_yield_ignores_unsupported_openclaw_args() -> None:
+    yielded_messages: list[str] = []
+
+    async def on_yield(message: str) -> None:
+        yielded_messages.append(message)
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        sessions_yield_service=on_yield,
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "sessions_yield",
+            "sessionKey": "agent:main:main",
+            "args": {"message": "Waiting for children", "extra": True},
+        },
+    )
+
+    assert payload == {
+        "ok": True,
+        "result": {"status": "yielded", "message": "Waiting for children"},
+    }
+    assert yielded_messages == ["Waiting for children"]
 
 
 @pytest.mark.asyncio
@@ -3465,6 +6327,48 @@ async def test_session_status_model_parameter_updates_session_override(tmp_path)
 
 
 @pytest.mark.asyncio
+async def test_session_status_model_default_resets_auth_and_marks_live_switch(tmp_path) -> None:
+    database = Database(tmp_path / "gateway-session-status-model-default.db")
+    await database.initialize()
+    session_key = "agent:main:main"
+    await database.upsert_gateway_session_metadata(
+        session_key=session_key,
+        metadata={
+            "label": "Model Reset Lane",
+            "providerOverride": "anthropic",
+            "modelOverride": "claude-sonnet-4-6",
+            "modelOverrideSource": "user",
+            "authProfileOverride": "work",
+            "authProfileOverrideSource": "user",
+            "authProfileOverrideCompactionCount": 7,
+        },
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    payload = await service.call(
+        "session.status",
+        {"sessionKey": session_key, "model": "default"},
+    )
+
+    assert payload["details"]["changedModel"] is True
+    metadata_row = await database.get_gateway_session_metadata(session_key)
+    assert metadata_row is not None
+    metadata = metadata_row["metadata"]
+    assert metadata["label"] == "Model Reset Lane"
+    assert metadata["liveModelSwitchPending"] is True
+    assert "providerOverride" not in metadata
+    assert "modelOverride" not in metadata
+    assert "modelOverrideSource" not in metadata
+    assert "authProfileOverride" not in metadata
+    assert "authProfileOverrideSource" not in metadata
+    assert "authProfileOverrideCompactionCount" not in metadata
+
+
+@pytest.mark.asyncio
 async def test_chat_send_returns_run_ack_from_injected_control_chat_bridge() -> None:
     observed: dict[str, object] = {}
 
@@ -3518,6 +6422,78 @@ async def test_chat_send_returns_run_ack_from_injected_control_chat_bridge() -> 
         "timeout_ms": 30_000,
     }
     assert payload == {"runId": "run-chat-send-1", "status": "ok"}
+
+
+@pytest.mark.asyncio
+async def test_chat_send_clamps_large_timeout_ms_like_openclaw() -> None:
+    observed: dict[str, object | None] = {}
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        observed.update(
+            {
+                "session_key": session_key,
+                "message": message,
+                "idempotency_key": idempotency_key,
+                "thinking": thinking,
+                "deliver": deliver,
+                "timeout_ms": timeout_ms,
+            }
+        )
+        return {"runId": idempotency_key, "status": "ok"}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        chat_send_service=fake_chat_send_service,
+    )
+
+    payload = await service.call(
+        "chat.send",
+        {
+            "sessionKey": "openzues:thread:demo",
+            "message": "hold the run open",
+            "timeoutMs": 9_999_999_999,
+            "idempotencyKey": "run-chat-send-timeout-clamp-1",
+        },
+    )
+
+    assert payload == {"runId": "run-chat-send-timeout-clamp-1", "status": "ok"}
+    assert observed == {
+        "session_key": "openzues:thread:demo",
+        "message": "hold the run open",
+        "idempotency_key": "run-chat-send-timeout-clamp-1",
+        "thinking": None,
+        "deliver": None,
+        "timeout_ms": 2_147_000_000,
+    }
+
+
+@pytest.mark.asyncio
+async def test_chat_send_rejects_session_key_above_openclaw_limit() -> None:
+    async def fake_chat_send_service(**_kwargs: object) -> dict[str, object]:
+        raise AssertionError("chat runtime should not receive invalid session keys")
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        chat_send_service=fake_chat_send_service,
+    )
+
+    with pytest.raises(ValueError, match="sessionKey must be at most 512 characters"):
+        await service.call(
+            "chat.send",
+            {
+                "sessionKey": "s" * 513,
+                "message": "hello",
+                "idempotencyKey": "run-chat-send-long-key-1",
+            },
+        )
 
 
 @pytest.mark.asyncio
@@ -4590,116 +7566,52 @@ async def test_chat_send_blank_message_with_provenance_requires_message_or_attac
 
 
 @pytest.mark.asyncio
-async def test_chat_send_invalid_system_input_provenance_is_omitted_after_admin_scope() -> None:
-    observed: dict[str, object] = {}
-
-    async def fake_chat_send_service(
-        *,
-        session_key: str,
-        message: str,
-        idempotency_key: str,
-        thinking: str | None,
-        deliver: bool | None,
-        timeout_ms: int | None,
-    ) -> dict[str, object]:
-        observed.update(
-            {
-                "session_key": session_key,
-                "message": message,
-                "idempotency_key": idempotency_key,
-                "thinking": thinking,
-                "deliver": deliver,
-                "timeout_ms": timeout_ms,
-            }
-        )
-        return {"runId": idempotency_key, "status": "ok"}
+async def test_chat_send_rejects_invalid_system_input_provenance_kind() -> None:
+    async def fake_chat_send_service(**_kwargs: object) -> dict[str, object]:
+        raise AssertionError("chat runtime should not receive invalid provenance")
 
     service = GatewayNodeMethodService(
         GatewayNodeRegistry(),
         chat_send_service=fake_chat_send_service,
     )
 
-    payload = await service.call(
-        "chat.send",
-        {
-            "sessionKey": "openzues:thread:demo",
-            "message": "status",
-            "systemInputProvenance": {"kind": "not-a-real-kind"},
-            "idempotencyKey": "run-chat-send-invalid-system-provenance-1",
-        },
-        requester=GatewayNodeMethodRequester(caller_scopes=(ADMIN_GATEWAY_METHOD_SCOPE,)),
-    )
-
-    assert observed == {
-        "session_key": "openzues:thread:demo",
-        "message": "status",
-        "idempotency_key": "run-chat-send-invalid-system-provenance-1",
-        "thinking": None,
-        "deliver": None,
-        "timeout_ms": None,
-    }
-    assert payload == {
-        "runId": "run-chat-send-invalid-system-provenance-1",
-        "status": "ok",
-    }
+    with pytest.raises(ValueError, match="systemInputProvenance.kind must be one of"):
+        await service.call(
+            "chat.send",
+            {
+                "sessionKey": "openzues:thread:demo",
+                "message": "status",
+                "systemInputProvenance": {"kind": "not-a-real-kind"},
+                "idempotencyKey": "run-chat-send-invalid-system-provenance-1",
+            },
+            requester=GatewayNodeMethodRequester(caller_scopes=(ADMIN_GATEWAY_METHOD_SCOPE,)),
+        )
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("raw_value",), [("",), (0,), (False,)])
-async def test_chat_send_falsey_scalar_system_input_provenance_is_omitted_before_scope_gate(
+async def test_chat_send_rejects_non_object_system_input_provenance(
     raw_value: object,
 ) -> None:
-    observed: dict[str, object] = {}
-
-    async def fake_chat_send_service(
-        *,
-        session_key: str,
-        message: str,
-        idempotency_key: str,
-        thinking: str | None,
-        deliver: bool | None,
-        timeout_ms: int | None,
-    ) -> dict[str, object]:
-        observed.update(
-            {
-                "session_key": session_key,
-                "message": message,
-                "idempotency_key": idempotency_key,
-                "thinking": thinking,
-                "deliver": deliver,
-                "timeout_ms": timeout_ms,
-            }
-        )
-        return {"runId": idempotency_key, "status": "ok"}
+    async def fake_chat_send_service(**_kwargs: object) -> dict[str, object]:
+        raise AssertionError("chat runtime should not receive invalid provenance")
 
     service = GatewayNodeMethodService(
         GatewayNodeRegistry(),
         chat_send_service=fake_chat_send_service,
     )
 
-    payload = await service.call(
-        "chat.send",
-        {
-            "sessionKey": "openzues:thread:demo",
-            "message": "status",
-            "systemInputProvenance": raw_value,
-            "idempotencyKey": "run-chat-send-falsey-system-provenance-1",
-        },
-        requester=GatewayNodeMethodRequester(caller_scopes=("operator",)),
-    )
-
-    assert observed == {
-        "session_key": "openzues:thread:demo",
-        "message": "status",
-        "idempotency_key": "run-chat-send-falsey-system-provenance-1",
-        "thinking": None,
-        "deliver": None,
-        "timeout_ms": None,
-    }
-    assert payload == {
-        "runId": "run-chat-send-falsey-system-provenance-1",
-        "status": "ok",
-    }
+    with pytest.raises(ValueError, match="systemInputProvenance must be an object"):
+        await service.call(
+            "chat.send",
+            {
+                "sessionKey": "openzues:thread:demo",
+                "message": "status",
+                "systemInputProvenance": raw_value,
+                "idempotencyKey": "run-chat-send-invalid-system-provenance-shape-1",
+            },
+            requester=GatewayNodeMethodRequester(caller_scopes=("operator",)),
+        )
 
 
 @pytest.mark.asyncio
@@ -5179,6 +8091,25 @@ async def test_chat_inject_appends_assistant_message_and_publishes_session_messa
             {
                 "sessionKey": "launch:mode:workspace_affinity:thread:missing",
                 "message": "Injected parity note",
+            },
+        )
+
+    with pytest.raises(ValueError, match="message must be a non-empty string"):
+        await service.call(
+            "chat.inject",
+            {
+                "sessionKey": session_key,
+                "message": "",
+            },
+        )
+
+    with pytest.raises(ValueError, match="label must be at most 100 characters"):
+        await service.call(
+            "chat.inject",
+            {
+                "sessionKey": session_key,
+                "message": "Injected parity note",
+                "label": "L" * 101,
             },
         )
 
@@ -6145,7 +9076,7 @@ async def test_chat_abort_uses_resolved_subagent_store_key() -> None:
 
 
 @pytest.mark.asyncio
-async def test_chat_abort_treats_empty_run_id_as_session_scoped_abort() -> None:
+async def test_chat_abort_rejects_empty_run_id_like_openclaw() -> None:
     observed_interrupt: dict[str, str | None] = {}
 
     async def fake_chat_send_service(
@@ -6174,24 +9105,12 @@ async def test_chat_abort_treats_empty_run_id_as_session_scoped_abort() -> None:
         chat_abort_service=fake_chat_abort_service,
     )
 
-    await service.call(
-        "chat.send",
-        {
-            "sessionKey": "openzues:thread:demo",
-            "message": "status",
-            "idempotencyKey": "run-chat-send-1",
-        },
-    )
-    payload = await service.call(
-        "chat.abort",
-        {"sessionKey": "openzues:thread:demo", "runId": ""},
-    )
-
-    assert observed_interrupt == {
-        "session_key": "openzues:thread:demo",
-        "run_id": None,
-    }
-    assert payload == {"ok": True, "aborted": True, "runIds": ["run-chat-send-1"]}
+    with pytest.raises(ValueError, match="runId must be a non-empty string"):
+        await service.call(
+            "chat.abort",
+            {"sessionKey": "openzues:thread:demo", "runId": ""},
+        )
+    assert observed_interrupt == {}
 
 
 @pytest.mark.asyncio
@@ -7723,6 +10642,36 @@ async def test_sessions_delete_removes_metadata_backed_session_and_transcript() 
 
 
 @pytest.mark.asyncio
+async def test_sessions_delete_false_deletes_entry_and_retains_transcript(tmp_path) -> None:
+    database = Database(tmp_path / "gateway-sessions-delete-retain-transcript.db")
+    await database.initialize()
+    session_key = "agent:main:subagent:retain-transcript"
+    await database.upsert_gateway_session_metadata(
+        session_key=session_key,
+        metadata={"label": "Retain Transcript"},
+    )
+    await database.append_control_chat_message(
+        role="assistant",
+        content="Transcript should remain.",
+        session_key=session_key,
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    payload = await service.call(
+        "sessions.delete",
+        {"key": session_key, "deleteTranscript": False},
+    )
+
+    assert payload == {"ok": True, "key": session_key, "deleted": True, "archived": []}
+    assert await database.get_gateway_session_metadata(session_key) is None
+    assert await database.count_control_chat_messages(session_key=session_key) == 1
+
+
+@pytest.mark.asyncio
 async def test_sessions_delete_uses_resolved_subagent_store_key() -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-delete-subagent-alias"
     shutil.rmtree(tmp_path, ignore_errors=True)
@@ -8779,6 +11728,84 @@ async def test_sessions_preview_returns_current_session_items_and_missing_unknow
             },
         ],
     }
+
+
+@pytest.mark.asyncio
+async def test_sessions_preview_filters_blank_keys_like_openclaw() -> None:
+    database = Database(Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-preview-blank.db")
+    shutil.rmtree(database.path.parent, ignore_errors=True)
+    database.path.parent.mkdir(parents=True, exist_ok=True)
+    await database.initialize()
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    payload = await service.call("sessions.preview", {"keys": ["  ", "\t"]}, now_ms=222)
+
+    assert payload == {"ts": 222, "previews": []}
+
+
+@pytest.mark.asyncio
+async def test_sessions_preview_preserves_duplicate_keys_like_openclaw() -> None:
+    database = Database(Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-preview-duplicate.db")
+    shutil.rmtree(database.path.parent, ignore_errors=True)
+    database.path.parent.mkdir(parents=True, exist_ok=True)
+    await database.initialize()
+    session_key = "openzues:thread:duplicate-preview"
+    await database.append_control_chat_message(
+        role="assistant",
+        content="Duplicate preview ready.",
+        session_key=session_key,
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    payload = await service.call(
+        "sessions.preview",
+        {"keys": [session_key, session_key]},
+        now_ms=333,
+    )
+
+    assert payload == {
+        "ts": 333,
+        "previews": [
+            {
+                "key": session_key,
+                "status": "ok",
+                "items": [{"role": "assistant", "text": "Duplicate preview ready."}],
+            },
+            {
+                "key": session_key,
+                "status": "ok",
+                "items": [{"role": "assistant", "text": "Duplicate preview ready."}],
+            },
+        ],
+    }
+
+
+@pytest.mark.asyncio
+async def test_sessions_preview_caps_keys_like_openclaw() -> None:
+    database = Database(Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-preview-key-cap.db")
+    shutil.rmtree(database.path.parent, ignore_errors=True)
+    database.path.parent.mkdir(parents=True, exist_ok=True)
+    await database.initialize()
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+    )
+    keys = [f"openzues:thread:preview-{index}" for index in range(65)]
+
+    payload = await service.call("sessions.preview", {"keys": keys}, now_ms=444)
+
+    assert len(payload["previews"]) == 64
+    assert payload["previews"][0]["key"] == "openzues:thread:preview-0"
+    assert payload["previews"][-1]["key"] == "openzues:thread:preview-63"
 
 
 @pytest.mark.asyncio
@@ -9922,6 +12949,32 @@ async def test_sessions_create_registers_metadata_session_and_sends_initial_mess
 
 
 @pytest.mark.asyncio
+async def test_sessions_create_returns_run_error_when_initial_send_fails(tmp_path) -> None:
+    database = Database(tmp_path / "gateway-sessions-create-run-error.db")
+    await database.initialize()
+
+    async def fake_chat_send_service(**_kwargs: object) -> dict[str, object]:
+        raise RuntimeError("agent offline")
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        chat_send_service=fake_chat_send_service,
+    )
+
+    payload = await service.call(
+        "sessions.create",
+        {"label": "Created With Failed Run", "task": "Start this lane."},
+    )
+
+    assert payload["ok"] is True
+    assert payload["runStarted"] is False
+    assert payload["runError"] == {"message": "agent offline"}
+    assert await database.get_gateway_session_metadata(str(payload["key"])) is not None
+
+
+@pytest.mark.asyncio
 async def test_sessions_create_accepts_persisted_custom_agent_sessions() -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-create-custom-agent"
     shutil.rmtree(tmp_path, ignore_errors=True)
@@ -10088,6 +13141,34 @@ async def test_sessions_create_scopes_custom_agent_request_key() -> None:
     assert metadata_row["metadata"]["agentId"] == "builder-prime"
     assert metadata_row["metadata"]["label"] == "Builder explicit child"
     assert await database.get_gateway_session_metadata("subagent:child") is None
+
+
+@pytest.mark.asyncio
+async def test_sessions_create_reports_openclaw_key_agent_mismatch(tmp_path) -> None:
+    database = Database(tmp_path / "gateway-sessions-create-agent-mismatch.db")
+    await database.initialize()
+    await database.create_gateway_agent(
+        agent_id="builder-prime",
+        name="Builder Prime",
+        workspace=str(tmp_path / "agents" / "builder-prime"),
+        model=None,
+        emoji=None,
+        avatar=None,
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"sessions\.create key agent \(auditor\) does not match agentId \(builder-prime\)",
+    ):
+        await service.call(
+            "sessions.create",
+            {"key": "agent:auditor:main", "agentId": "builder-prime"},
+        )
 
 
 @pytest.mark.asyncio
@@ -10266,6 +13347,93 @@ async def test_sessions_spawn_creates_openclaw_style_subagent_session() -> None:
     assert metadata_row["metadata"]["thinkingLevel"] == "medium"
     assert metadata_row["metadata"]["spawnedBy"].startswith("launch:mode:workspace_affinity")
     assert metadata_row["metadata"]["spawnDepth"] == 1
+
+
+@pytest.mark.asyncio
+async def test_sessions_spawn_returns_openclaw_accepted_note_for_run_mode(tmp_path) -> None:
+    database = Database(tmp_path / "gateway-sessions-spawn-accepted-note.db")
+    await database.initialize()
+
+    async def fake_chat_send_service(**_kwargs: object) -> dict[str, object]:
+        return {"runId": "run-spawned-session-note-1", "status": "ok"}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        chat_send_service=fake_chat_send_service,
+    )
+
+    payload = await service.call("sessions.spawn", {"task": "Spawn with note."})
+
+    assert payload["note"] == (
+        "Auto-announce is push-based. After spawning children, do NOT call "
+        "sessions_list, sessions_history, exec sleep, or any polling tool. "
+        "Wait for completion events to arrive as user messages, track expected "
+        "child session keys, and only send your final answer after ALL expected "
+        "completions arrive. If a child completion event arrives AFTER your final "
+        "answer, reply ONLY with NO_REPLY."
+    )
+
+
+@pytest.mark.asyncio
+async def test_sessions_spawn_reports_model_applied_for_model_override(tmp_path) -> None:
+    database = Database(tmp_path / "gateway-sessions-spawn-model-applied.db")
+    await database.initialize()
+
+    async def fake_chat_send_service(**_kwargs: object) -> dict[str, object]:
+        return {"runId": "run-spawned-session-model-1", "status": "ok"}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        chat_send_service=fake_chat_send_service,
+    )
+
+    payload = await service.call(
+        "sessions.spawn",
+        {"task": "Spawn with model.", "model": "gpt-5.4-mini"},
+    )
+
+    assert payload["modelApplied"] is True
+
+
+@pytest.mark.asyncio
+async def test_sessions_spawn_cleans_up_provisional_child_when_runtime_start_fails(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-sessions-spawn-start-failure.db")
+    await database.initialize()
+
+    async def fake_chat_send_service(**_kwargs: object) -> dict[str, object]:
+        raise RuntimeError("spawn startup failed")
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        hub=BroadcastHub(),
+        sessions_service=GatewaySessionsService(database),
+        chat_send_service=fake_chat_send_service,
+    )
+
+    payload = await service.call(
+        "sessions.spawn",
+        {"task": "Fail after provisional child session creation."},
+        now_ms=891,
+    )
+
+    child_key = str(payload["childSessionKey"])
+    assert payload == {
+        "status": "error",
+        "error": "spawn startup failed",
+        "childSessionKey": child_key,
+        "mode": "run",
+        "cleanup": "keep",
+    }
+    assert child_key.startswith("launch:mode:workspace_affinity:thread:gateway-spawn-")
+    assert await database.get_gateway_session_metadata(child_key) is None
+    assert await database.count_control_chat_messages(session_key=child_key) == 0
 
 
 @pytest.mark.asyncio
@@ -10646,6 +13814,48 @@ async def test_sessions_spawn_rejects_acp_required_sandbox_policy() -> None:
 
 
 @pytest.mark.asyncio
+async def test_sessions_spawn_rejects_light_context_for_acp_before_runtime_boundary() -> None:
+    service = GatewayNodeMethodService(GatewayNodeRegistry())
+
+    with pytest.raises(
+        ValueError,
+        match="lightContext is only supported for runtime='subagent'.",
+    ):
+        await service.call(
+            "sessions.spawn",
+            {
+                "task": "Summarize this through ACP.",
+                "runtime": "acp",
+                "lightContext": True,
+            },
+        )
+
+
+@pytest.mark.asyncio
+async def test_sessions_spawn_rejects_acp_attachments_before_runtime_boundary() -> None:
+    service = GatewayNodeMethodService(GatewayNodeRegistry())
+
+    payload = await service.call(
+        "sessions.spawn",
+        {
+            "task": "Review this attachment through ACP.",
+            "runtime": "acp",
+            "agentId": "codex",
+            "attachments": [{"name": "spec.md", "content": "Ship it.", "encoding": "utf8"}],
+        },
+    )
+
+    assert payload == {
+        "status": "error",
+        "error": (
+            "attachments are currently unsupported for runtime=acp; "
+            "use runtime=subagent or remove attachments"
+        ),
+        "role": "codex",
+    }
+
+
+@pytest.mark.asyncio
 async def test_sessions_spawn_session_mode_requires_thread_binding(tmp_path) -> None:
     database = Database(tmp_path / "gateway-sessions-spawn-session-mode.db")
     await database.initialize()
@@ -10856,7 +14066,10 @@ async def test_sessions_patch_persists_current_session_metadata_and_surfaces_it(
         sessions_service=GatewaySessionsService(database),
     )
 
-    with pytest.raises(ValueError, match="responseUsage must be one of: full, off, on, tokens"):
+    with pytest.raises(
+        ValueError,
+        match=r'invalid responseUsage \(use "off"\|"tokens"\|"full"\)',
+    ):
         await service.call(
             "sessions.patch",
             {
@@ -10935,6 +14148,311 @@ async def test_sessions_patch_persists_current_session_metadata_and_surfaces_it(
     assert history_payload["fastMode"] is True
     assert history_payload["verboseLevel"] == "high"
     assert history_payload["traceLevel"] == "debug"
+
+
+@pytest.mark.asyncio
+async def test_sessions_patch_rejects_spawn_lineage_on_main_session(tmp_path) -> None:
+    database = Database(tmp_path / "gateway-sessions-patch-main-lineage.db")
+    await database.initialize()
+    current_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+    )
+    await database.append_control_chat_message(
+        role="assistant",
+        content="Main session exists.",
+        session_key=current_session_key,
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"spawnedBy is only supported for subagent:\* or acp:\* sessions",
+    ):
+        await service.call(
+            "sessions.patch",
+            {"key": current_session_key, "spawnedBy": "agent:main:main"},
+        )
+
+
+@pytest.mark.asyncio
+async def test_sessions_patch_rejects_changed_spawned_by(tmp_path) -> None:
+    database = Database(tmp_path / "gateway-sessions-patch-spawned-by-change.db")
+    await database.initialize()
+    child_session_key = "agent:main:subagent:child"
+    await database.upsert_gateway_session_metadata(
+        session_key=child_session_key,
+        metadata={"spawnedBy": "agent:main:main"},
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    with pytest.raises(ValueError, match="spawnedBy cannot be changed once set"):
+        await service.call(
+            "sessions.patch",
+            {"key": child_session_key, "spawnedBy": "agent:main:other"},
+        )
+
+
+@pytest.mark.asyncio
+async def test_sessions_patch_rejects_duplicate_label(tmp_path) -> None:
+    database = Database(tmp_path / "gateway-sessions-patch-duplicate-label.db")
+    await database.initialize()
+    first_session_key = "agent:main:subagent:first"
+    second_session_key = "agent:main:subagent:second"
+    await database.upsert_gateway_session_metadata(
+        session_key=first_session_key,
+        metadata={"label": "Already Claimed"},
+    )
+    await database.upsert_gateway_session_metadata(
+        session_key=second_session_key,
+        metadata={"label": "Second Session"},
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    with pytest.raises(ValueError, match="label already in use: Already Claimed"):
+        await service.call(
+            "sessions.patch",
+            {"key": second_session_key, "label": "Already Claimed"},
+        )
+
+
+@pytest.mark.asyncio
+async def test_sessions_patch_normalizes_response_usage_on_to_tokens(tmp_path) -> None:
+    database = Database(tmp_path / "gateway-sessions-patch-response-usage.db")
+    await database.initialize()
+    current_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+    )
+    await database.append_control_chat_message(
+        role="assistant",
+        content="Patch response usage.",
+        session_key=current_session_key,
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    payload = await service.call(
+        "sessions.patch",
+        {"key": current_session_key, "responseUsage": "on"},
+    )
+
+    assert payload["entry"]["responseUsage"] == "tokens"
+    metadata_row = await database.get_gateway_session_metadata(current_session_key)
+    assert metadata_row is not None
+    assert metadata_row["metadata"]["responseUsage"] == "tokens"
+
+
+@pytest.mark.asyncio
+async def test_sessions_patch_normalizes_exec_security_case(tmp_path) -> None:
+    database = Database(tmp_path / "gateway-sessions-patch-exec-security.db")
+    await database.initialize()
+    current_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+    )
+    await database.append_control_chat_message(
+        role="assistant",
+        content="Patch exec security.",
+        session_key=current_session_key,
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    payload = await service.call(
+        "sessions.patch",
+        {"key": current_session_key, "execSecurity": "ALLOWLIST"},
+    )
+
+    assert payload["entry"]["execSecurity"] == "allowlist"
+    metadata_row = await database.get_gateway_session_metadata(current_session_key)
+    assert metadata_row is not None
+    assert metadata_row["metadata"]["execSecurity"] == "allowlist"
+
+
+@pytest.mark.asyncio
+async def test_sessions_patch_normalizes_exec_ask_case(tmp_path) -> None:
+    database = Database(tmp_path / "gateway-sessions-patch-exec-ask.db")
+    await database.initialize()
+    current_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+    )
+    await database.append_control_chat_message(
+        role="assistant",
+        content="Patch exec ask.",
+        session_key=current_session_key,
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    payload = await service.call(
+        "sessions.patch",
+        {"key": current_session_key, "execAsk": "ON-MISS"},
+    )
+
+    assert payload["entry"]["execAsk"] == "on-miss"
+    metadata_row = await database.get_gateway_session_metadata(current_session_key)
+    assert metadata_row is not None
+    assert metadata_row["metadata"]["execAsk"] == "on-miss"
+
+
+@pytest.mark.asyncio
+async def test_sessions_patch_normalizes_exec_host_case(tmp_path) -> None:
+    database = Database(tmp_path / "gateway-sessions-patch-exec-host.db")
+    await database.initialize()
+    current_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+    )
+    await database.append_control_chat_message(
+        role="assistant",
+        content="Patch exec host.",
+        session_key=current_session_key,
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    payload = await service.call(
+        "sessions.patch",
+        {"key": current_session_key, "execHost": "SANDBOX"},
+    )
+
+    assert payload["entry"]["execHost"] == "sandbox"
+    metadata_row = await database.get_gateway_session_metadata(current_session_key)
+    assert metadata_row is not None
+    assert metadata_row["metadata"]["execHost"] == "sandbox"
+
+
+@pytest.mark.asyncio
+async def test_sessions_patch_normalizes_elevated_level_alias(tmp_path) -> None:
+    database = Database(tmp_path / "gateway-sessions-patch-elevated-level.db")
+    await database.initialize()
+    current_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+    )
+    await database.append_control_chat_message(
+        role="assistant",
+        content="Patch elevated level.",
+        session_key=current_session_key,
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    payload = await service.call(
+        "sessions.patch",
+        {"key": current_session_key, "elevatedLevel": "auto-approve"},
+    )
+
+    assert payload["entry"]["elevatedLevel"] == "full"
+    metadata_row = await database.get_gateway_session_metadata(current_session_key)
+    assert metadata_row is not None
+    assert metadata_row["metadata"]["elevatedLevel"] == "full"
+
+
+@pytest.mark.asyncio
+async def test_sessions_patch_normalizes_send_policy_case(tmp_path) -> None:
+    database = Database(tmp_path / "gateway-sessions-patch-send-policy.db")
+    await database.initialize()
+    child_session_key = "agent:main:subagent:send-policy-child"
+    await database.upsert_gateway_session_metadata(
+        session_key=child_session_key,
+        metadata={"label": "Send Policy Child"},
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    payload = await service.call(
+        "sessions.patch",
+        {"key": child_session_key, "sendPolicy": "ALLOW"},
+    )
+
+    assert payload["entry"]["sendPolicy"] == "allow"
+    metadata_row = await database.get_gateway_session_metadata(child_session_key)
+    assert metadata_row is not None
+    assert metadata_row["metadata"]["sendPolicy"] == "allow"
+
+
+@pytest.mark.asyncio
+async def test_sessions_patch_normalizes_group_activation_case(tmp_path) -> None:
+    database = Database(tmp_path / "gateway-sessions-patch-group-activation.db")
+    await database.initialize()
+    current_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+    )
+    await database.append_control_chat_message(
+        role="assistant",
+        content="Patch group activation.",
+        session_key=current_session_key,
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    payload = await service.call(
+        "sessions.patch",
+        {"key": current_session_key, "groupActivation": "ALWAYS"},
+    )
+
+    assert payload["entry"]["groupActivation"] == "always"
+    metadata_row = await database.get_gateway_session_metadata(current_session_key)
+    assert metadata_row is not None
+    assert metadata_row["metadata"]["groupActivation"] == "always"
 
 
 @pytest.mark.asyncio
@@ -18847,6 +22365,62 @@ async def test_sessions_list_supports_openclaw_kind_and_message_limit_filters() 
 
 
 @pytest.mark.asyncio
+async def test_sessions_list_floors_numeric_openclaw_filters() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-list-numeric-filters"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-sessions-list-numeric-filters.db")
+    await database.initialize()
+    session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+    )
+    await database.append_control_chat_message(
+        role="assistant",
+        content="First visible message.",
+        session_key=session_key,
+    )
+    await database.append_control_chat_message(
+        role="assistant",
+        content="Latest visible message.",
+        session_key=session_key,
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    payload = await service.call(
+        "sessions.list",
+        {
+            "includeGlobal": True,
+            "includeUnknown": False,
+            "limit": 1.9,
+            "activeMinutes": 30.8,
+            "messageLimit": 1.9,
+        },
+        now_ms=802,
+    )
+
+    assert [session["key"] for session in payload["sessions"]] == [session_key]
+    assert payload["sessions"][0]["messages"] == [
+        {
+            "role": "assistant",
+            "content": [{"type": "text", "text": "Latest visible message."}],
+            "id": str(payload["sessions"][0]["messages"][0]["id"]),
+            "__openclaw": {
+                "id": str(payload["sessions"][0]["messages"][0]["id"]),
+                "seq": 2,
+            },
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_sessions_list_supports_include_derived_titles() -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-list-derived-title-service"
     shutil.rmtree(tmp_path, ignore_errors=True)
@@ -18991,6 +22565,29 @@ async def test_sessions_get_honors_explicit_limits_above_direct_rest_cap() -> No
     assert len(payload["messages"]) == 1001
     assert payload["messages"][0]["content"][0]["text"] == "message 1"
     assert payload["messages"][-1]["content"][0]["text"] == "message 1001"
+
+
+@pytest.mark.asyncio
+async def test_sessions_get_floors_numeric_openclaw_limit(tmp_path) -> None:
+    database = Database(tmp_path / "gateway-sessions-get-numeric-limit.db")
+    await database.initialize()
+    session_key = "openzues:thread:numeric-limit"
+    await database.append_control_chat_message(
+        role="user",
+        content="Older get message.",
+        session_key=session_key,
+    )
+    await database.append_control_chat_message(
+        role="assistant",
+        content="Newest get message.",
+        session_key=session_key,
+    )
+    service = GatewayNodeMethodService(GatewayNodeRegistry(), database=database)
+
+    payload = await service.call("sessions.get", {"key": session_key, "limit": 1.9})
+
+    assert len(payload["messages"]) == 1
+    assert payload["messages"][0]["content"][0]["text"] == "Newest get message."
 
 
 @pytest.mark.asyncio

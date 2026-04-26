@@ -148,6 +148,18 @@ _SPECS: tuple[HermesToolsetSpec, ...] = (
         aliases=("session_history", "chat_history"),
     ),
     HermesToolsetSpec(
+        name="sessions_yield",
+        capability_family="session operations",
+        summary="Yield the current session turn until sub-agent or external results arrive.",
+        posture="partial",
+        warning=(
+            "Sessions-yield posture maps to OpenClaw's turn-yield result contract; "
+            "runtime supervisor resume behavior depends on the embedding lane wiring "
+            "a yield callback."
+        ),
+        aliases=("session_yield", "sessions.yield"),
+    ),
+    HermesToolsetSpec(
         name="session_status",
         capability_family="session operations",
         summary="Show a bounded session status card with model, usage, and route context.",
@@ -164,8 +176,9 @@ _SPECS: tuple[HermesToolsetSpec, ...] = (
         summary="Send a bounded message to a visible session by key or label.",
         posture="partial",
         warning=(
-            "Sessions-send posture maps to OpenZues sessions.send dispatch; full OpenClaw "
-            "agent-to-agent announce and ping-pong runtime parity is still in progress."
+            "Sessions-send posture maps to OpenZues sessions.send dispatch with OpenClaw-style "
+            "agent-to-agent announce and ping-pong flow; full OpenClaw visibility sandbox and "
+            "native tool-executor parity is still in progress."
         ),
         aliases=("session_send", "sessions.send"),
     ),

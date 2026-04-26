@@ -21,12 +21,12 @@ What that means in practice:
 
 ## OpenClaw parity progress
 
-Best-effort estimate: OpenZues is at roughly **30%** of overall OpenClaw parity today, with a reasonable band of about **25-35%**.
+Best-effort estimate: OpenZues is at roughly **43%** of overall OpenClaw parity today, with a reasonable band of about **38-48%**.
 That estimate is intentionally conservative and reflects the whole OpenClaw product surface, not just the local control-plane path.
 
-Most of the parity progress so far is in gateway/control-plane-adjacent work: setup and bootstrap flows, launch routing and session-key handling, operator supervision, checkpoint continuity, gateway method coverage, bounded session surfaces, and mission-backed cron/usage compatibility.
-The current active gateway/cron/session-delivery family is materially further along, at roughly **70%** of its bounded local parity path.
-The biggest gaps are still the broader OpenClaw runtime surfaces: multi-channel delivery, wider CLI/runtime parity, browser and canvas control, nodes, voice, packaging, and companion apps.
+Most of the parity progress so far is in gateway/control-plane-adjacent work: setup and bootstrap flows, launch routing and session-key handling, operator supervision, checkpoint continuity, gateway method coverage, bounded session/chat/tool contracts, direct session history, browser/canvas command bridges, and mission-backed cron/usage compatibility.
+The current active gateway/session/tool-contract family is materially further along, at roughly **94%** of its bounded local parity path, while the chat/session contract subfamily is roughly **96%** after the latest schema and lifecycle slices.
+The biggest gaps are still the broader OpenClaw runtime surfaces: ACP-backed subagent spawning, provider-native outbound delivery, wider CLI/runtime parity, packaging, companion apps, and exact file-store-only transcript edge cases that do not map cleanly to OpenZues' SQLite-backed store.
 
 For the detailed parity rollup, see [docs/openclaw-parity-progress.md](docs/openclaw-parity-progress.md) and the living checkpoint ledger at [docs/openclaw-parity-checkpoint-2026-04-10.md](docs/openclaw-parity-checkpoint-2026-04-10.md).
 

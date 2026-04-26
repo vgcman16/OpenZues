@@ -4,6 +4,7 @@ import asyncio
 import base64
 import hashlib
 import json
+import math
 import re
 import secrets
 import shutil
@@ -97,6 +98,9 @@ from openzues.services.session_keys import (
     DEFAULT_MAIN_KEY,
     build_agent_main_session_key,
     classify_session_key_shape,
+    is_acp_session_key,
+    is_cron_session_key,
+    is_subagent_session_key,
     normalize_agent_id,
     parse_agent_session_key,
     parse_thread_session_suffix,
@@ -116,11 +120,15 @@ _MAX_RECENT_NODE_EXEC_FINISHED_RUNS = 2_000
 _CANVAS_CAPABILITY_PATH_PREFIX = "/__openclaw__/cap"
 _CANVAS_CAPABILITY_TTL_MS = 10 * 60_000
 _SESSION_LABEL_MAX_LENGTH = 512
-_SESSION_PATCH_RESPONSE_USAGE_VALUES = {"full", "off", "on", "tokens"}
 _SESSION_PATCH_SUBAGENT_ROLE_VALUES = {"leaf", "orchestrator"}
 _SESSION_PATCH_SUBAGENT_CONTROL_SCOPE_VALUES = {"children", "none"}
-_SESSION_PATCH_SEND_POLICY_VALUES = {"allow", "deny"}
-_SESSION_PATCH_GROUP_ACTIVATION_VALUES = {"always", "mention"}
+_SESSION_PATCH_SPAWN_LINEAGE_FIELDS = {
+    "spawnedBy",
+    "spawnedWorkspaceDir",
+    "spawnDepth",
+    "subagentRole",
+    "subagentControlScope",
+}
 _INPUT_PROVENANCE_KIND_VALUES = {"external_user", "inter_session", "internal_system"}
 _DEFAULT_SESSION_DELETE_ARCHIVE_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
 _KNOWN_GATEWAY_CHAT_CHANNEL_ORDER = ("discord", "slack", "telegram", "whatsapp")
@@ -134,10 +142,21 @@ _PLUGIN_APPROVAL_MAX_TIMEOUT_MS = 600_000
 _PLUGIN_APPROVAL_DECISIONS = {"allow-once", "allow-always", "deny"}
 _EXEC_APPROVAL_DEFAULT_TIMEOUT_MS = 1_800_000
 _EXEC_APPROVAL_DECISIONS = {"allow-once", "allow-always", "deny"}
+_OPENCLAW_MAX_SAFE_TIMEOUT_MS = 2_147_000_000
+_CHAT_SEND_SESSION_KEY_MAX_LENGTH = 512
+_CHAT_INJECT_LABEL_MAX_LENGTH = 100
 _CHAT_HISTORY_DEFAULT_MAX_CHARS = 8_000
 _CHAT_HISTORY_MAX_SINGLE_MESSAGE_BYTES = 128 * 1024
 _CHAT_HISTORY_MAX_TOTAL_BYTES = 6 * 1024 * 1024
 _CHAT_HISTORY_OVERSIZED_PLACEHOLDER = "[chat.history omitted: message too large]"
+_ASSISTANT_VISIBLE_TOOL_RESULT_BLOCK_RE = re.compile(
+    r"<\s*tool_result\b[^>]*>.*?(?:<\s*/\s*(?:tool_result|tool_call)\s*>|\Z)",
+    re.IGNORECASE | re.DOTALL,
+)
+_ASSISTANT_VISIBLE_THINK_BLOCK_RE = re.compile(
+    r"<\s*think\b[^>]*>.*?(?:<\s*/\s*think\s*>|\Z)",
+    re.IGNORECASE | re.DOTALL,
+)
 _SESSIONS_HISTORY_MAX_BYTES = 80 * 1024
 _SESSIONS_HISTORY_TEXT_MAX_CHARS = 4_000
 _SESSIONS_HISTORY_OVERSIZED_PLACEHOLDER = "[sessions_history omitted: message too large]"
@@ -146,6 +165,17 @@ _SESSIONS_SPAWN_MAX_ATTACHMENT_BYTES = 1024 * 1024
 _SESSIONS_SPAWN_MAX_TOTAL_ATTACHMENT_BYTES = 5 * 1024 * 1024
 _SESSIONS_SPAWN_DEFAULT_MAX_DEPTH = 1
 _SESSIONS_SPAWN_DEFAULT_MAX_CHILDREN_PER_AGENT = 5
+_SESSIONS_SPAWN_ACCEPTED_NOTE = (
+    "Auto-announce is push-based. After spawning children, do NOT call "
+    "sessions_list, sessions_history, exec sleep, or any polling tool. "
+    "Wait for completion events to arrive as user messages, track expected "
+    "child session keys, and only send your final answer after ALL expected "
+    "completions arrive. If a child completion event arrives AFTER your final "
+    "answer, reply ONLY with NO_REPLY."
+)
+_SESSIONS_SPAWN_SESSION_ACCEPTED_NOTE = (
+    "thread-bound session stays active after this task; continue in-thread for follow-ups."
+)
 _GATEWAY_TOOLS_INVOKE_DEFAULT_DENY = {
     "exec",
     "spawn",
@@ -174,6 +204,8 @@ _GATEWAY_TOOLS_INVOKE_METHOD_ALIASES = {
     "sessions.list": "sessions.list",
     "sessions_history": "sessions.history",
     "sessions.history": "sessions.history",
+    "sessions_yield": "sessions.yield",
+    "sessions.yield": "sessions.yield",
     "sessions_send": "sessions.send",
     "sessions.send": "sessions.send",
     "sessions_spawn": "sessions.spawn",
@@ -191,8 +223,10 @@ _GATEWAY_TOOLS_INVOKE_SESSION_KEY_METHODS = {
     "chat.history",
     "session.status",
     "sessions.history",
+    "sessions.yield",
     "tools.effective",
 }
+_SESSIONS_LIST_TOOL_KINDS = {"main", "group", "cron", "hook", "node", "other"}
 _SESSIONS_SPAWN_UNSUPPORTED_PARAM_KEYS = {
     "target",
     "transport",
@@ -251,6 +285,10 @@ class GatewayNodeMethodRequester:
     caller_scopes: tuple[str, ...] | None = None
     client_id: str | None = None
     client_mode: str | None = None
+    message_channel: str | None = None
+    message_account_id: str | None = None
+    message_to: str | None = None
+    message_thread_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -506,10 +544,261 @@ def _tools_invoke_requester_is_owner(requester: GatewayNodeMethodRequester) -> b
     return ADMIN_GATEWAY_METHOD_SCOPE in requester.caller_scopes
 
 
+def _openclaw_sessions_list_tool_kinds(value: object) -> tuple[str, ...]:
+    if not isinstance(value, list):
+        return ()
+    return tuple(
+        normalized
+        for entry in value
+        if isinstance(entry, str)
+        for normalized in (entry.strip().lower(),)
+        if normalized in _SESSIONS_LIST_TOOL_KINDS
+    )
+
+
+def _openclaw_sessions_list_tool_args(params: dict[str, Any]) -> dict[str, Any]:
+    projected: dict[str, Any] = {
+        "includeGlobal": True,
+        "includeUnknown": True,
+    }
+    for key in ("limit", "activeMinutes", "messageLimit"):
+        if key in params:
+            projected[key] = params[key]
+    normalized_kinds = _openclaw_sessions_list_tool_kinds(params.get("kinds"))
+    if normalized_kinds:
+        projected["kinds"] = list(normalized_kinds)
+    return projected
+
+
+def _openclaw_sessions_history_tool_args(params: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: params[key]
+        for key in ("sessionKey", "limit", "includeTools")
+        if key in params
+    }
+
+
+def _openclaw_sessions_yield_tool_args(
+    params: dict[str, Any],
+    *,
+    session_key: str | None,
+) -> dict[str, Any]:
+    projected: dict[str, Any] = {}
+    if session_key is not None:
+        projected["sessionKey"] = session_key
+    if isinstance(params.get("message"), str):
+        projected["message"] = params["message"]
+    return projected
+
+
+def _openclaw_session_status_tool_args(params: dict[str, Any]) -> dict[str, Any]:
+    return {key: params[key] for key in ("sessionKey", "model") if key in params}
+
+
+def _openclaw_sessions_send_tool_args(params: dict[str, Any]) -> dict[str, Any]:
+    allowed_keys = {
+        "key",
+        "label",
+        "agentId",
+        "message",
+        "thinking",
+        "attachments",
+        "timeoutMs",
+        "timeoutSeconds",
+        "idempotencyKey",
+        "requesterSessionKey",
+        "requesterChannel",
+    }
+    return {key: value for key, value in params.items() if key in allowed_keys}
+
+
+def _openclaw_sessions_spawn_tool_args(params: dict[str, Any]) -> dict[str, Any]:
+    allowed_keys = {
+        "task",
+        "label",
+        "runtime",
+        "agentId",
+        "resumeSessionId",
+        "model",
+        "thinking",
+        "cwd",
+        "runTimeoutSeconds",
+        "timeoutSeconds",
+        "thread",
+        "mode",
+        "cleanup",
+        "sandbox",
+        "streamTo",
+        "lightContext",
+        "attachments",
+        "attachAs",
+        "expectsCompletionMessage",
+    }
+    return {
+        key: value
+        for key, value in params.items()
+        if key in allowed_keys or key in _SESSIONS_SPAWN_UNSUPPORTED_PARAM_KEYS
+    }
+
+
+def _sessions_spawn_accepted_note(
+    *,
+    spawn_mode: Literal["run", "session"],
+    requester_session_key: str | None,
+) -> str | None:
+    if spawn_mode == "session":
+        return _SESSIONS_SPAWN_SESSION_ACCEPTED_NOTE
+    if is_cron_session_key(requester_session_key):
+        return None
+    return _SESSIONS_SPAWN_ACCEPTED_NOTE
+
+
+def _session_patch_supports_spawn_lineage(session_key: str) -> bool:
+    return is_subagent_session_key(session_key) or is_acp_session_key(session_key)
+
+
+def _normalize_session_patch_response_usage(value: object) -> Literal["tokens", "full"] | None:
+    if value is None:
+        return None
+    raw = _require_non_empty_string(value, label="responseUsage").lower()
+    if raw in {"off", "false", "no", "0", "disable", "disabled"}:
+        return None
+    if raw in {"on", "true", "yes", "1", "enable", "enabled"}:
+        return "tokens"
+    if raw in {"tokens", "token", "tok", "minimal", "min"}:
+        return "tokens"
+    if raw in {"full", "session"}:
+        return "full"
+    raise ValueError('invalid responseUsage (use "off"|"tokens"|"full")')
+
+
+def _normalize_session_patch_exec_security(
+    value: object,
+) -> Literal["deny", "allowlist", "full"] | None:
+    if value is None:
+        return None
+    raw = _require_non_empty_string(value, label="execSecurity").lower()
+    if raw in {"deny", "allowlist", "full"}:
+        return cast(Literal["deny", "allowlist", "full"], raw)
+    raise ValueError('invalid execSecurity (use "deny"|"allowlist"|"full")')
+
+
+def _normalize_session_patch_exec_ask(
+    value: object,
+) -> Literal["off", "on-miss", "always"] | None:
+    if value is None:
+        return None
+    raw = _require_non_empty_string(value, label="execAsk").lower()
+    if raw in {"off", "on-miss", "always"}:
+        return cast(Literal["off", "on-miss", "always"], raw)
+    raise ValueError('invalid execAsk (use "off"|"on-miss"|"always")')
+
+
+def _normalize_session_patch_exec_host(
+    value: object,
+) -> Literal["auto", "sandbox", "gateway", "node"] | None:
+    if value is None:
+        return None
+    raw = _require_non_empty_string(value, label="execHost").lower()
+    if raw in {"auto", "sandbox", "gateway", "node"}:
+        return cast(Literal["auto", "sandbox", "gateway", "node"], raw)
+    raise ValueError('invalid execHost (use "auto"|"sandbox"|"gateway"|"node")')
+
+
+def _normalize_session_patch_elevated_level(
+    value: object,
+) -> Literal["off", "on", "ask", "full"] | None:
+    if value is None:
+        return None
+    raw = _require_non_empty_string(value, label="elevatedLevel").lower()
+    if raw in {"off", "false", "no", "0"}:
+        return "off"
+    if raw in {"full", "auto", "auto-approve", "autoapprove"}:
+        return "full"
+    if raw in {"ask", "prompt", "approval", "approve"}:
+        return "ask"
+    if raw in {"on", "true", "yes", "1"}:
+        return "on"
+    raise ValueError('invalid elevatedLevel (use "on"|"off"|"ask"|"full")')
+
+
+def _normalize_session_patch_send_policy(value: object) -> Literal["allow", "deny"] | None:
+    if value is None:
+        return None
+    raw = _require_non_empty_string(value, label="sendPolicy").lower()
+    if raw in {"allow", "deny"}:
+        return cast(Literal["allow", "deny"], raw)
+    raise ValueError('invalid sendPolicy (use "allow"|"deny")')
+
+
+def _normalize_session_patch_group_activation(
+    value: object,
+) -> Literal["mention", "always"] | None:
+    if value is None:
+        return None
+    raw = _require_non_empty_string(value, label="groupActivation").lower()
+    if raw in {"mention", "always"}:
+        return cast(Literal["mention", "always"], raw)
+    raise ValueError('invalid groupActivation (use "mention"|"always")')
+
+
 def _normalized_tools_invoke_policy_set(value: object) -> set[str]:
     if not isinstance(value, list):
         return set()
     return {entry.strip() for entry in value if isinstance(entry, str) and entry.strip()}
+
+
+def _tools_invoke_sessions_send_result(
+    result: object,
+    params: dict[str, Any],
+) -> object:
+    timeout_seconds = params.get("timeoutSeconds")
+    if (
+        isinstance(timeout_seconds, bool)
+        or not isinstance(timeout_seconds, int | float)
+    ):
+        return result
+    if not isinstance(result, dict):
+        return result
+    status = _string_or_none(result.get("status"))
+    session_key = (
+        _string_or_none(params.get("key"))
+        or _string_or_none(params.get("sessionKey"))
+        or _string_or_none(result.get("sessionKey"))
+    )
+    if status in {"error", "timeout"}:
+        if session_key is None or _string_or_none(result.get("sessionKey")) is not None:
+            return result
+        return {**result, "sessionKey": session_key}
+    run_id = _string_or_none(result.get("runId")) or _string_or_none(
+        params.get("idempotencyKey")
+    )
+    if run_id is None:
+        return result
+    if timeout_seconds == 0:
+        normalized: dict[str, object] = {
+            "runId": run_id,
+            "status": "accepted",
+            "delivery": {"status": "pending", "mode": "announce"},
+        }
+        if session_key is not None:
+            normalized["sessionKey"] = session_key
+        return normalized
+    if timeout_seconds < 0 or status != "ok":
+        return result
+    normalized = {
+        "runId": run_id,
+        "status": "ok",
+        "delivery": {"status": "pending", "mode": "announce"},
+    }
+    reply = _string_or_none(result.get("reply")) or _string_or_none(
+        result.get("replyText")
+    )
+    if reply is not None:
+        normalized["reply"] = reply
+    if session_key is not None:
+        normalized["sessionKey"] = session_key
+    return normalized
 
 
 def _validate_canvas_a2ui_jsonl(params: object) -> None:
@@ -803,6 +1092,7 @@ class GatewayNodeMethodService:
         chat_send_service: Callable[..., Awaitable[dict[str, object]]] | None = None,
         chat_attachment_send_service: Callable[..., Awaitable[dict[str, object]]] | None = None,
         chat_abort_service: Callable[..., Awaitable[dict[str, object]]] | None = None,
+        sessions_yield_service: Callable[[str], Awaitable[None]] | None = None,
         sleep: Callable[[float], Awaitable[None]] | None = None,
         status_service: Callable[[], Awaitable[dict[str, object]]] | None = None,
         runtime_update_tick: Callable[[], Awaitable[bool]] | None = None,
@@ -895,11 +1185,13 @@ class GatewayNodeMethodService:
         self._chat_send_service = chat_send_service
         self._chat_attachment_send_service = chat_attachment_send_service
         self._chat_abort_service = chat_abort_service
+        self._sessions_yield_service = sessions_yield_service
         self._gateway_chat_run_ids_by_session_key: dict[str, str] = {}
         self._gateway_tracked_chat_runs_by_id: dict[str, GatewayTrackedChatRun] = {}
         self._recent_node_voice_transcripts: dict[str, tuple[str, int]] = {}
         self._recent_node_exec_finished_runs: dict[str, int] = {}
         self._apns_wake_nudge_at_by_node_id: dict[str, int] = {}
+        self._background_tasks: set[asyncio.Task[None]] = set()
         self._plugin_approval_records: dict[str, GatewayPluginApprovalRecord] = {}
         self._exec_approval_records: dict[str, GatewayExecApprovalRecord] = {}
         self._sleep = sleep or asyncio.sleep
@@ -1306,6 +1598,280 @@ class GatewayNodeMethodService:
             return None
         return channel, to
 
+    async def _latest_control_chat_message_id(self, session_key: str) -> int:
+        if self._database is None:
+            return 0
+        rows = await self._database.list_control_chat_messages(
+            limit=1,
+            session_key=session_key,
+        )
+        if not rows:
+            return 0
+        value = rows[-1].get("id")
+        return int(value) if isinstance(value, int) else 0
+
+    async def _wait_for_fresh_assistant_reply(
+        self,
+        *,
+        session_key: str,
+        after_message_id: int,
+        timeout_ms: int,
+    ) -> str | None:
+        if self._database is None or timeout_ms <= 0:
+            return None
+        deadline = time.monotonic() + (timeout_ms / 1000)
+        while True:
+            rows = await self._database.list_control_chat_messages(
+                limit=50,
+                session_key=session_key,
+            )
+            for row in rows:
+                raw_id = row.get("id")
+                row_id = int(raw_id) if isinstance(raw_id, int) else 0
+                if row_id <= after_message_id:
+                    continue
+                if str(row.get("role") or "").strip().lower() != "assistant":
+                    continue
+                text = _chat_history_display_text(str(row.get("content") or "")).strip()
+                if not text or text.upper() in _CHAT_HISTORY_ASSISTANT_SKIP_TEXTS:
+                    continue
+                return text
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return None
+            await asyncio.sleep(min(0.05, remaining))
+
+    def _schedule_sessions_send_a2a_announce_flow(
+        self,
+        *,
+        target_session_key: str,
+        message: str,
+        round_one_reply: str,
+        requester_session_key: str | None,
+        requester_channel: str | None,
+        timeout_ms: int,
+        now_ms: int | None,
+    ) -> None:
+        async def run_guarded() -> None:
+            try:
+                await self._run_sessions_send_a2a_announce_flow(
+                    target_session_key=target_session_key,
+                    message=message,
+                    round_one_reply=round_one_reply,
+                    requester_session_key=requester_session_key,
+                    requester_channel=requester_channel,
+                    timeout_ms=timeout_ms,
+                    now_ms=now_ms,
+                )
+            except Exception:
+                return
+
+        task = asyncio.create_task(run_guarded())
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+
+    def _schedule_sessions_send_a2a_announce_after_wait_flow(
+        self,
+        *,
+        target_session_key: str,
+        message: str,
+        after_message_id: int,
+        requester_session_key: str | None,
+        requester_channel: str | None,
+        wait_timeout_ms: int,
+        announce_timeout_ms: int,
+        now_ms: int | None,
+    ) -> None:
+        async def run_guarded() -> None:
+            try:
+                reply = await self._wait_for_fresh_assistant_reply(
+                    session_key=target_session_key,
+                    after_message_id=after_message_id,
+                    timeout_ms=wait_timeout_ms,
+                )
+                if reply is None:
+                    return
+                await self._run_sessions_send_a2a_announce_flow(
+                    target_session_key=target_session_key,
+                    message=message,
+                    round_one_reply=reply,
+                    requester_session_key=requester_session_key,
+                    requester_channel=requester_channel,
+                    timeout_ms=announce_timeout_ms,
+                    now_ms=now_ms,
+                )
+            except Exception:
+                return
+
+        task = asyncio.create_task(run_guarded())
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+
+    async def _run_sessions_send_a2a_announce_flow(
+        self,
+        *,
+        target_session_key: str,
+        message: str,
+        round_one_reply: str,
+        requester_session_key: str | None,
+        requester_channel: str | None,
+        timeout_ms: int,
+        now_ms: int | None,
+    ) -> None:
+        if self._chat_send_service is None:
+            return
+        target = await self._sessions_send_announce_target_for_session(
+            target_session_key,
+            now_ms=now_ms,
+        )
+        target_channel = target.get("channel") if target is not None else None
+        latest_reply = await self._run_sessions_send_a2a_reply_ping_pong(
+            target_session_key=target_session_key,
+            requester_session_key=requester_session_key,
+            requester_channel=requester_channel,
+            target_channel=target_channel,
+            round_one_reply=round_one_reply,
+            timeout_ms=timeout_ms,
+        )
+        announce_context = _format_sessions_send_announce_context_message(
+            original_message=message,
+            round_one_reply=round_one_reply,
+            latest_reply=latest_reply,
+            requester_session_key=requester_session_key,
+            requester_channel=requester_channel,
+            target_session_key=target_session_key,
+            target_channel=target_channel,
+        )
+        input_provenance = (
+            {
+                "kind": "inter_session",
+                "sourceSessionKey": requester_session_key,
+                "sourceChannel": requester_channel,
+                "sourceTool": "sessions_send",
+            }
+            if requester_session_key is not None or requester_channel is not None
+            else None
+        )
+        announce_message = _format_gateway_chat_system_provenance_message(
+            "\n".join([announce_context, "", "Agent-to-agent announce step."]),
+            system_input_provenance=input_provenance,
+            system_provenance_receipt=None,
+        )
+        announce_result = await self._chat_send_service(
+            session_key=target_session_key,
+            message=announce_message,
+            idempotency_key=secrets.token_urlsafe(18),
+            thinking=None,
+            deliver=None,
+            timeout_ms=timeout_ms,
+        )
+        announce_reply = _sessions_send_reply_text(announce_result)
+        if (
+            target is None
+            or announce_reply is None
+            or announce_reply.strip() == "ANNOUNCE_SKIP"
+        ):
+            return
+        params: dict[str, object] = {
+            "to": target["to"],
+            "message": announce_reply.strip(),
+            "channel": target["channel"],
+            "sessionKey": target_session_key,
+            "idempotencyKey": secrets.token_urlsafe(18),
+        }
+        account_id = target.get("accountId")
+        if account_id is not None:
+            params["accountId"] = account_id
+        thread_id = target.get("threadId")
+        if thread_id is not None:
+            params["threadId"] = thread_id
+        try:
+            await self.call("send", params, now_ms=now_ms)
+        except Exception:
+            return
+
+    async def _run_sessions_send_a2a_reply_ping_pong(
+        self,
+        *,
+        target_session_key: str,
+        requester_session_key: str | None,
+        requester_channel: str | None,
+        target_channel: str | None,
+        round_one_reply: str,
+        timeout_ms: int,
+    ) -> str:
+        if (
+            self._chat_send_service is None
+            or requester_session_key is None
+            or requester_session_key == target_session_key
+        ):
+            return round_one_reply
+        max_turns = _sessions_send_max_ping_pong_turns(self._config_service)
+        if max_turns <= 0:
+            return round_one_reply
+        latest_reply = round_one_reply
+        incoming_message = round_one_reply
+        current_session_key = requester_session_key
+        next_session_key = target_session_key
+        for turn in range(1, max_turns + 1):
+            current_role: Literal["requester", "target"] = (
+                "requester" if current_session_key == requester_session_key else "target"
+            )
+            reply_context = _format_sessions_send_reply_context_message(
+                requester_session_key=requester_session_key,
+                requester_channel=requester_channel,
+                target_session_key=target_session_key,
+                target_channel=target_channel,
+                current_role=current_role,
+                turn=turn,
+                max_turns=max_turns,
+            )
+            source_channel = (
+                requester_channel if next_session_key == requester_session_key else target_channel
+            )
+            input_provenance = {
+                "kind": "inter_session",
+                "sourceSessionKey": next_session_key,
+                "sourceChannel": source_channel,
+                "sourceTool": "sessions_send",
+            }
+            reply_message = _format_gateway_chat_system_provenance_message(
+                "\n".join([reply_context, "", incoming_message]),
+                system_input_provenance=input_provenance,
+                system_provenance_receipt=None,
+            )
+            reply_result = await self._chat_send_service(
+                session_key=current_session_key,
+                message=reply_message,
+                idempotency_key=secrets.token_urlsafe(18),
+                thinking=None,
+                deliver=None,
+                timeout_ms=timeout_ms,
+            )
+            reply = _sessions_send_reply_text(reply_result)
+            if reply is None or reply.strip() == "REPLY_SKIP":
+                break
+            latest_reply = reply
+            incoming_message = reply
+            current_session_key, next_session_key = next_session_key, current_session_key
+        return latest_reply
+
+    async def _sessions_send_announce_target_for_session(
+        self,
+        session_key: str,
+        *,
+        now_ms: int | None,
+    ) -> dict[str, str] | None:
+        if self._sessions_service is not None:
+            entry = await self._sessions_service.build_session_payload_for_key(
+                session_key=session_key,
+                now_ms=_timestamp_ms(now_ms),
+            )
+            target = _sessions_send_announce_target_from_session_payload(entry)
+            if target is not None:
+                return target
+        return _sessions_send_announce_target_from_key(session_key)
+
     async def _invoke_gateway_tool(
         self,
         payload: dict[str, Any],
@@ -1356,6 +1922,151 @@ class GatewayNodeMethodService:
             and "sessionKey" not in tool_args
         ):
             tool_args["sessionKey"] = session_key
+        if tool_key == "sessions_spawn" and resolved_tool_method == "sessions.spawn":
+            tool_args = _openclaw_sessions_spawn_tool_args(tool_args)
+        if session_key is not None and resolved_tool_method == "sessions.spawn":
+            tool_args["requesterSessionKey"] = session_key
+        if tool_key == "sessions_list" and resolved_tool_method == "sessions.list":
+            tool_args = _openclaw_sessions_list_tool_args(tool_args)
+        if tool_key == "sessions_history" and resolved_tool_method == "sessions.history":
+            tool_args = _openclaw_sessions_history_tool_args(tool_args)
+        if tool_key == "sessions_yield" and resolved_tool_method == "sessions.yield":
+            tool_args = _openclaw_sessions_yield_tool_args(
+                tool_args,
+                session_key=session_key,
+            )
+        if tool_key == "session_status" and resolved_tool_method == "session.status":
+            tool_args = _openclaw_session_status_tool_args(tool_args)
+        if resolved_tool_method == "sessions.send":
+            if "sessionKey" in tool_args:
+                target_session_key = tool_args.pop("sessionKey")
+                if "key" not in tool_args:
+                    tool_args["key"] = target_session_key
+            if session_key is not None and "requesterSessionKey" not in tool_args:
+                tool_args["requesterSessionKey"] = session_key
+            requester_route = _requester_route_context(requester)
+            if (
+                requester_route is not None
+                and "channel" in requester_route
+                and "requesterChannel" not in tool_args
+            ):
+                tool_args["requesterChannel"] = requester_route["channel"]
+            if tool_key == "sessions_send":
+                tool_args = _openclaw_sessions_send_tool_args(tool_args)
+            label_lookup_error = _sessions_send_label_lookup_policy_error(
+                self._config_service,
+                requester_session_key=_string_or_none(tool_args.get("requesterSessionKey")),
+                label=_string_or_none(tool_args.get("label")),
+                requested_agent_id=_string_or_none(tool_args.get("agentId")),
+                target_session_key=_string_or_none(tool_args.get("key")),
+            )
+            if label_lookup_error is not None:
+                run_id = _string_or_none(tool_args.get("idempotencyKey")) or secrets.token_urlsafe(
+                    18
+                )
+                return {
+                    "ok": True,
+                    "result": {
+                        "runId": run_id,
+                        "status": "forbidden",
+                        "error": label_lookup_error,
+                    },
+                }
+            send_label = _string_or_none(tool_args.get("label"))
+            if (
+                send_label is not None
+                and _string_or_none(tool_args.get("key")) is None
+                and self._sessions_service is not None
+            ):
+                resolved_session = await self._sessions_service.resolve_key(
+                    key=None,
+                    session_id=None,
+                    label=send_label,
+                    agent_id=_string_or_none(tool_args.get("agentId")),
+                    spawned_by=None,
+                    include_global=True,
+                    include_unknown=False,
+                )
+                resolved_session_key = await self._resolve_existing_session_key(
+                    _require_non_empty_string(resolved_session.get("key"), label="key"),
+                    now_ms=now_ms,
+                )
+                tool_args = {**tool_args, "key": resolved_session_key}
+                tool_args.pop("label", None)
+            visibility_error = await _session_access_visibility_policy_error(
+                self._config_service,
+                self._database,
+                action="send",
+                requester_session_key=_string_or_none(tool_args.get("requesterSessionKey")),
+                target_session_key=_string_or_none(tool_args.get("key")),
+            )
+            a2a_error = _sessions_send_a2a_policy_error(
+                self._config_service,
+                requester_session_key=_string_or_none(tool_args.get("requesterSessionKey")),
+                target_session_key=_string_or_none(tool_args.get("key")),
+            )
+            policy_error = visibility_error or a2a_error
+            if policy_error is not None:
+                run_id = _string_or_none(tool_args.get("idempotencyKey")) or secrets.token_urlsafe(
+                    18
+                )
+                forbidden_result: dict[str, object] = {
+                    "runId": run_id,
+                    "status": "forbidden",
+                    "error": policy_error,
+                }
+                target_key = _string_or_none(tool_args.get("key"))
+                if target_key is not None:
+                    forbidden_result["sessionKey"] = target_key
+                return {"ok": True, "result": forbidden_result}
+        if resolved_tool_method in {"sessions.history", "session.status"}:
+            access_action: Literal["history", "status"] = (
+                "history" if resolved_tool_method == "sessions.history" else "status"
+            )
+            access_error = await _session_access_visibility_policy_error(
+                self._config_service,
+                self._database,
+                action=access_action,
+                requester_session_key=session_key,
+                target_session_key=_string_or_none(tool_args.get("sessionKey")),
+            )
+            if access_error is None:
+                access_error = _session_access_a2a_policy_error(
+                    self._config_service,
+                    action=access_action,
+                    requester_session_key=session_key,
+                    target_session_key=_string_or_none(tool_args.get("sessionKey")),
+                )
+            if access_error is not None:
+                return {
+                    "ok": True,
+                    "result": {
+                        "status": "forbidden",
+                        "error": access_error,
+                    },
+                }
+        sessions_send_wait_key = _string_or_none(tool_args.get("key"))
+        sessions_send_timeout_seconds: int | None = None
+        sessions_send_wait_timeout_ms: int | None = None
+        sessions_send_wait_after_id: int | None = None
+        if (
+            tool_key == "sessions_send"
+            and resolved_tool_method == "sessions.send"
+            and sessions_send_wait_key is not None
+            and self._database is not None
+        ):
+            timeout_seconds_value = tool_args.get("timeoutSeconds")
+            if (
+                not isinstance(timeout_seconds_value, bool)
+                and isinstance(timeout_seconds_value, int | float)
+            ):
+                timeout_seconds = max(0, int(timeout_seconds_value))
+                sessions_send_timeout_seconds = timeout_seconds
+                sessions_send_wait_after_id = await self._latest_control_chat_message_id(
+                    sessions_send_wait_key
+                )
+                if timeout_seconds > 0:
+                    sessions_send_wait_timeout_ms = timeout_seconds * 1000
         hook_agent_id = resolve_agent_id_from_session_key(
             str(tool_args.get("sessionKey") or session_key or DEFAULT_MAIN_KEY)
         )
@@ -1403,6 +2114,83 @@ class GatewayNodeMethodService:
             requester=requester,
             now_ms=now_ms,
         )
+        if resolved_tool_method == "sessions.list":
+            result = await _filter_tools_invoke_sessions_list_result(
+                self._config_service,
+                self._database,
+                result,
+                requester_session_key=session_key,
+            )
+        if tool_key == "sessions_send" and resolved_tool_method == "sessions.send":
+            if (
+                isinstance(result, dict)
+                and _string_or_none(result.get("reply")) is None
+                and _string_or_none(result.get("replyText")) is None
+                and sessions_send_wait_key is not None
+                and sessions_send_wait_after_id is not None
+                and sessions_send_wait_timeout_ms is not None
+            ):
+                reply = await self._wait_for_fresh_assistant_reply(
+                    session_key=sessions_send_wait_key,
+                    after_message_id=sessions_send_wait_after_id,
+                    timeout_ms=sessions_send_wait_timeout_ms,
+                )
+                if reply is not None:
+                    result = {**result, "reply": reply}
+            round_one_reply = _sessions_send_reply_text(result)
+            target_session_key = _string_or_none(tool_args.get("key")) or _string_or_none(
+                tool_args.get("sessionKey")
+            )
+            if target_session_key is None and isinstance(result, dict):
+                target_session_key = _string_or_none(result.get("sessionKey"))
+            announce_timeout_ms = _sessions_send_announce_timeout_ms(tool_args)
+            requester_session_key = _string_or_none(tool_args.get("requesterSessionKey"))
+            requester_channel = _string_or_none(tool_args.get("requesterChannel"))
+            original_message = str(tool_args.get("message") or "")
+            should_start_a2a_flow = (
+                requester_session_key is not None
+                or requester_channel is not None
+                or (
+                    target_session_key is not None
+                    and await self._sessions_send_announce_target_for_session(
+                        target_session_key,
+                        now_ms=now_ms,
+                    )
+                    is not None
+                )
+            )
+            if (
+                should_start_a2a_flow
+                and round_one_reply is not None
+                and target_session_key is not None
+                and announce_timeout_ms > 0
+            ):
+                self._schedule_sessions_send_a2a_announce_flow(
+                    target_session_key=target_session_key,
+                    message=original_message,
+                    round_one_reply=round_one_reply,
+                    requester_session_key=requester_session_key,
+                    requester_channel=requester_channel,
+                    timeout_ms=announce_timeout_ms,
+                    now_ms=now_ms,
+                )
+            elif (
+                should_start_a2a_flow
+                and target_session_key is not None
+                and sessions_send_timeout_seconds == 0
+                and sessions_send_wait_after_id is not None
+            ):
+                self._schedule_sessions_send_a2a_announce_after_wait_flow(
+                    target_session_key=target_session_key,
+                    message=original_message,
+                    after_message_id=sessions_send_wait_after_id,
+                    requester_session_key=requester_session_key,
+                    requester_channel=requester_channel,
+                    wait_timeout_ms=announce_timeout_ms,
+                    announce_timeout_ms=announce_timeout_ms,
+                    now_ms=now_ms,
+                )
+            result = _tools_invoke_sessions_send_result(result, tool_args)
         return {"ok": True, "result": result}
 
     def _gateway_tools_invoke_configured_policy(self) -> tuple[set[str], set[str]]:
@@ -3716,13 +4504,14 @@ class GatewayNodeMethodService:
                 if "includeUnknown" in payload
                 else False
             )
-            limit = _optional_bounded_int(
+            limit = _optional_openclaw_floor_int(
                 payload.get("limit"),
                 label="limit",
                 minimum=1,
                 maximum=1000,
+                clamp_max=True,
             )
-            active_minutes = _optional_min_int(
+            active_minutes = _optional_openclaw_floor_int(
                 payload.get("activeMinutes"),
                 label="activeMinutes",
                 minimum=1,
@@ -3732,11 +4521,12 @@ class GatewayNodeMethodService:
             agent_id = _optional_normalized_string(payload.get("agentId"), label="agentId")
             search = _optional_non_empty_string(payload.get("search"), label="search")
             kinds = tuple(_optional_string_list(payload.get("kinds"), label="kinds"))
-            message_limit = _optional_bounded_int(
+            message_limit = _optional_openclaw_floor_int(
                 payload.get("messageLimit"),
                 label="messageLimit",
                 minimum=0,
                 maximum=20,
+                clamp_max=True,
             )
             include_derived_titles = (
                 _optional_bool(payload.get("includeDerivedTitles"), label="includeDerivedTitles")
@@ -3829,7 +4619,11 @@ class GatewayNodeMethodService:
                 session_key,
                 now_ms=now_ms,
             )
-            limit = _optional_min_int(payload.get("limit"), label="limit", minimum=1)
+            limit = _optional_openclaw_floor_int(
+                payload.get("limit"),
+                label="limit",
+                minimum=1,
+            )
             cursor = _optional_cursor_int(
                 payload.get("cursor"),
                 label="cursor",
@@ -4613,7 +5407,7 @@ class GatewayNodeMethodService:
                 session_key,
                 now_ms=now_ms,
             )
-            limit = _optional_bounded_int(
+            limit = _optional_openclaw_floor_int(
                 payload.get("limit"),
                 label="limit",
                 minimum=1,
@@ -4659,7 +5453,7 @@ class GatewayNodeMethodService:
                 requested_history_session_key,
                 now_ms=now_ms,
             )
-            limit = _optional_bounded_int(
+            limit = _optional_openclaw_floor_int(
                 payload.get("limit"),
                 label="limit",
                 minimum=1,
@@ -4677,6 +5471,28 @@ class GatewayNodeMethodService:
                 limit=limit,
                 include_tools=include_tools,
             )
+
+        if resolved_method == "sessions.yield":
+            _validate_exact_keys(
+                resolved_method,
+                payload,
+                allowed_keys=("sessionKey", "message"),
+            )
+            session_key = _optional_normalized_string(payload.get("sessionKey"), label="sessionKey")
+            if session_key is None:
+                return {"status": "error", "error": "No session context"}
+            message = (
+                _optional_normalized_string(payload.get("message"), label="message")
+                if "message" in payload
+                else None
+            ) or "Turn yielded."
+            if self._sessions_yield_service is None:
+                return {
+                    "status": "error",
+                    "error": "Yield not supported in this context",
+                }
+            await self._sessions_yield_service(message)
+            return {"status": "yielded", "message": message}
 
         if resolved_method == "session.status":
             _validate_exact_keys(
@@ -4700,12 +5516,11 @@ class GatewayNodeMethodService:
             )
             changed_model = False
             if "model" in payload:
-                await _apply_session_status_model_override(
+                changed_model = await _apply_session_status_model_override(
                     self._database,
                     session_key=status_session_key,
                     model=_optional_non_empty_string(payload.get("model"), label="model"),
                 )
-                changed_model = True
             status_entry = await self._sessions_service.build_session_payload_for_key(
                 session_key=status_session_key,
                 now_ms=_timestamp_ms(now_ms),
@@ -4752,7 +5567,10 @@ class GatewayNodeMethodService:
                     message="chat.send is unavailable until control chat runtime is wired",
                     status_code=503,
             )
-            session_key = _require_non_empty_string(payload.get("sessionKey"), label="sessionKey")
+            session_key = _require_chat_send_session_key(
+                payload.get("sessionKey"),
+                label="sessionKey",
+            )
             session_key = await self._resolve_existing_session_key(
                 session_key,
                 now_ms=now_ms,
@@ -4774,6 +5592,11 @@ class GatewayNodeMethodService:
             )
             raw_system_input_provenance = payload.get("systemInputProvenance")
             raw_system_provenance_receipt = payload.get("systemProvenanceReceipt")
+            if "systemInputProvenance" in payload:
+                _validate_agent_input_provenance(
+                    raw_system_input_provenance,
+                    label="systemInputProvenance",
+                )
             if raw_system_provenance_receipt is not None:
                 _require_string(
                     raw_system_provenance_receipt,
@@ -4814,11 +5637,9 @@ class GatewayNodeMethodService:
                 has_effective_attachments = _has_effective_agent_attachments(attachments)
             if not message.strip() and not has_effective_attachments:
                 raise ValueError("message or attachment required")
-            timeout_ms = _optional_bounded_int(
+            timeout_ms = _optional_openclaw_chat_timeout_ms(
                 payload.get("timeoutMs"),
                 label="timeoutMs",
-                minimum=0,
-                maximum=2_592_000_000,
             )
             idempotency_key = _require_non_empty_string(
                 payload.get("idempotencyKey"),
@@ -4920,13 +5741,13 @@ class GatewayNodeMethodService:
                     code="UNAVAILABLE",
                     message="chat.inject is unavailable until control chat persistence is wired",
                     status_code=503,
-                )
+            )
             session_key = _require_non_empty_string(payload.get("sessionKey"), label="sessionKey")
             message = _sanitize_gateway_chat_send_message_input(
-                _require_string(payload.get("message"), label="message")
+                _require_openclaw_non_empty_string(payload.get("message"), label="message")
             )
             label = (
-                _require_string(payload.get("label"), label="label")
+                _optional_chat_inject_label(payload.get("label"), label="label")
                 if "label" in payload and payload.get("label") is not None
                 else None
             )
@@ -4962,7 +5783,10 @@ class GatewayNodeMethodService:
                     "thinking",
                     "attachments",
                     "timeoutMs",
+                    "timeoutSeconds",
                     "idempotencyKey",
+                    "requesterSessionKey",
+                    "requesterChannel",
                 ),
             )
             if (
@@ -5012,6 +5836,14 @@ class GatewayNodeMethodService:
             message = _sanitize_gateway_chat_send_message_input(
                 _require_string(payload.get("message"), label="message")
             )
+            requester_session_key = _optional_non_empty_string(
+                payload.get("requesterSessionKey"),
+                label="requesterSessionKey",
+            )
+            requester_channel = _optional_normalized_string(
+                payload.get("requesterChannel"),
+                label="requesterChannel",
+            )
             thinking = (
                 _require_string(payload.get("thinking"), label="thinking")
                 if "thinking" in payload and payload.get("thinking") is not None
@@ -5031,6 +5863,15 @@ class GatewayNodeMethodService:
                 minimum=0,
                 maximum=2_592_000_000,
             )
+            if timeout_ms is None and "timeoutSeconds" in payload:
+                timeout_seconds_value = _optional_number(
+                    payload.get("timeoutSeconds"),
+                    label="timeoutSeconds",
+                )
+                if timeout_seconds_value is not None:
+                    if timeout_seconds_value < 0 or timeout_seconds_value > 2_592_000:
+                        raise ValueError("timeoutSeconds must be between 0 and 2592000")
+                    timeout_ms = int(timeout_seconds_value) * 1000
             idempotency_key = _optional_non_empty_string(
                 payload.get("idempotencyKey"),
                 label="idempotencyKey",
@@ -5046,6 +5887,27 @@ class GatewayNodeMethodService:
                     now_ms=now_ms,
                 )
                 return stop_result
+            input_provenance = (
+                {
+                    "kind": "inter_session",
+                    "sourceSessionKey": requester_session_key,
+                    "sourceChannel": requester_channel,
+                    "sourceTool": "sessions_send",
+                }
+                if requester_session_key is not None or requester_channel is not None
+                else None
+            )
+            message_with_agent_context = _format_sessions_send_agent_context_message(
+                message,
+                requester_session_key=requester_session_key,
+                requester_channel=requester_channel,
+                target_session_key=session_key,
+            )
+            runtime_message = _format_gateway_chat_system_provenance_message(
+                message_with_agent_context,
+                system_input_provenance=input_provenance,
+                system_provenance_receipt=None,
+            )
             pending_message_seq = (
                 await self._database.count_control_chat_messages(session_key=session_key) + 1
                 if self._database is not None
@@ -5065,7 +5927,7 @@ class GatewayNodeMethodService:
                 assert isinstance(attachments, list)
                 send_result = await self._chat_attachment_send_service(
                     session_key=session_key,
-                    message=message,
+                    message=runtime_message,
                     idempotency_key=idempotency_key,
                     thinking=thinking,
                     deliver=None,
@@ -5084,7 +5946,7 @@ class GatewayNodeMethodService:
                     )
                 send_result = await self._chat_send_service(
                     session_key=session_key,
-                    message=message,
+                    message=runtime_message,
                     idempotency_key=idempotency_key,
                     thinking=thinking,
                     deliver=None,
@@ -5396,8 +6258,6 @@ class GatewayNodeMethodService:
                 require_thread=False,
             )
             if mission is not None:
-                return {"ok": True, "key": canonical_key, "deleted": False, "archived": []}
-            if not resolved_delete_transcript and message_count:
                 return {"ok": True, "key": canonical_key, "deleted": False, "archived": []}
 
             deleted = metadata_row is not None or message_count > 0
@@ -5731,7 +6591,7 @@ class GatewayNodeMethodService:
                     message="sessions.preview is unavailable until transcript storage is wired",
                     status_code=503,
                 )
-            keys = _require_string_list(payload.get("keys"), label="keys")
+            keys = _require_preview_key_list(payload.get("keys"), label="keys")
             limit = _optional_bounded_int(
                 payload.get("limit"),
                 label="limit",
@@ -5918,6 +6778,11 @@ class GatewayNodeMethodService:
                 label="streamTo",
                 allowed_values={"parent"},
             )
+            light_context = bool(
+                _optional_bool(payload.get("lightContext"), label="lightContext")
+                if "lightContext" in payload
+                else False
+            )
             if stream_to is not None and runtime != "acp":
                 return {
                     "status": "error",
@@ -5933,7 +6798,18 @@ class GatewayNodeMethodService:
                     ),
                     **role_context,
                 }
+            if light_context and runtime != "subagent":
+                raise ValueError("lightContext is only supported for runtime='subagent'.")
             if runtime == "acp":
+                if payload.get("attachments") not in (None, []):
+                    return {
+                        "status": "error",
+                        "error": (
+                            "attachments are currently unsupported for runtime=acp; "
+                            "use runtime=subagent or remove attachments"
+                        ),
+                        **role_context,
+                    }
                 if sandbox == "require":
                     return {
                         "status": "forbidden",
@@ -6091,17 +6967,25 @@ class GatewayNodeMethodService:
                 allowed_values={"delete", "keep"},
             ) or "keep"
             tracked_cleanup = "keep" if tracked_mode == "session" else cleanup
-            run_timeout_seconds = _optional_min_int(
+            run_timeout_seconds_value = _optional_number(
                 payload.get("runTimeoutSeconds"),
                 label="runTimeoutSeconds",
-                minimum=0,
             )
-            if run_timeout_seconds is None:
-                run_timeout_seconds = _optional_min_int(
+            if run_timeout_seconds_value is None:
+                run_timeout_seconds_value = _optional_number(
                     payload.get("timeoutSeconds"),
                     label="timeoutSeconds",
-                    minimum=0,
                 )
+            if (
+                run_timeout_seconds_value is not None
+                and run_timeout_seconds_value < 0
+            ):
+                raise ValueError("runTimeoutSeconds must be at least 0")
+            run_timeout_seconds = (
+                int(run_timeout_seconds_value)
+                if run_timeout_seconds_value is not None
+                else None
+            )
             timeout_ms = (
                 run_timeout_seconds * 1000 if run_timeout_seconds is not None else None
             )
@@ -6118,6 +7002,18 @@ class GatewayNodeMethodService:
                 "subagentRole": child_subagent_role,
                 "subagentControlScope": _sessions_spawn_control_scope(child_subagent_role),
             }
+            requester_origin = _requester_route_context(resolved_requester)
+            if requester_origin is not None:
+                metadata["requesterOrigin"] = dict(requester_origin)
+                metadata["deliveryContext"] = dict(requester_origin)
+                if "channel" in requester_origin:
+                    metadata["lastChannel"] = requester_origin["channel"]
+                if "to" in requester_origin:
+                    metadata["lastTo"] = requester_origin["to"]
+                if "accountId" in requester_origin:
+                    metadata["lastAccountId"] = requester_origin["accountId"]
+                if "threadId" in requester_origin:
+                    metadata["lastThreadId"] = requester_origin["threadId"]
             if label is not None:
                 metadata["label"] = label
             if model is not None:
@@ -6138,6 +7034,7 @@ class GatewayNodeMethodService:
             )
             attachment_receipt: dict[str, Any] | None = None
             attachment_suffix: str | None = None
+            attachment_dir: Path | None = None
             if payload.get("attachments") not in (None, []):
                 workspace_dir = Path(cwd).expanduser() if cwd is not None else Path.cwd()
                 attachment_receipt, attachment_suffix = _materialize_sessions_spawn_attachments(
@@ -6145,6 +7042,9 @@ class GatewayNodeMethodService:
                     attachments=payload.get("attachments"),
                     mount_path_hint=mount_path_hint,
                 )
+                rel_dir = _string_or_none(attachment_receipt.get("relDir"))
+                if rel_dir is not None:
+                    attachment_dir = workspace_dir / rel_dir
                 metadata["attachments"] = attachment_receipt
             await self._database.upsert_gateway_session_metadata(
                 session_key=canonical_key,
@@ -6163,18 +7063,69 @@ class GatewayNodeMethodService:
                     message="sessions.spawn could not materialize the spawned session",
                     status_code=503,
                 )
-            send_result = await self._chat_send_service(
-                session_key=canonical_key,
-                message=(
-                    f"{task}\n\n{attachment_suffix}".rstrip()
-                    if attachment_suffix is not None
-                    else task
-                ),
-                idempotency_key=secrets.token_urlsafe(18),
-                thinking=thinking,
-                deliver=None,
-                timeout_ms=timeout_ms,
-            )
+            try:
+                send_result = await self._chat_send_service(
+                    session_key=canonical_key,
+                    message=(
+                        f"{task}\n\n{attachment_suffix}".rstrip()
+                        if attachment_suffix is not None
+                        else task
+                    ),
+                    idempotency_key=secrets.token_urlsafe(18),
+                    thinking=thinking,
+                    deliver=None,
+                    timeout_ms=timeout_ms,
+                )
+            except Exception as exc:  # noqa: BLE001 - preserve actionable spawn error.
+                if attachment_dir is not None:
+                    shutil.rmtree(attachment_dir, ignore_errors=True)
+                await self._database.delete_control_chat_messages(session_key=canonical_key)
+                await self._database.delete_gateway_session_metadata(canonical_key)
+                self._forget_gateway_chat_run(canonical_key)
+                await self._publish_sessions_changed_event(
+                    session_key=canonical_key,
+                    reason="delete",
+                    now_ms=now_ms,
+                )
+                spawn_error_text = str(exc).strip() or type(exc).__name__
+                spawn_exception_response: dict[str, Any] = {
+                    "status": "error",
+                    "error": spawn_error_text,
+                    "childSessionKey": canonical_key,
+                    "mode": tracked_mode,
+                    "cleanup": tracked_cleanup,
+                }
+                spawn_exception_response.update(role_context)
+                return spawn_exception_response
+            run_id = _optional_non_empty_string(send_result.get("runId"), label="runId")
+            status_text = str(send_result.get("status") or "").strip().lower()
+            status = "accepted" if status_text in {"ok", "accepted", "started"} else "error"
+            if status == "error":
+                if attachment_dir is not None:
+                    shutil.rmtree(attachment_dir, ignore_errors=True)
+                await self._database.delete_control_chat_messages(session_key=canonical_key)
+                await self._database.delete_gateway_session_metadata(canonical_key)
+                self._forget_gateway_chat_run(canonical_key)
+                await self._publish_sessions_changed_event(
+                    session_key=canonical_key,
+                    reason="delete",
+                    now_ms=now_ms,
+                )
+                spawn_error_text = str(
+                    send_result.get("error")
+                    or send_result.get("message")
+                    or "spawn startup failed"
+                ).strip()
+                spawn_status_error_response: dict[str, Any] = {
+                    "status": "error",
+                    "error": spawn_error_text or "spawn startup failed",
+                    "childSessionKey": canonical_key,
+                    "runId": run_id,
+                    "mode": tracked_mode,
+                    "cleanup": tracked_cleanup,
+                }
+                spawn_status_error_response.update(role_context)
+                return spawn_status_error_response
             self._remember_gateway_chat_run(canonical_key, send_result, started_at_ms=timestamp_ms)
             await self._publish_sessions_changed_event(
                 session_key=canonical_key,
@@ -6186,9 +7137,6 @@ class GatewayNodeMethodService:
                 reason="send",
                 now_ms=now_ms,
             )
-            run_id = _optional_non_empty_string(send_result.get("runId"), label="runId")
-            status_text = str(send_result.get("status") or "").strip().lower()
-            status = "accepted" if status_text in {"ok", "accepted", "started"} else "error"
             spawn_response: dict[str, Any] = {
                 "status": status,
                 "childSessionKey": canonical_key,
@@ -6198,8 +7146,18 @@ class GatewayNodeMethodService:
                 "messageSeq": pending_message_seq,
                 "entry": entry,
             }
+            accepted_note = _sessions_spawn_accepted_note(
+                spawn_mode=tracked_mode,
+                requester_session_key=spawn_parent_session_key,
+            )
+            if accepted_note is not None:
+                spawn_response["note"] = accepted_note
+            if model is not None:
+                spawn_response["modelApplied"] = True
             if attachment_receipt is not None:
                 spawn_response["attachments"] = attachment_receipt
+            if requester_origin is not None:
+                spawn_response["requesterOrigin"] = requester_origin
             spawn_response.update(role_context)
             return spawn_response
 
@@ -6261,6 +7219,16 @@ class GatewayNodeMethodService:
             if requested_key is not None:
                 requested_key_text = requested_key.strip()
                 requested_key_lower = requested_key_text.lower()
+                requested_agent = parse_agent_session_key(requested_key_text)
+                if (
+                    requested_agent is not None
+                    and agent_id is not None
+                    and requested_agent.agent_id != agent_id
+                ):
+                    raise ValueError(
+                        "sessions.create key agent "
+                        f"({requested_agent.agent_id}) does not match agentId ({agent_id})"
+                    )
                 if agent_id is not None and requested_key_lower == "main":
                     canonical_key = build_agent_main_session_key(agent_id=agent_id)
                 elif agent_id is not None and requested_key_lower not in {
@@ -6349,40 +7317,47 @@ class GatewayNodeMethodService:
                 "sessionId": entry["sessionId"],
                 "entry": entry,
             }
+            run_started = False
             if initial_message is not None and self._chat_send_service is not None:
-                send_result = await self._chat_send_service(
-                    session_key=canonical_key,
-                    message=initial_message,
-                    idempotency_key=secrets.token_urlsafe(18),
-                    thinking=None,
-                    deliver=None,
-                    timeout_ms=None,
-                )
-                if pending_message_seq is not None and (
-                    _should_attach_pending_session_message_seq(send_result)
-                    or _should_attach_created_session_message_seq(send_result)
-                ):
-                    send_result = {
-                        **send_result,
-                        "messageSeq": pending_message_seq,
-                    }
-                self._remember_gateway_chat_run(
-                    canonical_key,
-                    send_result,
-                    started_at_ms=timestamp_ms,
-                )
-                response["runStarted"] = bool(
-                    isinstance(send_result.get("runId"), str)
-                    and str(send_result.get("status") or "").strip().lower() == "ok"
-                )
-                response.update(send_result)
+                try:
+                    send_result = await self._chat_send_service(
+                        session_key=canonical_key,
+                        message=initial_message,
+                        idempotency_key=secrets.token_urlsafe(18),
+                        thinking=None,
+                        deliver=None,
+                        timeout_ms=None,
+                    )
+                except Exception as exc:  # noqa: BLE001 - create should survive run failure.
+                    response["runStarted"] = False
+                    response["runError"] = {"message": str(exc).strip() or type(exc).__name__}
+                else:
+                    if pending_message_seq is not None and (
+                        _should_attach_pending_session_message_seq(send_result)
+                        or _should_attach_created_session_message_seq(send_result)
+                    ):
+                        send_result = {
+                            **send_result,
+                            "messageSeq": pending_message_seq,
+                        }
+                    self._remember_gateway_chat_run(
+                        canonical_key,
+                        send_result,
+                        started_at_ms=timestamp_ms,
+                    )
+                    run_started = bool(
+                        isinstance(send_result.get("runId"), str)
+                        and str(send_result.get("status") or "").strip().lower() == "ok"
+                    )
+                    response["runStarted"] = run_started
+                    response.update(send_result)
 
             await self._publish_sessions_changed_event(
                 session_key=canonical_key,
                 reason="create",
                 now_ms=now_ms,
             )
-            if initial_message is not None:
+            if run_started:
                 await self._publish_sessions_changed_event(
                     session_key=canonical_key,
                     reason="send",
@@ -6426,15 +7401,16 @@ class GatewayNodeMethodService:
             _optional_non_empty_string(payload.get("verboseLevel"), label="verboseLevel")
             _optional_non_empty_string(payload.get("traceLevel"), label="traceLevel")
             _optional_non_empty_string(payload.get("reasoningLevel"), label="reasoningLevel")
-            _optional_enum_value(
-                payload.get("responseUsage"),
-                label="responseUsage",
-                allowed_values=_SESSION_PATCH_RESPONSE_USAGE_VALUES,
-            )
-            _optional_non_empty_string(payload.get("elevatedLevel"), label="elevatedLevel")
-            _optional_non_empty_string(payload.get("execHost"), label="execHost")
-            _optional_non_empty_string(payload.get("execSecurity"), label="execSecurity")
-            _optional_non_empty_string(payload.get("execAsk"), label="execAsk")
+            if "responseUsage" in payload:
+                _normalize_session_patch_response_usage(payload.get("responseUsage"))
+            if "elevatedLevel" in payload:
+                _normalize_session_patch_elevated_level(payload.get("elevatedLevel"))
+            if "execHost" in payload:
+                _normalize_session_patch_exec_host(payload.get("execHost"))
+            if "execSecurity" in payload:
+                _normalize_session_patch_exec_security(payload.get("execSecurity"))
+            if "execAsk" in payload:
+                _normalize_session_patch_exec_ask(payload.get("execAsk"))
             _optional_non_empty_string(payload.get("execNode"), label="execNode")
             _optional_non_empty_string(payload.get("model"), label="model")
             _optional_non_empty_string(payload.get("spawnedBy"), label="spawnedBy")
@@ -6453,16 +7429,10 @@ class GatewayNodeMethodService:
                 label="subagentControlScope",
                 allowed_values=_SESSION_PATCH_SUBAGENT_CONTROL_SCOPE_VALUES,
             )
-            _optional_enum_value(
-                payload.get("sendPolicy"),
-                label="sendPolicy",
-                allowed_values=_SESSION_PATCH_SEND_POLICY_VALUES,
-            )
-            _optional_enum_value(
-                payload.get("groupActivation"),
-                label="groupActivation",
-                allowed_values=_SESSION_PATCH_GROUP_ACTIVATION_VALUES,
-            )
+            if "sendPolicy" in payload:
+                _normalize_session_patch_send_policy(payload.get("sendPolicy"))
+            if "groupActivation" in payload:
+                _normalize_session_patch_group_activation(payload.get("groupActivation"))
             if self._database is None or self._sessions_service is None:
                 raise GatewayNodeMethodError(
                     code="UNAVAILABLE",
@@ -6481,12 +7451,29 @@ class GatewayNodeMethodService:
             if existing_entry is None:
                 raise ValueError(f"session not found: {session_key}")
             canonical_key = str(existing_entry.get("key") or canonical_key)
+            if not _session_patch_supports_spawn_lineage(canonical_key):
+                for field in _SESSION_PATCH_SPAWN_LINEAGE_FIELDS:
+                    if field in payload and payload.get(field) is not None:
+                        raise ValueError(
+                            f"{field} is only supported for subagent:* or acp:* sessions"
+                        )
             existing_metadata_row = await self._database.get_gateway_session_metadata(canonical_key)
             existing_metadata: dict[str, Any] = {}
             if isinstance(existing_metadata_row, dict):
                 metadata_value = existing_metadata_row.get("metadata")
                 if isinstance(metadata_value, dict):
                     existing_metadata = dict(metadata_value)
+            if "label" in payload and payload.get("label") is not None:
+                requested_patch_label = _require_session_label(payload.get("label"), label="label")
+                for row in await self._database.list_gateway_session_metadata_rows():
+                    row_session_key = _string_or_none(row.get("session_key"))
+                    if row_session_key == canonical_key:
+                        continue
+                    row_metadata = row.get("metadata")
+                    if not isinstance(row_metadata, dict):
+                        continue
+                    if row_metadata.get("label") == requested_patch_label:
+                        raise ValueError(f"label already in use: {requested_patch_label}")
             next_metadata = dict(existing_metadata)
             for field in (
                 "label",
@@ -6530,6 +7517,72 @@ class GatewayNodeMethodService:
                     next_metadata["modelOverride"] = model_override
                     next_metadata.pop("model", None)
                     continue
+                if field == "responseUsage":
+                    normalized_response_usage = _normalize_session_patch_response_usage(
+                        metadata_value
+                    )
+                    if normalized_response_usage is None:
+                        next_metadata.pop(field, None)
+                    else:
+                        next_metadata[field] = normalized_response_usage
+                    continue
+                if field == "execSecurity":
+                    normalized_exec_security = _normalize_session_patch_exec_security(
+                        metadata_value
+                    )
+                    if normalized_exec_security is None:
+                        next_metadata.pop(field, None)
+                    else:
+                        next_metadata[field] = normalized_exec_security
+                    continue
+                if field == "execAsk":
+                    normalized_exec_ask = _normalize_session_patch_exec_ask(metadata_value)
+                    if normalized_exec_ask is None:
+                        next_metadata.pop(field, None)
+                    else:
+                        next_metadata[field] = normalized_exec_ask
+                    continue
+                if field == "execHost":
+                    normalized_exec_host = _normalize_session_patch_exec_host(metadata_value)
+                    if normalized_exec_host is None:
+                        next_metadata.pop(field, None)
+                    else:
+                        next_metadata[field] = normalized_exec_host
+                    continue
+                if field == "elevatedLevel":
+                    normalized_elevated_level = _normalize_session_patch_elevated_level(
+                        metadata_value
+                    )
+                    if normalized_elevated_level is None:
+                        next_metadata.pop(field, None)
+                    else:
+                        next_metadata[field] = normalized_elevated_level
+                    continue
+                if field == "sendPolicy":
+                    normalized_send_policy = _normalize_session_patch_send_policy(metadata_value)
+                    if normalized_send_policy is None:
+                        next_metadata.pop(field, None)
+                    else:
+                        next_metadata[field] = normalized_send_policy
+                    continue
+                if field == "groupActivation":
+                    normalized_group_activation = _normalize_session_patch_group_activation(
+                        metadata_value
+                    )
+                    if normalized_group_activation is None:
+                        next_metadata.pop(field, None)
+                    else:
+                        next_metadata[field] = normalized_group_activation
+                    continue
+                if field in _SESSION_PATCH_SPAWN_LINEAGE_FIELDS:
+                    existing_value = existing_metadata.get(field)
+                    if metadata_value is None:
+                        if existing_value is not None:
+                            raise ValueError(f"{field} cannot be cleared once set")
+                        next_metadata.pop(field, None)
+                        continue
+                    if existing_value is not None and existing_value != metadata_value:
+                        raise ValueError(f"{field} cannot be changed once set")
                 if metadata_value is None:
                     next_metadata.pop(field, None)
                 else:
@@ -6579,10 +7632,8 @@ class GatewayNodeMethodService:
             session_key = _require_non_empty_string(payload.get("sessionKey"), label="sessionKey")
             session_key = await self._resolve_existing_session_key(session_key, now_ms=now_ms)
             run_id = None
-            if "runId" in payload and payload.get("runId") is not None:
-                run_id = _require_string(payload.get("runId"), label="runId")
-                if run_id == "":
-                    run_id = None
+            if "runId" in payload:
+                run_id = _require_openclaw_non_empty_string(payload.get("runId"), label="runId")
             return await self._abort_gateway_chat_run(
                 session_key=session_key,
                 run_id=run_id,
@@ -9980,6 +11031,27 @@ def _string_or_none(value: object) -> str | None:
     return trimmed or None
 
 
+def _requester_route_context(
+    requester: GatewayNodeMethodRequester,
+) -> dict[str, str] | None:
+    route: dict[str, str] = {}
+    channel = _string_or_none(requester.message_channel)
+    if channel is not None:
+        normalized_channel = _normalize_gateway_chat_channel_id(channel)
+        if normalized_channel is not None:
+            route["channel"] = normalized_channel
+    account_id = _string_or_none(requester.message_account_id)
+    if account_id is not None:
+        route["accountId"] = account_id
+    to = _string_or_none(requester.message_to)
+    if to is not None:
+        route["to"] = to
+    thread_id = _string_or_none(requester.message_thread_id)
+    if thread_id is not None:
+        route["threadId"] = thread_id
+    return route or None
+
+
 def _session_key_inherits_channel_delivery_context(session_key: str, channel: str) -> bool:
     channel_token = channel.strip().lower()
     if not channel_token or channel_token == "webchat":
@@ -10568,7 +11640,7 @@ async def _apply_session_status_model_override(
     *,
     session_key: str,
     model: str | None,
-) -> None:
+) -> bool:
     existing_metadata_row = await database.get_gateway_session_metadata(session_key)
     existing_metadata: dict[str, Any] = {}
     if isinstance(existing_metadata_row, dict):
@@ -10577,20 +11649,54 @@ async def _apply_session_status_model_override(
             existing_metadata = dict(metadata_value)
     next_metadata = dict(existing_metadata)
     if model is None or model.strip().lower() == "default":
+        selection_updated = (
+            "providerOverride" in next_metadata
+            or "modelOverride" in next_metadata
+            or "model" in next_metadata
+            or "modelProvider" in next_metadata
+        )
         next_metadata.pop("model", None)
+        next_metadata.pop("modelProvider", None)
         next_metadata.pop("providerOverride", None)
         next_metadata.pop("modelOverride", None)
+        next_metadata.pop("modelOverrideSource", None)
+        next_metadata.pop("authProfileOverride", None)
+        next_metadata.pop("authProfileOverrideSource", None)
+        next_metadata.pop("authProfileOverrideCompactionCount", None)
+        next_metadata.pop("contextTokens", None)
+        next_metadata.pop("fallbackNoticeSelectedModel", None)
+        next_metadata.pop("fallbackNoticeActiveModel", None)
+        next_metadata.pop("fallbackNoticeReason", None)
+        if selection_updated:
+            next_metadata["liveModelSwitchPending"] = True
     else:
         provider_model_override = _provider_model_override(model)
         if provider_model_override is None:
+            selection_updated = next_metadata.get("model") != model or any(
+                key in next_metadata for key in ("providerOverride", "modelOverride")
+            )
             next_metadata["model"] = model
             next_metadata.pop("providerOverride", None)
             next_metadata.pop("modelOverride", None)
+            next_metadata.pop("modelOverrideSource", None)
         else:
             provider_override, model_override = provider_model_override
+            selection_updated = (
+                next_metadata.get("providerOverride") != provider_override
+                or next_metadata.get("modelOverride") != model_override
+            )
             next_metadata["providerOverride"] = provider_override
             next_metadata["modelOverride"] = model_override
+            next_metadata["modelOverrideSource"] = "user"
             next_metadata.pop("model", None)
+            next_metadata.pop("modelProvider", None)
+        next_metadata.pop("contextTokens", None)
+        next_metadata.pop("fallbackNoticeSelectedModel", None)
+        next_metadata.pop("fallbackNoticeActiveModel", None)
+        next_metadata.pop("fallbackNoticeReason", None)
+        if selection_updated:
+            next_metadata["liveModelSwitchPending"] = True
+    changed = next_metadata != existing_metadata
     if next_metadata:
         await database.upsert_gateway_session_metadata(
             session_key=session_key,
@@ -10598,6 +11704,7 @@ async def _apply_session_status_model_override(
         )
     else:
         await database.delete_gateway_session_metadata(session_key)
+    return changed
 
 
 def _build_session_status_text(entry: dict[str, Any], *, changed_model: bool) -> str:
@@ -11469,9 +12576,9 @@ def _project_sessions_history_messages(
     content_truncated = False
     content_redacted = False
     for row in rows:
-        raw_role = str(row.get("role") or "").strip().lower()
-        role = raw_role if raw_role in {"user", "assistant", "tool", "system"} else "other"
-        if not include_tools and role == "tool":
+        raw_role_value = str(row.get("role") or "").strip()
+        role = _sessions_history_display_role(raw_role_value)
+        if not include_tools and _sessions_history_is_tool_role(raw_role_value):
             continue
         text = _chat_history_display_text(str(row.get("content") or ""))
         if role == "assistant" and text.strip().upper() in _CHAT_HISTORY_ASSISTANT_SKIP_TEXTS:
@@ -11490,6 +12597,19 @@ def _project_sessions_history_messages(
         "contentTruncated": content_truncated,
         "contentRedacted": content_redacted,
     }
+
+
+def _sessions_history_display_role(role: str) -> str:
+    if role == "toolResult":
+        return role
+    normalized = role.lower()
+    if normalized in {"user", "assistant", "tool", "system"}:
+        return normalized
+    return "other"
+
+
+def _sessions_history_is_tool_role(role: str) -> bool:
+    return role in {"tool", "toolResult"}
 
 
 def _sessions_history_sanitized_text(text: str) -> dict[str, Any]:
@@ -11687,8 +12807,15 @@ def _json_utf8_byte_count(value: object) -> int:
 def _chat_history_display_text(text: str) -> str:
     return _CHAT_HISTORY_INLINE_DIRECTIVE_RE.sub(
         "",
-        _strip_trailing_untrusted_context_metadata(text),
+        _sanitize_assistant_visible_history_text(
+            _strip_trailing_untrusted_context_metadata(text)
+        ),
     )
+
+
+def _sanitize_assistant_visible_history_text(text: str) -> str:
+    without_tool_results = _ASSISTANT_VISIBLE_TOOL_RESULT_BLOCK_RE.sub("", text)
+    return _ASSISTANT_VISIBLE_THINK_BLOCK_RE.sub("", without_tool_results)
 
 
 def _strip_trailing_untrusted_context_metadata(text: str) -> str:
@@ -12067,6 +13194,13 @@ def _require_non_empty_string(value: object, *, label: str) -> str:
     return trimmed
 
 
+def _require_chat_send_session_key(value: object, *, label: str) -> str:
+    resolved = _require_non_empty_string(value, label=label)
+    if len(resolved) > _CHAT_SEND_SESSION_KEY_MAX_LENGTH:
+        raise ValueError(f"{label} must be at most {_CHAT_SEND_SESSION_KEY_MAX_LENGTH} characters")
+    return resolved
+
+
 def _require_session_label(value: object, *, label: str) -> str:
     resolved = _require_non_empty_string(value, label=label)
     if len(resolved) > _SESSION_LABEL_MAX_LENGTH:
@@ -12089,6 +13223,19 @@ def _require_string(value: object, *, label: str) -> str:
     return value
 
 
+def _require_openclaw_non_empty_string(value: object, *, label: str) -> str:
+    if not isinstance(value, str) or len(value) < 1:
+        raise ValueError(f"{label} must be a non-empty string")
+    return value
+
+
+def _optional_chat_inject_label(value: object, *, label: str) -> str:
+    resolved = _require_string(value, label=label)
+    if len(resolved) > _CHAT_INJECT_LABEL_MAX_LENGTH:
+        raise ValueError(f"{label} must be at most {_CHAT_INJECT_LABEL_MAX_LENGTH} characters")
+    return resolved
+
+
 def _require_string_list(value: object, *, label: str) -> list[str]:
     if not isinstance(value, list):
         raise ValueError(f"{label} must be a non-empty string array")
@@ -12105,6 +13252,19 @@ def _require_string_list(value: object, *, label: str) -> list[str]:
     if not normalized:
         raise ValueError(f"{label} must be a non-empty string array")
     return normalized
+
+
+def _require_preview_key_list(value: object, *, label: str) -> list[str]:
+    if not isinstance(value, list) or not value:
+        raise ValueError(f"{label} must be a non-empty string array")
+    normalized: list[str] = []
+    for entry in value:
+        if not isinstance(entry, str) or not entry:
+            raise ValueError(f"{label} must be a non-empty string array")
+        trimmed = entry.strip()
+        if trimmed:
+            normalized.append(trimmed)
+    return normalized[:64]
 
 
 def _require_string_array(value: object, *, label: str) -> list[str]:
@@ -12176,6 +13336,41 @@ def _optional_bounded_int(
     if value < minimum or value > maximum:
         raise ValueError(f"{label} must be between {minimum} and {maximum}")
     return value
+
+
+def _optional_openclaw_chat_timeout_ms(value: object, *, label: str) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{label} must be an integer")
+    if value < 0:
+        raise ValueError(f"{label} must be at least 0")
+    if value == 0:
+        return _OPENCLAW_MAX_SAFE_TIMEOUT_MS
+    return min(value, _OPENCLAW_MAX_SAFE_TIMEOUT_MS)
+
+
+def _optional_openclaw_floor_int(
+    value: object,
+    *,
+    label: str,
+    minimum: int,
+    maximum: int | None = None,
+    clamp_max: bool = False,
+) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        raise ValueError(f"{label} must be a number")
+    numeric_value = float(value)
+    if not math.isfinite(numeric_value):
+        raise ValueError(f"{label} must be a finite number")
+    bounded_value = max(minimum, math.floor(numeric_value))
+    if maximum is not None and bounded_value > maximum:
+        if clamp_max:
+            return maximum
+        raise ValueError(f"{label} must be between {minimum} and {maximum}")
+    return bounded_value
 
 
 def _optional_cursor_int(
@@ -12773,6 +13968,527 @@ def _format_gateway_chat_system_provenance_message(
     if not lines:
         return message
     return "\n".join([*lines, "", message])
+
+
+def _format_sessions_send_agent_context_message(
+    message: str,
+    *,
+    requester_session_key: str | None,
+    requester_channel: str | None,
+    target_session_key: str,
+) -> str:
+    if requester_session_key is None and requester_channel is None:
+        return message
+    lines = ["Agent-to-agent message context:"]
+    if requester_session_key is not None:
+        lines.append(f"Agent 1 (requester) session: {requester_session_key}.")
+    if requester_channel is not None:
+        lines.append(f"Agent 1 (requester) channel: {requester_channel}.")
+    lines.append(f"Agent 2 (target) session: {target_session_key}.")
+    return "\n".join([*lines, "", message])
+
+
+def _format_sessions_send_announce_context_message(
+    *,
+    original_message: str,
+    round_one_reply: str | None,
+    latest_reply: str | None,
+    requester_session_key: str | None,
+    requester_channel: str | None,
+    target_session_key: str,
+    target_channel: str | None,
+) -> str:
+    lines = ["Agent-to-agent announce step:"]
+    if requester_session_key is not None:
+        lines.append(f"Agent 1 (requester) session: {requester_session_key}.")
+    if requester_channel is not None:
+        lines.append(f"Agent 1 (requester) channel: {requester_channel}.")
+    lines.append(f"Agent 2 (target) session: {target_session_key}.")
+    if target_channel is not None:
+        lines.append(f"Agent 2 (target) channel: {target_channel}.")
+    lines.append(f"Original request: {original_message}")
+    lines.append(
+        f"Round 1 reply: {round_one_reply}"
+        if round_one_reply
+        else "Round 1 reply: (not available)."
+    )
+    lines.append(
+        f"Latest reply: {latest_reply}" if latest_reply else "Latest reply: (not available)."
+    )
+    lines.append('If you want to remain silent, reply exactly "ANNOUNCE_SKIP".')
+    lines.append("Any other reply will be posted to the target channel.")
+    lines.append("After this reply, the agent-to-agent conversation is over.")
+    return "\n".join(lines)
+
+
+def _format_sessions_send_reply_context_message(
+    *,
+    requester_session_key: str,
+    requester_channel: str | None,
+    target_session_key: str,
+    target_channel: str | None,
+    current_role: Literal["requester", "target"],
+    turn: int,
+    max_turns: int,
+) -> str:
+    current_label = (
+        "Agent 1 (requester)" if current_role == "requester" else "Agent 2 (target)"
+    )
+    lines = [
+        "Agent-to-agent reply step:",
+        f"Current agent: {current_label}.",
+        f"Turn {turn} of {max_turns}.",
+        f"Agent 1 (requester) session: {requester_session_key}.",
+    ]
+    if requester_channel is not None:
+        lines.append(f"Agent 1 (requester) channel: {requester_channel}.")
+    lines.append(f"Agent 2 (target) session: {target_session_key}.")
+    if target_channel is not None:
+        lines.append(f"Agent 2 (target) channel: {target_channel}.")
+    lines.append('If you want to stop the ping-pong, reply exactly "REPLY_SKIP".')
+    return "\n".join(lines)
+
+
+def _sessions_send_reply_text(payload: object) -> str | None:
+    if not isinstance(payload, dict):
+        return None
+    reply = _string_or_none(payload.get("reply")) or _string_or_none(payload.get("replyText"))
+    if reply is not None:
+        return reply
+    message = payload.get("message")
+    if not isinstance(message, dict):
+        return None
+    content = message.get("content")
+    if isinstance(content, str):
+        return _string_or_none(content)
+    if not isinstance(content, list):
+        return None
+    text_parts: list[str] = []
+    for item in content:
+        if not isinstance(item, dict):
+            continue
+        text = _string_or_none(item.get("text"))
+        if text is not None:
+            text_parts.append(text)
+    return _string_or_none("\n".join(text_parts))
+
+
+def _sessions_send_announce_timeout_ms(params: dict[str, Any]) -> int:
+    timeout_seconds = params.get("timeoutSeconds")
+    if (
+        not isinstance(timeout_seconds, bool)
+        and isinstance(timeout_seconds, int | float)
+    ):
+        floored_seconds = max(0, int(timeout_seconds))
+        return 30_000 if floored_seconds == 0 else floored_seconds * 1000
+    timeout_ms = params.get("timeoutMs")
+    if not isinstance(timeout_ms, bool) and isinstance(timeout_ms, int | float):
+        return max(0, int(timeout_ms))
+    return 30_000
+
+
+def _sessions_send_max_ping_pong_turns(
+    config_service: GatewayConfigService | None,
+) -> int:
+    if config_service is None:
+        return 5
+    try:
+        snapshot = config_service.build_snapshot()
+    except Exception:
+        return 5
+    session = snapshot.get("session")
+    if not isinstance(session, dict):
+        return 5
+    agent_to_agent = session.get("agentToAgent")
+    if not isinstance(agent_to_agent, dict):
+        return 5
+    raw = agent_to_agent.get("maxPingPongTurns")
+    if isinstance(raw, bool) or not isinstance(raw, int | float):
+        return 5
+    return max(0, min(5, int(raw)))
+
+
+async def _session_access_visibility_policy_error(
+    config_service: GatewayConfigService | None,
+    database: Database | None,
+    *,
+    action: Literal["history", "send", "status", "list"],
+    requester_session_key: str | None,
+    target_session_key: str | None,
+) -> str | None:
+    if requester_session_key is None or target_session_key is None:
+        return None
+    visibility = _sessions_send_tools_visibility(config_service)
+    if visibility is None:
+        return None
+    requester_agent_id = resolve_agent_id_from_session_key(requester_session_key)
+    target_agent_id = resolve_agent_id_from_session_key(target_session_key)
+    if requester_agent_id != target_agent_id:
+        if visibility == "all":
+            return None
+        return _session_access_cross_visibility_message(action)
+    if visibility == "self" and target_session_key != requester_session_key:
+        return (
+            f"{_session_access_action_prefix(action)} visibility is restricted "
+            "to the current session "
+            "(tools.sessions.visibility=self)."
+        )
+    if (
+        visibility == "tree"
+        and target_session_key != requester_session_key
+        and not await _sessions_send_target_in_requester_tree(
+            database,
+            requester_session_key=requester_session_key,
+            target_session_key=target_session_key,
+        )
+    ):
+        return (
+            f"{_session_access_action_prefix(action)} visibility is restricted "
+            "to the current session tree "
+            "(tools.sessions.visibility=tree)."
+        )
+    return None
+
+
+def _session_access_action_prefix(
+    action: Literal["history", "send", "status", "list"],
+) -> str:
+    if action == "history":
+        return "Session history"
+    if action == "send":
+        return "Session send"
+    if action == "status":
+        return "Session status"
+    return "Session list"
+
+
+def _session_access_cross_visibility_message(
+    action: Literal["history", "send", "status", "list"],
+) -> str:
+    return (
+        f"{_session_access_action_prefix(action)} visibility is restricted. Set "
+        "tools.sessions.visibility=all to allow cross-agent access."
+    )
+
+
+async def _sessions_send_target_in_requester_tree(
+    database: Database | None,
+    *,
+    requester_session_key: str,
+    target_session_key: str,
+) -> bool:
+    if requester_session_key == target_session_key:
+        return True
+    if database is None:
+        return False
+    metadata_row = await database.get_gateway_session_metadata(target_session_key)
+    metadata = metadata_row.get("metadata") if isinstance(metadata_row, dict) else None
+    if not isinstance(metadata, dict):
+        return False
+    parent_key = _string_or_none(metadata.get("spawnedBy")) or _string_or_none(
+        metadata.get("parentSessionKey")
+    )
+    return parent_key == requester_session_key
+
+
+def _sessions_send_tools_visibility(
+    config_service: GatewayConfigService | None,
+) -> str | None:
+    if config_service is None:
+        return None
+    try:
+        snapshot = config_service.build_snapshot()
+    except Exception:
+        return "tree"
+    tools = snapshot.get("tools")
+    if not isinstance(tools, dict):
+        return "tree"
+    sessions = tools.get("sessions")
+    if not isinstance(sessions, dict):
+        return "tree"
+    raw_visibility = sessions.get("visibility")
+    if not isinstance(raw_visibility, str):
+        return "tree"
+    visibility = raw_visibility.strip().lower()
+    if visibility in {"self", "tree", "agent", "all"}:
+        return visibility
+    return "tree"
+
+
+def _sessions_send_a2a_policy_error(
+    config_service: GatewayConfigService | None,
+    *,
+    requester_session_key: str | None,
+    target_session_key: str | None,
+) -> str | None:
+    return _session_access_a2a_policy_error(
+        config_service,
+        action="send",
+        requester_session_key=requester_session_key,
+        target_session_key=target_session_key,
+    )
+
+
+def _sessions_send_label_lookup_policy_error(
+    config_service: GatewayConfigService | None,
+    *,
+    requester_session_key: str | None,
+    label: str | None,
+    requested_agent_id: str | None,
+    target_session_key: str | None,
+) -> str | None:
+    if (
+        requester_session_key is None
+        or label is None
+        or requested_agent_id is None
+        or target_session_key is not None
+    ):
+        return None
+    requester_agent_id = resolve_agent_id_from_session_key(requester_session_key)
+    target_agent_id = normalize_agent_id(requested_agent_id)
+    if requester_agent_id == target_agent_id:
+        return None
+    a2a_error = _session_access_a2a_agent_policy_error(
+        config_service,
+        action="send",
+        requester_agent_id=requester_agent_id,
+        target_agent_id=target_agent_id,
+    )
+    if a2a_error is not None:
+        return a2a_error
+    visibility = _sessions_send_tools_visibility(config_service)
+    if visibility != "all":
+        return _session_access_cross_visibility_message("send")
+    return None
+
+
+def _session_access_a2a_policy_error(
+    config_service: GatewayConfigService | None,
+    *,
+    action: Literal["history", "send", "status", "list"],
+    requester_session_key: str | None,
+    target_session_key: str | None,
+) -> str | None:
+    if requester_session_key is None or target_session_key is None:
+        return None
+    requester_agent_id = resolve_agent_id_from_session_key(requester_session_key)
+    target_agent_id = resolve_agent_id_from_session_key(target_session_key)
+    if requester_agent_id == target_agent_id:
+        return None
+    return _session_access_a2a_agent_policy_error(
+        config_service,
+        action=action,
+        requester_agent_id=requester_agent_id,
+        target_agent_id=target_agent_id,
+    )
+
+
+def _session_access_a2a_agent_policy_error(
+    config_service: GatewayConfigService | None,
+    *,
+    action: Literal["history", "send", "status", "list"],
+    requester_agent_id: str,
+    target_agent_id: str,
+) -> str | None:
+    enabled, allow_patterns = _sessions_send_a2a_policy_config(config_service)
+    if not enabled:
+        return _session_access_a2a_disabled_message(action)
+    if _sessions_send_a2a_agent_allowed(
+        requester_agent_id,
+        allow_patterns,
+    ) and _sessions_send_a2a_agent_allowed(target_agent_id, allow_patterns):
+        return None
+    return _session_access_a2a_denied_message(action)
+
+
+def _session_access_a2a_disabled_message(
+    action: Literal["history", "send", "status", "list"],
+) -> str:
+    if action == "history":
+        return (
+            "Agent-to-agent history is disabled. Set "
+            "tools.agentToAgent.enabled=true to allow cross-agent access."
+        )
+    if action == "send":
+        return (
+            "Agent-to-agent messaging is disabled. Set "
+            "tools.agentToAgent.enabled=true to allow cross-agent sends."
+        )
+    if action == "status":
+        return (
+            "Agent-to-agent status is disabled. Set "
+            "tools.agentToAgent.enabled=true to allow cross-agent access."
+        )
+    return (
+        "Agent-to-agent listing is disabled. Set "
+        "tools.agentToAgent.enabled=true to allow cross-agent visibility."
+    )
+
+
+def _session_access_a2a_denied_message(
+    action: Literal["history", "send", "status", "list"],
+) -> str:
+    if action == "history":
+        return "Agent-to-agent history denied by tools.agentToAgent.allow."
+    if action == "send":
+        return "Agent-to-agent messaging denied by tools.agentToAgent.allow."
+    if action == "status":
+        return "Agent-to-agent status denied by tools.agentToAgent.allow."
+    return "Agent-to-agent listing denied by tools.agentToAgent.allow."
+
+
+async def _filter_tools_invoke_sessions_list_result(
+    config_service: GatewayConfigService | None,
+    database: Database | None,
+    result: object,
+    *,
+    requester_session_key: str | None,
+) -> object:
+    if requester_session_key is None or not isinstance(result, dict):
+        return result
+    raw_sessions = result.get("sessions")
+    if not isinstance(raw_sessions, list):
+        return result
+    visible_sessions: list[object] = []
+    for entry in raw_sessions:
+        if not isinstance(entry, dict):
+            visible_sessions.append(entry)
+            continue
+        target_session_key = _string_or_none(entry.get("key"))
+        if target_session_key is None:
+            visible_sessions.append(entry)
+            continue
+        if target_session_key == "unknown":
+            continue
+        if target_session_key == "global" and requester_session_key != "global":
+            continue
+        visibility_error = await _session_access_visibility_policy_error(
+            config_service,
+            database,
+            action="list",
+            requester_session_key=requester_session_key,
+            target_session_key=target_session_key,
+        )
+        a2a_error = _session_access_a2a_policy_error(
+            config_service,
+            action="list",
+            requester_session_key=requester_session_key,
+            target_session_key=target_session_key,
+        )
+        if visibility_error is None and a2a_error is None:
+            visible_sessions.append(entry)
+    return {**result, "count": len(visible_sessions), "sessions": visible_sessions}
+
+
+def _sessions_send_a2a_policy_config(
+    config_service: GatewayConfigService | None,
+) -> tuple[bool, tuple[str, ...]]:
+    if config_service is None:
+        return False, ()
+    try:
+        snapshot = config_service.build_snapshot()
+    except Exception:
+        return False, ()
+    tools = snapshot.get("tools")
+    if not isinstance(tools, dict):
+        return False, ()
+    agent_to_agent = tools.get("agentToAgent")
+    if not isinstance(agent_to_agent, dict):
+        return False, ()
+    raw_allow = agent_to_agent.get("allow")
+    allow_patterns = (
+        tuple(entry.strip() for entry in raw_allow if isinstance(entry, str) and entry.strip())
+        if isinstance(raw_allow, list)
+        else ()
+    )
+    return agent_to_agent.get("enabled") is True, allow_patterns
+
+
+def _sessions_send_a2a_agent_allowed(agent_id: str, patterns: tuple[str, ...]) -> bool:
+    if not patterns:
+        return True
+    for pattern in patterns:
+        normalized = pattern.strip().lower()
+        if not normalized:
+            continue
+        if normalized == "*":
+            return True
+        if "*" not in normalized and normalized == agent_id:
+            return True
+        if "*" in normalized:
+            escaped = re.escape(normalized).replace("\\*", ".*")
+            if re.fullmatch(escaped, agent_id, flags=re.IGNORECASE) is not None:
+                return True
+    return False
+
+
+def _sessions_send_announce_target_from_session_payload(
+    payload: object,
+) -> dict[str, str] | None:
+    if not isinstance(payload, dict):
+        return None
+    delivery_context = payload.get("deliveryContext")
+    delivery = delivery_context if isinstance(delivery_context, dict) else {}
+    channel = _string_or_none(delivery.get("channel")) or _string_or_none(
+        payload.get("lastChannel")
+    )
+    to = _string_or_none(delivery.get("to")) or _string_or_none(payload.get("lastTo"))
+    if channel is None or to is None:
+        return None
+    normalized_channel = _normalize_gateway_chat_channel_id(channel)
+    if normalized_channel is None:
+        return None
+    target = {"channel": normalized_channel, "to": to}
+    account_id = _string_or_none(delivery.get("accountId")) or _string_or_none(
+        payload.get("lastAccountId")
+    )
+    if account_id is not None:
+        target["accountId"] = account_id
+    thread_id = _stringified_route_id(
+        delivery.get("threadId") if "threadId" in delivery else payload.get("lastThreadId")
+    )
+    if thread_id is not None:
+        target["threadId"] = thread_id
+    return target
+
+
+def _sessions_send_announce_target_from_key(session_key: str) -> dict[str, str] | None:
+    parts = [part.strip() for part in str(session_key or "").strip().split(":")]
+    if len(parts) < 5 or parts[0].lower() != "agent":
+        return None
+    rest = parts[2:]
+    channel = _normalize_gateway_chat_channel_id(rest[0])
+    if channel is None:
+        return None
+    index = 1
+    account_id: str | None = None
+    peer_kinds = {"direct", "group", "channel"}
+    if index < len(rest) and rest[index].lower() not in peer_kinds:
+        account_id = _string_or_none(rest[index])
+        index += 1
+    if index + 1 >= len(rest):
+        return None
+    peer_kind = rest[index].lower()
+    peer_id = _string_or_none(rest[index + 1])
+    if peer_kind not in peer_kinds or peer_id is None:
+        return None
+    target = {"channel": channel, "to": peer_id}
+    if account_id is not None:
+        target["accountId"] = account_id
+    tail = rest[index + 2 :]
+    if len(tail) >= 2 and tail[0].lower() in {"thread", "topic"}:
+        thread_id = _string_or_none(tail[1])
+        if thread_id is not None:
+            target["threadId"] = thread_id
+    return target
+
+
+def _stringified_route_id(value: object) -> str | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, int):
+        return str(value)
+    return _string_or_none(value)
 
 
 def _has_effective_agent_attachment_content(value: object) -> bool:
