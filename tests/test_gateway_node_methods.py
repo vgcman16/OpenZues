@@ -13377,6 +13377,36 @@ async def test_sessions_spawn_returns_openclaw_accepted_note_for_run_mode(tmp_pa
 
 
 @pytest.mark.asyncio
+async def test_sessions_spawn_persists_completion_expectation_override(tmp_path) -> None:
+    database = Database(tmp_path / "gateway-sessions-spawn-completion-expectation.db")
+    await database.initialize()
+
+    async def fake_chat_send_service(**_kwargs: object) -> dict[str, object]:
+        return {"runId": "run-spawned-session-no-announce-1", "status": "ok"}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        chat_send_service=fake_chat_send_service,
+    )
+
+    payload = await service.call(
+        "sessions.spawn",
+        {
+            "task": "Spawn without waiting for a completion announce.",
+            "expectsCompletionMessage": False,
+        },
+    )
+
+    assert payload["status"] == "accepted"
+    child_session_key = str(payload["childSessionKey"])
+    metadata_row = await database.get_gateway_session_metadata(child_session_key)
+    assert metadata_row is not None
+    assert metadata_row["metadata"]["expectsCompletionMessage"] is False
+
+
+@pytest.mark.asyncio
 async def test_sessions_spawn_reports_model_applied_for_model_override(tmp_path) -> None:
     database = Database(tmp_path / "gateway-sessions-spawn-model-applied.db")
     await database.initialize()

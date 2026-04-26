@@ -23,6 +23,12 @@ when callers omit explicit `runTimeoutSeconds` / legacy `timeoutSeconds`.
 Remaining spawn work should stay on ACP harness execution, sandboxed target
 runtimes, thread-binding lifecycle hooks, and completion/cleanup orchestration.
 
+Current queue-head adjustment: `sessions.spawn` now also preserves
+`expectsCompletionMessage` on spawned-session metadata, matching OpenClaw's
+subagent run-registry intent at the durable state boundary. Remaining work is
+to consume that flag in the future lifecycle/cleanup owner rather than drop it
+at spawn time.
+
 Current queue-head adjustment: OpenZues now advertises an explicit
 `sessions_history` tool posture and exposes `sessions.history` as an
 agent-tool-style gateway read: it resolves session aliases, hides tool rows by

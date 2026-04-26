@@ -6967,6 +6967,14 @@ class GatewayNodeMethodService:
                 allowed_values={"delete", "keep"},
             ) or "keep"
             tracked_cleanup = "keep" if tracked_mode == "session" else cleanup
+            expects_completion_message = (
+                _optional_bool(
+                    payload.get("expectsCompletionMessage"),
+                    label="expectsCompletionMessage",
+                )
+                if "expectsCompletionMessage" in payload
+                else None
+            )
             run_timeout_seconds_value = _optional_number(
                 payload.get("runTimeoutSeconds"),
                 label="runTimeoutSeconds",
@@ -7024,6 +7032,8 @@ class GatewayNodeMethodService:
                 metadata["spawnedWorkspaceDir"] = cwd
             if agent_id is not None:
                 metadata["agentId"] = agent_id
+            if expects_completion_message is not None:
+                metadata["expectsCompletionMessage"] = expects_completion_message
             attach_as = payload.get("attachAs")
             if attach_as is not None and not isinstance(attach_as, dict):
                 raise ValueError("attachAs must be an object")
