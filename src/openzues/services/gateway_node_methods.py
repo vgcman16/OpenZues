@@ -11480,17 +11480,17 @@ def _sessions_spawn_max_children_per_agent(config_service: GatewayConfigService 
 
 def _sessions_spawn_default_run_timeout_seconds(
     config_service: GatewayConfigService | None,
-) -> int | None:
+) -> int:
     if config_service is None:
-        return None
+        return 0
     subagents_config = _sessions_spawn_subagents_config(config_service)
     if subagents_config is None:
-        return None
+        return 0
     raw_timeout = subagents_config.get("runTimeoutSeconds")
     if isinstance(raw_timeout, bool) or not isinstance(raw_timeout, int | float):
-        return None
+        return 0
     if not math.isfinite(float(raw_timeout)):
-        return None
+        return 0
     return max(0, math.floor(float(raw_timeout)))
 
 

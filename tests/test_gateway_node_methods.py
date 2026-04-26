@@ -13770,6 +13770,35 @@ async def test_sessions_spawn_uses_configured_default_run_timeout(tmp_path) -> N
 
 
 @pytest.mark.asyncio
+async def test_sessions_spawn_defaults_omitted_run_timeout_to_zero(tmp_path) -> None:
+    database = Database(tmp_path / "gateway-sessions-spawn-default-zero-timeout.db")
+    await database.initialize()
+    observed_send: dict[str, object] = {}
+
+    async def fake_chat_send_service(**kwargs: object) -> dict[str, object]:
+        observed_send.update(kwargs)
+        return {"runId": "run-zero-timeout", "status": "ok", "messageSeq": 1}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        chat_send_service=fake_chat_send_service,
+    )
+
+    payload = await service.call(
+        "sessions.spawn",
+        {"task": "Use the implicit no-timeout sentinel."},
+    )
+
+    assert payload["status"] == "accepted"
+    assert observed_send["timeout_ms"] == 0
+    metadata_row = await database.get_gateway_session_metadata(str(payload["childSessionKey"]))
+    assert metadata_row is not None
+    assert metadata_row["metadata"]["runTimeoutSeconds"] == 0
+
+
+@pytest.mark.asyncio
 async def test_sessions_spawn_honors_configured_max_children_per_agent(tmp_path) -> None:
     database = Database(tmp_path / "gateway-sessions-spawn-max-children.db")
     await database.initialize()

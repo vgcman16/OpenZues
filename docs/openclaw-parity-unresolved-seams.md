@@ -46,6 +46,10 @@ metadata (`spawnMode`, `cleanup`, and resolved `runTimeoutSeconds`) on child
 sessions. Remaining work is the lifecycle owner that consumes those fields for
 completion announcements and cleanup.
 
+Current queue-head adjustment: omitted `sessions.spawn` run timeout now
+resolves to OpenClaw's explicit no-timeout sentinel (`0`) and persists that
+resolved value on child metadata.
+
 Current queue-head adjustment: OpenZues now advertises an explicit
 `sessions_history` tool posture and exposes `sessions.history` as an
 agent-tool-style gateway read: it resolves session aliases, hides tool rows by
