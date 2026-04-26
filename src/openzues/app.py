@@ -2188,8 +2188,18 @@ def create_app(
         timeout_ms: int | None,
         channel: str | None = None,
         to: str | None = None,
+        bootstrap_context_mode: str | None = None,
+        bootstrap_context_run_kind: str | None = None,
     ) -> dict[str, object]:
-        del thinking, deliver, timeout_ms, channel, to
+        del (
+            thinking,
+            deliver,
+            timeout_ms,
+            channel,
+            to,
+            bootstrap_context_mode,
+            bootstrap_context_run_kind,
+        )
         dashboard_view = await build_dashboard()
         await active_control_chat_service.submit(
             message,

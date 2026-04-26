@@ -13407,6 +13407,40 @@ async def test_sessions_spawn_persists_completion_expectation_override(tmp_path)
 
 
 @pytest.mark.asyncio
+async def test_sessions_spawn_passes_lightweight_bootstrap_context(tmp_path) -> None:
+    database = Database(tmp_path / "gateway-sessions-spawn-light-context.db")
+    await database.initialize()
+    observed_send: dict[str, object] = {}
+
+    async def fake_chat_send_service(**kwargs: object) -> dict[str, object]:
+        observed_send.update(kwargs)
+        return {"runId": "run-spawned-session-light-context-1", "status": "ok"}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        chat_send_service=fake_chat_send_service,
+    )
+
+    payload = await service.call(
+        "sessions.spawn",
+        {
+            "task": "Spawn with lightweight context.",
+            "lightContext": True,
+        },
+    )
+
+    assert payload["status"] == "accepted"
+    assert observed_send["bootstrap_context_mode"] == "lightweight"
+    assert observed_send["bootstrap_context_run_kind"] == "default"
+    child_session_key = str(payload["childSessionKey"])
+    metadata_row = await database.get_gateway_session_metadata(child_session_key)
+    assert metadata_row is not None
+    assert metadata_row["metadata"]["bootstrapContextMode"] == "lightweight"
+
+
+@pytest.mark.asyncio
 async def test_sessions_spawn_reports_model_applied_for_model_override(tmp_path) -> None:
     database = Database(tmp_path / "gateway-sessions-spawn-model-applied.db")
     await database.initialize()

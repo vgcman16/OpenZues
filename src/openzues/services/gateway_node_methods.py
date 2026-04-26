@@ -7032,6 +7032,8 @@ class GatewayNodeMethodService:
                 metadata["spawnedWorkspaceDir"] = cwd
             if agent_id is not None:
                 metadata["agentId"] = agent_id
+            if light_context:
+                metadata["bootstrapContextMode"] = "lightweight"
             if expects_completion_message is not None:
                 metadata["expectsCompletionMessage"] = expects_completion_message
             attach_as = payload.get("attachAs")
@@ -7074,6 +7076,14 @@ class GatewayNodeMethodService:
                     status_code=503,
                 )
             try:
+                light_context_kwargs = (
+                    {
+                        "bootstrap_context_mode": "lightweight",
+                        "bootstrap_context_run_kind": "default",
+                    }
+                    if light_context
+                    else {}
+                )
                 send_result = await self._chat_send_service(
                     session_key=canonical_key,
                     message=(
@@ -7085,6 +7095,7 @@ class GatewayNodeMethodService:
                     thinking=thinking,
                     deliver=None,
                     timeout_ms=timeout_ms,
+                    **light_context_kwargs,
                 )
             except Exception as exc:  # noqa: BLE001 - preserve actionable spawn error.
                 if attachment_dir is not None:

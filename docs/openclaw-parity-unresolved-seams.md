@@ -29,6 +29,12 @@ subagent run-registry intent at the durable state boundary. Remaining work is
 to consume that flag in the future lifecycle/cleanup owner rather than drop it
 at spawn time.
 
+Current queue-head adjustment: `sessions.spawn lightContext=true` now reaches
+the child run dispatcher as `bootstrap_context_mode="lightweight"` /
+`bootstrap_context_run_kind="default"` and persists `bootstrapContextMode` on
+the spawned session. Remaining work is to make the deeper subagent lifecycle
+owner consume the metadata the same way OpenClaw's child runtime does.
+
 Current queue-head adjustment: OpenZues now advertises an explicit
 `sessions_history` tool posture and exposes `sessions.history` as an
 agent-tool-style gateway read: it resolves session aliases, hides tool rows by
