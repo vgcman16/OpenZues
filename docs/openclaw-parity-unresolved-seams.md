@@ -41,6 +41,11 @@ instead of sending raw task text directly. Remaining spawn gaps are now deeper:
 ACP harness execution, thread-bound session spawns, sandboxed target runtimes,
 and lifecycle cleanup/announce handling.
 
+Current queue-head adjustment: `sessions.spawn` now persists lifecycle policy
+metadata (`spawnMode`, `cleanup`, and resolved `runTimeoutSeconds`) on child
+sessions. Remaining work is the lifecycle owner that consumes those fields for
+completion announcements and cleanup.
+
 Current queue-head adjustment: OpenZues now advertises an explicit
 `sessions_history` tool posture and exposes `sessions.history` as an
 agent-tool-style gateway read: it resolves session aliases, hides tool rows by

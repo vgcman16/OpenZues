@@ -13363,6 +13363,9 @@ async def test_sessions_spawn_creates_openclaw_style_subagent_session() -> None:
     assert metadata_row["metadata"]["thinkingLevel"] == "medium"
     assert metadata_row["metadata"]["spawnedBy"].startswith("launch:mode:workspace_affinity")
     assert metadata_row["metadata"]["spawnDepth"] == 1
+    assert metadata_row["metadata"]["spawnMode"] == "run"
+    assert metadata_row["metadata"]["cleanup"] == "delete"
+    assert metadata_row["metadata"]["runTimeoutSeconds"] == 7
 
 
 @pytest.mark.asyncio

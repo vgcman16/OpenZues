@@ -7032,7 +7032,11 @@ class GatewayNodeMethodService:
                 "spawnDepth": child_spawn_depth,
                 "subagentRole": child_subagent_role,
                 "subagentControlScope": _sessions_spawn_control_scope(child_subagent_role),
+                "spawnMode": tracked_mode,
+                "cleanup": tracked_cleanup,
             }
+            if run_timeout_seconds is not None:
+                metadata["runTimeoutSeconds"] = run_timeout_seconds
             requester_origin = _requester_route_context(resolved_requester)
             if requester_origin is not None:
                 metadata["requesterOrigin"] = dict(requester_origin)
