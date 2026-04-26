@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import re
 from collections.abc import Awaitable, Callable
-from datetime import UTC, datetime, timedelta
-from typing import Any, Literal, cast
+from datetime import UTC, datetime, timedelta, tzinfo
+from typing import Any, Literal, NamedTuple, cast
 from urllib.parse import urlparse
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from openzues.database import Database
 from openzues.schemas import ConversationTargetView, TaskBlueprintCreate
@@ -26,6 +27,18 @@ CronDeliveryStatus = Literal["delivered", "not-delivered", "unknown", "not-reque
 _GATEWAY_CRON_AGENT_ID = "openzues"
 _CRON_CUSTOM_SESSION_SEGMENT_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$", re.IGNORECASE)
 _CRON_DELIVERY_CHANNEL_ID_RE = re.compile(r"^[a-z][a-z_-]{0,63}$")
+_CRON_LOOKAHEAD_MINUTES = 366 * 24 * 60
+
+
+class _ParsedCronSchedule(NamedTuple):
+    seconds: set[int]
+    minutes: set[int]
+    hours: set[int]
+    days_of_month: set[int]
+    months: set[int]
+    days_of_week: set[int]
+    day_of_month_any: bool
+    day_of_week_any: bool
 
 
 class GatewayCronService:
@@ -600,9 +613,12 @@ class GatewayCronService:
         if bool(task.get("enabled")):
             next_run_at_ms = _next_run_at_ms(
                 last_launched_at=payload_state.get("last_launched_at"),
+                created_at=task.get("created_at"),
                 cadence_minutes=_int_or_none(task.get("cadence_minutes")),
                 schedule_kind=_text_or_none(payload_state.get("schedule_kind")),
                 schedule_at=payload_state.get("schedule_at"),
+                schedule_cron_expr=payload_state.get("schedule_cron_expr"),
+                schedule_cron_tz=payload_state.get("schedule_cron_tz"),
                 last_status=payload_state.get("last_status"),
             )
             if next_run_at_ms is not None:
@@ -666,16 +682,29 @@ def _parse_timestamp(value: object) -> datetime | None:
 def _next_run_at_ms(
     *,
     last_launched_at: object,
+    created_at: object | None = None,
     cadence_minutes: int | None,
     schedule_kind: str | None = None,
     schedule_at: object | None = None,
+    schedule_cron_expr: object | None = None,
+    schedule_cron_tz: object | None = None,
     last_status: object | None = None,
 ) -> int | None:
-    if str(schedule_kind or "").strip().lower() == "at":
+    normalized_schedule_kind = str(schedule_kind or "").strip().lower()
+    if normalized_schedule_kind == "at":
         return _at_schedule_next_run_at_ms(
             schedule_at=schedule_at,
             last_launched_at=last_launched_at,
             last_status=last_status,
+        )
+    if normalized_schedule_kind == "cron":
+        base = _parse_timestamp(last_launched_at) or _parse_timestamp(created_at)
+        if base is None:
+            base = datetime.now(UTC)
+        return _cron_expression_next_run_at_ms(
+            expr=schedule_cron_expr,
+            tz=schedule_cron_tz,
+            after=base,
         )
     if cadence_minutes is None:
         return None
@@ -696,6 +725,20 @@ def _task_is_due(task: dict[str, Any]) -> bool:
             schedule_at=schedule.get("at"),
             last_launched_at=_task_payload_fields(task).get("last_launched_at"),
             last_status=_task_payload_fields(task).get("last_status"),
+        )
+        current_ms = int(datetime.now(UTC).timestamp() * 1000)
+        return next_run_at_ms is not None and next_run_at_ms <= current_ms
+    if schedule["kind"] == "cron":
+        payload_state = _task_payload_fields(task)
+        base = _parse_timestamp(payload_state.get("last_launched_at")) or _parse_timestamp(
+            task.get("created_at")
+        )
+        if base is None:
+            return False
+        next_run_at_ms = _cron_expression_next_run_at_ms(
+            expr=schedule.get("expr"),
+            tz=schedule.get("tz"),
+            after=base,
         )
         current_ms = int(datetime.now(UTC).timestamp() * 1000)
         return next_run_at_ms is not None and next_run_at_ms <= current_ms
@@ -916,6 +959,18 @@ def _is_gateway_cron_task(task: dict[str, Any]) -> bool:
             ) is not None
         except ValueError:
             return False
+    if schedule_kind == "cron":
+        try:
+            return (
+                _canonical_cron_expr(
+                    payload_state.get("schedule_cron_expr"),
+                    method="stored cron",
+                    label="schedule.expr",
+                )
+                is not None
+            )
+        except ValueError:
+            return False
     cadence_minutes = _int_or_none(task.get("cadence_minutes"))
     return cadence_minutes is not None and cadence_minutes >= 1
 
@@ -938,18 +993,41 @@ def _cron_schedule_payload(
             "kind": "at",
             "at": schedule_at,
         }
+    if schedule_kind == "cron":
+        expr = _canonical_cron_expr(
+            resolved_payload_state.get("schedule_cron_expr"),
+            method="stored cron",
+            label="schedule.expr",
+        )
+        if expr is None:
+            return None
+        cron_schedule: dict[str, Any] = {
+            "kind": "cron",
+            "expr": expr,
+        }
+        tz = _canonical_cron_tz(resolved_payload_state.get("schedule_cron_tz"))
+        if tz is not None:
+            cron_schedule["tz"] = tz
+        stagger_ms = _canonical_cron_stagger_ms(
+            resolved_payload_state.get("schedule_cron_stagger_ms"),
+            method="stored cron",
+            label="schedule.staggerMs",
+        )
+        if stagger_ms is not None:
+            cron_schedule["staggerMs"] = stagger_ms
+        return cron_schedule
 
     cadence_minutes = _int_or_none(task.get("cadence_minutes"))
     if cadence_minutes is None or cadence_minutes < 1:
         return None
-    schedule: dict[str, Any] = {
+    every_schedule: dict[str, Any] = {
         "kind": "every",
         "everyMs": cadence_minutes * 60_000,
     }
     anchor_ms = resolved_payload_state.get("schedule_anchor_ms")
     if isinstance(anchor_ms, int) and not isinstance(anchor_ms, bool) and anchor_ms >= 0:
-        schedule["anchorMs"] = anchor_ms
-    return schedule
+        every_schedule["anchorMs"] = anchor_ms
+    return every_schedule
 
 
 def _at_schedule_next_run_at_ms(
@@ -1008,6 +1086,192 @@ def _canonical_cron_schedule_at(value: object, *, error_message: str) -> str | N
     if parsed is None:
         raise ValueError(error_message)
     return parsed.astimezone(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def _canonical_cron_expr(
+    value: object,
+    *,
+    method: str,
+    label: str,
+) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f"invalid {method} params: {label} must be a non-empty string")
+    expr = " ".join(value.strip().split())
+    if not expr:
+        raise ValueError(f"invalid {method} params: {label} must be a non-empty string")
+    field_count = len(expr.split())
+    if field_count not in {5, 6}:
+        raise ValueError(
+            f"invalid {method} params: {label} must be a 5-field or 6-field cron expression"
+        )
+    return expr
+
+
+def _canonical_cron_tz(value: object) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip()
+    return normalized or None
+
+
+def _canonical_cron_stagger_ms(
+    value: object,
+    *,
+    method: str,
+    label: str,
+) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError(f"invalid {method} params: {label} must be a non-negative integer")
+    return value
+
+
+def _cron_expression_next_run_at_ms(
+    *,
+    expr: object,
+    tz: object,
+    after: datetime,
+) -> int | None:
+    normalized_expr = _canonical_cron_expr(
+        expr,
+        method="stored cron",
+        label="schedule.expr",
+    )
+    if normalized_expr is None:
+        return None
+    try:
+        schedule = _parse_cron_expression(normalized_expr)
+    except ValueError:
+        return None
+    timezone = _cron_timezone(tz)
+    start = (after.astimezone(timezone) + timedelta(seconds=1)).replace(microsecond=0)
+    minute_cursor = start.replace(second=0)
+    ordered_seconds = sorted(schedule.seconds)
+    for _ in range(_CRON_LOOKAHEAD_MINUTES):
+        if _cron_minute_matches(minute_cursor, schedule):
+            for second in ordered_seconds:
+                candidate = minute_cursor.replace(second=second)
+                if candidate >= start:
+                    return int(candidate.astimezone(UTC).timestamp() * 1000)
+        minute_cursor += timedelta(minutes=1)
+    return None
+
+
+def cron_expression_next_run_at(
+    *,
+    expr: object,
+    tz: object,
+    after: datetime,
+) -> str | None:
+    next_run_at_ms = _cron_expression_next_run_at_ms(expr=expr, tz=tz, after=after)
+    if next_run_at_ms is None:
+        return None
+    return datetime.fromtimestamp(next_run_at_ms / 1000, tz=UTC).isoformat()
+
+
+def _cron_timezone(value: object) -> tzinfo:
+    normalized_tz = _canonical_cron_tz(value)
+    if normalized_tz is None:
+        return UTC
+    try:
+        return ZoneInfo(normalized_tz)
+    except ZoneInfoNotFoundError:
+        return UTC
+
+
+def _parse_cron_expression(expr: str) -> _ParsedCronSchedule:
+    fields = expr.split()
+    if len(fields) == 5:
+        seconds = {0}
+        minute_field, hour_field, day_field, month_field, weekday_field = fields
+    elif len(fields) == 6:
+        seconds = _parse_cron_field(fields[0], minimum=0, maximum=59)
+        minute_field, hour_field, day_field, month_field, weekday_field = fields[1:]
+    else:
+        raise ValueError("cron expression must contain 5 or 6 fields")
+    day_of_month_any = day_field in {"*", "?"}
+    day_of_week_any = weekday_field in {"*", "?"}
+    days_of_week = {
+        0 if value == 7 else value
+        for value in _parse_cron_field(weekday_field, minimum=0, maximum=7)
+    }
+    return _ParsedCronSchedule(
+        seconds=seconds,
+        minutes=_parse_cron_field(minute_field, minimum=0, maximum=59),
+        hours=_parse_cron_field(hour_field, minimum=0, maximum=23),
+        days_of_month=_parse_cron_field(day_field, minimum=1, maximum=31),
+        months=_parse_cron_field(month_field, minimum=1, maximum=12),
+        days_of_week=days_of_week,
+        day_of_month_any=day_of_month_any,
+        day_of_week_any=day_of_week_any,
+    )
+
+
+def _parse_cron_field(field: str, *, minimum: int, maximum: int) -> set[int]:
+    normalized = field.strip()
+    if normalized in {"*", "?"}:
+        return set(range(minimum, maximum + 1))
+    values: set[int] = set()
+    for part in normalized.split(","):
+        segment = part.strip()
+        if not segment:
+            raise ValueError("empty cron field segment")
+        step = 1
+        if "/" in segment:
+            base, raw_step = segment.split("/", 1)
+            if not raw_step.isdigit():
+                raise ValueError("invalid cron field step")
+            step = int(raw_step)
+            if step < 1:
+                raise ValueError("invalid cron field step")
+        else:
+            base = segment
+        if base in {"*", "?"}:
+            start, end = minimum, maximum
+        elif "-" in base:
+            raw_start, raw_end = base.split("-", 1)
+            start = _parse_cron_int(raw_start, minimum=minimum, maximum=maximum)
+            end = _parse_cron_int(raw_end, minimum=minimum, maximum=maximum)
+            if end < start:
+                raise ValueError("invalid cron field range")
+        else:
+            start = _parse_cron_int(base, minimum=minimum, maximum=maximum)
+            end = start
+        values.update(range(start, end + 1, step))
+    if not values:
+        raise ValueError("empty cron field")
+    return values
+
+
+def _parse_cron_int(value: str, *, minimum: int, maximum: int) -> int:
+    raw = value.strip()
+    if not raw.isdigit():
+        raise ValueError("invalid cron field value")
+    parsed = int(raw)
+    if parsed < minimum or parsed > maximum:
+        raise ValueError("cron field value out of range")
+    return parsed
+
+
+def _cron_minute_matches(moment: datetime, schedule: _ParsedCronSchedule) -> bool:
+    cron_dow = (moment.weekday() + 1) % 7
+    day_of_month_matches = moment.day in schedule.days_of_month
+    day_of_week_matches = cron_dow in schedule.days_of_week
+    if not schedule.day_of_month_any and not schedule.day_of_week_any:
+        day_matches = day_of_month_matches or day_of_week_matches
+    else:
+        day_matches = day_of_month_matches and day_of_week_matches
+    return (
+        moment.minute in schedule.minutes
+        and moment.hour in schedule.hours
+        and moment.month in schedule.months
+        and day_matches
+    )
 
 
 def build_gateway_cron_task_blueprint(job_create: dict[str, Any]) -> TaskBlueprintCreate:
@@ -1119,6 +1383,9 @@ def build_gateway_cron_task_blueprint(job_create: dict[str, Any]) -> TaskBluepri
     cadence_minutes: int | None = None
     anchor_ms: int | None = None
     schedule_at: str | None = None
+    schedule_cron_expr: str | None = None
+    schedule_cron_tz: str | None = None
+    schedule_cron_stagger_ms: int | None = None
     if schedule_kind == "every":
         _validate_gateway_cron_object_keys(
             schedule,
@@ -1162,10 +1429,32 @@ def build_gateway_cron_task_blueprint(job_create: dict[str, Any]) -> TaskBluepri
         )
         if schedule_at is None:
             raise ValueError("invalid cron.add params: schedule.at must be an ISO-8601 timestamp")
+    elif schedule_kind == "cron":
+        _validate_gateway_cron_object_keys(
+            schedule,
+            method="cron.add",
+            label="schedule",
+            allowed_keys={"kind", "expr", "tz", "staggerMs"},
+        )
+        schedule_cron_expr = _canonical_cron_expr(
+            schedule.get("expr"),
+            method="cron.add",
+            label="schedule.expr",
+        )
+        if schedule_cron_expr is None:
+            raise ValueError("invalid cron.add params: schedule.expr must be a non-empty string")
+        schedule_cron_tz = _canonical_cron_tz(schedule.get("tz"))
+        if "tz" in schedule and schedule_cron_tz is None:
+            raise ValueError("invalid cron.add params: schedule.tz must be a string")
+        schedule_cron_stagger_ms = _canonical_cron_stagger_ms(
+            schedule.get("staggerMs"),
+            method="cron.add",
+            label="schedule.staggerMs",
+        )
     else:
         raise ValueError(
             "invalid cron.add params: "
-            "OpenZues currently supports only schedule.kind='every' or 'at'"
+            "schedule.kind must be one of: at, cron, every"
         )
 
     session_target = _validated_cron_session_target(
@@ -1264,7 +1553,7 @@ def build_gateway_cron_task_blueprint(job_create: dict[str, Any]) -> TaskBluepri
     else:
         raise ValueError("invalid cron.add params: enabled must be a boolean")
 
-    resolved_schedule_kind = cast(Literal["every", "at"], schedule_kind)
+    resolved_schedule_kind = cast(Literal["every", "at", "cron"], schedule_kind)
 
     return TaskBlueprintCreate(
         name=name,
@@ -1275,6 +1564,9 @@ def build_gateway_cron_task_blueprint(job_create: dict[str, Any]) -> TaskBluepri
         schedule_anchor_ms=anchor_ms,
         schedule_kind=resolved_schedule_kind,
         schedule_at=schedule_at,
+        schedule_cron_expr=schedule_cron_expr,
+        schedule_cron_tz=schedule_cron_tz,
+        schedule_cron_stagger_ms=schedule_cron_stagger_ms,
         cron_session_target=session_target,
         cron_session_key=cron_session_key,
         cron_wake_mode=cast(Literal["now", "next-heartbeat"], wake_mode),
@@ -1475,6 +1767,9 @@ def build_gateway_cron_job_patch(
             row_updates["cadence_minutes"] = every_ms // 60_000
             payload_updates["schedule_kind"] = "every"
             payload_updates["schedule_at"] = None
+            payload_updates["schedule_cron_expr"] = None
+            payload_updates["schedule_cron_tz"] = None
+            payload_updates["schedule_cron_stagger_ms"] = None
             if "anchorMs" in schedule:
                 raw_anchor_ms = schedule.get("anchorMs")
                 if (
@@ -1507,13 +1802,46 @@ def build_gateway_cron_job_patch(
             if payload_updates["schedule_at"] is None:
                 raise ValueError(
                     "invalid cron.update params: patch.schedule.at must be an ISO-8601 timestamp"
-                )
+            )
             payload_updates["schedule_anchor_ms"] = None
+            payload_updates["schedule_cron_expr"] = None
+            payload_updates["schedule_cron_tz"] = None
+            payload_updates["schedule_cron_stagger_ms"] = None
+            row_updates["cadence_minutes"] = None
+        elif schedule_kind == "cron":
+            _validate_gateway_cron_object_keys(
+                schedule,
+                method="cron.update",
+                label="patch.schedule",
+                allowed_keys={"kind", "expr", "tz", "staggerMs"},
+            )
+            schedule_cron_expr = _canonical_cron_expr(
+                schedule.get("expr"),
+                method="cron.update",
+                label="patch.schedule.expr",
+            )
+            if schedule_cron_expr is None:
+                raise ValueError(
+                    "invalid cron.update params: patch.schedule.expr must be a non-empty string"
+                )
+            schedule_cron_tz = _canonical_cron_tz(schedule.get("tz"))
+            if "tz" in schedule and schedule_cron_tz is None:
+                raise ValueError("invalid cron.update params: patch.schedule.tz must be a string")
+            payload_updates["schedule_kind"] = "cron"
+            payload_updates["schedule_at"] = None
+            payload_updates["schedule_anchor_ms"] = None
+            payload_updates["schedule_cron_expr"] = schedule_cron_expr
+            payload_updates["schedule_cron_tz"] = schedule_cron_tz
+            payload_updates["schedule_cron_stagger_ms"] = _canonical_cron_stagger_ms(
+                schedule.get("staggerMs"),
+                method="cron.update",
+                label="patch.schedule.staggerMs",
+            )
             row_updates["cadence_minutes"] = None
         else:
             raise ValueError(
                 "invalid cron.update params: "
-                "OpenZues currently supports only patch.schedule.kind='every' or 'at'"
+                "patch.schedule.kind must be one of: at, cron, every"
             )
 
     if "sessionTarget" in patch:

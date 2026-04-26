@@ -88,6 +88,112 @@ async def test_message_payloads_surface_compaction_checkpoint_metadata(tmp_path:
 
 
 @pytest.mark.asyncio
+async def test_message_payloads_surface_live_usage_metadata(tmp_path: Path) -> None:
+    database = Database(tmp_path / "gateway-sessions.db")
+    await database.initialize()
+
+    message_row_id = await database.append_control_chat_message(
+        role="assistant",
+        content="Usage snapshot",
+        mission_id=None,
+        session_key="openzues:thread:usage-live",
+        usage={
+            "input": 2_000,
+            "output": 400,
+            "cacheRead": 300,
+            "cacheWrite": 100,
+        },
+        cost={"total": 0.0042},
+    )
+    message_row = await database.get_control_chat_message(message_row_id)
+    assert message_row is not None
+
+    sessions_service = GatewaySessionsService(database)
+    message_payload = await sessions_service.build_message_event_payload(
+        message_row=message_row,
+        now_ms=1_700_000_000_456,
+    )
+    changed_payload = await sessions_service.build_message_changed_event_payload(
+        message_row=message_row,
+        now_ms=1_700_000_000_456,
+    )
+
+    assert message_payload is not None
+    assert message_payload["inputTokens"] == 2_000
+    assert message_payload["outputTokens"] == 400
+    assert message_payload["totalTokens"] == 2_400
+    assert message_payload["totalTokensFresh"] is True
+    assert message_payload["estimatedCostUsd"] == 0.0042
+
+    assert changed_payload is not None
+    assert changed_payload["inputTokens"] == 2_000
+    assert changed_payload["outputTokens"] == 400
+    assert changed_payload["totalTokens"] == 2_400
+    assert changed_payload["totalTokensFresh"] is True
+    assert changed_payload["estimatedCostUsd"] == 0.0042
+
+
+@pytest.mark.asyncio
+async def test_message_payloads_surface_spawn_and_route_metadata(tmp_path: Path) -> None:
+    database = Database(tmp_path / "gateway-sessions.db")
+    await database.initialize()
+
+    session_key = "agent:main:child"
+    await database.upsert_gateway_session_metadata(
+        session_key=session_key,
+        metadata={
+            "spawnedBy": "agent:main:main",
+            "spawnedWorkspaceDir": "/tmp/subagent-workspace",
+            "forkedFromParent": True,
+            "spawnDepth": 2,
+            "subagentRole": "orchestrator",
+            "subagentControlScope": "children",
+            "parentSessionKey": "agent:main:main",
+            "lastChannel": "telegram",
+            "lastTo": "-100123",
+            "lastAccountId": "acct-1",
+            "lastThreadId": 42,
+        },
+    )
+    message_row_id = await database.append_control_chat_message(
+        role="assistant",
+        content="Metadata snapshot",
+        mission_id=None,
+        session_key=session_key,
+    )
+    message_row = await database.get_control_chat_message(message_row_id)
+    assert message_row is not None
+
+    sessions_service = GatewaySessionsService(database)
+    message_payload = await sessions_service.build_message_event_payload(
+        message_row=message_row,
+        now_ms=1_700_000_000_456,
+    )
+    changed_payload = await sessions_service.build_message_changed_event_payload(
+        message_row=message_row,
+        now_ms=1_700_000_000_456,
+    )
+
+    expected_metadata = {
+        "spawnedBy": "agent:main:main",
+        "spawnedWorkspaceDir": "/tmp/subagent-workspace",
+        "forkedFromParent": True,
+        "spawnDepth": 2,
+        "subagentRole": "orchestrator",
+        "subagentControlScope": "children",
+        "parentSessionKey": "agent:main:main",
+        "lastChannel": "telegram",
+        "lastTo": "-100123",
+        "lastAccountId": "acct-1",
+        "lastThreadId": 42,
+    }
+    assert message_payload is not None
+    assert {key: message_payload.get(key) for key in expected_metadata} == expected_metadata
+    assert changed_payload is not None
+    assert {key: changed_payload.get(key) for key in expected_metadata} == expected_metadata
+
+
+@pytest.mark.asyncio
 async def test_session_payload_caps_compaction_checkpoint_count_at_25(
     tmp_path: Path,
 ) -> None:
@@ -194,12 +300,243 @@ async def test_build_snapshot_discovers_mission_and_transcript_sessions_without_
 
     sessions_by_key = {session["key"]: session for session in snapshot["sessions"]}
 
-    assert snapshot["count"] == 2
-    assert set(sessions_by_key) == {mission_only_key, transcript_only_key}
+    assert snapshot["count"] == 3
+    assert set(sessions_by_key) == {
+        "launch:mode:workspace_affinity",
+        mission_only_key,
+        transcript_only_key,
+    }
     assert sessions_by_key[mission_only_key]["sessionId"] == "mission-only"
     assert sessions_by_key[mission_only_key]["subject"] == "Mission-only objective"
     assert sessions_by_key[transcript_only_key]["sessionId"] == "transcript-only"
     assert sessions_by_key[transcript_only_key]["subject"] == "Operator control chat"
+
+
+@pytest.mark.asyncio
+async def test_build_snapshot_surfaces_transcript_usage_and_model_fallbacks(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "gateway-sessions.db")
+    await database.initialize()
+
+    parent_session_key = "agent:main:main"
+    child_session_key = "agent:main:dashboard:child"
+    await database.upsert_gateway_session_metadata(
+        session_key=parent_session_key,
+        metadata={"label": "Main"},
+    )
+    await database.upsert_gateway_session_metadata(
+        session_key=child_session_key,
+        metadata={
+            "label": "Child",
+            "parentSessionKey": parent_session_key,
+        },
+    )
+    await database.append_control_chat_message(
+        role="assistant",
+        content="Used Anthropic for this turn.",
+        mission_id=None,
+        session_key=child_session_key,
+        usage={"input": 2_000, "output": 500, "cacheRead": 1_000},
+        cost={"total": 0.0042},
+        model_provider="anthropic",
+        model="claude-sonnet-4-6",
+        created_at="2024-01-02T03:04:05Z",
+    )
+    await database.append_control_chat_message(
+        role="assistant",
+        content="Delivery mirror should not replace model identity.",
+        mission_id=None,
+        session_key=child_session_key,
+        usage={"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
+        model_provider="openclaw",
+        model="delivery-mirror",
+        created_at="2024-01-02T03:04:06Z",
+    )
+
+    snapshot = await GatewaySessionsService(database).build_snapshot(
+        include_global=True,
+        include_unknown=False,
+        limit=None,
+        active_minutes=None,
+        label=None,
+        spawned_by=None,
+        agent_id=None,
+        search=None,
+        include_derived_titles=False,
+        include_last_message=False,
+        now_ms=1_700_000_000_345,
+    )
+
+    sessions_by_key = {session["key"]: session for session in snapshot["sessions"]}
+    parent = sessions_by_key[parent_session_key]
+    child = sessions_by_key[child_session_key]
+
+    assert parent["childSessions"] == [child_session_key]
+    assert child["parentSessionKey"] == parent_session_key
+    assert child["inputTokens"] == 2_000
+    assert child["outputTokens"] == 500
+    assert child["totalTokens"] == 3_000
+    assert child["totalTokensFresh"] is True
+    assert child["estimatedCostUsd"] == 0.0042
+    assert child["modelProvider"] == "anthropic"
+    assert child["model"] == "claude-sonnet-4-6"
+    assert child["contextTokens"] == 1_048_576
+
+
+@pytest.mark.asyncio
+async def test_changed_event_payload_surfaces_transcript_usage_metadata(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "gateway-sessions.db")
+    await database.initialize()
+
+    session_key = "agent:main:dashboard:usage-event"
+    await database.upsert_gateway_session_metadata(
+        session_key=session_key,
+        metadata={"label": "Usage Event"},
+    )
+    await database.append_control_chat_message(
+        role="assistant",
+        content="Used Anthropic for this event.",
+        mission_id=None,
+        session_key=session_key,
+        usage={"input": 2_000, "output": 500, "cacheRead": 1_000},
+        cost={"total": 0.0042},
+        model_provider="anthropic",
+        model="claude-sonnet-4-6",
+        created_at="2024-01-02T03:04:05Z",
+    )
+
+    payload = await GatewaySessionsService(database).build_changed_event_payload(
+        session_key=session_key,
+        reason="patch",
+        now_ms=1_700_000_000_456,
+    )
+
+    assert payload["sessionKey"] == session_key
+    assert payload["reason"] == "patch"
+    assert payload["inputTokens"] == 2_000
+    assert payload["outputTokens"] == 500
+    assert payload["totalTokens"] == 3_000
+    assert payload["totalTokensFresh"] is True
+    assert payload["estimatedCostUsd"] == 0.0042
+    assert payload["modelProvider"] == "anthropic"
+    assert payload["model"] == "claude-sonnet-4-6"
+    assert payload["contextTokens"] == 1_048_576
+
+
+@pytest.mark.asyncio
+async def test_changed_event_payload_surfaces_session_setting_route_metadata(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "gateway-sessions.db")
+    await database.initialize()
+
+    session_key = "agent:main:dashboard:settings-event"
+    await database.upsert_gateway_session_metadata(
+        session_key=session_key,
+        metadata={
+            "verboseLevel": "on",
+            "responseUsage": "full",
+            "fastMode": True,
+            "lastChannel": "telegram",
+            "lastTo": "-100123",
+            "lastAccountId": "acct-1",
+            "lastThreadId": 42,
+        },
+    )
+
+    payload = await GatewaySessionsService(database).build_changed_event_payload(
+        session_key=session_key,
+        reason="patch",
+        now_ms=1_700_000_000_567,
+    )
+
+    assert payload["sessionKey"] == session_key
+    assert payload["reason"] == "patch"
+    assert payload["verboseLevel"] == "on"
+    assert payload["responseUsage"] == "full"
+    assert payload["fastMode"] is True
+    assert payload["lastChannel"] == "telegram"
+    assert payload["lastTo"] == "-100123"
+    assert payload["lastAccountId"] == "acct-1"
+    assert payload["lastThreadId"] == 42
+
+
+@pytest.mark.asyncio
+async def test_build_snapshot_surfaces_delivery_context_from_route_metadata(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "gateway-sessions.db")
+    await database.initialize()
+
+    session_key = "agent:main:dashboard:delivery-context"
+    await database.upsert_gateway_session_metadata(
+        session_key=session_key,
+        metadata={
+            "lastChannel": "whatsapp",
+            "lastTo": "+1555",
+            "lastAccountId": "work",
+            "lastThreadId": 42,
+        },
+    )
+
+    payload = await GatewaySessionsService(database).build_session_payload_for_key(
+        session_key=session_key,
+        now_ms=1_700_000_000_678,
+    )
+
+    assert payload is not None
+    assert payload["lastChannel"] == "whatsapp"
+    assert payload["lastTo"] == "+1555"
+    assert payload["lastAccountId"] == "work"
+    assert payload["lastThreadId"] == 42
+    assert payload["deliveryContext"] == {
+        "channel": "whatsapp",
+        "to": "+1555",
+        "accountId": "work",
+        "threadId": 42,
+    }
+
+
+@pytest.mark.asyncio
+async def test_route_metadata_preserves_string_thread_ids(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "gateway-sessions.db")
+    await database.initialize()
+
+    session_key = "agent:main:dashboard:string-thread"
+    await database.upsert_gateway_session_metadata(
+        session_key=session_key,
+        metadata={
+            "lastChannel": "whatsapp",
+            "lastTo": "+1555",
+            "lastAccountId": "work",
+            "lastThreadId": "1737500000.123456",
+        },
+    )
+
+    payload = await GatewaySessionsService(database).build_session_payload_for_key(
+        session_key=session_key,
+        now_ms=1_700_000_000_789,
+    )
+    changed_payload = await GatewaySessionsService(database).build_changed_event_payload(
+        session_key=session_key,
+        reason="patch",
+        now_ms=1_700_000_000_789,
+    )
+
+    assert payload is not None
+    assert payload["lastThreadId"] == "1737500000.123456"
+    assert payload["deliveryContext"] == {
+        "channel": "whatsapp",
+        "to": "+1555",
+        "accountId": "work",
+        "threadId": "1737500000.123456",
+    }
+    assert changed_payload["lastThreadId"] == "1737500000.123456"
 
 
 @pytest.mark.asyncio
@@ -224,6 +561,7 @@ async def test_build_snapshot_includes_current_main_session_without_persisted_ro
     )
 
     assert snapshot["count"] == 1
+    assert snapshot["defaults"]["modelProvider"] == "openai"
     assert snapshot["defaults"]["mainSessionKey"] == "launch:mode:workspace_affinity"
     assert snapshot["sessions"] == [
         {
@@ -244,6 +582,7 @@ async def test_build_snapshot_includes_current_main_session_without_persisted_ro
             "inputTokens": None,
             "outputTokens": None,
             "totalTokens": None,
+            "totalTokensFresh": False,
             "modelProvider": "openai",
             "model": "gpt-5.4",
             "contextTokens": None,
@@ -1145,6 +1484,39 @@ async def test_key_lookup_accepts_default_agent_request_key_alias_like_openclaw(
 
 
 @pytest.mark.asyncio
+async def test_key_lookup_scopes_custom_agent_request_key_alias(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "gateway-sessions.db")
+    await database.initialize()
+    await database.create_gateway_agent(
+        agent_id="builder-prime",
+        name="Builder Prime",
+        workspace=str(tmp_path / "agents" / "builder-prime"),
+        model="gpt-5.4-mini",
+        emoji=None,
+        avatar=None,
+    )
+    stored_key = "agent:builder-prime:subagent:child"
+    await database.upsert_gateway_session_metadata(
+        session_key=stored_key,
+        metadata={"agentId": "builder-prime", "label": "Builder child"},
+    )
+
+    payload = await GatewaySessionsService(database).resolve_key(
+        key="subagent:child",
+        session_id=None,
+        label=None,
+        agent_id="builder-prime",
+        spawned_by=None,
+        include_global=True,
+        include_unknown=True,
+    )
+
+    assert payload == {"ok": True, "key": stored_key}
+
+
+@pytest.mark.asyncio
 async def test_resolve_key_session_id_lookup_rejects_legacy_launch_session_for_agent_filter(
     tmp_path: Path,
 ) -> None:
@@ -1433,7 +1805,7 @@ async def test_build_snapshot_spawned_by_filter_excludes_global_and_unknown_sess
 
 
 @pytest.mark.asyncio
-async def test_build_snapshot_agent_filter_only_returns_strict_agent_sessions(
+async def test_build_snapshot_agent_filter_includes_main_legacy_sessions(
     tmp_path: Path,
 ) -> None:
     database = Database(tmp_path / "gateway-sessions.db")
@@ -1467,8 +1839,12 @@ async def test_build_snapshot_agent_filter_only_returns_strict_agent_sessions(
         now_ms=1_700_000_001_000,
     )
 
-    assert snapshot["count"] == 1
-    assert [session["key"] for session in snapshot["sessions"]] == [strict_agent_key]
+    assert snapshot["count"] == 3
+    assert {session["key"] for session in snapshot["sessions"]} == {
+        "launch:mode:workspace_affinity",
+        legacy_launch_key,
+        strict_agent_key,
+    }
 
 
 @pytest.mark.asyncio

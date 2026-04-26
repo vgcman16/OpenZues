@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 import sys
@@ -77,6 +78,35 @@ class GatewayConfigService:
         self._open_path = open_path or _open_gateway_config_path
 
     def build_snapshot(self) -> dict[str, Any]:
+        if self._config_path is not None and self._config_path.exists():
+            try:
+                persisted = json.loads(self._config_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                persisted = None
+            if isinstance(persisted, dict):
+                return self._validated_snapshot(persisted)
+        return self._default_snapshot()
+
+    def set_raw(self, raw: str, *, base_hash: str | None = None) -> dict[str, Any]:
+        self._require_config_path()
+        parsed = self._parse_raw_object(raw, label="config.set")
+        next_snapshot = self._validated_snapshot(parsed)
+        return self._write_snapshot(next_snapshot, base_hash=base_hash)
+
+    def patch_raw(self, raw: str, *, base_hash: str | None = None) -> dict[str, Any]:
+        self._require_config_path()
+        patch = self._parse_raw_object(raw, label="config.patch")
+        current = self.build_snapshot()
+        next_snapshot = self._validated_snapshot(_merge_config_patch(current, patch))
+        return self._write_snapshot(next_snapshot, base_hash=base_hash)
+
+    def apply_raw(self, raw: str, *, base_hash: str | None = None) -> dict[str, Any]:
+        result = self.set_raw(raw, base_hash=base_hash)
+        result["restart"] = None
+        result["sentinel"] = None
+        return result
+
+    def _default_snapshot(self) -> dict[str, Any]:
         return ControlUiBootstrapConfigView.model_validate(
             {
                 "basePath": self._base_path,
@@ -89,6 +119,50 @@ class GatewayConfigService:
                 "allowExternalEmbedUrls": self._allow_external_embed_urls,
             }
         ).model_dump(mode="json", by_alias=True)
+
+    def _validated_snapshot(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return ControlUiBootstrapConfigView.model_validate(payload).model_dump(
+            mode="json",
+            by_alias=True,
+        )
+
+    def _require_config_path(self) -> Path:
+        if self._config_path is None:
+            raise RuntimeError("config file path unavailable")
+        return self._config_path
+
+    def _parse_raw_object(self, raw: str, *, label: str) -> dict[str, Any]:
+        try:
+            parsed = json.loads(raw)
+        except ValueError as exc:
+            raise ValueError(f"{label} raw must be valid JSON") from exc
+        if not isinstance(parsed, dict):
+            raise ValueError(f"{label} raw must be an object")
+        return parsed
+
+    def _write_snapshot(self, snapshot: dict[str, Any], *, base_hash: str | None) -> dict[str, Any]:
+        config_path = self._require_config_path()
+        if config_path.exists():
+            current_hash = self._snapshot_hash(self.build_snapshot())
+            if not base_hash:
+                raise ValueError("config base hash required; re-run config.get and retry")
+            if base_hash != current_hash:
+                raise ValueError("config changed since last load; re-run config.get and retry")
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        config_path.write_text(
+            json.dumps(snapshot, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        return {
+            "ok": True,
+            "path": str(config_path),
+            "config": snapshot,
+            "hash": self._snapshot_hash(snapshot),
+        }
+
+    def _snapshot_hash(self, snapshot: dict[str, Any]) -> str:
+        encoded = json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        return f"sha256:{hashlib.sha256(encoded).hexdigest()}"
 
     def can_open_file(self) -> bool:
         return self._config_path is not None
@@ -111,3 +185,15 @@ class GatewayConfigService:
                 "error": "failed to open config file",
             }
         return {"ok": True, "path": str(self._config_path)}
+
+
+def _merge_config_patch(current: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(current)
+    for key, value in patch.items():
+        if value is None:
+            merged.pop(key, None)
+        elif isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _merge_config_patch(dict(merged[key]), value)
+        else:
+            merged[key] = value
+    return merged

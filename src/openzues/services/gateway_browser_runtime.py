@@ -21,6 +21,7 @@ class GatewayBrowserRuntimeError(RuntimeError):
 class GatewayBrowserRuntimeService:
     def __init__(self, *, command: str | None = None) -> None:
         self._command = command
+        self._recording_paths: dict[str, Path] = {}
 
     def _resolve_command(self) -> str:
         command = self._command or shutil.which("agent-browser.cmd") or shutil.which(
@@ -37,6 +38,7 @@ class GatewayBrowserRuntimeService:
         session: str,
         timeout_seconds: float,
         allow_failure: bool = False,
+        input_text: str | None = None,
     ) -> str:
         invocation = [self._resolve_command(), "--session", session, *args]
         try:
@@ -46,6 +48,7 @@ class GatewayBrowserRuntimeService:
                 text=True,
                 timeout=timeout_seconds,
                 check=False,
+                input=input_text,
             )
         except OSError as exc:
             raise GatewayBrowserRuntimeError(
@@ -132,6 +135,179 @@ class GatewayBrowserRuntimeService:
             "output": output,
         }
 
+    def set_setting(
+        self,
+        setting: str,
+        values: list[str],
+        *,
+        session: str,
+    ) -> dict[str, object]:
+        args = browser_set_args(setting, values)
+        output = self._run(args, session=session, timeout_seconds=8.0)
+        setting_name = args[1]
+        payload_values: list[str] = args[2:]
+        safe_output = output
+        payload: dict[str, object] = {
+            "ok": True,
+            "status": "ready",
+            "headline": "Browser setting updated",
+            "summary": f"Updated browser setting {setting} for session {session}.",
+            "session": session,
+            "setting": setting_name,
+            "values": payload_values,
+            "output": safe_output,
+        }
+        if setting_name == "headers":
+            headers = browser_headers_map(args[2])
+            for header_value in headers.values():
+                safe_output = safe_output.replace(header_value, "[redacted]")
+            payload_values = ["[redacted]"]
+            payload["headerNames"] = list(headers)
+            payload["redacted"] = True
+        elif setting_name == "credentials":
+            safe_output = safe_output.replace(args[3], "[redacted]")
+            payload_values = [args[2], "[redacted]"]
+            payload["redacted"] = True
+        payload["summary"] = first_browser_output_line(safe_output) or payload["summary"]
+        payload["values"] = payload_values
+        payload["output"] = safe_output
+        return payload
+
+    def batch(
+        self,
+        commands: list[str],
+        *,
+        session: str,
+        bail: bool = False,
+    ) -> dict[str, object]:
+        args = browser_batch_args(commands, bail=bail)
+        output = self._run(args, session=session, timeout_seconds=30.0)
+        lines = browser_output_lines(output)
+        clean_commands = args[2:] if bail else args[1:]
+        return {
+            "ok": True,
+            "status": "ready",
+            "headline": "Browser batch completed",
+            "summary": first_browser_output_line(output)
+            or f"Ran {len(clean_commands)} browser batch command(s).",
+            "session": session,
+            "commandCount": len(clean_commands),
+            "commands": clean_commands,
+            "bail": bail,
+            "lineCount": len(lines),
+            "lines": lines,
+            "output": output,
+        }
+
+    def dashboard_start(
+        self,
+        *,
+        session: str,
+        port: int | None = None,
+    ) -> dict[str, object]:
+        args = ["dashboard", "start"]
+        if port is not None:
+            args.extend(["--port", str(port)])
+        output = self._run(args, session=session, timeout_seconds=10.0)
+        return browser_dashboard_payload(
+            operation="start",
+            session=session,
+            output=output,
+            port=port,
+        )
+
+    def dashboard_stop(self, *, session: str) -> dict[str, object]:
+        output = self._run(["dashboard", "stop"], session=session, timeout_seconds=10.0)
+        return browser_dashboard_payload(
+            operation="stop",
+            session=session,
+            output=output,
+            port=None,
+        )
+
+    def chat(
+        self,
+        message: str,
+        *,
+        session: str,
+        model: str | None = None,
+        quiet: bool = False,
+        verbose: bool = False,
+    ) -> dict[str, object]:
+        args = browser_chat_args(message, model=model, quiet=quiet, verbose=verbose)
+        output = self._run(args, session=session, timeout_seconds=120.0)
+        lines = browser_output_lines(output)
+        return {
+            "ok": True,
+            "status": "ready",
+            "headline": "Browser chat completed",
+            "summary": first_browser_output_line(output)
+            or "Browser chat instruction completed.",
+            "session": session,
+            "message": message,
+            "model": model,
+            "quiet": quiet,
+            "verbose": verbose,
+            "lineCount": len(lines),
+            "lines": lines,
+            "output": output,
+        }
+
+    def ios_device_list(self, *, session: str) -> dict[str, object]:
+        output = self._run(
+            ["--provider", "ios", "device", "list"],
+            session=session,
+            timeout_seconds=10.0,
+        )
+        return browser_ios_device_list_payload(session=session, output=output)
+
+    def ios_swipe(
+        self,
+        direction: str,
+        *,
+        session: str,
+        distance: int | None = None,
+    ) -> dict[str, object]:
+        args = browser_ios_swipe_args(direction, distance=distance)
+        output = self._run(args, session=session, timeout_seconds=10.0)
+        lines = browser_output_lines(output)
+        return {
+            "ok": True,
+            "status": "ready",
+            "headline": "iOS browser swipe completed",
+            "summary": first_browser_output_line(output)
+            or f"Ran iOS browser swipe {args[3]}.",
+            "session": session,
+            "direction": args[3],
+            "distance": int(args[4]) if len(args) > 4 else None,
+            "lineCount": len(lines),
+            "lines": lines,
+            "output": output,
+        }
+
+    def ios_tap(self, target: str, *, session: str) -> dict[str, object]:
+        resolved_target = target.strip()
+        if not resolved_target:
+            raise GatewayBrowserRuntimeError("browser.ios.tap requires target")
+        output = self._run(
+            ["--provider", "ios", "tap", resolved_target],
+            session=session,
+            timeout_seconds=10.0,
+        )
+        lines = browser_output_lines(output)
+        return {
+            "ok": True,
+            "status": "ready",
+            "headline": "iOS browser tap completed",
+            "summary": first_browser_output_line(output)
+            or f"Tapped {resolved_target} through the iOS browser provider.",
+            "session": session,
+            "target": resolved_target,
+            "lineCount": len(lines),
+            "lines": lines,
+            "output": output,
+        }
+
     def close(
         self,
         *,
@@ -166,6 +342,24 @@ class GatewayBrowserRuntimeService:
             "targetId": None,
             "output": output,
         }
+
+    def confirm(self, action_id: str, *, session: str) -> dict[str, object]:
+        output = self._run(["confirm", action_id], session=session, timeout_seconds=6.0)
+        return browser_confirmation_payload(
+            session=session,
+            action_id=action_id,
+            decision="confirm",
+            output=output,
+        )
+
+    def deny(self, action_id: str, *, session: str) -> dict[str, object]:
+        output = self._run(["deny", action_id], session=session, timeout_seconds=6.0)
+        return browser_confirmation_payload(
+            session=session,
+            action_id=action_id,
+            decision="deny",
+            output=output,
+        )
 
     def focus(self, target_id: str, *, session: str) -> dict[str, object]:
         output = self._run(["tab", target_id], session=session, timeout_seconds=6.0)
@@ -316,9 +510,75 @@ class GatewayBrowserRuntimeService:
             output=output,
         )
 
+    def network_har_start(self, *, session: str) -> dict[str, object]:
+        output = self._run(
+            ["network", "har", "start"],
+            session=session,
+            timeout_seconds=5.0,
+        )
+        return browser_network_har_start_payload(session=session, output=output)
+
+    def network_har_stop(self, *, session: str) -> dict[str, object]:
+        har_path = browser_network_har_target_path(session)
+        output = self._run(
+            ["network", "har", "stop", str(har_path)],
+            session=session,
+            timeout_seconds=10.0,
+        )
+        saved_path = Path(har_path)
+        size_bytes = saved_path.stat().st_size if saved_path.exists() else 0
+        return browser_network_har_stop_payload(
+            session=session,
+            path=str(har_path),
+            output=output,
+            size_bytes=size_bytes,
+        )
+
     def cookies_get(self, *, session: str) -> dict[str, object]:
         output = self._run(["cookies", "get"], session=session, timeout_seconds=5.0)
         return browser_cookies_payload(session=session, output=output)
+
+    def cookies_set(
+        self,
+        name: str,
+        value: str,
+        *,
+        session: str,
+        url: str | None = None,
+        domain: str | None = None,
+        path: str | None = None,
+        http_only: bool | None = None,
+        secure: bool | None = None,
+        same_site: str | None = None,
+        expires: int | None = None,
+    ) -> dict[str, object]:
+        args = browser_cookie_set_args(
+            name=name,
+            value=value,
+            url=url,
+            domain=domain,
+            path=path,
+            http_only=http_only,
+            secure=secure,
+            same_site=same_site,
+            expires=expires,
+        )
+        output = self._run(args, session=session, timeout_seconds=5.0)
+        return browser_cookie_mutation_payload(
+            session=session,
+            operation="set",
+            name=name.strip(),
+            output=output,
+        )
+
+    def cookies_clear(self, *, session: str) -> dict[str, object]:
+        output = self._run(["cookies", "clear"], session=session, timeout_seconds=5.0)
+        return browser_cookie_mutation_payload(
+            session=session,
+            operation="clear",
+            name=None,
+            output=output,
+        )
 
     def storage_get(
         self,
@@ -327,6 +587,7 @@ class GatewayBrowserRuntimeService:
         session: str,
         key: str | None = None,
     ) -> dict[str, object]:
+        storage_type = browser_storage_type(storage_type)
         args = ["storage", storage_type, "get"]
         if key is not None:
             args.append(key)
@@ -335,6 +596,50 @@ class GatewayBrowserRuntimeService:
             session=session,
             storage_type=storage_type,
             key=key,
+            output=output,
+        )
+
+    def storage_set(
+        self,
+        storage_type: str,
+        key: str,
+        value: str,
+        *,
+        session: str,
+    ) -> dict[str, object]:
+        storage_type = browser_storage_type(storage_type)
+        if not key.strip():
+            raise GatewayBrowserRuntimeError("browser.storage.set requires key")
+        output = self._run(
+            ["storage", storage_type, "set", key.strip(), value],
+            session=session,
+            timeout_seconds=5.0,
+        )
+        return browser_storage_mutation_payload(
+            session=session,
+            storage_type=storage_type,
+            operation="set",
+            key=key.strip(),
+            output=output,
+        )
+
+    def storage_clear(
+        self,
+        storage_type: str,
+        *,
+        session: str,
+    ) -> dict[str, object]:
+        storage_type = browser_storage_type(storage_type)
+        output = self._run(
+            ["storage", storage_type, "clear"],
+            session=session,
+            timeout_seconds=5.0,
+        )
+        return browser_storage_mutation_payload(
+            session=session,
+            storage_type=storage_type,
+            operation="clear",
+            key=None,
             output=output,
         )
 
@@ -497,6 +802,161 @@ class GatewayBrowserRuntimeService:
             output=output,
         )
 
+    def trace_start(self, *, session: str) -> dict[str, object]:
+        output = self._run(["trace", "start"], session=session, timeout_seconds=5.0)
+        return browser_trace_start_payload(session=session, output=output)
+
+    def trace_stop(self, *, session: str) -> dict[str, object]:
+        trace_path = browser_trace_target_path(session)
+        output = self._run(
+            ["trace", "stop", str(trace_path)],
+            session=session,
+            timeout_seconds=15.0,
+        )
+        saved_path = Path(trace_path)
+        size_bytes = saved_path.stat().st_size if saved_path.exists() else None
+        return browser_trace_stop_payload(
+            session=session,
+            path=str(trace_path),
+            size_bytes=size_bytes,
+            output=output,
+        )
+
+    def profiler_start(
+        self,
+        *,
+        session: str,
+        categories: str | None = None,
+    ) -> dict[str, object]:
+        args = ["profiler", "start"]
+        if categories is not None:
+            args.extend(["--categories", categories])
+        output = self._run(args, session=session, timeout_seconds=5.0)
+        return browser_profiler_start_payload(
+            session=session,
+            categories=categories,
+            output=output,
+        )
+
+    def profiler_stop(self, *, session: str) -> dict[str, object]:
+        profile_path = browser_profiler_target_path(session)
+        output = self._run(
+            ["profiler", "stop", str(profile_path)],
+            session=session,
+            timeout_seconds=15.0,
+        )
+        saved_path = Path(profile_path)
+        size_bytes = saved_path.stat().st_size if saved_path.exists() else None
+        return browser_profiler_stop_payload(
+            session=session,
+            path=str(profile_path),
+            size_bytes=size_bytes,
+            output=output,
+        )
+
+    def record_start(
+        self,
+        *,
+        session: str,
+        url: str | None = None,
+    ) -> dict[str, object]:
+        recording_path = browser_recording_target_path(session)
+        args = ["record", "start", str(recording_path)]
+        if url is not None:
+            args.append(url)
+        output = self._run(args, session=session, timeout_seconds=10.0)
+        self._recording_paths[session] = recording_path
+        return browser_record_start_payload(
+            session=session,
+            url=url,
+            path=str(recording_path),
+            output=output,
+        )
+
+    def record_stop(self, *, session: str) -> dict[str, object]:
+        output = self._run(["record", "stop"], session=session, timeout_seconds=15.0)
+        recording_path = self._recording_paths.pop(session, None)
+        size_bytes = (
+            recording_path.stat().st_size
+            if recording_path is not None and recording_path.exists()
+            else None
+        )
+        return browser_record_stop_payload(
+            session=session,
+            path=str(recording_path) if recording_path is not None else None,
+            size_bytes=size_bytes,
+            output=output,
+        )
+
+    def record_restart(
+        self,
+        *,
+        session: str,
+        url: str | None = None,
+    ) -> dict[str, object]:
+        recording_path = browser_recording_target_path(session)
+        args = ["record", "restart", str(recording_path)]
+        if url is not None:
+            args.append(url)
+        output = self._run(args, session=session, timeout_seconds=15.0)
+        self._recording_paths[session] = recording_path
+        return browser_record_start_payload(
+            session=session,
+            url=url,
+            path=str(recording_path),
+            output=output,
+        )
+
+    def highlight(self, selector: str, *, session: str) -> dict[str, object]:
+        output = self._run(["highlight", selector], session=session, timeout_seconds=5.0)
+        return browser_debug_payload(
+            action="highlight",
+            session=session,
+            output=output,
+            selector=selector,
+        )
+
+    def inspect(self, *, session: str) -> dict[str, object]:
+        output = self._run(["inspect"], session=session, timeout_seconds=5.0)
+        return browser_debug_payload(
+            action="inspect",
+            session=session,
+            output=output,
+            inspector_open=True,
+        )
+
+    def clipboard_read(self, *, session: str) -> dict[str, object]:
+        output = self._run(["clipboard", "read"], session=session, timeout_seconds=5.0)
+        return browser_clipboard_payload(
+            operation="read",
+            session=session,
+            output=output,
+            text=strip_browser_value(output),
+        )
+
+    def clipboard_write(self, text: str, *, session: str) -> dict[str, object]:
+        if not text:
+            raise GatewayBrowserRuntimeError("browser.clipboard.write requires text")
+        output = self._run(
+            ["clipboard", "write", text],
+            session=session,
+            timeout_seconds=5.0,
+        )
+        return browser_clipboard_payload(
+            operation="write",
+            session=session,
+            output=output,
+            text=text,
+        )
+
+    def clipboard_copy(self, *, session: str) -> dict[str, object]:
+        output = self._run(["clipboard", "copy"], session=session, timeout_seconds=5.0)
+        return browser_clipboard_payload(operation="copy", session=session, output=output)
+
+    def clipboard_paste(self, *, session: str) -> dict[str, object]:
+        output = self._run(["clipboard", "paste"], session=session, timeout_seconds=5.0)
+        return browser_clipboard_payload(operation="paste", session=session, output=output)
+
     def auth_list(self, *, session: str) -> dict[str, object]:
         output = self._run(["auth", "list"], session=session, timeout_seconds=5.0)
         return browser_auth_list_payload(session=session, output=output)
@@ -504,6 +964,67 @@ class GatewayBrowserRuntimeService:
     def auth_show(self, name: str, *, session: str) -> dict[str, object]:
         output = self._run(["auth", "show", name], session=session, timeout_seconds=5.0)
         return browser_auth_show_payload(session=session, name=name, output=output)
+
+    def auth_save(
+        self,
+        name: str,
+        *,
+        session: str,
+        url: str,
+        username: str,
+        password: str,
+        username_selector: str | None = None,
+        password_selector: str | None = None,
+        submit_selector: str | None = None,
+    ) -> dict[str, object]:
+        args = [
+            "auth",
+            "save",
+            name,
+            "--url",
+            url,
+            "--username",
+            username,
+            "--password-stdin",
+        ]
+        if username_selector is not None:
+            args.extend(["--username-selector", username_selector])
+        if password_selector is not None:
+            args.extend(["--password-selector", password_selector])
+        if submit_selector is not None:
+            args.extend(["--submit-selector", submit_selector])
+        output = self._run(
+            args,
+            session=session,
+            timeout_seconds=10.0,
+            input_text=f"{password}\n",
+        )
+        return browser_auth_save_payload(
+            session=session,
+            name=name,
+            url=url,
+            username=username,
+            output=output,
+            password=password,
+        )
+
+    def auth_login(self, name: str, *, session: str) -> dict[str, object]:
+        output = self._run(["auth", "login", name], session=session, timeout_seconds=30.0)
+        return browser_auth_mutation_payload(
+            session=session,
+            name=name,
+            operation="login",
+            output=output,
+        )
+
+    def auth_delete(self, name: str, *, session: str) -> dict[str, object]:
+        output = self._run(["auth", "delete", name], session=session, timeout_seconds=5.0)
+        return browser_auth_mutation_payload(
+            session=session,
+            name=name,
+            operation="delete",
+            output=output,
+        )
 
     def tabs(self, *, session: str) -> dict[str, object]:
         output = self._run(["tab", "list"], session=session, timeout_seconds=5.0)
@@ -812,6 +1333,69 @@ def browser_network_request_payload(
     }
 
 
+def browser_network_har_start_payload(*, session: str, output: str) -> dict[str, object]:
+    lines = browser_output_lines(output)
+    summary = first_browser_output_line(output) or "Browser HAR recording started."
+    return {
+        "ok": True,
+        "status": "ready",
+        "headline": "Browser HAR recording started",
+        "summary": summary,
+        "session": session,
+        "harRecording": True,
+        "lineCount": len(lines),
+        "lines": lines,
+        "output": output,
+    }
+
+
+def browser_network_har_stop_payload(
+    *,
+    session: str,
+    path: str,
+    output: str,
+    size_bytes: int,
+) -> dict[str, object]:
+    lines = browser_output_lines(output)
+    summary = first_browser_output_line(output) or "Browser HAR artifact captured."
+    return {
+        "ok": True,
+        "status": "ready",
+        "headline": "Browser HAR artifact captured",
+        "summary": summary,
+        "session": session,
+        "harRecording": False,
+        "path": path,
+        "sizeBytes": size_bytes,
+        "lineCount": len(lines),
+        "lines": lines,
+        "output": output,
+    }
+
+
+def browser_confirmation_payload(
+    *,
+    session: str,
+    action_id: str,
+    decision: str,
+    output: str,
+) -> dict[str, object]:
+    lines = browser_output_lines(output)
+    return {
+        "ok": True,
+        "status": "ready",
+        "headline": f"Browser action {decision}ed",
+        "summary": first_browser_output_line(output)
+        or f"Browser pending action {action_id} {decision}ed.",
+        "session": session,
+        "actionId": action_id,
+        "decision": decision,
+        "lineCount": len(lines),
+        "lines": lines,
+        "output": output,
+    }
+
+
 def browser_cookies_payload(*, session: str, output: str) -> dict[str, object]:
     cookies: list[object] = []
     try:
@@ -835,6 +1419,29 @@ def browser_cookies_payload(*, session: str, output: str) -> dict[str, object]:
         "cookieCount": cookie_count,
         "cookies": cookies,
         "lines": lines,
+    }
+
+
+def browser_cookie_mutation_payload(
+    *,
+    session: str,
+    operation: str,
+    name: str | None,
+    output: str,
+) -> dict[str, object]:
+    lines = browser_output_lines(output)
+    return {
+        "ok": True,
+        "status": "ready",
+        "headline": f"Browser cookie {operation} completed",
+        "summary": first_browser_output_line(output)
+        or f"Browser cookie {operation} completed.",
+        "session": session,
+        "operation": operation,
+        "name": name,
+        "lineCount": len(lines),
+        "lines": lines,
+        "output": output,
     }
 
 
@@ -865,6 +1472,33 @@ def browser_storage_payload(
         "entryCount": entry_count,
         "entries": entries,
         "lines": lines,
+    }
+
+
+def browser_storage_mutation_payload(
+    *,
+    session: str,
+    storage_type: str,
+    operation: str,
+    key: str | None,
+    output: str,
+) -> dict[str, object]:
+    lines = browser_output_lines(output)
+    return {
+        "ok": True,
+        "status": "ready",
+        "headline": f"Browser {storage_type}Storage {operation} completed",
+        "summary": (
+            first_browser_output_line(output)
+            or f"Browser {storage_type}Storage {operation} completed."
+        ),
+        "session": session,
+        "type": storage_type,
+        "operation": operation,
+        "key": key,
+        "lineCount": len(lines),
+        "lines": lines,
+        "output": output,
     }
 
 
@@ -1050,6 +1684,192 @@ def browser_upload_payload(
     }
 
 
+def browser_trace_start_payload(*, session: str, output: str) -> dict[str, object]:
+    lines = browser_output_lines(output)
+    summary = first_browser_output_line(output) or "Browser trace recording started."
+    return {
+        "ok": True,
+        "status": "ready",
+        "headline": "Browser trace recording started",
+        "summary": summary,
+        "session": session,
+        "traceRecording": True,
+        "lineCount": len(lines),
+        "lines": lines,
+        "output": output,
+    }
+
+
+def browser_trace_stop_payload(
+    *,
+    session: str,
+    path: str,
+    size_bytes: int | None,
+    output: str,
+) -> dict[str, object]:
+    lines = browser_output_lines(output)
+    summary = first_browser_output_line(output) or "Browser trace artifact captured."
+    return {
+        "ok": True,
+        "status": "ready",
+        "headline": "Browser trace artifact captured",
+        "summary": summary,
+        "session": session,
+        "path": path,
+        "sizeBytes": size_bytes,
+        "traceRecording": False,
+        "lineCount": len(lines),
+        "lines": lines,
+        "output": output,
+    }
+
+
+def browser_profiler_start_payload(
+    *,
+    session: str,
+    categories: str | None,
+    output: str,
+) -> dict[str, object]:
+    lines = browser_output_lines(output)
+    summary = first_browser_output_line(output) or "Browser profiler recording started."
+    return {
+        "ok": True,
+        "status": "ready",
+        "headline": "Browser profiler recording started",
+        "summary": summary,
+        "session": session,
+        "categories": categories,
+        "profilerRecording": True,
+        "lineCount": len(lines),
+        "lines": lines,
+        "output": output,
+    }
+
+
+def browser_profiler_stop_payload(
+    *,
+    session: str,
+    path: str,
+    size_bytes: int | None,
+    output: str,
+) -> dict[str, object]:
+    lines = browser_output_lines(output)
+    summary = first_browser_output_line(output) or "Browser profiler artifact captured."
+    return {
+        "ok": True,
+        "status": "ready",
+        "headline": "Browser profiler artifact captured",
+        "summary": summary,
+        "session": session,
+        "path": path,
+        "sizeBytes": size_bytes,
+        "profilerRecording": False,
+        "lineCount": len(lines),
+        "lines": lines,
+        "output": output,
+    }
+
+
+def browser_record_start_payload(
+    *,
+    session: str,
+    url: str | None,
+    path: str,
+    output: str,
+) -> dict[str, object]:
+    lines = browser_output_lines(output)
+    summary = first_browser_output_line(output) or "Browser recording started."
+    return {
+        "ok": True,
+        "status": "ready",
+        "headline": "Browser recording started",
+        "summary": summary,
+        "session": session,
+        "url": url,
+        "path": path,
+        "recording": True,
+        "lineCount": len(lines),
+        "lines": lines,
+        "output": output,
+    }
+
+
+def browser_record_stop_payload(
+    *,
+    session: str,
+    path: str | None,
+    size_bytes: int | None,
+    output: str,
+) -> dict[str, object]:
+    lines = browser_output_lines(output)
+    summary = first_browser_output_line(output) or "Browser recording stopped."
+    return {
+        "ok": True,
+        "status": "ready",
+        "headline": "Browser recording stopped",
+        "summary": summary,
+        "session": session,
+        "path": path,
+        "sizeBytes": size_bytes,
+        "recording": False,
+        "lineCount": len(lines),
+        "lines": lines,
+        "output": output,
+    }
+
+
+def browser_debug_payload(
+    *,
+    action: str,
+    session: str,
+    output: str,
+    selector: str | None = None,
+    inspector_open: bool | None = None,
+) -> dict[str, object]:
+    lines = browser_output_lines(output)
+    summary = first_browser_output_line(output) or f"Browser {action} completed."
+    payload: dict[str, object] = {
+        "ok": True,
+        "status": "ready",
+        "headline": f"Browser {action} completed",
+        "summary": summary,
+        "session": session,
+        "lineCount": len(lines),
+        "lines": lines,
+        "output": output,
+    }
+    if selector is not None:
+        payload["selector"] = selector
+    if inspector_open is not None:
+        payload["inspectorOpen"] = inspector_open
+    return payload
+
+
+def browser_clipboard_payload(
+    *,
+    operation: str,
+    session: str,
+    output: str,
+    text: str | None = None,
+) -> dict[str, object]:
+    lines = browser_output_lines(output)
+    payload: dict[str, object] = {
+        "ok": True,
+        "status": "ready",
+        "headline": f"Browser clipboard {operation} completed",
+        "summary": first_browser_output_line(output)
+        or f"Browser clipboard {operation} completed.",
+        "session": session,
+        "operation": operation,
+        "lineCount": len(lines),
+        "lines": lines,
+        "output": output,
+    }
+    if text is not None:
+        payload["text"] = text
+    return payload
+
+
 def browser_auth_list_payload(*, session: str, output: str) -> dict[str, object]:
     profiles: list[Any] = []
     try:
@@ -1077,6 +1897,60 @@ def browser_auth_list_payload(*, session: str, output: str) -> dict[str, object]
     }
 
 
+def browser_dashboard_payload(
+    *,
+    operation: str,
+    session: str,
+    output: str,
+    port: int | None,
+) -> dict[str, object]:
+    lines = browser_output_lines(output)
+    dashboard_running = operation == "start"
+    payload: dict[str, object] = {
+        "ok": True,
+        "status": "ready",
+        "headline": f"Browser dashboard {operation} completed",
+        "summary": first_browser_output_line(output)
+        or f"Browser dashboard {operation} completed.",
+        "session": session,
+        "operation": operation,
+        "dashboardRunning": dashboard_running,
+        "lineCount": len(lines),
+        "lines": lines,
+        "output": output,
+    }
+    if port is not None:
+        payload["port"] = port
+    return payload
+
+
+def browser_ios_device_list_payload(*, session: str, output: str) -> dict[str, object]:
+    devices: list[Any] = []
+    try:
+        parsed = json.loads(output) if output else None
+    except json.JSONDecodeError:
+        parsed = None
+    if isinstance(parsed, dict):
+        raw_devices = parsed.get("devices")
+        if isinstance(raw_devices, list):
+            devices = raw_devices
+    elif isinstance(parsed, list):
+        devices = parsed
+    lines = browser_output_lines(output)
+    if not devices:
+        devices = lines
+    return {
+        "ok": True,
+        "status": "ready",
+        "headline": "iOS browser devices captured",
+        "summary": f"Captured {len(devices)} iOS browser device(s).",
+        "session": session,
+        "deviceCount": len(devices),
+        "devices": devices,
+        "lines": lines,
+    }
+
+
 def browser_auth_show_payload(*, session: str, name: str, output: str) -> dict[str, object]:
     profile: object | None = None
     try:
@@ -1094,6 +1968,57 @@ def browser_auth_show_payload(*, session: str, name: str, output: str) -> dict[s
         "name": name,
         "profile": profile,
         "lines": browser_output_lines(output),
+    }
+
+
+def browser_auth_save_payload(
+    *,
+    session: str,
+    name: str,
+    url: str,
+    username: str,
+    output: str,
+    password: str,
+) -> dict[str, object]:
+    safe_output = output.replace(password, "[redacted]") if password else output
+    lines = browser_output_lines(safe_output)
+    return {
+        "ok": True,
+        "status": "ready",
+        "headline": "Browser auth profile save completed",
+        "summary": first_browser_output_line(safe_output)
+        or f"Browser auth profile {name} save completed.",
+        "session": session,
+        "name": name,
+        "url": url,
+        "username": username,
+        "operation": "save",
+        "lineCount": len(lines),
+        "lines": lines,
+        "output": safe_output,
+    }
+
+
+def browser_auth_mutation_payload(
+    *,
+    session: str,
+    name: str,
+    operation: str,
+    output: str,
+) -> dict[str, object]:
+    lines = browser_output_lines(output)
+    return {
+        "ok": True,
+        "status": "ready",
+        "headline": f"Browser auth profile {operation} completed",
+        "summary": first_browser_output_line(output)
+        or f"Browser auth profile {name} {operation} completed.",
+        "session": session,
+        "name": name,
+        "operation": operation,
+        "lineCount": len(lines),
+        "lines": lines,
+        "output": output,
     }
 
 
@@ -1121,6 +2046,42 @@ def browser_download_target_path(session: str, *, filename_hint: str | None = No
     return (
         Path(tempfile.gettempdir())
         / f"openzues-browser-download-{safe_session}-{time.time_ns()}-{safe_filename}"
+    )
+
+
+def browser_trace_target_path(session: str) -> Path:
+    slug = re.sub(r"[^A-Za-z0-9_.-]+", "-", session.strip()).strip(".-")
+    safe_session = slug[:48] or DEFAULT_BROWSER_SESSION
+    return (
+        Path(tempfile.gettempdir())
+        / f"openzues-browser-trace-{safe_session}-{time.time_ns()}.zip"
+    )
+
+
+def browser_network_har_target_path(session: str) -> Path:
+    slug = re.sub(r"[^A-Za-z0-9_.-]+", "-", session.strip()).strip(".-")
+    safe_session = slug[:48] or DEFAULT_BROWSER_SESSION
+    return (
+        Path(tempfile.gettempdir())
+        / f"openzues-browser-har-{safe_session}-{time.time_ns()}.har"
+    )
+
+
+def browser_profiler_target_path(session: str) -> Path:
+    slug = re.sub(r"[^A-Za-z0-9_.-]+", "-", session.strip()).strip(".-")
+    safe_session = slug[:48] or DEFAULT_BROWSER_SESSION
+    return (
+        Path(tempfile.gettempdir())
+        / f"openzues-browser-profiler-{safe_session}-{time.time_ns()}.json"
+    )
+
+
+def browser_recording_target_path(session: str) -> Path:
+    slug = re.sub(r"[^A-Za-z0-9_.-]+", "-", session.strip()).strip(".-")
+    safe_session = slug[:48] or DEFAULT_BROWSER_SESSION
+    return (
+        Path(tempfile.gettempdir())
+        / f"openzues-browser-recording-{safe_session}-{time.time_ns()}.webm"
     )
 
 
@@ -1267,6 +2228,46 @@ def browser_act_args(kind: str, request: dict[str, Any]) -> list[str]:
         return ["click", browser_required_selector(request, kind)]
     if kind in {"dblclick", "doubleClick"}:
         return ["dblclick", browser_required_selector(request, kind)]
+    if kind == "drag":
+        source = browser_request_string(request, "source", "sourceSelector", "from", "src")
+        destination = browser_request_string(
+            request,
+            "destination",
+            "destinationSelector",
+            "to",
+            "dst",
+        )
+        if not source or not destination:
+            raise ValueError("browser.act drag requires source and destination")
+        return ["drag", source, destination]
+    if kind == "mouse":
+        action = browser_request_string(request, "action")
+        if action not in {"move", "down", "up", "wheel"}:
+            raise ValueError("browser.act mouse action must be move, down, up, or wheel")
+        if action == "move":
+            x = browser_request_int(request, "x")
+            y = browser_request_int(request, "y")
+            if x is None or y is None:
+                raise ValueError("browser.act mouse move requires x and y")
+            return ["mouse", "move", str(x), str(y)]
+        if action in {"down", "up"}:
+            button = browser_request_string(request, "button", "btn")
+            return ["mouse", action, button] if button else ["mouse", action]
+        dy = browser_request_int(request, "dy")
+        dx = browser_request_int(request, "dx")
+        if dy is None:
+            raise ValueError("browser.act mouse wheel requires dy")
+        if dx is None:
+            return ["mouse", "wheel", str(dy)]
+        return ["mouse", "wheel", str(dy), str(dx)]
+    if kind == "keyboard":
+        action = browser_request_string(request, "action").lower()
+        if action not in {"type", "inserttext"}:
+            raise ValueError("browser.act keyboard action must be type or inserttext")
+        text = browser_required_string(request, "text", label="browser.act request.text")
+        return ["keyboard", action, text]
+    if kind == "find":
+        return browser_find_args(request)
     if kind == "type":
         text = browser_required_string(request, "text", label="browser.act request.text")
         selector = browser_request_string(request, "selector", "ref", "targetId")
@@ -1358,6 +2359,245 @@ def browser_request_int(request: dict[str, Any], key: str) -> int | None:
     if isinstance(value, float) and value.is_integer():
         return int(value)
     return None
+
+
+def browser_find_args(request: dict[str, Any]) -> list[str]:
+    locator = browser_request_string(request, "locator").lower()
+    locator_kinds = {
+        "role",
+        "text",
+        "label",
+        "placeholder",
+        "alt",
+        "title",
+        "testid",
+        "first",
+        "last",
+        "nth",
+    }
+    if locator not in locator_kinds:
+        raise ValueError("browser.act find locator is required")
+    args = ["find", locator]
+    if locator == "nth":
+        index = browser_request_int(request, "index")
+        selector = browser_request_string(request, "selector", "value", "locatorValue", "query")
+        if index is None or not selector:
+            raise ValueError("browser.act find nth requires index and selector")
+        args.extend([str(index), selector])
+    elif locator in {"first", "last"}:
+        selector = browser_request_string(request, "selector", "value", "locatorValue", "query")
+        if not selector:
+            raise ValueError(f"browser.act find {locator} requires selector")
+        args.append(selector)
+    else:
+        value = browser_request_string(request, "value", "locatorValue", "query")
+        if not value:
+            raise ValueError(f"browser.act find {locator} requires value")
+        args.append(value)
+
+    action = browser_request_string(request, "action").lower() or "click"
+    if action not in {"click", "fill", "type", "hover", "focus", "check", "uncheck"}:
+        raise ValueError("browser.act find action is unsupported")
+    args.append(action)
+    if action in {"fill", "type"}:
+        args.append(browser_required_string(request, "text", label="browser.act request.text"))
+    name = browser_request_string(request, "name")
+    if name:
+        args.extend(["--name", name])
+    if browser_json_bool(request, "exact"):
+        args.append("--exact")
+    return args
+
+
+def browser_set_args(setting: str, values: list[str]) -> list[str]:
+    normalized = setting.strip().lower()
+    clean_values = [value.strip() for value in values if value.strip()]
+    if normalized == "viewport":
+        if len(clean_values) != 2:
+            raise GatewayBrowserRuntimeError("browser.set viewport requires width and height")
+        width = browser_positive_int(clean_values[0], label="width")
+        height = browser_positive_int(clean_values[1], label="height")
+        return ["set", "viewport", str(width), str(height)]
+    if normalized == "device":
+        if len(clean_values) != 1:
+            raise GatewayBrowserRuntimeError("browser.set device requires one device name")
+        return ["set", "device", clean_values[0]]
+    if normalized == "geo":
+        if len(clean_values) != 2:
+            raise GatewayBrowserRuntimeError("browser.set geo requires latitude and longitude")
+        latitude = browser_geo_float(clean_values[0], label="latitude", minimum=-90, maximum=90)
+        longitude = browser_geo_float(clean_values[1], label="longitude", minimum=-180, maximum=180)
+        return ["set", "geo", str(latitude), str(longitude)]
+    if normalized == "offline":
+        if clean_values not in (["on"], ["off"]):
+            raise GatewayBrowserRuntimeError("browser.set offline requires on or off")
+        return ["set", "offline", clean_values[0]]
+    if normalized == "headers":
+        if len(clean_values) != 1:
+            raise GatewayBrowserRuntimeError("browser.set headers requires one JSON object")
+        headers = browser_headers_map(clean_values[0])
+        return ["set", "headers", json.dumps(headers, separators=(",", ":"))]
+    if normalized == "credentials":
+        if len(clean_values) != 2:
+            raise GatewayBrowserRuntimeError(
+                "browser.set credentials requires username and password"
+            )
+        return ["set", "credentials", clean_values[0], clean_values[1]]
+    if normalized == "media":
+        if not clean_values or clean_values[0] not in {"dark", "light"}:
+            raise GatewayBrowserRuntimeError("browser.set media requires dark or light")
+        if len(clean_values) > 2 or (
+            len(clean_values) == 2 and clean_values[1] != "reduced-motion"
+        ):
+            raise GatewayBrowserRuntimeError("browser.set media only accepts reduced-motion")
+        return ["set", "media", *clean_values]
+    raise GatewayBrowserRuntimeError(f"unsupported browser setting: {setting}")
+
+
+def browser_batch_args(commands: list[str], *, bail: bool = False) -> list[str]:
+    clean_commands = [command.strip() for command in commands if command.strip()]
+    if not clean_commands:
+        raise GatewayBrowserRuntimeError("browser.batch requires at least one command")
+    if len(clean_commands) > 20:
+        raise GatewayBrowserRuntimeError("browser.batch accepts at most 20 commands")
+    for command in clean_commands:
+        if "\r" in command or "\n" in command or "\x00" in command:
+            raise GatewayBrowserRuntimeError("browser.batch commands must be one-line strings")
+    args = ["batch"]
+    if bail:
+        args.append("--bail")
+    args.extend(clean_commands)
+    return args
+
+
+def browser_chat_args(
+    message: str,
+    *,
+    model: str | None = None,
+    quiet: bool = False,
+    verbose: bool = False,
+) -> list[str]:
+    prompt = message.strip()
+    if not prompt:
+        raise GatewayBrowserRuntimeError("browser.chat requires a message")
+    if quiet and verbose:
+        raise GatewayBrowserRuntimeError("browser.chat quiet and verbose are mutually exclusive")
+    args: list[str] = []
+    if model is not None:
+        resolved_model = model.strip()
+        if not resolved_model:
+            raise GatewayBrowserRuntimeError("browser.chat model must be non-empty")
+        args.extend(["--model", resolved_model])
+    if quiet:
+        args.append("--quiet")
+    if verbose:
+        args.append("--verbose")
+    args.extend(["chat", prompt])
+    return args
+
+
+def browser_ios_swipe_args(direction: str, *, distance: int | None = None) -> list[str]:
+    resolved_direction = direction.strip().lower()
+    if resolved_direction not in {"up", "down", "left", "right"}:
+        raise GatewayBrowserRuntimeError(
+            "browser.ios.swipe direction must be up, down, left, or right"
+        )
+    args = ["--provider", "ios", "swipe", resolved_direction]
+    if distance is not None:
+        if distance < 1 or distance > 10_000:
+            raise GatewayBrowserRuntimeError(
+                "browser.ios.swipe distance must be between 1 and 10000"
+            )
+        args.append(str(distance))
+    return args
+
+
+def browser_headers_map(value: str) -> dict[str, str]:
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise GatewayBrowserRuntimeError(
+            "browser.set headers requires a JSON object"
+        ) from exc
+    if not isinstance(parsed, dict):
+        raise GatewayBrowserRuntimeError("browser.set headers requires a JSON object")
+    headers: dict[str, str] = {}
+    for header_name, header_value in parsed.items():
+        if not isinstance(header_name, str) or not header_name.strip():
+            raise GatewayBrowserRuntimeError("browser.set headers requires string names")
+        if not isinstance(header_value, str):
+            raise GatewayBrowserRuntimeError("browser.set headers requires string values")
+        headers[header_name.strip()] = header_value
+    if not headers:
+        raise GatewayBrowserRuntimeError("browser.set headers requires at least one header")
+    return headers
+
+
+def browser_storage_type(storage_type: str) -> str:
+    normalized = storage_type.strip().lower()
+    if normalized not in {"local", "session"}:
+        raise GatewayBrowserRuntimeError("browser.storage type must be local or session")
+    return normalized
+
+
+def browser_cookie_set_args(
+    *,
+    name: str,
+    value: str,
+    url: str | None,
+    domain: str | None,
+    path: str | None,
+    http_only: bool | None,
+    secure: bool | None,
+    same_site: str | None,
+    expires: int | None,
+) -> list[str]:
+    normalized_name = name.strip()
+    if not normalized_name:
+        raise GatewayBrowserRuntimeError("browser.cookies.set requires name")
+    args = ["cookies", "set", normalized_name, value]
+    if url:
+        args.extend(["--url", url.strip()])
+    if domain:
+        args.extend(["--domain", domain.strip()])
+    if path:
+        args.extend(["--path", path.strip()])
+    if http_only:
+        args.append("--httpOnly")
+    if secure:
+        args.append("--secure")
+    if same_site is not None:
+        normalized_same_site = same_site.strip()
+        if normalized_same_site not in {"Strict", "Lax", "None"}:
+            raise GatewayBrowserRuntimeError("browser.cookies.set sameSite is unsupported")
+        args.extend(["--sameSite", normalized_same_site])
+    if expires is not None:
+        if isinstance(expires, bool) or expires < 0:
+            raise GatewayBrowserRuntimeError("browser.cookies.set expires must be non-negative")
+        args.extend(["--expires", str(expires)])
+    return args
+
+
+def browser_positive_int(value: str, *, label: str) -> int:
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise GatewayBrowserRuntimeError(f"browser.set {label} must be an integer") from exc
+    if parsed < 1 or parsed > 10_000:
+        raise GatewayBrowserRuntimeError(f"browser.set {label} must be between 1 and 10000")
+    return parsed
+
+
+def browser_geo_float(value: str, *, label: str, minimum: float, maximum: float) -> float:
+    try:
+        parsed = float(value)
+    except ValueError as exc:
+        raise GatewayBrowserRuntimeError(f"browser.set {label} must be a number") from exc
+    if parsed < minimum or parsed > maximum:
+        raise GatewayBrowserRuntimeError(
+            f"browser.set {label} must be between {minimum:g} and {maximum:g}"
+        )
+    return parsed
 
 
 def strip_browser_value(value: str) -> str:

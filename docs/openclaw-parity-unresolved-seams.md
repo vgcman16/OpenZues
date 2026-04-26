@@ -1,6 +1,287 @@
 # OpenClaw Parity Unresolved Seams
 
-Updated: 2026-04-24
+Updated: 2026-04-25
+
+Current queue-head adjustment: live `session.message` payloads now carry nested
+OpenClaw transcript identity metadata (`message.__openclaw.id` /
+`message.__openclaw.seq`) alongside the existing top-level `messageId` /
+`messageSeq`. The next bounded transcript seam should stay with session-event
+replay/filtering or another source-backed `chat.*` / `sessions.*` mismatch.
+
+Current queue-head adjustment: broad `sessions.subscribe` clients now receive
+live `session.message` transcript events as well as `sessions.changed`, matching
+OpenClaw's operator session stream while keeping `sessions.messages.subscribe`
+as the narrower session-key filter. The next bounded seam should move to
+direct REST/session-history replay parity or another source-backed transcript
+gap.
+
+Current queue-head adjustment: direct `GET /sessions/{sessionKey}/history` now
+serves OpenClaw-style JSON/SSE history, including cursor pagination, preserved
+`messages`, `items`, `hasMore`, `nextCursor`, raw `__openclaw.seq` metadata,
+default 12k text caps, lenient invalid-cursor handling, initial `history` SSE
+events, and `not_found` responses for unknown session keys. The next bounded
+seam should inspect live SSE update behavior or the next source-backed
+transcript replay gap.
+
+Current queue-head adjustment: RPC `sessions.get` now defaults to OpenClaw's
+200-message limit instead of clipping no-limit reads to 50 messages. The next
+bounded transcript seam should continue through live SSE updates or another
+source-backed `sessions.*` response-shape mismatch.
+
+Current queue-head adjustment: direct session-history SSE streams now stay live
+after the initial `history` event. Unbounded streams emit inline OpenClaw-style
+`message` events from live `session.message` gateway events, bounded or cursor
+streams emit refreshed `history` windows, and non-message `sessions.changed`
+updates refresh history without duplicating normal message-phase updates. The
+next bounded transcript seam should stay with remaining `sessions-history-http`
+edge cases such as auth/scope rejection, duplicate/freshest session resolution,
+or silent transcript refresh semantics if they map cleanly to OpenZues'
+SQLite-backed session store.
+
+Current queue-head adjustment: RPC `sessions.get` now accepts explicit limits
+above 1000 like OpenClaw's WebSocket method, while direct HTTP
+`/sessions/{sessionKey}/history` keeps its upstream 1000-row REST cap. The next
+bounded transcript seam should inspect another source-backed `chat.*` /
+`sessions.*` mismatch instead of conflating RPC limits with direct REST limits.
+
+Current queue-head adjustment: persisted custom agents now flow through
+`agent.identity.get` by explicit `agentId` and by `agent:<id>:main` session keys,
+using the SQLite agent registry as the truth source while preserving malformed
+session-key and mismatched-selector rejection. The next adjacent session/agent
+seam is custom-agent workspace file ownership or another transcript/runtime gap.
+
+Current queue-head adjustment: `agents.files.list/get/set` now resolve persisted
+custom-agent workspaces before reading or writing allowed instruction/memory
+files, instead of forcing all file calls through the main OpenZues workspace.
+The next adjacent seam should stay in session/chat transcript/runtime ownership
+unless a smaller custom-agent lifecycle gap is proven.
+
+Current queue-head adjustment: `sessions.send` and `sessions.steer` now reject
+`agent:<id>:...` keys whose custom-agent owner has been deleted, matching the
+OpenClaw deleted-agent guard before runtime send/steer dispatch. The next seam
+should continue through chat-history/session-read model fidelity.
+
+Current queue-head adjustment: `chat.history` now hides assistant-only
+`NO_REPLY` / `ANNOUNCE_SKIP` / `REPLY_SKIP` rows and strips inline
+`[[reply_to...]]` / `[[audio_as_voice]]` directives from displayed text. The
+next history seam is usage/cost/read-model metadata fidelity or another bounded
+transcript projection mismatch.
+
+Current queue-head adjustment: `chat.history` now preserves optional assistant
+`usage` / `cost` metadata from control-chat rows through nullable SQLite JSON
+columns while still withholding arbitrary debug/details fields. The next
+read-model seam should stay bounded to transcript truncation, metadata, or
+session-history parity.
+
+Current queue-head adjustment: `chat.history maxChars` now applies per-message
+prefix truncation with the OpenClaw `...(truncated)...` marker instead of using
+a global tail budget that drops older messages. The next transcript seam should
+move to `sessions.get`/history parity or a narrow API mirror if found.
+
+Current queue-head adjustment: `chat.history` now applies the OpenClaw default
+12,000-character text cap when callers omit `maxChars`, while `sessions.get`
+keeps its raw-session behavior. The next bounded seam should inspect session
+event subscriptions or preview sanitization rather than keep widening history.
+
+Current queue-head adjustment: `chat.history` now replaces single oversized
+projected messages with `[chat.history omitted: message too large]` and
+OpenClaw truncation metadata before serialization, even when callers request a
+large `maxChars`. The next bounded history seam should prove whether recent
+small messages survive alongside an oversized latest message.
+
+Current queue-head adjustment: `chat.history` now enforces a final serialized
+message-array byte budget after single-message placeholder replacement, keeping
+the newest rows that fit and dropping older rows. The next bounded transcript
+seam should move to event replay or `sessions.get` fidelity.
+
+Current queue-head adjustment: `sessions.preview` now reuses chat-history
+display hygiene by hiding assistant skip-only rows and stripping inline
+reply/audio directives before rendering preview text. The next nearby seam is
+session message event subscription replay/shape if a focused mismatch is found.
+
+Current queue-head adjustment: live `session.message` events now apply the same
+OpenClaw display hygiene: inline `[[reply_to...]]` / `[[audio_as_voice]]`
+directives are stripped and assistant-only `NO_REPLY` / `ANNOUNCE_SKIP` /
+`REPLY_SKIP` rows no longer emit `session.message` or message-phase
+`sessions.changed` events. The next bounded transcript seam should move to
+session message final/delta replay shape, `sessions.get` fidelity, or another
+focused `chat.*`/`sessions.*` mismatch from upstream tests.
+
+Current queue-head adjustment: live transcript `session.message` and
+`sessions.changed` events now project assistant message `usage_json` / `cost_json`
+into OpenClaw-shaped top-level `inputTokens`, `outputTokens`, `totalTokens`,
+`totalTokensFresh`, and `estimatedCostUsd` metadata. The next bounded seam should
+stay with session event metadata breadth, `sessions.get` fidelity, or SSE/history
+transcript replay parity.
+
+Current queue-head adjustment: transcript `session.message` and message-phase
+`sessions.changed` events now copy persisted spawned-session metadata,
+`forkedFromParent`, and last-route thread fields (`lastChannel`, `lastTo`,
+`lastAccountId`, `lastThreadId`) from the session payload. The next bounded seam
+should move to session message subscription/filtering parity, `sessions.get`
+fidelity, or SSE fast-path replay gaps.
+
+Current queue-head adjustment: `sessions.get` now supports cursor pagination
+when the visible transcript spans multiple pages, preserving the legacy
+`messages` field while adding `items`, `hasMore`, `nextCursor`, and raw
+`__openclaw.seq` metadata. The returned string `nextCursor` can be passed
+directly into the next `sessions.get` call. The next bounded seam should stay
+with session history read-model fidelity, unknown-session status, or SSE
+fast-path parity.
+
+Current queue-head adjustment: `sessions.get` now accepts OpenClaw `seq:<n>`
+cursor strings in addition to bare numeric cursor strings. The next bounded
+read-model seam should move to session event replay/SSE parity or another
+source-backed transcript mismatch.
+
+Current queue-head adjustment: `sessions.patch` now resolves the requested
+session key before patching and can update metadata/message-backed child
+sessions instead of only the current session. The next bounded seam should stay
+with remaining `sessions.*` parameter breadth, lifecycle hook/event fidelity, or
+session history replay behavior.
+
+Current queue-head adjustment: `sessions.create` now scopes the `key=main`
+alias to the requested persisted custom agent, returning and storing
+`agent:<id>:main` instead of rejecting the request as an `agentId` /
+`sessionKey` mismatch. The next bounded seam should stay with `sessions.create`
+sentinel/parameter fidelity or another adjacent session lifecycle gap.
+
+Current queue-head adjustment: `sessions.create` now preserves literal `global`
+and `unknown` sentinel keys when `agentId` is supplied, instead of trying to
+force them through agent-scoped session-key validation. The next bounded seam
+should continue through session-create response fidelity or session-list
+transcript usage/model fallback parity.
+
+Current queue-head adjustment: initial `sessions.create` runs now return the
+pending OpenClaw-style `messageSeq` for the first submitted user turn while
+leaving established `sessions.send` / `sessions.steer` response payloads stable.
+The next bounded seam should move to `sessions.list` transcript usage/model
+fallback parity.
+
+Current queue-head adjustment: `sessions.list` now derives fresh prompt-token
+usage totals, estimated cost, assistant model identity, and known Anthropic 1M
+context from persisted assistant transcript rows. The next bounded seam should
+continue with `sessions.changed` mutation-event usage metadata or another
+adjacent session lifecycle/read-model gap.
+
+Current queue-head adjustment: mutation `sessions.changed` payloads now copy
+fresh transcript-derived `totalTokensFresh` and `estimatedCostUsd` alongside
+the existing token/model fields. The next bounded seam should continue with
+remaining session lifecycle metadata such as reset/delete/compaction event
+fidelity.
+
+Current queue-head adjustment: mutation `sessions.changed` payloads now copy
+persisted session setting and route fields, including `responseUsage`,
+`fastMode`, `forkedFromParent`, `lastChannel`, `lastTo`, `lastAccountId`, and
+`lastThreadId`. The next bounded seam should stay in the adjacent session
+event metadata cluster.
+
+Current queue-head adjustment: `sessions.patch` now resolves request aliases
+such as `subagent:child` before metadata writes, response keys, and
+`sessions.changed` publishes, so subagent mutations land under
+`agent:main:subagent:child`. The next bounded seam should continue through
+session reset/delete alias fidelity or list/read-model details.
+
+Current queue-head adjustment: session snapshots now include an OpenClaw-shaped
+`deliveryContext` object derived from persisted last-route metadata while
+retaining the raw `last*` fields. The next bounded seam should continue through
+session-store RPC response fidelity.
+
+Current queue-head adjustment: session snapshots and mutation `sessions.changed`
+events now preserve string `lastThreadId` values such as Slack decimal thread
+ids instead of dropping them through an integer-only route metadata parser. The
+next bounded seam should continue through session-store RPC response fidelity.
+
+Current queue-head adjustment: `sessions.list` defaults now include
+`modelProvider` alongside `model`, `contextTokens`, and `mainSessionKey`, closing
+the next small OpenClaw response-shape gap in the session inventory header. The
+next bounded seam should continue through adjacent `sessions.*` response
+fidelity.
+
+Current queue-head adjustment: session snapshots now emit
+`totalTokensFresh: false` for no-usage or stale-usage rows instead of omitting
+the freshness marker. The next bounded seam should continue through adjacent
+`sessions.*` response fidelity.
+
+Current queue-head adjustment: `sessions.patch` now splits provider-qualified
+model overrides into `providerOverride` and `modelOverride`, returns the
+OpenClaw-style patch entry shape, and resolves/list rows under the split model
+identity. The next bounded seam should continue through adjacent `sessions.*`
+response fidelity.
+
+Current queue-head adjustment: `sessions.reset` now discards stale runtime
+`modelProvider` / `model` / `contextTokens` metadata while preserving explicit
+provider/model overrides as `modelOverrideSource: user`. The next bounded seam
+should continue through adjacent `sessions.*` response fidelity.
+
+Current queue-head adjustment: `sessions.reset` and session payloads now
+preserve owned child metadata such as group/channel fields, queue settings,
+auth-profile overrides, CLI bindings, custom display name, and nested delivery
+context. The next bounded seam should continue through adjacent `sessions.*`
+response fidelity.
+
+Current queue-head adjustment: `sessions.preview` now resolves mixed-case
+legacy main aliases by keeping the freshest exact stored alias row instead of
+merging stale duplicate alias transcripts. The next bounded seam should
+continue through adjacent `sessions.*` alias cleanup and response fidelity.
+
+Current queue-head adjustment: `sessions.delete` now resolves request aliases
+such as `subagent:child` before deleting metadata/transcript rows and returning
+the mutation key. The next bounded seam should continue through adjacent
+`sessions.*` alias cleanup and response fidelity.
+
+Current queue-head adjustment: `sessions.compact` now resolves request aliases
+such as `subagent:child` before compaction/checkpoint writes and response
+shaping, so archived history lands under `agent:main:subagent:child`. The next
+bounded seam should continue through adjacent `sessions.*` alias cleanup and
+response fidelity.
+
+Current queue-head adjustment: `sessions.compaction.restore` now resolves
+request aliases such as `subagent:child` before checkpoint lookup, transcript
+restore, and mutation-event publishing. The next bounded seam should continue
+through compaction inventory read aliases or adjacent `sessions.*` response
+fidelity.
+
+Current queue-head adjustment: `sessions.compaction.list/get` now resolve
+request aliases such as `subagent:child` before checkpoint inventory reads, so
+short subagent keys can locate canonical checkpoint rows. The next bounded seam
+should continue through compaction branch alias cleanup or adjacent
+`sessions.*` response fidelity.
+
+Current queue-head adjustment: `sessions.compaction.branch` now resolves
+request aliases such as `subagent:child` before copying source metadata,
+branching checkpoint history, and publishing source/target session-change
+events. The next bounded seam should move out of compaction alias cleanup and
+continue through adjacent `sessions.*` response fidelity.
+
+Current queue-head adjustment: `sessions.messages.subscribe/unsubscribe` now
+resolve request aliases such as `subagent:child` before returning the key and
+updating the hub's scoped message filter, so canonical subagent
+`session.message` events reach short-alias subscribers. The next bounded seam
+should continue through adjacent `sessions.*` response fidelity.
+
+Current queue-head adjustment: `sessions.get` now resolves request aliases
+such as `subagent:child` before reading transcript rows, so short aliases return
+the canonical subagent transcript instead of an empty message list. The next
+bounded seam should continue through adjacent session usage/read-model
+fidelity.
+
+Current queue-head adjustment: `sessions.usage`, `sessions.usage.timeseries`,
+and `sessions.usage.logs` now resolve request aliases such as `subagent:child`
+before reading usage summaries, mission points, or usage-linked transcript rows.
+The next bounded seam should continue through adjacent session-keyed read/write
+surfaces.
+
+Current queue-head adjustment: `chat.history` now resolves request aliases such
+as `subagent:child` before reading transcript rows and session metadata. The
+next bounded seam should continue through adjacent session-keyed runtime paths
+if a focused mismatch is proven.
+
+Current queue-head adjustment: `chat.send`, `sessions.send`, and
+`sessions.steer` now resolve request aliases such as `subagent:child` before
+runtime dispatch, run tracking, pending-message counts, and session-change
+events. The next bounded seam should continue through remaining session-keyed
+runtime surfaces such as abort/wait if a focused mismatch is proven.
 
 ## How To Read This Queue
 
@@ -71,6 +352,52 @@ Current queue-head adjustment: `browser.diff.screenshot` is now productized as a
 Current queue-head adjustment: `browser.download` is now productized as a write-scoped controlled file capture method. It clicks a selector through `agent-browser download`, writes only to an OpenZues-generated temp path, and treats caller filenames as sanitized hints rather than paths. The next browser seam is upload guardrails or a read-only trace/profile metadata boundary.
 
 Current queue-head adjustment: `browser.upload` is now productized as a write-scoped guarded file-input method. It accepts only existing OpenZues temp artifacts (`openzues-browser-*`) and rejects arbitrary local files before invoking `agent-browser upload`. The next browser seam is read-only trace/profile metadata or another bounded debug diagnostic before broader debug/control mutation.
+
+Current queue-head adjustment: `browser.trace.start` and `browser.trace.stop` are now productized as write-scoped browser debug artifact methods. `trace start` records through the current `agent-browser` session, and `trace stop` writes only to an OpenZues-generated temp ZIP artifact instead of accepting arbitrary output paths. The next browser seam is the adjacent profiler artifact lifecycle (`browser.profiler.start` / `browser.profiler.stop`) or another bounded debug diagnostic.
+
+Current queue-head adjustment: `browser.profiler.start` and `browser.profiler.stop` are now productized as write-scoped browser performance artifact methods. `profiler start` accepts optional comma-separated categories, and `profiler stop` writes only to an OpenZues-generated temp JSON artifact. The next browser seam is another bounded debug/control command such as recording lifecycle, proxy/profile boundaries, or target-aware action breadth.
+
+Current queue-head adjustment: `browser.record.start`, `browser.record.stop`, and `browser.record.restart` are now productized as write-scoped video recording lifecycle methods. Start/restart write only to OpenZues-generated temp WebM artifacts, and stop reports the tracked per-session artifact path/size. The next browser seam is proxy/profile mutation boundaries or target-aware action breadth.
+
+Current queue-head adjustment: `browser.highlight` and `browser.inspect` are now productized as write-scoped browser debug methods. Highlight targets a selector/ref through `agent-browser highlight`, and inspect opens DevTools through `agent-browser inspect`; clipboard, proxy, and auth-vault mutations remain intentionally outside this bounded slice. The next browser seam is target-aware action breadth such as drag/mouse/keyboard/find, or a separately guarded clipboard/proxy decision.
+
+Current queue-head adjustment: the bounded `browser.act` mapper now includes installed `agent-browser drag <src> <dst>` support with source/destination validation. The next browser seam is remaining target-aware action breadth such as mouse/keyboard/find, or a separately guarded clipboard/proxy decision.
+
+Current queue-head adjustment: the bounded `browser.act` mapper now includes installed `agent-browser mouse move/down/up/wheel` support with structured action, coordinate, button, and delta validation. The next browser seam is remaining keyboard/find action breadth or a separately guarded clipboard/proxy decision.
+
+Current queue-head adjustment: the bounded `browser.act` mapper now includes installed focused `agent-browser keyboard inserttext <text>` support, while existing `kind="type"` without a selector continues to cover `keyboard type`. The next browser seam is semantic `find` action breadth or a separately guarded clipboard/proxy decision.
+
+Current queue-head adjustment: the bounded `browser.act` mapper now includes installed semantic `agent-browser find <locator> <value> [action] [text]` support for role/text/label/placeholder/alt/title/testid/first/last/nth locators, bounded actions, role name filtering, and exact matching. The next browser seam is a separately guarded clipboard/proxy/settings decision.
+
+Current queue-head adjustment: `browser.set` is now productized for guarded low-risk settings: viewport, device, geo, offline, and media. The next browser seam is a separately guarded clipboard bridge or scoped headers/credentials setting decision; persistent proxy mutation remains intentionally guarded.
+
+Current queue-head adjustment: `browser.clipboard.read`, `browser.clipboard.write`, `browser.clipboard.copy`, and `browser.clipboard.paste` are now productized as structured gateway methods backed by the installed `agent-browser clipboard` operations. The next browser seam is scoped headers/credentials settings, guarded storage/cookie mutation, HAR mutation, or auth save/login/delete; persistent proxy mutation remains intentionally guarded.
+
+Current queue-head adjustment: `browser.storage.set` and `browser.storage.clear` are now productized as write-scoped localStorage/sessionStorage mutation methods backed by installed `agent-browser storage local|session set/clear` operations. The next browser seam is guarded cookie mutation, scoped headers/credentials settings, HAR mutation, or auth save/login/delete; persistent proxy mutation remains intentionally guarded.
+
+Current queue-head adjustment: `browser.cookies.set` and `browser.cookies.clear` are now productized as write-scoped cookie mutation methods backed by installed `agent-browser cookies set/clear` operations. Runtime payloads avoid echoing cookie values from real browser calls. The next browser seam is scoped headers/credentials settings, HAR mutation, auth save/login/delete, or confirmation handling; persistent proxy mutation remains intentionally guarded.
+
+Current queue-head adjustment: `browser.network.har.start` and `browser.network.har.stop` are now productized as write-scoped browser network artifact methods backed by installed `agent-browser network har start/stop` operations. HAR stop writes only to an OpenZues-generated temp `.har` artifact. The next browser seam is scoped headers/credentials settings, auth save/login/delete, confirmation handling, or batch/chat/dashboard productization; persistent proxy mutation remains intentionally guarded.
+
+Current queue-head adjustment: `browser.confirm` and `browser.deny` are now productized as write-scoped pending-action decision methods backed by installed `agent-browser confirm/deny <id>` operations. The next browser seam is scoped headers/credentials settings, auth save/login/delete, or batch/chat/dashboard productization; persistent proxy mutation remains intentionally guarded.
+
+Current queue-head adjustment: `browser.auth.login` and `browser.auth.delete` are now productized as write-scoped auth profile methods backed by installed `agent-browser auth login/delete <name>` operations. Password-bearing `auth.save` remains the next auth seam and should use stdin/vault-safe handling rather than echoing secrets in outputs. The next browser seam is password-safe auth save, scoped headers/credentials settings, or batch/chat/dashboard productization; persistent proxy mutation remains intentionally guarded.
+
+Current queue-head adjustment: `browser.auth.save` is now productized as a write-scoped auth profile method backed by installed `agent-browser auth save <name> --password-stdin`. OpenZues keeps the password out of argv, sends it only over stdin, and redacts exact password echoes from the runtime payload. The next browser seam is scoped headers/credentials settings or batch/chat/dashboard productization; persistent proxy mutation remains intentionally guarded.
+
+Current queue-head adjustment: `browser.set` now includes installed `agent-browser set headers <json>` and `set credentials <user> <pass>` support. The gateway validates header JSON, preserves proxy as a guarded boundary, and redacts header values plus HTTP-auth passwords from runtime payloads. The next browser seam is batch/chat/dashboard productization or provider/iOS-specific command boundaries.
+
+Current queue-head adjustment: `browser.batch` is now productized as a bounded write-scoped bridge for installed `agent-browser batch [--bail] "<cmd>" ...` commands. The gateway accepts up to 20 one-line browser command strings, passes them as argv without a shell, and returns structured line/result metadata. The next browser seam is chat/dashboard productization or provider/iOS-specific command boundaries.
+
+Current queue-head adjustment: `browser.dashboard.start` and `browser.dashboard.stop` are now productized as write-scoped bridges for the installed agent-browser observability dashboard lifecycle. Start validates an optional 1-65535 port and stop maps to `agent-browser dashboard stop`. The next browser seam is chat command productization or provider/iOS-specific command boundaries.
+
+Current queue-head adjustment: `browser.chat` is now productized as a write-scoped single-shot bridge for installed `agent-browser chat <message>`. The gateway validates message/model/quiet/verbose params and leaves missing AI Gateway credentials as normal runtime unavailable errors. The next browser seam is provider/iOS-specific command boundaries; persistent proxy mutation remains intentionally guarded.
+
+Current queue-head adjustment: `browser.ios.device.list`, `browser.ios.swipe`, and `browser.ios.tap` are now productized as provider-scoped bridges for installed `agent-browser -p ios` commands. Device list is read-scoped; swipe/tap are write-scoped and validate direction, distance, and target. Windows/non-Xcode hosts still surface iOS runtime unavailability honestly, and persistent proxy/profile mutation remains intentionally guarded. The browser command queue should now hand off to the next repo-level parity family instead of circling this seam.
+
+Current queue-head adjustment: repo-level rotation moved from browser command productization into cron parity. `cron.add` and `cron.update` now accept OpenClaw-style `schedule.kind="cron"` objects with `expr`, optional `tz`, and optional `staggerMs`; cron jobs round-trip through `cron.list`, compute next due time, and launch through `cron.run` with `mode="due"`. The next repo-level method seam should move to gateway session or agent-file surfaces rather than reopening the closed browser command queue.
+
+Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `agents.files.set` now cover OpenClaw's bootstrap/memory workspace files (`AGENTS.md`, `SOUL.md`, `TOOLS.md`, `IDENTITY.md`, `USER.md`, `HEARTBEAT.md`, `BOOTSTRAP.md`, `MEMORY.md`, and `memory.md`) while preserving the existing OpenZues `.codex/AGENTS.md` file. The next repo-level method seam should move to session/runtime-control surfaces instead of reopening agent-file filename breadth.
 
 ## Verified This Run
 
@@ -511,4 +838,64 @@ Current queue-head adjustment: `browser.upload` is now productized as a write-sc
 - `pytest` temp-path cleanup currently hits `WinError 5` in this Windows/OneDrive environment, so temp-path-heavy proofs may need direct invocation until that harness issue is cleaned up.
 - The repo virtualenv launcher currently points at a missing base Python; focused verification succeeded by running the Codex runtime interpreter with `.venv\\Lib\\site-packages` on `PYTHONPATH`.
 - `tests/test_gateway_nodes_api.py` still carries unrelated historical `E501` lines, so touched-file Ruff verification for this seam used `--extend-ignore E501` instead of widening into repo-style cleanup.
-- The queue head now tracks the post-send/post-poll/post-media shared direct-owner boundary rather than the older checkpoint-only follow-on.
+- `plugin.approval.*` moved from explicit hard-503 validation to a bounded local lifecycle in `GatewayNodeMethodService`: request creates a pending record, list exposes pending records, resolve records and broadcasts the decision, and waitDecision returns the stored decision.
+- Verified `plugin.approval.*` with `pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k plugin_approval`, `ruff check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`, and `mypy src/openzues/services/gateway_node_methods.py`.
+- `device.pair.*` moved from explicit hard-503 validation to persisted pairing lifecycle aliases over `GatewayNodePairingService`: list exposes OpenClaw-shaped `deviceId` pending/paired payloads, approve/reject broadcast `device.pair.resolved`, and remove deletes paired devices without exposing the node token.
+- Verified `device.pair.*` with `pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k device_pair`, `pytest tests/test_gateway_node_methods.py -q -k "node_pair or device_pair"`, `ruff check src/openzues/database.py src/openzues/services/gateway_node_pairing.py src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`, and `mypy src/openzues/database.py src/openzues/services/gateway_node_pairing.py src/openzues/services/gateway_node_methods.py`.
+- `exec.approval.*` moved from explicit hard-503 validation to a bounded local approval lifecycle in `GatewayNodeMethodService`: request creates a pending approval, list/get expose pending metadata, resolve records and broadcasts the decision, and waitDecision returns the stored decision.
+- Verified `exec.approval.*` with `pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k exec_approval`, the combined `pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "exec_approval or plugin_approval or device_pair"`, `ruff check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`, and `mypy src/openzues/services/gateway_node_methods.py`.
+- `exec.approvals.*` moved from explicit hard-503 validation to persisted policy config files under the OpenZues data dir, including global get/set, node get/set, socket-token redaction, and base-hash guards.
+- Verified `exec.approvals.*` with `pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k exec_approvals`, `ruff check src/openzues/services/gateway_node_methods.py src/openzues/app.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`, and `mypy src/openzues/services/gateway_node_methods.py src/openzues/app.py`.
+- `device.token.rotate/revoke` moved from explicit hard-503 validation to a persisted SQLite token runtime: rotate creates or replaces role-scoped device auth tokens, `device.pair.list` now summarizes those tokens without leaking the paired-node token, revoke records `revokedAtMs`, and unknown device/role calls fail as invalid requests.
+- Verified `device.token.*` with `pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k device_token`, `pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "device_pair or device_token or node_pair"`, `ruff check src/openzues/database.py src/openzues/services/gateway_node_pairing.py src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`, and `mypy src/openzues/database.py src/openzues/services/gateway_node_pairing.py src/openzues/services/gateway_node_methods.py`.
+- `agents.create/update/delete` moved from explicit hard-503 validation to a persisted SQLite custom-agent registry: create/update materialize workspace `IDENTITY.md`, list now includes custom agents alongside `main`, and delete removes the registry entry without touching workspace files unless a later deletion runtime intentionally adds safe trash handling.
+- Verified `agents.*` mutation with `pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "agents_mutate or agents_mutation or agents_list_returns"`, `pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "agents_list or agents_files or agents_mutate or agents_mutation or agent_identity"`, `ruff check src/openzues/database.py src/openzues/services/gateway_agents.py src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py tests/test_gateway_method_policy.py`, and `mypy src/openzues/database.py src/openzues/services/gateway_agents.py src/openzues/services/gateway_node_methods.py`.
+- `config.set/patch/apply` moved from explicit hard-503 validation to a bounded writable control-UI config owner: set/apply validate full config JSON, patch shallow/deep-merges JSON patches into the current config, writes `settings/control-ui-config.json`, enforces base-hash guards once the file exists, and `config.get` reads back the durable snapshot.
+- Verified config mutation with `pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "config_get or config_open_file or config_write or control_ui_config"`, `ruff check src/openzues/services/gateway_config.py src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`, and `mypy src/openzues/services/gateway_config.py src/openzues/services/gateway_node_methods.py`.
+- `doctor.memory.backfillDreamDiary/resetDreamDiary/resetGroundedShortTerm/repairDreamingArtifacts/dedupeDreamDiary` moved from explicit hard-503 validation to bounded workspace mutation helpers for OpenZues dreaming artifacts.
+- Verified doctor-memory mutation with `pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k doctor_memory`, `ruff check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`, and `mypy src/openzues/services/gateway_node_methods.py`.
+- Admin-scoped `chat.send` origin-route fields moved from explicit hard-503 validation to bounded route-provenance preservation in the submitted runtime message, while non-admin callers remain blocked and broader system provenance remains guarded.
+- Verified `chat.send` origin-route provenance with `pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "originating_fields or originating_route or system_provenance"`, `ruff check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`, and `mypy src/openzues/services/gateway_node_methods.py`.
+- Admin-scoped `chat.send` system provenance moved from explicit hard-503 validation to bounded runtime-envelope preservation for input provenance plus receipt text, while non-admin callers remain blocked.
+- Verified `chat.send` system provenance with `pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "originating_fields or originating_route or system_provenance"`, `ruff check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`, and `mypy src/openzues/services/gateway_node_methods.py`.
+- `sessions.steer` moved past a false interruption-runtime dependency: idle steer sends now use the chat send runtime without requiring an abort service, while active-run interruption and stop commands still require the abort runtime.
+- Verified idle `sessions.steer` with `pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k sessions_steer`, `ruff check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`, and `mypy src/openzues/services/gateway_node_methods.py`.
+- `chat.abort` now resolves request aliases such as `subagent:child` through the shared existing-session resolver before interrupting active tracked runs, so short child aliases can cancel the canonical runtime run.
+- Verified `chat.abort` alias resolution with `pytest tests/test_gateway_node_methods.py -q -k "chat_abort_uses_resolved_subagent_store_key"`, `pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "chat_abort or chat_send or sessions_send or sessions_steer"`, `ruff check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`, and `mypy src/openzues/services/gateway_node_methods.py`.
+- `sessions.abort` now resolves request aliases such as `subagent:child` through the shared existing-session resolver before interrupting active tracked runs and publishing the abort `sessions.changed` event under the canonical key.
+- Verified `sessions.abort` alias resolution with `pytest tests/test_gateway_node_methods.py -q -k "sessions_abort_uses_resolved_subagent_store_key"`, `pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "sessions_abort or chat_abort or chat_send or sessions_send or sessions_steer"`, `ruff check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`, and `mypy src/openzues/services/gateway_node_methods.py`.
+- `sessions.preview` now resolves request aliases such as `subagent:child` through the shared existing-session resolver before reading transcript rows, while preserving the caller's requested key in each preview response slot.
+- Verified `sessions.preview` alias resolution with `pytest tests/test_gateway_node_methods.py -q -k "sessions_preview_uses_resolved_subagent_store_key"`, `pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "sessions_preview or sessions_get or chat_history or sessions_usage"`, `ruff check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`, and `mypy src/openzues/services/gateway_node_methods.py`.
+- `tools.effective` now resolves request aliases such as `subagent:child` through the shared existing-session resolver before deriving session-scoped toolsets and agent identity.
+- Verified `tools.effective` alias resolution with `pytest tests/test_gateway_node_methods.py -q -k "tools_effective_uses_resolved_subagent_store_key"`, `pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "tools_effective or tools_catalog or sessions_preview"`, `ruff check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`, and `mypy src/openzues/services/gateway_node_methods.py`.
+- direct channel `send` now resolves known request aliases such as `subagent:child` before passing source-session provenance to the delivery runtime, while preserving unknown structural source keys exactly.
+- Verified direct-send alias resolution with `pytest tests/test_gateway_node_methods.py -q -k "send_uses_resolved_subagent_store_key_for_delivery_provenance"`, `pytest tests/test_gateway_nodes_api.py -q -k "send_endpoint_delivers_channel_target_message_and_records_outbound_delivery or send_endpoint_delivers_channel_target_media_and_records_outbound_delivery"`, `pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "send_ or poll_ or message_action"`, `ruff check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`, and `mypy src/openzues/services/gateway_node_methods.py`.
+- `plugin.approval.request` and `exec.approval.request` now resolve known request aliases such as `subagent:child` before storing durable approval provenance, while preserving unknown legacy session ids.
+- Verified approval provenance alias resolution with `pytest tests/test_gateway_node_methods.py -q -k "plugin_approval_request_uses_resolved_subagent_store_key"`, `pytest tests/test_gateway_node_methods.py -q -k "exec_approval_request_uses_resolved_subagent_store_key"`, `pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "plugin_approval or exec_approval or send_uses_resolved_subagent_store_key_for_delivery_provenance"`, `ruff check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`, and `mypy src/openzues/services/gateway_node_methods.py`.
+- internal `node.event` routing now resolves known request aliases such as `subagent:child` before chat subscriptions, exec/notification wake events, voice transcripts, and agent requests, while preserving the raw recorded node event.
+- Verified node-event alias routing with `pytest tests/test_gateway_node_methods.py -q -k "node_event_chat_subscribe_uses_resolved_subagent_store_key"`, `pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "node_event or node_invoke"`, `ruff check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`, and `mypy src/openzues/services/gateway_node_methods.py`.
+- `wake` now resolves known request aliases such as `subagent:child` before deriving agent id and queueing wake requests.
+- Verified wake alias resolution with `pytest tests/test_gateway_node_methods.py -q -k "wake_uses_resolved_subagent_store_key"`, `pytest tests/test_gateway_nodes_api.py -q -k "wake_now_auto_retries_after_submit_error"`, `pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "wake or cron_wake"`, `ruff check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`, and `mypy src/openzues/services/gateway_node_methods.py`.
+- Persisted custom agents now flow into session orchestration: `sessions.create` accepts custom `agentId` values, generates custom-agent session keys, records the agent metadata, and `sessions.list agentId=...` can filter those sessions.
+- Verified the custom-agent session bridge with `pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "sessions_create or sessions_list_filters_by_agent"`, `ruff check src/openzues/services/gateway_node_methods.py src/openzues/services/gateway_sessions.py src/openzues/services/gateway_agents.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`, and `mypy src/openzues/services/gateway_node_methods.py src/openzues/services/gateway_sessions.py src/openzues/services/gateway_agents.py`.
+- Shared known/existing session-key resolution now falls back to a unique session-id lookup, so short aliases such as `subagent:child` can resolve to custom-agent store keys like `agent:builder-prime:subagent:child`; `agent.identity.get` now uses that resolver before deriving identity.
+- Verified custom-agent child alias identity with `pytest tests/test_gateway_node_methods.py -q -k "agent_identity_get_uses_resolved_custom_subagent_store_key"`, the adjacent `pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "agent_identity or sessions_resolve or sessions_get or sessions_preview or chat_abort or sessions_abort or tools_effective or send_uses_resolved_subagent_store_key_for_delivery_provenance or plugin_approval or exec_approval or node_event_chat_subscribe or wake_uses_resolved"`, `ruff check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`, and `mypy src/openzues/services/gateway_node_methods.py`.
+- `agent` launch now validates custom `agentId` values through the persisted agent registry and resolves known child aliases before dispatch, so `agentId=builder-prime` plus `sessionKey=subagent:child` launches against `agent:builder-prime:subagent:child`.
+- Verified custom-agent child launch with `pytest tests/test_gateway_node_methods.py -q -k "agent_launch_uses_resolved_custom_subagent_store_key"`, the adjacent `pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "agent_launch or agent_rejects or agent_identity or sessions_create or sessions_list_filters_by_agent"`, `ruff check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`, and `mypy src/openzues/services/gateway_node_methods.py`.
+- `agent` launch now defaults persisted custom agents with no explicit session selector to scoped main sessions such as `agent:builder-prime:main` and persists `agentId` metadata for discovery.
+- Verified custom-agent default launch with `pytest tests/test_gateway_node_methods.py -q -k "agent_launch_defaults_custom_agent_to_scoped_main_session"`, the adjacent `pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "agent_launch or agent_rejects or agent_identity or sessions_create or sessions_list_filters_by_agent"`, `ruff check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`, and `mypy src/openzues/services/gateway_node_methods.py`.
+- `sessions.patch` now resolves request keys through the shared existing-session resolver, so short aliases can mutate custom-agent child sessions such as `agent:builder-prime:subagent:child`.
+- Verified custom-agent patch alias routing with `pytest tests/test_gateway_node_methods.py -q -k "sessions_patch_uses_resolved_custom_subagent_store_key"`, the adjacent `pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "sessions_patch or sessions_get or chat_history or sessions_usage or sessions_preview"`, `ruff check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`, and `mypy src/openzues/services/gateway_node_methods.py`.
+- `sessions.reset` now resolves request keys through the shared existing-session resolver before clearing transcripts and runtime metadata, preserving durable custom-agent metadata for aliases such as `subagent:child`.
+- Verified custom-agent reset alias routing with `pytest tests/test_gateway_node_methods.py -q -k "sessions_reset_uses_resolved_custom_subagent_store_key"`, the adjacent `pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "sessions_reset or sessions_delete or sessions_patch or sessions_preview"`, `ruff check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`, and `mypy src/openzues/services/gateway_node_methods.py`.
+- `sessions.delete` now resolves request keys through the shared existing-session resolver before archive/delete work, so short aliases delete custom-agent child sessions rather than silently no-oping.
+- Verified custom-agent delete alias routing with `pytest tests/test_gateway_node_methods.py -q -k "sessions_delete_uses_resolved_custom_subagent_store_key"`, the adjacent `pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "sessions_delete or sessions_reset or sessions_patch or sessions_compact or sessions_compaction"`, `ruff check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`, and `mypy src/openzues/services/gateway_node_methods.py`.
+- `chat.inject` now resolves request keys through the shared existing-session resolver before appending assistant transcript rows, so injected notes for custom-agent child aliases land on the canonical session.
+- Verified custom-agent inject alias routing with `pytest tests/test_gateway_node_methods.py -q -k "chat_inject_uses_resolved_custom_subagent_store_key"`, the adjacent `pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "chat_inject or chat_history or chat_send or sessions_get or sessions_preview"`, `ruff check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`, and `mypy src/openzues/services/gateway_node_methods.py`.
+- `sessions.create parentSessionKey` now resolves request keys through the shared existing-session resolver before deriving generated child session keys, so custom-agent parent aliases spawn under canonical custom parents.
+- Verified custom-agent create-parent alias routing with `pytest tests/test_gateway_node_methods.py -q -k "sessions_create_resolves_custom_subagent_parent_key"`, the adjacent `pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "sessions_create or sessions_list_filters_by_agent or agent_launch or agent_identity"`, `ruff check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`, and `mypy src/openzues/services/gateway_node_methods.py`.
+- `sessions.create key=subagent:* agentId=<custom>` now scopes explicit child keys through the custom-agent store helper before mismatch validation, so `subagent:child` creates `agent:builder-prime:subagent:child` instead of failing as a main-agent key.
+- Verified custom-agent explicit-key create routing with `pytest tests/test_gateway_node_methods.py -q -k "sessions_create_scopes_custom_agent_request_key"`, the adjacent `pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "sessions_create or sessions_list_filters_by_agent or agent_launch or agent_identity"`, `ruff check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py`, and `mypy src/openzues/services/gateway_node_methods.py`.
+- `sessions.resolve key=subagent:* agentId=<custom>` now probes the custom-agent store before falling back to default-main aliases, and agent-filtered `sessionId` / label lookups no longer mistake legacy launch sessions for agent-owned sessions.
+- Verified custom-agent resolver alias routing with `pytest tests/test_gateway_sessions.py -q -k "key_lookup_scopes_custom_agent_request_key_alias"`, `pytest tests/test_gateway_sessions.py tests/test_gateway_node_methods.py -q -k "resolve_key or sessions_resolve"`, the adjacent `pytest tests/test_gateway_sessions.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "sessions_list_filters_by_agent or sessions_resolve or resolve_key or sessions_create or agent_launch or agent_identity"`, `ruff check src/openzues/services/gateway_sessions.py src/openzues/services/gateway_node_methods.py tests/test_gateway_sessions.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`, and `mypy src/openzues/services/gateway_node_methods.py src/openzues/services/gateway_sessions.py`.
+- The queue head now tracks the remaining advertised runtime-control hard gaps, especially channel/session transcript/runtime methods (`chat.*` and `sessions.*`), rather than the older approval lifecycle/config/device-token/agent-mutation/memory-doctor/placeheld provenance/false steer-runtime/custom-agent-session placeholders.

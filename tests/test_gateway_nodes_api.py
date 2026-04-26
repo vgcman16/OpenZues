@@ -7,14 +7,21 @@ import json
 import os
 import re
 import shutil
+import socket
 import sqlite3
 import subprocess
+import threading
 import time
+from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
+from urllib.parse import quote
 
+import httpx
 import pytest
+import uvicorn
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.asymmetric.ed25519 import (
@@ -225,6 +232,61 @@ def _wait_for(fetch, predicate, *, timeout_seconds: float = 3.0, interval_second
         time.sleep(interval_seconds)
         value = fetch()
     return value
+
+
+def _unused_tcp_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+def _start_test_server(app) -> tuple[str, uvicorn.Server, threading.Thread]:
+    port = _unused_tcp_port()
+    server = uvicorn.Server(
+        uvicorn.Config(
+            app,
+            host="127.0.0.1",
+            port=port,
+            log_level="critical",
+            access_log=False,
+        )
+    )
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    deadline = time.monotonic() + 5.0
+    while not server.started:
+        if not thread.is_alive():
+            raise RuntimeError("Uvicorn test server stopped before startup")
+        if time.monotonic() >= deadline:
+            raise RuntimeError("Timed out waiting for Uvicorn test server startup")
+        time.sleep(0.01)
+    return f"http://127.0.0.1:{port}", server, thread
+
+
+def _stop_test_server(server: uvicorn.Server, thread: threading.Thread) -> None:
+    server.should_exit = True
+    thread.join(timeout=5.0)
+
+
+def _read_sse_payload(lines: Iterator[str], event_name: str) -> dict[str, Any]:
+    current_event: str | None = None
+    data_lines: list[str] = []
+    for line in lines:
+        if line.startswith(":") or line.startswith("retry:"):
+            continue
+        if not line:
+            if current_event == event_name and data_lines:
+                payload = json.loads("\n".join(data_lines))
+                assert isinstance(payload, dict)
+                return payload
+            current_event = None
+            data_lines = []
+            continue
+        if line.startswith("event: "):
+            current_event = line.removeprefix("event: ").strip()
+        elif line.startswith("data: "):
+            data_lines.append(line.removeprefix("data: "))
+    raise AssertionError(f"SSE event {event_name!r} was not delivered before stream closed")
 
 
 def test_gateway_node_endpoints_surface_known_nodes_and_pending_actions(tmp_path) -> None:
@@ -3131,50 +3193,8 @@ def test_gateway_node_method_call_endpoint_returns_models_auth_status_unavailabl
     }
 
 
-@pytest.mark.parametrize(
-    ("method", "params", "detail"),
-    [
-        (
-            "device.pair.list",
-            {},
-            "device.pair.list is unavailable until device auth pairing runtime is wired",
-        ),
-        (
-            "device.pair.approve",
-            {"requestId": "device-request-1"},
-            "device.pair.approve is unavailable until device auth pairing runtime is wired",
-        ),
-        (
-            "device.pair.reject",
-            {"requestId": "device-request-1"},
-            "device.pair.reject is unavailable until device auth pairing runtime is wired",
-        ),
-        (
-            "device.pair.remove",
-            {"deviceId": "device-1"},
-            "device.pair.remove is unavailable until device auth pairing runtime is wired",
-        ),
-        (
-            "device.token.rotate",
-            {
-                "deviceId": "device-1",
-                "role": "operator",
-                "scopes": ["operator.read"],
-            },
-            "device.token.rotate is unavailable until device auth token runtime is wired",
-        ),
-        (
-            "device.token.revoke",
-            {"deviceId": "device-1", "role": "operator"},
-            "device.token.revoke is unavailable until device auth token runtime is wired",
-        ),
-    ],
-)
-def test_gateway_node_method_call_endpoint_returns_device_family_unavailable_contract(
+def test_gateway_node_method_call_endpoint_rejects_unknown_device_token_target(
     tmp_path,
-    method: str,
-    params: dict[str, object],
-    detail: str,
 ) -> None:
     app_settings = Settings(
         data_dir=tmp_path / "data",
@@ -3186,222 +3206,21 @@ def test_gateway_node_method_call_endpoint_returns_device_family_unavailable_con
         _allow_mutating_api_requests(client)
         response = client.post(
             "/api/gateway/node-methods/call",
-            json={"method": method, "params": params},
-        )
-
-    assert response.status_code == 503
-    assert response.json() == {"detail": detail}
-
-
-@pytest.mark.parametrize(
-    ("method", "params", "detail"),
-    [
-        (
-            "plugin.approval.list",
-            {},
-            "plugin.approval.list is unavailable until plugin approval runtime is wired",
-        ),
-        (
-            "plugin.approval.request",
-            {
-                "pluginId": "alpha-plugin",
-                "title": "Install alpha plugin",
-                "description": "Approve installation of the alpha plugin bundle.",
-                "severity": "warning",
-                "toolName": "plugin.install",
-                "toolCallId": "call-1",
-                "agentId": "agent-1",
-                "sessionKey": "session-1",
-                "turnSourceChannel": "slack",
-                "turnSourceTo": "ops",
-                "turnSourceAccountId": "acct-1",
-                "turnSourceThreadId": 42,
-                "timeoutMs": 30_000,
-                "twoPhase": True,
-            },
-            "plugin.approval.request is unavailable until plugin approval runtime is wired",
-        ),
-        (
-            "plugin.approval.waitDecision",
-            {"id": "plugin:approval-1"},
-            "plugin.approval.waitDecision is unavailable until plugin approval runtime is wired",
-        ),
-        (
-            "plugin.approval.resolve",
-            {"id": "plugin:approval-1", "decision": "allow-once"},
-            "plugin.approval.resolve is unavailable until plugin approval runtime is wired",
-        ),
-    ],
-)
-def test_gateway_node_method_call_endpoint_returns_plugin_approval_family_unavailable_contract(
-    tmp_path,
-    method: str,
-    params: dict[str, object],
-    detail: str,
-) -> None:
-    app_settings = Settings(
-        data_dir=tmp_path / "data",
-        db_path=tmp_path / "data" / "openzues-test.db",
-    )
-    app = create_app(app_settings)
-
-    with TestClient(app, client=("testclient", 50000)) as client:
-        _allow_mutating_api_requests(client)
-        response = client.post(
-            "/api/gateway/node-methods/call",
-            json={"method": method, "params": params},
-        )
-
-    assert response.status_code == 503
-    assert response.json() == {"detail": detail}
-
-
-@pytest.mark.parametrize(
-    ("method", "params", "detail"),
-    [
-        (
-            "exec.approval.get",
-            {"id": "approval-1"},
-            "exec.approval.get is unavailable until exec approval runtime is wired",
-        ),
-        (
-            "exec.approval.list",
-            {},
-            "exec.approval.list is unavailable until exec approval runtime is wired",
-        ),
-        (
-            "exec.approval.request",
-            {
-                "id": "approval-1",
-                "command": "npm test",
-                "commandArgv": ["npm", "test"],
-                "env": {"CI": "1"},
-                "cwd": "C:/workspace",
-                "host": "desktop",
-                "security": "strict",
-                "ask": "manual",
-                "agentId": "agent-1",
-                "resolvedPath": "C:/workspace/package.json",
-                "sessionKey": "session-1",
-                "turnSourceChannel": "slack",
-                "turnSourceTo": "ops",
-                "turnSourceAccountId": "acct-1",
-                "turnSourceThreadId": "thread-1",
-                "timeoutMs": 30_000,
-                "twoPhase": True,
-            },
-            "exec.approval.request is unavailable until exec approval runtime is wired",
-        ),
-        (
-            "exec.approval.waitDecision",
-            {"id": "approval-1"},
-            "exec.approval.waitDecision is unavailable until exec approval runtime is wired",
-        ),
-        (
-            "exec.approval.resolve",
-            {"id": "approval-1", "decision": "allow-once"},
-            "exec.approval.resolve is unavailable until exec approval runtime is wired",
-        ),
-    ],
-)
-def test_gateway_node_method_call_endpoint_returns_exec_approval_family_unavailable_contract(
-    tmp_path,
-    method: str,
-    params: dict[str, object],
-    detail: str,
-) -> None:
-    app_settings = Settings(
-        data_dir=tmp_path / "data",
-        db_path=tmp_path / "data" / "openzues-test.db",
-    )
-    app = create_app(app_settings)
-
-    with TestClient(app, client=("testclient", 50000)) as client:
-        _allow_mutating_api_requests(client)
-        response = client.post(
-            "/api/gateway/node-methods/call",
-            json={"method": method, "params": params},
-        )
-
-    assert response.status_code == 503
-    assert response.json() == {"detail": detail}
-
-
-@pytest.mark.parametrize(
-    ("method", "params", "detail"),
-    [
-        (
-            "exec.approvals.get",
-            {},
-            "exec.approvals.get is unavailable until exec approval policy config runtime is wired",
-        ),
-        (
-            "exec.approvals.set",
-            {
-                "file": {
-                    "version": 1,
-                    "socket": {"path": "C:/tmp/approvals.sock", "token": "secret-token"},
-                    "defaults": {
-                        "security": "strict",
-                        "ask": "manual",
-                        "askFallback": "deny",
-                        "autoAllowSkills": True,
-                    },
-                    "agents": {
-                        "main": {
-                            "security": "strict",
-                            "ask": "manual",
-                            "askFallback": "deny",
-                            "autoAllowSkills": False,
-                            "allowlist": [
-                                {
-                                    "id": "entry-1",
-                                    "pattern": "npm",
-                                    "argPattern": "test",
-                                    "lastUsedAt": 1,
-                                    "lastUsedCommand": "npm test",
-                                    "lastResolvedPath": "C:/workspace/package.json",
-                                }
-                            ],
-                        }
-                    },
+            json={
+                "method": "device.token.rotate",
+                "params": {
+                    "deviceId": "device-1",
+                    "role": "operator",
+                    "scopes": ["operator.read"],
                 },
-                "baseHash": "abc123",
             },
-            "exec.approvals.set is unavailable until exec approval policy config runtime is wired",
-        ),
-        (
-            "exec.approvals.node.get",
-            {"nodeId": "node-1"},
-            "exec.approvals.node.get is unavailable until exec approval policy "
-            "config runtime is wired",
-        ),
-        (
-            "exec.approvals.node.set",
-            {
-                "nodeId": "node-1",
-                "file": {
-                    "version": 1,
-                    "defaults": {
-                        "security": "strict",
-                        "ask": "manual",
-                        "askFallback": "deny",
-                        "autoAllowSkills": True,
-                    },
-                },
-                "baseHash": "node-hash",
-            },
-            "exec.approvals.node.set is unavailable until exec approval policy "
-            "config runtime is wired",
-        ),
-    ],
-)
-def test_gateway_node_method_call_endpoint_returns_exec_approvals_family_unavailable_contract(
-    tmp_path,
-    method: str,
-    params: dict[str, object],
-    detail: str,
-) -> None:
+        )
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "device token rotation denied"}
+
+
+def test_gateway_node_method_call_endpoint_supports_device_pair_lifecycle(tmp_path) -> None:
     app_settings = Settings(
         data_dir=tmp_path / "data",
         db_path=tmp_path / "data" / "openzues-test.db",
@@ -3410,13 +3229,285 @@ def test_gateway_node_method_call_endpoint_returns_exec_approvals_family_unavail
 
     with TestClient(app, client=("testclient", 50000)) as client:
         _allow_mutating_api_requests(client)
-        response = client.post(
+        request_response = client.post(
             "/api/gateway/node-methods/call",
-            json={"method": method, "params": params},
+            json={
+                "method": "node.pair.request",
+                "params": {
+                    "nodeId": "device-api-node",
+                    "displayName": "API Device",
+                    "platform": "windows",
+                    "deviceFamily": "desktop",
+                    "remoteIp": "10.0.0.52",
+                },
+            },
+        )
+        request_id = request_response.json()["request"]["requestId"]
+        list_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={"method": "device.pair.list", "params": {}},
+        )
+        approve_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={"method": "device.pair.approve", "params": {"requestId": request_id}},
+        )
+        remove_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={"method": "device.pair.remove", "params": {"deviceId": "device-api-node"}},
         )
 
-    assert response.status_code == 503
-    assert response.json() == {"detail": detail}
+    assert list_response.status_code == 200
+    assert list_response.json()["pending"][0]["deviceId"] == "device-api-node"
+    assert approve_response.status_code == 200
+    approved_device = approve_response.json()["device"]
+    assert approved_device["deviceId"] == "device-api-node"
+    assert "token" not in approved_device
+    assert approved_device["tokens"] == {}
+    assert remove_response.status_code == 200
+    assert remove_response.json() == {"deviceId": "device-api-node"}
+
+
+def test_gateway_node_method_call_endpoint_supports_device_token_lifecycle(tmp_path) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        request_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "node.pair.request",
+                "params": {
+                    "nodeId": "device-token-api-node",
+                    "displayName": "API Token Device",
+                },
+            },
+        )
+        request_id = request_response.json()["request"]["requestId"]
+        client.post(
+            "/api/gateway/node-methods/call",
+            json={"method": "device.pair.approve", "params": {"requestId": request_id}},
+        )
+        rotate_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "device.token.rotate",
+                "params": {
+                    "deviceId": "device-token-api-node",
+                    "role": "operator",
+                    "scopes": ["operator.read"],
+                },
+            },
+        )
+        list_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={"method": "device.pair.list", "params": {}},
+        )
+        revoke_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "device.token.revoke",
+                "params": {"deviceId": "device-token-api-node", "role": "operator"},
+            },
+        )
+
+    assert rotate_response.status_code == 200
+    rotated = rotate_response.json()
+    assert rotated["deviceId"] == "device-token-api-node"
+    assert rotated["role"] == "operator"
+    assert rotated["scopes"] == ["operator.read"]
+    assert isinstance(rotated["token"], str)
+    assert list_response.status_code == 200
+    assert list_response.json()["paired"][0]["tokens"][0]["role"] == "operator"
+    assert revoke_response.status_code == 200
+    assert revoke_response.json()["deviceId"] == "device-token-api-node"
+    assert revoke_response.json()["role"] == "operator"
+    assert isinstance(revoke_response.json()["revokedAtMs"], int)
+
+
+def test_gateway_node_method_call_endpoint_tracks_plugin_approval_lifecycle(tmp_path) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        request_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "plugin.approval.request",
+                "params": {
+                    "pluginId": "alpha-plugin",
+                    "title": "Install alpha plugin",
+                    "description": "Approve installation of the alpha plugin bundle.",
+                    "severity": "warning",
+                    "toolName": "plugin.install",
+                    "toolCallId": "call-1",
+                    "agentId": "agent-1",
+                    "sessionKey": "session-1",
+                    "turnSourceChannel": "slack",
+                    "turnSourceTo": "ops",
+                    "turnSourceAccountId": "acct-1",
+                    "turnSourceThreadId": 42,
+                    "timeoutMs": 30_000,
+                    "twoPhase": True,
+                },
+            },
+        )
+        approval_id = request_response.json()["id"]
+        list_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={"method": "plugin.approval.list", "params": {}},
+        )
+        resolve_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "plugin.approval.resolve",
+                "params": {"id": approval_id, "decision": "allow-always"},
+            },
+        )
+        wait_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={"method": "plugin.approval.waitDecision", "params": {"id": approval_id}},
+        )
+
+    assert request_response.status_code == 200
+    assert isinstance(approval_id, str)
+    assert approval_id.startswith("plugin:")
+    assert request_response.json()["status"] == "accepted"
+    assert list_response.status_code == 200
+    assert [approval["id"] for approval in list_response.json()["approvals"]] == [approval_id]
+    assert resolve_response.status_code == 200
+    assert resolve_response.json() == {"ok": True}
+    assert wait_response.status_code == 200
+    assert wait_response.json()["decision"] == "allow-always"
+
+
+def test_gateway_node_method_call_endpoint_tracks_exec_approval_lifecycle(tmp_path) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        request_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "exec.approval.request",
+                "params": {
+                    "id": "exec-api-approval-1",
+                    "command": "npm test",
+                    "commandArgv": ["npm", "test"],
+                    "env": {"CI": "1"},
+                    "cwd": "C:/workspace",
+                    "host": "gateway",
+                    "security": "allowlist",
+                    "ask": "on-miss",
+                    "agentId": "agent-1",
+                    "resolvedPath": "C:/workspace/package.json",
+                    "sessionKey": "session-1",
+                    "timeoutMs": 30_000,
+                    "twoPhase": True,
+                },
+            },
+        )
+        list_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={"method": "exec.approval.list", "params": {}},
+        )
+        get_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={"method": "exec.approval.get", "params": {"id": "exec-api-approval-1"}},
+        )
+        resolve_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "exec.approval.resolve",
+                "params": {"id": "exec-api-approval-1", "decision": "allow-always"},
+            },
+        )
+        wait_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "exec.approval.waitDecision",
+                "params": {"id": "exec-api-approval-1"},
+            },
+        )
+
+    assert request_response.status_code == 200
+    assert request_response.json()["id"] == "exec-api-approval-1"
+    assert list_response.status_code == 200
+    assert [approval["id"] for approval in list_response.json()["approvals"]] == [
+        "exec-api-approval-1"
+    ]
+    assert get_response.status_code == 200
+    assert get_response.json()["allowedDecisions"] == ["allow-once", "allow-always", "deny"]
+    assert resolve_response.status_code == 200
+    assert resolve_response.json() == {"ok": True}
+    assert wait_response.status_code == 200
+    assert wait_response.json()["decision"] == "allow-always"
+
+
+def test_gateway_node_method_call_endpoint_persists_exec_approvals_config(tmp_path) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+    file_config = {
+        "version": 1,
+        "socket": {"path": "C:/tmp/approvals.sock", "token": "secret-token"},
+        "defaults": {
+            "security": "strict",
+            "ask": "manual",
+            "askFallback": "deny",
+            "autoAllowSkills": True,
+        },
+    }
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        before_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={"method": "exec.approvals.get", "params": {}},
+        )
+        set_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={"method": "exec.approvals.set", "params": {"file": file_config}},
+        )
+        after_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={"method": "exec.approvals.get", "params": {}},
+        )
+        node_set_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "exec.approvals.node.set",
+                "params": {"nodeId": "node-1", "file": {"version": 1, "agents": {}}},
+            },
+        )
+        node_get_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={"method": "exec.approvals.node.get", "params": {"nodeId": "node-1"}},
+        )
+
+    assert before_response.status_code == 200
+    assert before_response.json()["exists"] is False
+    assert set_response.status_code == 200
+    assert set_response.json()["file"]["socket"] == {"path": "C:/tmp/approvals.sock"}
+    assert "token" not in set_response.json()["file"]["socket"]
+    assert after_response.status_code == 200
+    assert after_response.json() == set_response.json()
+    assert node_set_response.status_code == 200
+    assert node_get_response.status_code == 200
+    assert node_get_response.json() == node_set_response.json()
 
 
 def test_gateway_node_method_call_endpoint_toggles_attention_queue_runtime(
@@ -4986,7 +5077,7 @@ def test_gateway_node_method_call_endpoint_ignores_blank_chat_send_originating_f
     ]
 
 
-def test_gateway_node_method_call_endpoint_treats_chat_send_originating_fields_() -> None:
+def test_gateway_node_method_call_endpoint_preserves_chat_send_originating_fields() -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-chat-send-origin-runtime-api"
     shutil.rmtree(tmp_path, ignore_errors=True)
     tmp_path.mkdir(parents=True, exist_ok=True)
@@ -5007,19 +5098,33 @@ def test_gateway_node_method_call_endpoint_treats_chat_send_originating_fields_(
                     "message": "status",
                     "originatingChannel": "slack",
                     "originatingTo": "C12345",
+                    "originatingAccountId": "T999",
+                    "originatingThreadId": "1714000000.000100",
                     "idempotencyKey": "run-chat-send-origin-runtime-api-1",
                 },
             },
         )
+        messages = asyncio.run(client.app.state.database.list_control_chat_messages())
 
-    assert response.status_code == 503
-    assert response.json()["detail"] == (
-        "chat.send originating route fields are unavailable until control chat route "
-        "provenance is wired"
+    assert response.status_code == 200
+    assert response.json() == {
+        "runId": "run-chat-send-origin-runtime-api-1",
+        "status": "ok",
+    }
+    assert messages[-2]["content"] == "\n".join(
+        [
+            "[OpenClaw route provenance]",
+            "OriginatingChannel: slack",
+            "OriginatingTo: C12345",
+            "OriginatingAccountId: T999",
+            "OriginatingThreadId: 1714000000.000100",
+            "",
+            "status",
+        ]
     )
 
 
-def test_gateway_node_method_call_endpoint_treats_chat_send_system_provenance_fields_() -> None:
+def test_gateway_node_method_call_endpoint_preserves_chat_send_system_provenance() -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-chat-send-system-runtime-api"
     shutil.rmtree(tmp_path, ignore_errors=True)
     tmp_path.mkdir(parents=True, exist_ok=True)
@@ -5038,17 +5143,37 @@ def test_gateway_node_method_call_endpoint_treats_chat_send_system_provenance_fi
                 "params": {
                     "sessionKey": "openzues:thread:demo",
                     "message": "status",
-                    "systemInputProvenance": {"kind": "internal_system"},
+                    "systemInputProvenance": {
+                        "kind": "internal_system",
+                        "originSessionId": "session-123",
+                        "sourceSessionKey": "openzues:thread:source",
+                        "sourceChannel": "slack",
+                        "sourceTool": "gateway",
+                    },
                     "systemProvenanceReceipt": "Gateway witness",
                     "idempotencyKey": "run-chat-send-system-runtime-api-1",
                 },
             },
         )
+        messages = asyncio.run(client.app.state.database.list_control_chat_messages())
 
-    assert response.status_code == 503
-    assert response.json()["detail"] == (
-        "chat.send system provenance fields are unavailable until control chat "
-        "provenance injection is wired"
+    assert response.status_code == 200
+    assert response.json() == {
+        "runId": "run-chat-send-system-runtime-api-1",
+        "status": "ok",
+    }
+    assert messages[-2]["content"] == "\n".join(
+        [
+            "Gateway witness",
+            "[OpenClaw input provenance]",
+            "Kind: internal_system",
+            "originSessionId: session-123",
+            "sourceSessionKey: openzues:thread:source",
+            "sourceChannel: slack",
+            "sourceTool: gateway",
+            "",
+            "status",
+        ]
     )
 
 
@@ -6281,6 +6406,7 @@ def test_gateway_node_method_call_endpoint_sessions_steer_without_interrupt_emit
         "inputTokens": None,
         "outputTokens": None,
         "totalTokens": None,
+        "totalTokensFresh": False,
         "contextTokens": None,
         "modelProvider": "openai",
         "model": "gpt-5.4",
@@ -6804,6 +6930,7 @@ def test_gateway_node_method_call_endpoint_publishes_sessions_changed_after_sess
             "inputTokens": None,
             "outputTokens": None,
             "totalTokens": None,
+            "totalTokensFresh": False,
             "contextTokens": None,
             "modelProvider": "openai",
             "model": "gpt-5.4",
@@ -6923,6 +7050,7 @@ def test_gateway_node_method_call_endpoint_publishes_session_message_events_afte
         "id": "1",
         "role": "user",
         "content": [{"type": "text", "text": "status"}],
+        "__openclaw": {"id": "1", "seq": 1},
     }
     assert isinstance(user_events[0]["createdAt"], str)
     assert isinstance(user_payload["updatedAt"], int)
@@ -10625,6 +10753,7 @@ def test_sessions_create_api_registers_session_and_sends_initial_message() -> No
     assert payload["runStarted"] is True
     assert payload["status"] == "ok"
     assert isinstance(payload["runId"], str)
+    assert payload["messageSeq"] == 1
     assert payload["entry"]["key"] == created_session_key
     assert payload["entry"]["kind"] == "thread"
     assert payload["entry"]["displayName"] == "OpenZues Control Chat Thread"
@@ -10672,6 +10801,63 @@ def test_sessions_create_api_registers_session_and_sends_initial_message() -> No
         and isinstance(event["payload"].get("reason"), str)
     ]
     assert [event["payload"]["reason"] for event in create_send_events] == ["create", "send"]
+
+
+def test_sessions_create_api_accepts_persisted_custom_agent_sessions() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-create-custom-agent-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        asyncio.run(
+            client.app.state.database.create_gateway_agent(
+                agent_id="builder-prime",
+                name="Builder Prime",
+                workspace=str(tmp_path / "agents" / "builder-prime"),
+                model="gpt-5.4-mini",
+                emoji=None,
+                avatar=None,
+            )
+        )
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.create",
+                "params": {
+                    "agentId": "builder-prime",
+                    "label": "Builder Prime Session",
+                    "message": "Ship the custom-agent API slice.",
+                },
+            },
+        )
+        list_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.list",
+                "params": {
+                    "includeGlobal": True,
+                    "includeUnknown": False,
+                    "agentId": "builder-prime",
+                    "limit": 10,
+                },
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    created_key = payload["key"]
+    assert created_key.startswith("agent:builder-prime:main:thread:gateway-create-")
+    assert payload["ok"] is True
+    assert payload["entry"]["key"] == created_key
+    assert payload["entry"]["label"] == "Builder Prime Session"
+    assert list_response.status_code == 200
+    assert [session["key"] for session in list_response.json()["sessions"]] == [created_key]
 
 
 def test_sessions_patch_api_persists_current_session_metadata_and_surfaces_it() -> None:
@@ -10765,6 +10951,7 @@ def test_sessions_patch_api_persists_current_session_metadata_and_surfaces_it() 
             "inputTokens": None,
             "outputTokens": None,
             "totalTokens": None,
+            "totalTokensFresh": False,
             "modelProvider": "openai",
             "model": "gpt-5.4-mini",
             "contextTokens": None,
@@ -12392,6 +12579,66 @@ def test_gateway_node_method_call_endpoint_supports_cron_add_at_schedule() -> No
     assert jobs[0]["schedule"] == {"kind": "at", "at": "2026-04-18T12:00:00.000Z"}
 
 
+def test_gateway_node_method_call_endpoint_supports_cron_expression_schedule() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-add-cron-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "cron.add",
+                "params": {
+                    "name": "Hourly Repair",
+                    "enabled": True,
+                    "schedule": {
+                        "kind": "cron",
+                        "expr": "0 * * * *",
+                        "tz": "UTC",
+                        "staggerMs": 30_000,
+                    },
+                    "sessionTarget": "isolated",
+                    "wakeMode": "next-heartbeat",
+                    "payload": {
+                        "kind": "agentTurn",
+                        "message": "Repair the hourly parity seam.",
+                    },
+                },
+            },
+        )
+        list_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "cron.list",
+                "params": {"includeDisabled": True},
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["schedule"] == {
+        "kind": "cron",
+        "expr": "0 * * * *",
+        "tz": "UTC",
+        "staggerMs": 30_000,
+    }
+    assert list_response.status_code == 200
+    jobs = list_response.json()["jobs"]
+    assert len(jobs) == 1
+    assert jobs[0]["schedule"] == {
+        "kind": "cron",
+        "expr": "0 * * * *",
+        "tz": "UTC",
+        "staggerMs": 30_000,
+    }
+
+
 def test_gateway_node_method_call_endpoint_routes_main_system_event_cron_run_through_wake_queue(
     tmp_path,
 ) -> None:
@@ -13964,6 +14211,94 @@ def test_gateway_node_method_call_endpoint_supports_cron_update_at_schedule() ->
     assert jobs[0]["schedule"] == {"kind": "at", "at": "2026-04-18T12:00:00.000Z"}
 
 
+def test_gateway_node_method_call_endpoint_supports_cron_update_cron_schedule() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-update-cron-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        database = client.app.state.database
+        task_id = asyncio.run(
+            database.create_task_blueprint(
+                name="Nightly Ship",
+                summary="Ship the next verified slice.",
+                project_id=None,
+                instance_id=None,
+                cadence_minutes=60,
+                enabled=True,
+                payload={
+                    "objective_template": "Ship the next verified slice.",
+                    "conversation_target": None,
+                    "run_until_complete": False,
+                    "continuation_cooldown_minutes": 10,
+                    "completion_marker": None,
+                    "cwd": None,
+                    "model": "gpt-5.4",
+                    "reasoning_effort": None,
+                    "collaboration_mode": None,
+                    "max_turns": None,
+                    "use_builtin_agents": True,
+                    "run_verification": True,
+                    "auto_commit": False,
+                    "pause_on_approval": True,
+                    "allow_auto_reflexes": True,
+                    "auto_recover": True,
+                    "auto_recover_limit": 2,
+                    "reflex_cooldown_seconds": 900,
+                    "allow_failover": True,
+                    "toolsets": [],
+                },
+            )
+        )
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "cron.update",
+                "params": {
+                    "id": f"task-blueprint:{task_id}",
+                    "patch": {
+                        "schedule": {
+                            "kind": "cron",
+                            "expr": "0 9 * * *",
+                            "tz": "America/Chicago",
+                            "staggerMs": 45_000,
+                        },
+                    },
+                },
+            },
+        )
+        list_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "cron.list",
+                "params": {"includeDisabled": True},
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["schedule"] == {
+        "kind": "cron",
+        "expr": "0 9 * * *",
+        "tz": "America/Chicago",
+        "staggerMs": 45_000,
+    }
+    assert list_response.status_code == 200
+    jobs = list_response.json()["jobs"]
+    assert len(jobs) == 1
+    assert jobs[0]["schedule"] == {
+        "kind": "cron",
+        "expr": "0 9 * * *",
+        "tz": "America/Chicago",
+        "staggerMs": 45_000,
+    }
+
+
 def test_gateway_node_method_call_endpoint_infers_cron_update_at_schedule_kind() -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-update-at-infer-api"
     shutil.rmtree(tmp_path, ignore_errors=True)
@@ -15347,6 +15682,113 @@ def test_gateway_node_method_call_endpoint_supports_agents_files_set(
     assert get_payload["file"]["content"] == "Codex instructions.\n"
 
 
+def test_gateway_node_method_call_endpoint_supports_agents_memory_file(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir(parents=True, exist_ok=True)
+    monkeypatch.chdir(workspace_root)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        set_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "agents.files.set",
+                "params": {
+                    "agentId": "main",
+                    "name": "MEMORY.md",
+                    "content": "Durable memory.\n",
+                },
+            },
+        )
+        list_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={"method": "agents.files.list", "params": {"agentId": "main"}},
+        )
+        get_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "agents.files.get",
+                "params": {"agentId": "main", "name": "MEMORY.md"},
+            },
+        )
+
+    assert set_response.status_code == 200
+    assert set_response.json()["file"]["name"] == "MEMORY.md"
+    assert list_response.status_code == 200
+    files_by_name = {entry["name"]: entry for entry in list_response.json()["files"]}
+    assert "BOOTSTRAP.md" in files_by_name
+    assert "MEMORY.md" in files_by_name
+    assert get_response.status_code == 200
+    assert get_response.json()["file"]["content"] == "Durable memory.\n"
+
+
+def test_gateway_node_method_call_endpoint_supports_custom_agent_files(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir(parents=True, exist_ok=True)
+    agent_workspace = tmp_path / "api-agent-workspace"
+    monkeypatch.chdir(workspace_root)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        create_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "agents.create",
+                "params": {
+                    "name": "API Builder",
+                    "workspace": str(agent_workspace),
+                    "model": "gpt-5.4-mini",
+                },
+            },
+        )
+        set_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "agents.files.set",
+                "params": {
+                    "agentId": "api-builder",
+                    "name": "MEMORY.md",
+                    "content": "API builder memory.\n",
+                },
+            },
+        )
+        get_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "agents.files.get",
+                "params": {"agentId": "api-builder", "name": "MEMORY.md"},
+            },
+        )
+
+    written_path = agent_workspace / "MEMORY.md"
+    assert create_response.status_code == 200
+    assert set_response.status_code == 200
+    assert set_response.json()["workspace"] == str(agent_workspace)
+    assert set_response.json()["file"]["path"] == str(written_path)
+    assert get_response.status_code == 200
+    assert get_response.json()["agentId"] == "api-builder"
+    assert get_response.json()["workspace"] == str(agent_workspace)
+    assert get_response.json()["file"]["content"] == "API builder memory.\n"
+    assert written_path.read_text(encoding="utf-8") == "API builder memory.\n"
+    assert not (workspace_root / "MEMORY.md").exists()
+
+
 def test_gateway_node_method_call_endpoint_supports_agents_list_and_agent_identity_get(
     tmp_path,
     monkeypatch,
@@ -15456,66 +15898,84 @@ def test_gateway_node_method_call_endpoint_rejects_agent_identity_session_key_mi
     )
 
 
-@pytest.mark.parametrize(
-    ("method", "params", "detail"),
-    [
-        (
-            "agents.create",
-            {
-                "name": "Builder",
-                "workspace": "/tmp/workspace",
-                "model": "gpt-5.4",
-                "emoji": "robot",
-                "avatar": "/static/agent.png",
-            },
-            "agents.create is unavailable until multi-agent registry mutation is wired",
-        ),
-        (
-            "agents.update",
-            {
-                "agentId": "main",
-                "name": "Builder",
-                "workspace": "/tmp/workspace",
-                "model": "gpt-5.4",
-                "emoji": "robot",
-                "avatar": "/static/agent.png",
-            },
-            "agents.update is unavailable until multi-agent registry mutation is wired",
-        ),
-        (
-            "agents.delete",
-            {
-                "agentId": "main",
-                "deleteFiles": True,
-            },
-            "agents.delete is unavailable until multi-agent registry mutation is wired",
-        ),
-    ],
-)
-def test_gateway_node_method_call_endpoint_returns_explicit_agents_mutate_unavailable_contract(
+def test_gateway_node_method_call_endpoint_supports_agents_mutation_lifecycle(
     tmp_path,
-    method: str,
-    params: dict[str, object],
-    detail: str,
 ) -> None:
     app_settings = Settings(
         data_dir=tmp_path / "data",
         db_path=tmp_path / "data" / "openzues-test.db",
     )
     app = create_app(app_settings)
+    workspace = tmp_path / "api-agent-workspace"
+    updated_workspace = tmp_path / "api-agent-updated"
 
     with TestClient(app, client=("testclient", 50000)) as client:
         _allow_mutating_api_requests(client)
-        response = client.post(
+        create_response = client.post(
             "/api/gateway/node-methods/call",
             json={
-                "method": method,
-                "params": params,
+                "method": "agents.create",
+                "params": {
+                    "name": "API Builder",
+                    "workspace": str(workspace),
+                    "model": "gpt-5.4-mini",
+                    "emoji": "spark",
+                    "avatar": "/static/api-builder.png",
+                },
+            },
+        )
+        list_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={"method": "agents.list", "params": {}},
+        )
+        identity_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "agent.identity.get",
+                "params": {"sessionKey": "agent:api-builder:main"},
+            },
+        )
+        update_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "agents.update",
+                "params": {
+                    "agentId": "api-builder",
+                    "name": "API Builder Updated",
+                    "workspace": str(updated_workspace),
+                    "model": "gpt-5.4",
+                },
+            },
+        )
+        delete_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "agents.delete",
+                "params": {"agentId": "api-builder", "deleteFiles": False},
             },
         )
 
-    assert response.status_code == 503
-    assert response.json() == {"detail": detail}
+    assert create_response.status_code == 200
+    assert create_response.json()["agentId"] == "api-builder"
+    assert list_response.status_code == 200
+    custom = next(agent for agent in list_response.json()["agents"] if agent["id"] == "api-builder")
+    assert custom["workspace"] == str(workspace)
+    assert custom["identity"]["emoji"] == "spark"
+    assert identity_response.status_code == 200
+    assert identity_response.json() == {
+        "agentId": "api-builder",
+        "name": "API Builder",
+        "avatar": "/static/api-builder.png",
+        "emoji": "spark",
+    }
+    assert update_response.status_code == 200
+    assert update_response.json() == {"ok": True, "agentId": "api-builder"}
+    assert delete_response.status_code == 200
+    assert delete_response.json() == {
+        "ok": True,
+        "agentId": "api-builder",
+        "removedBindings": [],
+    }
 
 
 def test_gateway_node_method_call_endpoint_returns_doctor_memory_status_payload(
@@ -15582,57 +16042,80 @@ def test_gateway_node_method_call_endpoint_reads_doctor_memory_dream_diary(
     assert isinstance(payload["updatedAtMs"], int)
 
 
-@pytest.mark.parametrize(
-    ("method", "detail"),
-    [
-        (
-            "doctor.memory.backfillDreamDiary",
-            "doctor.memory.backfillDreamDiary is unavailable until gateway dreaming "
-            "runtime is wired",
-        ),
-        (
-            "doctor.memory.resetDreamDiary",
-            "doctor.memory.resetDreamDiary is unavailable until gateway dreaming runtime is wired",
-        ),
-        (
-            "doctor.memory.resetGroundedShortTerm",
-            "doctor.memory.resetGroundedShortTerm is unavailable until gateway dreaming "
-            "runtime is wired",
-        ),
-        (
-            "doctor.memory.repairDreamingArtifacts",
-            "doctor.memory.repairDreamingArtifacts is unavailable until gateway dreaming "
-            "runtime is wired",
-        ),
-        (
-            "doctor.memory.dedupeDreamDiary",
-            "doctor.memory.dedupeDreamDiary is unavailable until gateway dreaming runtime is wired",
-        ),
-    ],
-)
-def test_gateway_node_method_call_endpoint_returns_doctor_memory_family_unavailable_contract(
-    tmp_path,
-    method: str,
-    detail: str,
+def test_gateway_node_method_call_endpoint_mutates_doctor_memory_family(
+    tmp_path: Path,
 ) -> None:
+    memory_dir = tmp_path / "memory"
+    grounded_dir = memory_dir / "grounded-short-term"
+    grounded_dir.mkdir(parents=True)
+    (memory_dir / "2026-04-25.md").write_text(
+        "# Daily Memory\n\n- API shipped parity work.\n",
+        encoding="utf-8",
+    )
+    (grounded_dir / "short-term.md").write_text("- transient\n", encoding="utf-8")
+    diary_path = tmp_path / "DREAMS.md"
+    diary_path.write_text("# Dream Diary\n\n- duplicate\n- duplicate\n", encoding="utf-8")
     app_settings = Settings(
         data_dir=tmp_path / "data",
         db_path=tmp_path / "data" / "openzues-test.db",
     )
-    app = create_app(app_settings)
+    app = create_app(
+        app_settings,
+        gateway_node_method_service=GatewayNodeMethodService(
+            GatewayNodeRegistry(),
+            memory_doctor_workspace=tmp_path,
+        ),
+    )
 
     with TestClient(app, client=("testclient", 50000)) as client:
         _allow_mutating_api_requests(client)
-        response = client.post(
+        dedupe_response = client.post(
             "/api/gateway/node-methods/call",
             json={
-                "method": method,
+                "method": "doctor.memory.dedupeDreamDiary",
+                "params": {},
+            },
+        )
+        backfill_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "doctor.memory.backfillDreamDiary",
+                "params": {},
+            },
+        )
+        reset_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "doctor.memory.resetDreamDiary",
+                "params": {},
+            },
+        )
+        reset_short_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "doctor.memory.resetGroundedShortTerm",
+                "params": {},
+            },
+        )
+        repair_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "doctor.memory.repairDreamingArtifacts",
                 "params": {},
             },
         )
 
-    assert response.status_code == 503
-    assert response.json() == {"detail": detail}
+    assert dedupe_response.status_code == 200
+    assert dedupe_response.json()["removedEntries"] == 1
+    assert backfill_response.status_code == 200
+    assert backfill_response.json()["written"] == 2
+    assert reset_response.status_code == 200
+    assert reset_response.json()["removedEntries"] == 2
+    assert reset_short_response.status_code == 200
+    assert reset_short_response.json()["removedShortTermEntries"] == 1
+    assert repair_response.status_code == 200
+    assert repair_response.json()["changed"] is False
+    assert "openzues:dream-backfill" not in diary_path.read_text(encoding="utf-8")
 
 
 def test_gateway_node_method_call_endpoint_supports_agent_wait_for_tracked_gateway_run() -> None:
@@ -18037,6 +18520,7 @@ def test_gateway_node_method_call_endpoint_supports_sessions_list() -> None:
             "inputTokens": None,
             "outputTokens": None,
             "totalTokens": None,
+            "totalTokensFresh": False,
             "modelProvider": "openai",
             "model": "gpt-5.4",
             "contextTokens": None,
@@ -18110,6 +18594,7 @@ def test_gateway_node_method_call_endpoint_sessions_list_includes_metadata_sessi
             "inputTokens": None,
             "outputTokens": None,
             "totalTokens": None,
+            "totalTokensFresh": False,
             "modelProvider": "openai",
             "model": "gpt-5.4",
             "contextTokens": None,
@@ -18132,6 +18617,7 @@ def test_gateway_node_method_call_endpoint_sessions_list_includes_metadata_sessi
             "inputTokens": None,
             "outputTokens": None,
             "totalTokens": None,
+            "totalTokensFresh": False,
             "modelProvider": "openai",
             "model": "gpt-5.4-mini",
             "contextTokens": None,
@@ -18785,6 +19271,476 @@ def test_gateway_node_method_call_endpoint_supports_sessions_get() -> None:
     }
 
 
+def test_gateway_session_history_rest_endpoint_supports_cursor_pagination() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-session-history-rest-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+    session_key = "openzues:thread:demo"
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        database = client.app.state.database
+        for content in ("first message", "second message", "third message"):
+            asyncio.run(
+                database.append_control_chat_message(
+                    role="assistant",
+                    content=content,
+                    session_key=session_key,
+                )
+            )
+
+        encoded_key = quote(session_key, safe="")
+        first_response = client.get(f"/sessions/{encoded_key}/history?limit=2")
+        second_response = client.get(
+            f"/sessions/{encoded_key}/history?limit=2&cursor=2"
+        )
+
+    assert first_response.status_code == 200
+    first_body = first_response.json()
+    assert first_body["sessionKey"] == session_key
+    assert [message["content"][0]["text"] for message in first_body["items"]] == [
+        "second message",
+        "third message",
+    ]
+    assert [message["__openclaw"]["seq"] for message in first_body["messages"]] == [2, 3]
+    assert first_body["hasMore"] is True
+    assert first_body["nextCursor"] == "2"
+
+    assert second_response.status_code == 200
+    second_body = second_response.json()
+    assert [message["content"][0]["text"] for message in second_body["items"]] == [
+        "first message"
+    ]
+    assert [message["__openclaw"]["seq"] for message in second_body["messages"]] == [1]
+    assert second_body["hasMore"] is False
+    assert "nextCursor" not in second_body
+
+
+def test_gateway_session_history_rest_endpoint_reports_unknown_session() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-session-history-rest-missing-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.get("/sessions/missing-session/history")
+
+    assert response.status_code == 404
+    assert response.json() == {
+        "ok": False,
+        "error": {
+            "type": "not_found",
+            "message": "Session not found: missing-session",
+        },
+    }
+
+
+def test_gateway_session_history_rest_endpoint_streams_initial_sse_history() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-session-history-rest-sse-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+    session_key = "openzues:thread:sse"
+
+    asyncio.run(app.state.database.initialize())
+    asyncio.run(
+        app.state.database.append_control_chat_message(
+            role="assistant",
+            content="streamed initial history",
+            session_key=session_key,
+        )
+    )
+
+    base_url, server, thread = _start_test_server(app)
+    try:
+        encoded_key = quote(session_key, safe="")
+        timeout = httpx.Timeout(5.0, read=5.0)
+        with httpx.Client(timeout=timeout) as client:
+            with client.stream(
+                "GET",
+                f"{base_url}/sessions/{encoded_key}/history",
+                headers={"accept": "text/event-stream"},
+            ) as stream:
+                assert stream.status_code == 200
+                assert stream.headers["content-type"].startswith("text/event-stream")
+                payload = _read_sse_payload(stream.iter_lines(), "history")
+    finally:
+        _stop_test_server(server, thread)
+
+    assert payload["sessionKey"] == session_key
+    assert payload["messages"][0]["content"][0]["text"] == "streamed initial history"
+
+
+def test_gateway_session_history_rest_endpoint_streams_live_message_updates() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-session-history-rest-live-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+    app.state.control_plane_role = "leader"
+    app.state.control_plane_owner_pid = None
+    session_key = resolve_thread_session_keys(
+        base_session_key=build_launch_session_key(
+            mode="workspace_affinity",
+            preferred_instance_id=None,
+            task_id=None,
+            project_id=None,
+            operator_id=None,
+        ),
+        thread_id="thread-history-live-sse-api",
+    ).session_key
+    asyncio.run(app.state.database.initialize())
+    asyncio.run(
+        app.state.database.create_mission(
+            name="Gateway History SSE Loop",
+            objective="Prove live session history streaming.",
+            status="active",
+            instance_id=7,
+            project_id=None,
+            thread_id="thread-history-live-sse-api",
+            session_key=session_key,
+            cwd=str(tmp_path),
+            model="gpt-5.4",
+            reasoning_effort=None,
+            collaboration_mode=None,
+            max_turns=None,
+            use_builtin_agents=False,
+            run_verification=False,
+            auto_commit=False,
+            pause_on_approval=True,
+            allow_auto_reflexes=True,
+            auto_recover=True,
+            auto_recover_limit=2,
+            reflex_cooldown_seconds=900,
+            allow_failover=True,
+        )
+    )
+    asyncio.run(
+        app.state.database.append_control_chat_message(
+            role="assistant",
+            content="opening streamed history",
+            session_key=session_key,
+        )
+    )
+
+    base_url, server, thread = _start_test_server(app)
+    app.state.control_plane_role = "leader"
+    app.state.control_plane_owner_pid = None
+    encoded_key = quote(session_key, safe="")
+    try:
+        timeout = httpx.Timeout(5.0, read=5.0)
+        with httpx.Client(timeout=timeout) as client:
+            with client.stream(
+                "GET",
+                f"{base_url}/sessions/{encoded_key}/history",
+                headers={"accept": "text/event-stream"},
+            ) as stream:
+                assert stream.status_code == 200
+                lines = stream.iter_lines()
+                history_payload = _read_sse_payload(lines, "history")
+                assert history_payload["sessionKey"] == session_key
+                assert history_payload["messages"][0]["content"][0]["text"] == (
+                    "opening streamed history"
+                )
+
+                inject_response = client.post(
+                    f"{base_url}/api/gateway/node-methods/call",
+                    json={
+                        "method": "chat.inject",
+                        "params": {
+                            "sessionKey": session_key,
+                            "message": "live streamed update",
+                            "label": "History Stream",
+                        },
+                    },
+                )
+                assert inject_response.status_code == 200
+
+                message_payload = _read_sse_payload(lines, "message")
+    finally:
+        _stop_test_server(server, thread)
+
+    assert message_payload == {
+        "sessionKey": session_key,
+        "message": {
+            "id": "2",
+            "role": "assistant",
+            "content": [{"type": "text", "text": "live streamed update"}],
+            "__openclaw": {"id": "2", "seq": 2},
+        },
+        "messageId": "2",
+        "messageSeq": 2,
+    }
+
+
+def test_gateway_session_history_rest_endpoint_streams_bounded_history_refresh() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-session-history-rest-refresh-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+    session_key = resolve_thread_session_keys(
+        base_session_key=build_launch_session_key(
+            mode="workspace_affinity",
+            preferred_instance_id=None,
+            task_id=None,
+            project_id=None,
+            operator_id=None,
+        ),
+        thread_id="thread-history-refresh-sse-api",
+    ).session_key
+    asyncio.run(app.state.database.initialize())
+    asyncio.run(
+        app.state.database.create_mission(
+            name="Gateway History SSE Refresh Loop",
+            objective="Prove bounded session history refresh streaming.",
+            status="active",
+            instance_id=7,
+            project_id=None,
+            thread_id="thread-history-refresh-sse-api",
+            session_key=session_key,
+            cwd=str(tmp_path),
+            model="gpt-5.4",
+            reasoning_effort=None,
+            collaboration_mode=None,
+            max_turns=None,
+            use_builtin_agents=False,
+            run_verification=False,
+            auto_commit=False,
+            pause_on_approval=True,
+            allow_auto_reflexes=True,
+            auto_recover=True,
+            auto_recover_limit=2,
+            reflex_cooldown_seconds=900,
+            allow_failover=True,
+        )
+    )
+    asyncio.run(
+        app.state.database.append_control_chat_message(
+            role="assistant",
+            content="bounded opening history",
+            session_key=session_key,
+        )
+    )
+
+    base_url, server, thread = _start_test_server(app)
+    app.state.control_plane_role = "leader"
+    app.state.control_plane_owner_pid = None
+    encoded_key = quote(session_key, safe="")
+    try:
+        timeout = httpx.Timeout(5.0, read=5.0)
+        with httpx.Client(timeout=timeout) as client:
+            with client.stream(
+                "GET",
+                f"{base_url}/sessions/{encoded_key}/history?limit=1",
+                headers={"accept": "text/event-stream"},
+            ) as stream:
+                assert stream.status_code == 200
+                lines = stream.iter_lines()
+                opening_payload = _read_sse_payload(lines, "history")
+                assert opening_payload["messages"][0]["content"][0]["text"] == (
+                    "bounded opening history"
+                )
+
+                inject_response = client.post(
+                    f"{base_url}/api/gateway/node-methods/call",
+                    json={
+                        "method": "chat.inject",
+                        "params": {
+                            "sessionKey": session_key,
+                            "message": "bounded live refresh",
+                            "label": "History Refresh",
+                        },
+                    },
+                )
+                assert inject_response.status_code == 200
+
+                refresh_payload = _read_sse_payload(lines, "history")
+    finally:
+        _stop_test_server(server, thread)
+
+    assert refresh_payload["sessionKey"] == session_key
+    assert [message["content"][0]["text"] for message in refresh_payload["messages"]] == [
+        "bounded live refresh"
+    ]
+    assert refresh_payload["hasMore"] is True
+    assert refresh_payload["nextCursor"] == "2"
+
+
+def test_gateway_session_history_rest_endpoint_refreshes_sse_on_session_change() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-session-history-rest-change-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+    session_key = resolve_thread_session_keys(
+        base_session_key=build_launch_session_key(
+            mode="workspace_affinity",
+            preferred_instance_id=None,
+            task_id=None,
+            project_id=None,
+            operator_id=None,
+        ),
+        thread_id="thread-history-change-sse-api",
+    ).session_key
+    asyncio.run(app.state.database.initialize())
+    asyncio.run(
+        app.state.database.create_mission(
+            name="Gateway History SSE Change Loop",
+            objective="Prove non-message session updates refresh history streams.",
+            status="active",
+            instance_id=7,
+            project_id=None,
+            thread_id="thread-history-change-sse-api",
+            session_key=session_key,
+            cwd=str(tmp_path),
+            model="gpt-5.4",
+            reasoning_effort=None,
+            collaboration_mode=None,
+            max_turns=None,
+            use_builtin_agents=False,
+            run_verification=False,
+            auto_commit=False,
+            pause_on_approval=True,
+            allow_auto_reflexes=True,
+            auto_recover=True,
+            auto_recover_limit=2,
+            reflex_cooldown_seconds=900,
+            allow_failover=True,
+        )
+    )
+    asyncio.run(
+        app.state.database.append_control_chat_message(
+            role="assistant",
+            content="change opening history",
+            session_key=session_key,
+        )
+    )
+
+    base_url, server, thread = _start_test_server(app)
+    app.state.control_plane_role = "leader"
+    app.state.control_plane_owner_pid = None
+    encoded_key = quote(session_key, safe="")
+    try:
+        timeout = httpx.Timeout(5.0, read=5.0)
+        with httpx.Client(timeout=timeout) as client:
+            with client.stream(
+                "GET",
+                f"{base_url}/sessions/{encoded_key}/history",
+                headers={"accept": "text/event-stream"},
+            ) as stream:
+                assert stream.status_code == 200
+                lines = stream.iter_lines()
+                opening_payload = _read_sse_payload(lines, "history")
+                assert opening_payload["messages"][0]["content"][0]["text"] == (
+                    "change opening history"
+                )
+
+                patch_response = client.post(
+                    f"{base_url}/api/gateway/node-methods/call",
+                    json={
+                        "method": "sessions.patch",
+                        "params": {"key": session_key, "label": "Renamed History"},
+                    },
+                )
+                assert patch_response.status_code == 200
+
+                refresh_payload = _read_sse_payload(lines, "history")
+    finally:
+        _stop_test_server(server, thread)
+
+    assert refresh_payload["sessionKey"] == session_key
+    assert [message["content"][0]["text"] for message in refresh_payload["messages"]] == [
+        "change opening history"
+    ]
+
+
+def test_gateway_session_history_rest_endpoint_applies_default_text_cap() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-session-history-rest-cap-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+    session_key = "openzues:thread:rest-cap"
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        asyncio.run(
+            client.app.state.database.append_control_chat_message(
+                role="assistant",
+                content="a" * 12_005,
+                session_key=session_key,
+            )
+        )
+
+        encoded_key = quote(session_key, safe="")
+        response = client.get(f"/sessions/{encoded_key}/history")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["hasMore"] is False
+    assert body["messages"][0]["__openclaw"]["seq"] == 1
+    assert body["messages"][0]["content"][0]["text"] == f'{"a" * 12_000}\n...(truncated)...'
+
+
+def test_gateway_session_history_rest_endpoint_ignores_invalid_cursor() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-session-history-rest-cursor-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+    session_key = "openzues:thread:rest-cursor"
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        for content in ("first message", "second message"):
+            asyncio.run(
+                client.app.state.database.append_control_chat_message(
+                    role="assistant",
+                    content=content,
+                    session_key=session_key,
+                )
+            )
+
+        encoded_key = quote(session_key, safe="")
+        response = client.get(f"/sessions/{encoded_key}/history?limit=1&cursor=nope")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert [message["content"][0]["text"] for message in body["items"]] == ["second message"]
+    assert body["hasMore"] is True
+    assert body["nextCursor"] == "2"
+
+
 def test_gateway_node_method_call_endpoint_filters_sessions_get_by_session_key() -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-get-filtered-api"
     shutil.rmtree(tmp_path, ignore_errors=True)
@@ -19321,74 +20277,79 @@ def test_gateway_node_method_call_endpoint_returns_generic_error_when_config_ope
     assert expected_path.exists()
 
 
-@pytest.mark.parametrize(
-    ("method", "params", "expected_detail"),
-    [
-        (
-            "config.set",
-            {
-                "raw": "{\"assistantName\":\"Parity Builder\"}",
-                "baseHash": "sha256:abc123",
-            },
-            "config.set is unavailable until writable gateway config ownership is wired",
-        ),
-        (
-            "config.patch",
-            {
-                "raw": "{\"assistantName\":\"Parity Builder\"}",
-                "baseHash": "sha256:def456",
-                "sessionKey": "agent:main:thread:demo",
-                "deliveryContext": {
-                    "channel": "slack",
-                    "to": "user:U123",
-                    "accountId": "default",
-                    "threadId": 1771242986529939,
-                },
-                "note": "Patch the bounded config seam.",
-                "restartDelayMs": 0,
-            },
-            "config.patch is unavailable until writable gateway config patching is wired",
-        ),
-        (
-            "config.apply",
-            {
-                "raw": "{\"assistantName\":\"Parity Builder\"}",
-                "baseHash": "sha256:ghi789",
-                "sessionKey": "agent:main:thread:demo",
-                "deliveryContext": {
-                    "channel": "slack",
-                    "to": "user:U123",
-                    "accountId": "default",
-                    "threadId": 1771242986529939,
-                },
-                "note": "Apply the bounded config seam.",
-                "restartDelayMs": 0,
-            },
-            "config.apply is unavailable until writable gateway config apply runtime is wired",
-        ),
-    ],
-)
-def test_gateway_node_method_call_endpoint_returns_explicit_config_write_unavailable_contract(
+def test_gateway_node_method_call_endpoint_supports_config_write_lifecycle(
     tmp_path,
-    method: str,
-    params: dict[str, object],
-    expected_detail: str,
 ) -> None:
     app_settings = Settings(
         data_dir=tmp_path / "data",
         db_path=tmp_path / "data" / "openzues-test.db",
     )
     app = create_app(app_settings)
+    raw_snapshot = json.dumps(
+        {
+            "basePath": "/gateway",
+            "assistantName": "API Parity Builder",
+            "assistantAvatar": "/static/parity.svg",
+            "assistantAgentId": "openzues",
+            "serverVersion": "9.9.9",
+            "localMediaPreviewRoots": [],
+            "embedSandbox": "scripts",
+            "allowExternalEmbedUrls": False,
+        }
+    )
 
     with TestClient(app, client=("testclient", 50000)) as client:
         _allow_mutating_api_requests(client)
-        response = client.post(
+        set_response = client.post(
             "/api/gateway/node-methods/call",
-            json={"method": method, "params": params},
+            json={"method": "config.set", "params": {"raw": raw_snapshot}},
+        )
+        patch_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "config.patch",
+                "params": {
+                    "raw": "{\"assistantName\":\"API Patched Builder\"}",
+                    "baseHash": set_response.json()["hash"],
+                    "sessionKey": "agent:main:thread:demo",
+                    "note": "Patch the bounded config seam.",
+                    "restartDelayMs": 0,
+                },
+            },
+        )
+        applied_raw = json.dumps(
+            {
+                **patch_response.json()["config"],
+                "allowExternalEmbedUrls": True,
+            }
+        )
+        apply_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "config.apply",
+                "params": {
+                    "raw": applied_raw,
+                    "baseHash": patch_response.json()["hash"],
+                    "sessionKey": "agent:main:thread:demo",
+                    "note": "Apply the bounded config seam.",
+                    "restartDelayMs": 0,
+                },
+            },
+        )
+        get_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={"method": "config.get", "params": {}},
         )
 
-    assert response.status_code == 503
-    assert response.json() == {"detail": expected_detail}
+    assert set_response.status_code == 200
+    assert patch_response.status_code == 200
+    assert apply_response.status_code == 200
+    assert set_response.json()["config"]["assistantName"] == "API Parity Builder"
+    assert patch_response.json()["config"]["assistantName"] == "API Patched Builder"
+    assert apply_response.json()["config"]["allowExternalEmbedUrls"] is True
+    assert apply_response.json()["restart"] is None
+    assert apply_response.json()["sentinel"] is None
+    assert get_response.json() == apply_response.json()["config"]
 
 
 def test_gateway_node_method_call_endpoint_supports_commands_list(tmp_path) -> None:
@@ -19412,21 +20373,50 @@ def test_gateway_node_method_call_endpoint_supports_commands_list(tmp_path) -> N
     assert any(command["name"] == "agents.list" for command in payload["commands"])
     assert any(command["name"] == "channels.status" for command in payload["commands"])
     assert any(command["name"] == "browser.act" for command in payload["commands"])
+    assert any(command["name"] == "browser.auth.delete" for command in payload["commands"])
     assert any(command["name"] == "browser.auth.list" for command in payload["commands"])
+    assert any(command["name"] == "browser.auth.login" for command in payload["commands"])
+    assert any(command["name"] == "browser.auth.save" for command in payload["commands"])
     assert any(command["name"] == "browser.auth.show" for command in payload["commands"])
+    assert any(command["name"] == "browser.batch" for command in payload["commands"])
     assert any(command["name"] == "browser.back" for command in payload["commands"])
+    assert any(command["name"] == "browser.chat" for command in payload["commands"])
+    assert any(command["name"] == "browser.clipboard.copy" for command in payload["commands"])
+    assert any(command["name"] == "browser.clipboard.paste" for command in payload["commands"])
+    assert any(command["name"] == "browser.clipboard.read" for command in payload["commands"])
+    assert any(command["name"] == "browser.clipboard.write" for command in payload["commands"])
     assert any(command["name"] == "browser.close" for command in payload["commands"])
+    assert any(command["name"] == "browser.confirm" for command in payload["commands"])
+    assert any(command["name"] == "browser.cookies.clear" for command in payload["commands"])
     assert any(command["name"] == "browser.cookies.get" for command in payload["commands"])
+    assert any(command["name"] == "browser.cookies.set" for command in payload["commands"])
+    assert any(command["name"] == "browser.dashboard.start" for command in payload["commands"])
+    assert any(command["name"] == "browser.dashboard.stop" for command in payload["commands"])
     assert any(command["name"] == "browser.diff.snapshot" for command in payload["commands"])
     assert any(command["name"] == "browser.diff.screenshot" for command in payload["commands"])
     assert any(command["name"] == "browser.diff.url" for command in payload["commands"])
+    assert any(command["name"] == "browser.deny" for command in payload["commands"])
     assert any(command["name"] == "browser.download" for command in payload["commands"])
     assert any(command["name"] == "browser.focus" for command in payload["commands"])
     assert any(command["name"] == "browser.forward" for command in payload["commands"])
     assert any(command["name"] == "browser.get" for command in payload["commands"])
+    assert any(command["name"] == "browser.highlight" for command in payload["commands"])
+    assert any(command["name"] == "browser.inspect" for command in payload["commands"])
+    assert any(command["name"] == "browser.ios.device.list" for command in payload["commands"])
+    assert any(command["name"] == "browser.ios.swipe" for command in payload["commands"])
+    assert any(command["name"] == "browser.ios.tap" for command in payload["commands"])
     assert any(command["name"] == "browser.is" for command in payload["commands"])
     assert any(command["name"] == "browser.upload" for command in payload["commands"])
+    assert any(command["name"] == "browser.profiler.start" for command in payload["commands"])
+    assert any(command["name"] == "browser.profiler.stop" for command in payload["commands"])
+    assert any(command["name"] == "browser.record.restart" for command in payload["commands"])
+    assert any(command["name"] == "browser.record.start" for command in payload["commands"])
+    assert any(command["name"] == "browser.record.stop" for command in payload["commands"])
+    assert any(command["name"] == "browser.trace.start" for command in payload["commands"])
+    assert any(command["name"] == "browser.trace.stop" for command in payload["commands"])
     assert any(command["name"] == "browser.navigate" for command in payload["commands"])
+    assert any(command["name"] == "browser.network.har.start" for command in payload["commands"])
+    assert any(command["name"] == "browser.network.har.stop" for command in payload["commands"])
     assert any(command["name"] == "browser.network.request" for command in payload["commands"])
     assert any(command["name"] == "browser.network.requests" for command in payload["commands"])
     assert any(command["name"] == "browser.open" for command in payload["commands"])
@@ -19434,11 +20424,14 @@ def test_gateway_node_method_call_endpoint_supports_commands_list(tmp_path) -> N
     assert any(command["name"] == "browser.profiles" for command in payload["commands"])
     assert any(command["name"] == "browser.reload" for command in payload["commands"])
     assert any(command["name"] == "browser.screenshot" for command in payload["commands"])
+    assert any(command["name"] == "browser.set" for command in payload["commands"])
     assert any(command["name"] == "browser.session.current" for command in payload["commands"])
     assert any(command["name"] == "browser.session.list" for command in payload["commands"])
     assert any(command["name"] == "browser.start" for command in payload["commands"])
     assert any(command["name"] == "browser.stop" for command in payload["commands"])
+    assert any(command["name"] == "browser.storage.clear" for command in payload["commands"])
     assert any(command["name"] == "browser.storage.get" for command in payload["commands"])
+    assert any(command["name"] == "browser.storage.set" for command in payload["commands"])
     assert any(command["name"] == "browser.stream.disable" for command in payload["commands"])
     assert any(command["name"] == "browser.stream.enable" for command in payload["commands"])
     assert any(command["name"] == "browser.stream.status" for command in payload["commands"])
@@ -19606,6 +20599,69 @@ def test_gateway_node_method_call_endpoint_runs_browser_focus_runtime(tmp_path) 
 
     assert response.status_code == 200
     assert response.json() == {"ok": True, "session": "parity-browser", "targetId": "2"}
+
+
+def test_gateway_node_method_call_endpoint_runs_browser_confirmation_runtime(tmp_path) -> None:
+    class FakeBrowserRuntime:
+        def confirm(self, action_id: str, *, session: str) -> dict[str, object]:
+            return {
+                "ok": True,
+                "session": session,
+                "actionId": action_id,
+                "decision": "confirm",
+            }
+
+        def deny(self, action_id: str, *, session: str) -> dict[str, object]:
+            return {
+                "ok": True,
+                "session": session,
+                "actionId": action_id,
+                "decision": "deny",
+            }
+
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(
+        app_settings,
+        gateway_node_method_service=GatewayNodeMethodService(
+            GatewayNodeRegistry(),
+            browser_runtime_service=FakeBrowserRuntime(),
+        ),
+    )
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        confirm_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "browser.confirm",
+                "params": {"session": "parity-browser", "id": "pending-123"},
+            },
+        )
+        deny_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "browser.deny",
+                "params": {"session": "parity-browser", "id": "pending-456"},
+            },
+        )
+
+    assert confirm_response.status_code == 200
+    assert confirm_response.json() == {
+        "ok": True,
+        "session": "parity-browser",
+        "actionId": "pending-123",
+        "decision": "confirm",
+    }
+    assert deny_response.status_code == 200
+    assert deny_response.json() == {
+        "ok": True,
+        "session": "parity-browser",
+        "actionId": "pending-456",
+        "decision": "deny",
+    }
 
 
 def test_gateway_node_method_call_endpoint_runs_browser_lifecycle_runtime(tmp_path) -> None:
@@ -19792,6 +20848,322 @@ def test_gateway_node_method_call_endpoint_runs_browser_history_runtime(tmp_path
         "session": "parity-browser",
         "action": "reload",
     }
+
+
+def test_gateway_node_method_call_endpoint_runs_browser_set_runtime(tmp_path) -> None:
+    class FakeBrowserRuntime:
+        def set_setting(
+            self,
+            setting: str,
+            values: list[str],
+            *,
+            session: str,
+        ) -> dict[str, object]:
+            return {"ok": True, "session": session, "setting": setting, "values": values}
+
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(
+        app_settings,
+        gateway_node_method_service=GatewayNodeMethodService(
+            GatewayNodeRegistry(),
+            browser_runtime_service=FakeBrowserRuntime(),
+        ),
+    )
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "browser.set",
+                "params": {
+                    "session": "parity-browser",
+                    "setting": "media",
+                    "values": ["dark", "reduced-motion"],
+                },
+            },
+        )
+        headers_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "browser.set",
+                "params": {
+                    "session": "parity-browser",
+                    "setting": "headers",
+                    "values": ['{"Authorization":"Bearer token","X-Test":"yes"}'],
+                },
+            },
+        )
+        credentials_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "browser.set",
+                "params": {
+                    "session": "parity-browser",
+                    "setting": "credentials",
+                    "values": ["admin", "secret-token"],
+                },
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True,
+        "session": "parity-browser",
+        "setting": "media",
+        "values": ["dark", "reduced-motion"],
+    }
+    assert headers_response.status_code == 200
+    assert headers_response.json() == {
+        "ok": True,
+        "session": "parity-browser",
+        "setting": "headers",
+        "values": ['{"Authorization":"Bearer token","X-Test":"yes"}'],
+    }
+    assert credentials_response.status_code == 200
+    assert credentials_response.json() == {
+        "ok": True,
+        "session": "parity-browser",
+        "setting": "credentials",
+        "values": ["admin", "secret-token"],
+    }
+
+
+def test_gateway_node_method_call_endpoint_runs_browser_batch_runtime(tmp_path) -> None:
+    class FakeBrowserRuntime:
+        def batch(
+            self,
+            commands: list[str],
+            *,
+            session: str,
+            bail: bool = False,
+        ) -> dict[str, object]:
+            return {"ok": True, "session": session, "commandCount": len(commands), "bail": bail}
+
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(
+        app_settings,
+        gateway_node_method_service=GatewayNodeMethodService(
+            GatewayNodeRegistry(),
+            browser_runtime_service=FakeBrowserRuntime(),
+        ),
+    )
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "browser.batch",
+                "params": {
+                    "session": "parity-browser",
+                    "commands": ["open https://example.com", "snapshot -i"],
+                    "bail": True,
+                },
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True,
+        "session": "parity-browser",
+        "commandCount": 2,
+        "bail": True,
+    }
+
+
+def test_gateway_node_method_call_endpoint_runs_browser_dashboard_runtime(tmp_path) -> None:
+    class FakeBrowserRuntime:
+        def dashboard_start(
+            self,
+            *,
+            session: str,
+            port: int | None = None,
+        ) -> dict[str, object]:
+            return {"ok": True, "session": session, "dashboardRunning": True, "port": port}
+
+        def dashboard_stop(self, *, session: str) -> dict[str, object]:
+            return {"ok": True, "session": session, "dashboardRunning": False}
+
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(
+        app_settings,
+        gateway_node_method_service=GatewayNodeMethodService(
+            GatewayNodeRegistry(),
+            browser_runtime_service=FakeBrowserRuntime(),
+        ),
+    )
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        start_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "browser.dashboard.start",
+                "params": {"session": "parity-browser", "port": 4849},
+            },
+        )
+        stop_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "browser.dashboard.stop",
+                "params": {"session": "parity-browser"},
+            },
+        )
+
+    assert start_response.status_code == 200
+    assert start_response.json() == {
+        "ok": True,
+        "session": "parity-browser",
+        "dashboardRunning": True,
+        "port": 4849,
+    }
+    assert stop_response.status_code == 200
+    assert stop_response.json() == {
+        "ok": True,
+        "session": "parity-browser",
+        "dashboardRunning": False,
+    }
+
+
+def test_gateway_node_method_call_endpoint_runs_browser_chat_runtime(tmp_path) -> None:
+    class FakeBrowserRuntime:
+        def chat(
+            self,
+            message: str,
+            *,
+            session: str,
+            model: str | None = None,
+            quiet: bool = False,
+            verbose: bool = False,
+        ) -> dict[str, object]:
+            return {
+                "ok": True,
+                "session": session,
+                "message": message,
+                "model": model,
+                "quiet": quiet,
+                "verbose": verbose,
+            }
+
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(
+        app_settings,
+        gateway_node_method_service=GatewayNodeMethodService(
+            GatewayNodeRegistry(),
+            browser_runtime_service=FakeBrowserRuntime(),
+        ),
+    )
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "browser.chat",
+                "params": {
+                    "session": "parity-browser",
+                    "message": "summarize the current page",
+                    "model": "openai/gpt-4o",
+                    "quiet": True,
+                },
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True,
+        "session": "parity-browser",
+        "message": "summarize the current page",
+        "model": "openai/gpt-4o",
+        "quiet": True,
+        "verbose": False,
+    }
+
+
+def test_gateway_node_method_call_endpoint_runs_browser_ios_provider_runtime(
+    tmp_path,
+) -> None:
+    class FakeBrowserRuntime:
+        def ios_device_list(self, *, session: str) -> dict[str, object]:
+            return {"ok": True, "session": session, "deviceCount": 1}
+
+        def ios_swipe(
+            self,
+            direction: str,
+            *,
+            session: str,
+            distance: int | None = None,
+        ) -> dict[str, object]:
+            return {
+                "ok": True,
+                "session": session,
+                "direction": direction,
+                "distance": distance,
+            }
+
+        def ios_tap(self, target: str, *, session: str) -> dict[str, object]:
+            return {"ok": True, "session": session, "target": target}
+
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(
+        app_settings,
+        gateway_node_method_service=GatewayNodeMethodService(
+            GatewayNodeRegistry(),
+            browser_runtime_service=FakeBrowserRuntime(),
+        ),
+    )
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        devices_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "browser.ios.device.list",
+                "params": {"session": "parity-browser"},
+            },
+        )
+        swipe_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "browser.ios.swipe",
+                "params": {"session": "parity-browser", "direction": "up", "distance": 500},
+            },
+        )
+        tap_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "browser.ios.tap",
+                "params": {"session": "parity-browser", "target": "@e1"},
+            },
+        )
+
+    assert devices_response.status_code == 200
+    assert devices_response.json() == {"ok": True, "session": "parity-browser", "deviceCount": 1}
+    assert swipe_response.status_code == 200
+    assert swipe_response.json() == {
+        "ok": True,
+        "session": "parity-browser",
+        "direction": "up",
+        "distance": 500,
+    }
+    assert tap_response.status_code == 200
+    assert tap_response.json() == {"ok": True, "session": "parity-browser", "target": "@e1"}
 
 
 def test_gateway_node_method_call_endpoint_runs_browser_stream_status_runtime(tmp_path) -> None:
@@ -20034,6 +21406,180 @@ def test_gateway_node_method_call_endpoint_runs_browser_storage_inventory_runtim
         "session": "parity-browser",
         "type": "local",
         "key": "theme",
+    }
+
+
+def test_gateway_node_method_call_endpoint_runs_browser_cookie_mutation_runtime(
+    tmp_path,
+) -> None:
+    class FakeBrowserRuntime:
+        def cookies_set(
+            self,
+            name: str,
+            value: str,
+            *,
+            session: str,
+            url: str | None = None,
+            domain: str | None = None,
+            path: str | None = None,
+            http_only: bool | None = None,
+            secure: bool | None = None,
+            same_site: str | None = None,
+            expires: int | None = None,
+        ) -> dict[str, object]:
+            return {
+                "ok": True,
+                "session": session,
+                "name": name,
+                "value": value,
+                "url": url,
+                "domain": domain,
+                "path": path,
+                "httpOnly": http_only,
+                "secure": secure,
+                "sameSite": same_site,
+                "expires": expires,
+            }
+
+        def cookies_clear(self, *, session: str) -> dict[str, object]:
+            return {"ok": True, "session": session, "operation": "clear"}
+
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(
+        app_settings,
+        gateway_node_method_service=GatewayNodeMethodService(
+            GatewayNodeRegistry(),
+            browser_runtime_service=FakeBrowserRuntime(),
+        ),
+    )
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        set_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "browser.cookies.set",
+                "params": {
+                    "session": "parity-browser",
+                    "name": "session_id",
+                    "value": "abc123",
+                    "url": "https://app.example.test",
+                    "path": "/app",
+                    "httpOnly": True,
+                    "secure": True,
+                    "sameSite": "Strict",
+                    "expires": 1_735_689_600,
+                },
+            },
+        )
+        clear_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "browser.cookies.clear",
+                "params": {"session": "parity-browser"},
+            },
+        )
+
+    assert set_response.status_code == 200
+    assert set_response.json() == {
+        "ok": True,
+        "session": "parity-browser",
+        "name": "session_id",
+        "value": "abc123",
+        "url": "https://app.example.test",
+        "domain": None,
+        "path": "/app",
+        "httpOnly": True,
+        "secure": True,
+        "sameSite": "Strict",
+        "expires": 1_735_689_600,
+    }
+    assert clear_response.status_code == 200
+    assert clear_response.json() == {
+        "ok": True,
+        "session": "parity-browser",
+        "operation": "clear",
+    }
+
+
+def test_gateway_node_method_call_endpoint_runs_browser_storage_mutation_runtime(
+    tmp_path,
+) -> None:
+    class FakeBrowserRuntime:
+        def storage_set(
+            self,
+            storage_type: str,
+            key: str,
+            value: str,
+            *,
+            session: str,
+        ) -> dict[str, object]:
+            return {
+                "ok": True,
+                "session": session,
+                "type": storage_type,
+                "key": key,
+                "value": value,
+            }
+
+        def storage_clear(
+            self,
+            storage_type: str,
+            *,
+            session: str,
+        ) -> dict[str, object]:
+            return {"ok": True, "session": session, "type": storage_type}
+
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(
+        app_settings,
+        gateway_node_method_service=GatewayNodeMethodService(
+            GatewayNodeRegistry(),
+            browser_runtime_service=FakeBrowserRuntime(),
+        ),
+    )
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        set_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "browser.storage.set",
+                "params": {
+                    "session": "parity-browser",
+                    "type": "local",
+                    "key": "theme",
+                    "value": "dark",
+                },
+            },
+        )
+        clear_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "browser.storage.clear",
+                "params": {"session": "parity-browser", "type": "session"},
+            },
+        )
+
+    assert set_response.status_code == 200
+    assert set_response.json() == {
+        "ok": True,
+        "session": "parity-browser",
+        "type": "local",
+        "key": "theme",
+        "value": "dark",
+    }
+    assert clear_response.status_code == 200
+    assert clear_response.json() == {
+        "ok": True,
+        "session": "parity-browser",
+        "type": "session",
     }
 
 
@@ -20391,6 +21937,357 @@ def test_gateway_node_method_call_endpoint_runs_browser_upload_runtime(
     }
 
 
+def test_gateway_node_method_call_endpoint_runs_browser_trace_runtime(
+    tmp_path,
+) -> None:
+    class FakeBrowserRuntime:
+        def trace_start(self, *, session: str) -> dict[str, object]:
+            return {"ok": True, "session": session, "traceRecording": True}
+
+        def trace_stop(self, *, session: str) -> dict[str, object]:
+            return {
+                "ok": True,
+                "session": session,
+                "traceRecording": False,
+                "path": "C:/Temp/openzues-browser-trace-parity-browser.zip",
+            }
+
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(
+        app_settings,
+        gateway_node_method_service=GatewayNodeMethodService(
+            GatewayNodeRegistry(),
+            browser_runtime_service=FakeBrowserRuntime(),
+        ),
+    )
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        start_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "browser.trace.start",
+                "params": {"session": "parity-browser"},
+            },
+        )
+        stop_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "browser.trace.stop",
+                "params": {"session": "parity-browser"},
+            },
+        )
+
+    assert start_response.status_code == 200
+    assert start_response.json() == {
+        "ok": True,
+        "session": "parity-browser",
+        "traceRecording": True,
+    }
+    assert stop_response.status_code == 200
+    assert stop_response.json() == {
+        "ok": True,
+        "session": "parity-browser",
+        "traceRecording": False,
+        "path": "C:/Temp/openzues-browser-trace-parity-browser.zip",
+    }
+
+
+def test_gateway_node_method_call_endpoint_runs_browser_network_har_runtime(
+    tmp_path,
+) -> None:
+    class FakeBrowserRuntime:
+        def network_har_start(self, *, session: str) -> dict[str, object]:
+            return {"ok": True, "session": session, "harRecording": True}
+
+        def network_har_stop(self, *, session: str) -> dict[str, object]:
+            return {
+                "ok": True,
+                "session": session,
+                "harRecording": False,
+                "path": "C:/Temp/openzues-browser-har-parity-browser.har",
+            }
+
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(
+        app_settings,
+        gateway_node_method_service=GatewayNodeMethodService(
+            GatewayNodeRegistry(),
+            browser_runtime_service=FakeBrowserRuntime(),
+        ),
+    )
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        start_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "browser.network.har.start",
+                "params": {"session": "parity-browser"},
+            },
+        )
+        stop_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "browser.network.har.stop",
+                "params": {"session": "parity-browser"},
+            },
+        )
+
+    assert start_response.status_code == 200
+    assert start_response.json() == {
+        "ok": True,
+        "session": "parity-browser",
+        "harRecording": True,
+    }
+    assert stop_response.status_code == 200
+    assert stop_response.json() == {
+        "ok": True,
+        "session": "parity-browser",
+        "harRecording": False,
+        "path": "C:/Temp/openzues-browser-har-parity-browser.har",
+    }
+
+
+def test_gateway_node_method_call_endpoint_runs_browser_profiler_runtime(
+    tmp_path,
+) -> None:
+    class FakeBrowserRuntime:
+        def profiler_start(
+            self,
+            *,
+            session: str,
+            categories: str | None = None,
+        ) -> dict[str, object]:
+            return {
+                "ok": True,
+                "session": session,
+                "categories": categories,
+                "profilerRecording": True,
+            }
+
+        def profiler_stop(self, *, session: str) -> dict[str, object]:
+            return {
+                "ok": True,
+                "session": session,
+                "profilerRecording": False,
+                "path": "C:/Temp/openzues-browser-profiler-parity-browser.json",
+            }
+
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(
+        app_settings,
+        gateway_node_method_service=GatewayNodeMethodService(
+            GatewayNodeRegistry(),
+            browser_runtime_service=FakeBrowserRuntime(),
+        ),
+    )
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        start_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "browser.profiler.start",
+                "params": {
+                    "session": "parity-browser",
+                    "categories": "devtools.timeline,v8.execute",
+                },
+            },
+        )
+        stop_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "browser.profiler.stop",
+                "params": {"session": "parity-browser"},
+            },
+        )
+
+    assert start_response.status_code == 200
+    assert start_response.json() == {
+        "ok": True,
+        "session": "parity-browser",
+        "categories": "devtools.timeline,v8.execute",
+        "profilerRecording": True,
+    }
+    assert stop_response.status_code == 200
+    assert stop_response.json() == {
+        "ok": True,
+        "session": "parity-browser",
+        "profilerRecording": False,
+        "path": "C:/Temp/openzues-browser-profiler-parity-browser.json",
+    }
+
+
+def test_gateway_node_method_call_endpoint_runs_browser_record_runtime(
+    tmp_path,
+) -> None:
+    class FakeBrowserRuntime:
+        def record_start(
+            self,
+            *,
+            session: str,
+            url: str | None = None,
+        ) -> dict[str, object]:
+            return {
+                "ok": True,
+                "session": session,
+                "url": url,
+                "path": "C:/Temp/openzues-browser-recording-parity-browser.webm",
+                "recording": True,
+            }
+
+        def record_stop(self, *, session: str) -> dict[str, object]:
+            return {
+                "ok": True,
+                "session": session,
+                "path": "C:/Temp/openzues-browser-recording-parity-browser.webm",
+                "recording": False,
+            }
+
+        def record_restart(
+            self,
+            *,
+            session: str,
+            url: str | None = None,
+        ) -> dict[str, object]:
+            return {
+                "ok": True,
+                "session": session,
+                "url": url,
+                "path": "C:/Temp/openzues-browser-recording-parity-browser-restart.webm",
+                "recording": True,
+            }
+
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(
+        app_settings,
+        gateway_node_method_service=GatewayNodeMethodService(
+            GatewayNodeRegistry(),
+            browser_runtime_service=FakeBrowserRuntime(),
+        ),
+    )
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        start_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "browser.record.start",
+                "params": {
+                    "session": "parity-browser",
+                    "url": "http://127.0.0.1:8884",
+                },
+            },
+        )
+        stop_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "browser.record.stop",
+                "params": {"session": "parity-browser"},
+            },
+        )
+        restart_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "browser.record.restart",
+                "params": {
+                    "session": "parity-browser",
+                    "url": "http://127.0.0.1:8884/again",
+                },
+            },
+        )
+
+    assert start_response.status_code == 200
+    assert start_response.json() == {
+        "ok": True,
+        "session": "parity-browser",
+        "url": "http://127.0.0.1:8884",
+        "path": "C:/Temp/openzues-browser-recording-parity-browser.webm",
+        "recording": True,
+    }
+    assert stop_response.status_code == 200
+    assert stop_response.json() == {
+        "ok": True,
+        "session": "parity-browser",
+        "path": "C:/Temp/openzues-browser-recording-parity-browser.webm",
+        "recording": False,
+    }
+    assert restart_response.status_code == 200
+    assert restart_response.json() == {
+        "ok": True,
+        "session": "parity-browser",
+        "url": "http://127.0.0.1:8884/again",
+        "path": "C:/Temp/openzues-browser-recording-parity-browser-restart.webm",
+        "recording": True,
+    }
+
+
+def test_gateway_node_method_call_endpoint_runs_browser_debug_runtime(
+    tmp_path,
+) -> None:
+    class FakeBrowserRuntime:
+        def highlight(self, selector: str, *, session: str) -> dict[str, object]:
+            return {"ok": True, "session": session, "selector": selector}
+
+        def inspect(self, *, session: str) -> dict[str, object]:
+            return {"ok": True, "session": session, "inspectorOpen": True}
+
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(
+        app_settings,
+        gateway_node_method_service=GatewayNodeMethodService(
+            GatewayNodeRegistry(),
+            browser_runtime_service=FakeBrowserRuntime(),
+        ),
+    )
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        highlight_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "browser.highlight",
+                "params": {"session": "parity-browser", "selector": "@e2"},
+            },
+        )
+        inspect_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "browser.inspect",
+                "params": {"session": "parity-browser"},
+            },
+        )
+
+    assert highlight_response.status_code == 200
+    assert highlight_response.json() == {
+        "ok": True,
+        "session": "parity-browser",
+        "selector": "@e2",
+    }
+    assert inspect_response.status_code == 200
+    assert inspect_response.json() == {
+        "ok": True,
+        "session": "parity-browser",
+        "inspectorOpen": True,
+    }
+
+
 def test_gateway_node_method_call_endpoint_runs_browser_auth_metadata_runtime(
     tmp_path,
 ) -> None:
@@ -20440,6 +22337,204 @@ def test_gateway_node_method_call_endpoint_runs_browser_auth_metadata_runtime(
     assert show_response.json() == {"ok": True, "session": "parity-browser", "name": "github"}
 
 
+def test_gateway_node_method_call_endpoint_runs_browser_auth_profile_mutation_runtime(
+    tmp_path,
+) -> None:
+    class FakeBrowserRuntime:
+        def auth_login(self, name: str, *, session: str) -> dict[str, object]:
+            return {"ok": True, "session": session, "name": name, "loggedIn": True}
+
+        def auth_delete(self, name: str, *, session: str) -> dict[str, object]:
+            return {"ok": True, "session": session, "name": name, "deleted": True}
+
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(
+        app_settings,
+        gateway_node_method_service=GatewayNodeMethodService(
+            GatewayNodeRegistry(),
+            browser_runtime_service=FakeBrowserRuntime(),
+        ),
+    )
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        login_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "browser.auth.login",
+                "params": {"session": "parity-browser", "name": "github"},
+            },
+        )
+        delete_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "browser.auth.delete",
+                "params": {"session": "parity-browser", "name": "github"},
+            },
+        )
+
+    assert login_response.status_code == 200
+    assert login_response.json() == {
+        "ok": True,
+        "session": "parity-browser",
+        "name": "github",
+        "loggedIn": True,
+    }
+    assert delete_response.status_code == 200
+    assert delete_response.json() == {
+        "ok": True,
+        "session": "parity-browser",
+        "name": "github",
+        "deleted": True,
+    }
+
+
+def test_gateway_node_method_call_endpoint_runs_browser_auth_profile_save_runtime(
+    tmp_path,
+) -> None:
+    class FakeBrowserRuntime:
+        def auth_save(
+            self,
+            name: str,
+            *,
+            session: str,
+            url: str,
+            username: str,
+            password: str,
+            username_selector: str | None = None,
+            password_selector: str | None = None,
+            submit_selector: str | None = None,
+        ) -> dict[str, object]:
+            assert password == "secret-token"
+            return {
+                "ok": True,
+                "session": session,
+                "name": name,
+                "url": url,
+                "username": username,
+                "usernameSelector": username_selector,
+                "passwordSelector": password_selector,
+                "submitSelector": submit_selector,
+                "saved": True,
+            }
+
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(
+        app_settings,
+        gateway_node_method_service=GatewayNodeMethodService(
+            GatewayNodeRegistry(),
+            browser_runtime_service=FakeBrowserRuntime(),
+        ),
+    )
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "browser.auth.save",
+                "params": {
+                    "session": "parity-browser",
+                    "name": "github",
+                    "url": "https://github.com/login",
+                    "username": "octo",
+                    "password": "secret-token",
+                    "usernameSelector": "#login",
+                    "passwordSelector": "#password",
+                    "submitSelector": "button[type=submit]",
+                },
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True,
+        "session": "parity-browser",
+        "name": "github",
+        "url": "https://github.com/login",
+        "username": "octo",
+        "usernameSelector": "#login",
+        "passwordSelector": "#password",
+        "submitSelector": "button[type=submit]",
+        "saved": True,
+    }
+
+
+def test_gateway_node_method_call_endpoint_runs_browser_clipboard_runtime(
+    tmp_path,
+) -> None:
+    class FakeBrowserRuntime:
+        def clipboard_read(self, *, session: str) -> dict[str, object]:
+            return {"ok": True, "session": session, "text": "copied text"}
+
+        def clipboard_write(self, text: str, *, session: str) -> dict[str, object]:
+            return {"ok": True, "session": session, "text": text}
+
+        def clipboard_copy(self, *, session: str) -> dict[str, object]:
+            return {"ok": True, "session": session, "copied": True}
+
+        def clipboard_paste(self, *, session: str) -> dict[str, object]:
+            return {"ok": True, "session": session, "pasted": True}
+
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(
+        app_settings,
+        gateway_node_method_service=GatewayNodeMethodService(
+            GatewayNodeRegistry(),
+            browser_runtime_service=FakeBrowserRuntime(),
+        ),
+    )
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        read_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "browser.clipboard.read",
+                "params": {"session": "parity-browser"},
+            },
+        )
+        write_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "browser.clipboard.write",
+                "params": {"session": "parity-browser", "text": "copied text"},
+            },
+        )
+        copy_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "browser.clipboard.copy",
+                "params": {"session": "parity-browser"},
+            },
+        )
+        paste_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "browser.clipboard.paste",
+                "params": {"session": "parity-browser"},
+            },
+        )
+
+    assert read_response.status_code == 200
+    assert read_response.json() == {"ok": True, "session": "parity-browser", "text": "copied text"}
+    assert write_response.status_code == 200
+    assert write_response.json() == {"ok": True, "session": "parity-browser", "text": "copied text"}
+    assert copy_response.status_code == 200
+    assert copy_response.json() == {"ok": True, "session": "parity-browser", "copied": True}
+    assert paste_response.status_code == 200
+    assert paste_response.json() == {"ok": True, "session": "parity-browser", "pasted": True}
+
+
 def test_gateway_node_method_call_endpoint_runs_browser_act_runtime(tmp_path) -> None:
     class FakeBrowserRuntime:
         def act(self, request: dict[str, object], *, session: str) -> dict[str, object]:
@@ -20465,13 +22560,48 @@ def test_gateway_node_method_call_endpoint_runs_browser_act_runtime(tmp_path) ->
                 "method": "browser.act",
                 "params": {
                     "session": "parity-browser",
-                    "request": {"kind": "wait", "timeMs": 250},
+                    "request": {
+                        "kind": "drag",
+                        "source": "@card",
+                        "destination": "@dropzone",
+                    },
+                },
+            },
+        )
+        mouse_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "browser.act",
+                "params": {
+                    "session": "parity-browser",
+                    "request": {"kind": "mouse", "action": "move", "x": 15, "y": 30},
+                },
+            },
+        )
+        find_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "browser.act",
+                "params": {
+                    "session": "parity-browser",
+                    "request": {
+                        "kind": "find",
+                        "locator": "role",
+                        "value": "button",
+                        "action": "click",
+                        "name": "Submit",
+                        "exact": True,
+                    },
                 },
             },
         )
 
     assert response.status_code == 200
-    assert response.json() == {"ok": True, "session": "parity-browser", "kind": "wait"}
+    assert response.json() == {"ok": True, "session": "parity-browser", "kind": "drag"}
+    assert mouse_response.status_code == 200
+    assert mouse_response.json() == {"ok": True, "session": "parity-browser", "kind": "mouse"}
+    assert find_response.status_code == 200
+    assert find_response.json() == {"ok": True, "session": "parity-browser", "kind": "find"}
 
 
 def test_gateway_node_method_call_endpoint_runs_browser_status_runtime(tmp_path) -> None:

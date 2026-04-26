@@ -1,12 +1,406 @@
 ﻿# OpenClaw Parity Checkpoint
 
-## Current Rollup (through 2026-04-22 addenda)
+## Current Rollup (through 2026-04-25 addenda)
 
 - Estimated parity progress: roughly `25-35%` of the full OpenClaw product surface is now covered, with gateway/control-plane seams materially further along than whole-product parity. Registry, routing/session-key, large parts of gateway session/usage/cron compatibility, and operator-control seams have moved forward; channels, nodes, browser-control, canvas, voice, packaging, and companion apps still dominate the remaining gap.
 - Active feature family progress: the live queue is the gateway/cron/session-delivery family, and it is roughly `75-85%` complete along the current bounded local parity path. The latest addenda moved that family from session-target normalization into delivery metadata, runtime delivery ownership, webhook/session fallback behavior, preserved `sessionKey` wake routing, shared session-backed direct poll delivery, saved direct poll replay reconstruction, locked the hot session inventory/compaction surfacing shard, idempotent retry collapse on the shared direct send/poll owner, honest direct transport metadata on fresh responses plus saved outbound delivery views, one shared outbound runtime owner spanning direct send/poll, explicit announce, and saved session-like replays, one hot control-plane regression fix that keeps wrapped live MCP tool catalogs classified instead of dropping bare string plugin methods from the gateway capability scope summary, one adjacent gateway/session/node/wizard cleanup that locks remote saved-lane wizard progression, owner-session alias canonicalization, configured fallback model synthesis, and wake-triggered pending-work reconnect waits, and now one adjacent bootstrap/node/config-schema pass that locks bootstrap repair degradation for broken saved defaults plus `node.invoke` guard rails for `system.execApprovals.*` and persistent browser-profile `browser.proxy` mutations without changing the provider-runtime queue head.
 - Latest completed seams: the freshest landed seams are `bootstrap degraded-state repair for broken saved lane/workspace references`, `node.invoke guard rails for system.execApprovals and persistent browser.proxy mutations`, `punctuation-rich config.schema.lookup path support`, `remote wizard optional saved-lane staging and skip progression`, `gateway session owner-alias canonicalization`, `pending node-work wake reconnect wait`, `object-shaped configured model fallback synthesis`, `capability inventory classification for wrapped live MCP tool catalogs`, `shared outbound runtime owner for direct send/poll plus explicit announce and saved session-like replays`, `gateway session discovery truth under compaction inventory surfacing`, `task blueprint enabled-state read-model truth under bootstrap/setup`, `shared direct channel-target send owner`, `shared direct channel-target poll owner`, `direct send/poll idempotent retry collapse`, `direct send/poll session-backed transport metadata surfacing`, `saved direct poll replay message reconstruction`, `saved direct replay transport identity surfacing`, `cron runtime delivery-status`, `cron announce fallback and delivery.threadId`, `cron session delivery fallback`, and `cron system-event sessionKey wake` parity, layered on top of the already-locked gateway method registry seam and the `usage.cost` / `usage.status` bridge. This run also integrated the hot node/pairing, setup, bootstrap, and config-schema shards: paired catalogs now pin approved commands until a silent scope-upgrade request is staged, pending-work wakes wait through reconnect before returning, failed managed wakes keep the truthful `NOT_CONNECTED` boundary instead of leaking a platform allowlist error, broken saved lane/workspace defaults keep bootstrap on the truthful `degraded` state, punctuation-rich plugin ids still resolve through config lookup, and remote setup/bootstrap keeps workspace-affinity routing honest while the optional saved-lane wizard step advances cleanly after answer or skip.
 - Current queue head: provider-native outbound implementation behind the shared direct/announce runtime owner remains the next honest seam. OpenZues now covers webhook delivery, notification-route delivery, `sessionKey` / `channel="last"` fallback, shared explicit-target text send, shared explicit-target poll delivery, explicit announce plus saved session-like replay delivery through that same owner, and honest `runId` / `channel` / session-backed transport metadata on fresh and saved direct-delivery surfaces, but it still does not match OpenClaw's real outbound provider runtime for `channel` / `to` / `accountId`. This run reverified that the local generic node/runtime seams still do not advertise a provider-owned outbound `send` / `poll` / `announce` command, so the honest next move is to wire that provider-native implementation behind the new owner rather than land another session-backed detour.
 - How to read this checkpoint: treat the dated checkpoint sections near the top as seam locks and re-anchors, then use the newest `Recovery addendum` entries later in the file for the live edge. The final addendum's "Next exact seam" callout is the current queue head unless a newer dated section overrides it.
+
+## 2026-04-25 Direct Session History Live SSE Addendum
+
+- Continued the direct session-history endpoint pass after the REST/SSE shape
+  and `sessions.get` default-limit seams landed.
+- Re-read the OpenClaw live stream source and proof:
+  - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\sessions-history-http.ts`
+  - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\session-history-state.ts`
+  - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\sessions-history-http.test.ts`
+- Key finding:
+  - OpenClaw keeps `GET /sessions/{sessionKey}/history` SSE streams open after
+    the initial `history` snapshot.
+  - Unbounded streams emit inline `message` events when a visible transcript
+    message is appended.
+  - Bounded or cursor streams emit refreshed `history` windows on transcript
+    updates.
+  - OpenZues emitted only the initial `history` event and closed the stream.
+- Landed the smallest honest fix in `src/openzues/app.py`:
+  - the direct history SSE route now subscribes to the internal `BroadcastHub`
+    before emitting the opening snapshot
+  - unbounded streams forward matching live `session.message` events as
+    OpenClaw-style `message` SSE payloads with `messageId` / `messageSeq`
+  - bounded or cursor streams reload the direct history payload and emit a
+    refreshed `history` event
+  - non-message `sessions.changed` updates also refresh history streams, while
+    normal message-phase changes are skipped to avoid duplicate refreshes after
+    the paired `session.message` event
+  - live message payloads reuse the direct REST/SSE 12k text cap
+  - stream filtering resolves known session-key aliases before accepting
+    gateway events
+  - streams send upstream-style keepalive comments while waiting for updates
+- Added focused proof coverage in:
+  - `tests/test_gateway_nodes_api.py`
+- Verified with:
+  - `python -m pytest tests\test_gateway_nodes_api.py -q -k "session_history_rest_endpoint"`: `8 passed`
+  - `python -m pytest tests\test_gateway_nodes_api.py tests\test_gateway_node_methods.py -q -k "sessions_get or session_history_rest or session_message or sessions_subscribe"`: `25 passed`
+  - `ruff check src\openzues\app.py src\openzues\services\gateway_node_methods.py src\openzues\services\hub.py src\openzues\services\gateway_sessions.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`: clean
+  - `python -m mypy src\openzues\app.py src\openzues\services\gateway_node_methods.py src\openzues\services\hub.py src\openzues\services\gateway_sessions.py`: clean
+- Next exact seam:
+  - continue through the remaining `sessions-history-http` edge cases that map
+    to OpenZues' SQLite-backed session store, especially auth/scope rejection,
+    duplicate/freshest session resolution, or silent transcript refresh
+    semantics; otherwise move to the next source-backed `chat.*` / `sessions.*`
+    runtime mismatch.
+
+## 2026-04-25 Sessions Get Explicit Limit Addendum
+
+- Continued the session read-model pass after separating direct REST history
+  behavior from RPC `sessions.get` behavior.
+- Re-read the OpenClaw RPC owner:
+  - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods\sessions.ts`
+- Key finding:
+  - OpenClaw's `sessions.get` method floors explicit positive limits but does
+    not apply the direct REST history endpoint's 1000-row cap.
+  - OpenZues still validated RPC `sessions.get.limit` with the same 1000 cap,
+    so a valid `limit=1001` call failed before reading history.
+- Landed the smallest honest fix in `src/openzues/services/gateway_node_methods.py`:
+  - changed only RPC `sessions.get.limit` validation to require a positive
+    integer without a 1000 maximum
+  - removed the internal 1000 cap from the RPC `sessions.get` read model
+  - preserved the direct HTTP `/sessions/{sessionKey}/history` 1000-row REST
+    clamp in `src/openzues/app.py`
+- Added focused proof coverage in:
+  - `tests/test_gateway_node_methods.py`
+- Verified with:
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_get_honors_explicit_limits_above_direct_rest_cap or sessions_get_uses_openclaw_default_limit_of_200 or sessions_get_supports_cursor_pagination"`: `3 passed`
+  - `python -m pytest tests\test_gateway_nodes_api.py tests\test_gateway_node_methods.py -q -k "sessions_get or session_history_rest or session_message or sessions_subscribe"`: `26 passed`
+  - `ruff check src\openzues\app.py src\openzues\services\gateway_node_methods.py src\openzues\services\hub.py src\openzues\services\gateway_sessions.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`: clean
+  - `python -m mypy src\openzues\app.py src\openzues\services\gateway_node_methods.py src\openzues\services\hub.py src\openzues\services\gateway_sessions.py`: clean
+- Next exact seam:
+  - continue with the next source-backed `chat.*` / `sessions.*` mismatch,
+    keeping direct REST history caps separate from RPC method semantics.
+
+## 2026-04-25 Direct Session History REST Addendum
+
+- Continued the transcript replay pass after broad `sessions.subscribe`
+  transcript delivery landed.
+- Re-read the OpenClaw direct REST source and proof:
+  - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\sessions-history-http.ts`
+  - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\sessions-history-http.test.ts`
+- Key finding:
+  - OpenClaw serves `GET /sessions/{sessionKey}/history` as a direct HTTP
+    transcript history endpoint with the same cursor pagination shape as the
+    session-history read model.
+  - OpenZues only exposed the equivalent data through the RPC
+    `sessions.get` method, so direct REST callers got `404`.
+- Landed the smallest honest fix in `src/openzues/app.py`:
+  - added `GET /sessions/{sessionKey}/history`
+  - forwarded query `limit` / `cursor` into the verified `sessions.get` service
+    path
+  - normalized/clamped REST `limit` values before RPC dispatch
+  - ignored invalid/zero REST cursors like upstream instead of leaking the
+    stricter RPC parser
+  - forced the richer direct-history payload shape so REST history preserves
+    `items`, `hasMore`, and raw `__openclaw.seq` metadata even without an
+    explicit cursor
+  - applied the OpenClaw default 12k text cap to direct REST/SSE history output
+  - emitted the initial `history` SSE event when callers request
+    `text/event-stream`
+  - preserved `sessionKey` on direct REST responses
+  - returned OpenClaw-shaped `not_found` JSON for unknown sessions
+- Added focused proof coverage in:
+  - `tests/test_gateway_nodes_api.py`
+- Verified with:
+  - `python -m pytest tests\test_gateway_nodes_api.py tests\test_gateway_node_methods.py -q -k "sessions_get or session_history_rest or session_message or sessions_subscribe"`: `21 passed`
+  - `ruff check src\openzues\app.py src\openzues\services\hub.py src\openzues\services\gateway_sessions.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`: clean
+  - `python -m mypy src\openzues\app.py src\openzues\services\hub.py src\openzues\services\gateway_sessions.py`: clean
+- Next exact seam:
+  - inspect the same endpoint's live SSE update behavior or the next
+    source-backed transcript replay gap.
+
+## 2026-04-25 Sessions Get Default Limit Addendum
+
+- Stayed on the source-backed transcript read-model queue after the direct REST
+  history endpoint landed.
+- Re-read the OpenClaw RPC owner:
+  - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods\sessions.ts`
+- Key finding:
+  - OpenClaw `sessions.get` defaults to `limit=200`.
+  - OpenZues still defaulted to 50, so no-limit reads silently clipped
+    transcripts between 51 and 200 messages.
+- Landed the smallest honest fix in `src/openzues/services/gateway_node_methods.py`:
+  - changed only the implicit default limit from 50 to 200
+  - preserved explicit caller limits and the 1000-message hard cap
+- Added focused proof coverage in:
+  - `tests/test_gateway_node_methods.py`
+- Verified with:
+  - `python -m pytest tests\test_gateway_nodes_api.py tests\test_gateway_node_methods.py -q -k "sessions_get or session_history_rest or session_message or sessions_subscribe"`: `22 passed`
+  - `ruff check src\openzues\app.py src\openzues\services\gateway_node_methods.py src\openzues\services\hub.py src\openzues\services\gateway_sessions.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`: clean
+  - `python -m mypy src\openzues\app.py src\openzues\services\gateway_node_methods.py src\openzues\services\hub.py src\openzues\services\gateway_sessions.py`: clean
+- Next exact seam:
+  - continue through live session-history SSE updates or another source-backed
+    `sessions.*` response-shape mismatch.
+
+## 2026-04-25 Broad Session Subscribe Transcript Stream Addendum
+
+- Continued the live transcript event pass after nested `session.message`
+  metadata landed.
+- Re-read the OpenClaw source-of-truth subscription behavior in:
+  - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-session-events.ts`
+  - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\session-message-events.test.ts`
+- Key finding:
+  - OpenClaw broad `sessions.subscribe` clients receive live `session.message`
+    transcript events as well as `sessions.changed`.
+  - OpenZues only delivered `session.message` to clients using the narrower
+    `sessions.messages.subscribe` filter.
+- Landed the smallest honest fix in `src/openzues/services/hub.py`:
+  - broad session subscribers now pass the `session.message` visibility gate.
+  - session-specific message aliases continue to filter by session key when
+    broad subscription is not active.
+  - unsubscribe still removes both broad `sessions.changed` and broad
+    `session.message` delivery.
+- Updated focused proof coverage in:
+  - `tests/test_gateway_node_methods.py`
+- Verified with:
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "sessions_subscribe or sessions_messages_subscribe or session_message"`: `16 passed`
+  - `ruff check src\openzues\services\hub.py src\openzues\services\gateway_sessions.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`: clean
+  - `python -m mypy src\openzues\services\hub.py src\openzues\services\gateway_sessions.py`: clean
+- Next exact seam:
+  - continue to direct REST/session-history replay parity or another
+    source-backed transcript gap.
+
+## 2026-04-25 Session Message Transcript Metadata Addendum
+
+- Stayed on the active `chat.*` / `sessions.*` transcript parity queue after
+  the `sessions.get` cursor and custom-agent session resolver seams.
+- Re-read the OpenClaw source-of-truth live event builder:
+  - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-session-events.ts`
+- Key finding:
+  - OpenClaw attaches raw transcript identity inside the live
+    `session.message.message.__openclaw` object, not only as top-level
+    `messageId` / `messageSeq` fields.
+  - OpenZues already emitted the top-level fields but the nested message object
+    omitted `__openclaw.id` / `__openclaw.seq`.
+- Landed the smallest honest fix in `src/openzues/services/gateway_sessions.py`:
+  - `build_message_event_payload` now passes the computed sequence into the
+    nested message projection.
+  - `_message_payload` preserves the existing `id` field and adds
+    `__openclaw` only when id/seq metadata is available.
+- Updated focused proof coverage in:
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Verified with:
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "session_message or chat_inject"`: `6 passed`
+  - `ruff check src\openzues\services\gateway_sessions.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`: clean
+  - `python -m mypy src\openzues\services\gateway_sessions.py`: clean
+- Next exact seam:
+  - continue the transcript/live-event pass with session-event replay/filtering
+    or the next source-backed `chat.*` / `sessions.*` mismatch.
+
+## 2026-04-25 Custom-Agent Identity Bridge Addendum
+
+- Stayed on the active session/agent parity seam created by the custom-agent
+  session bridge.
+- Key finding:
+  - `sessions.create` and `sessions.list agentId=...` could already accept
+    persisted custom agents, but `agent.identity.get` still treated every
+    non-`main` / non-`openzues` selector as `unknown agent id`.
+- Landed the smallest honest fix in `src/openzues/services/gateway_agents.py`:
+  - built-in `main` / `openzues` aliases still resolve to the default OpenZues
+    identity
+  - persisted custom-agent rows now resolve through the SQLite agent registry by
+    explicit `agentId`
+  - `agent:<id>:main` session keys now return the same persisted identity
+  - malformed session keys and mismatched explicit/session selectors still reject
+    before dispatch
+- Added focused method/API proof coverage in:
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Verified with:
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "agent_identity or agents_mutation_lifecycle or sessions_create"`: `16 passed`
+  - `python -m ruff check src\openzues\services\gateway_agents.py src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`: clean
+  - `python -m mypy src\openzues\services\gateway_agents.py src\openzues\services\gateway_node_methods.py`: clean
+- Next exact seam:
+  - continue the adjacent session/agent pass by proving whether custom-agent
+    workspace files now route through `agents.files.*`, then patch the smallest
+    real gap found there.
+
+## 2026-04-25 Custom-Agent Workspace File Bridge Addendum
+
+- Continued the adjacent agent/session pass from the custom-agent identity bridge.
+- Key finding:
+  - `agents.files.list/get/set` still hard-coded the built-in `main/openzues`
+    agent ids and read from the default bootstrap workspace, even when the
+    caller targeted a persisted custom agent.
+- Landed the smallest honest fix in `src/openzues/services/gateway_agent_files.py`:
+  - built-in agent file calls still resolve to the default bootstrap workspace
+  - persisted custom-agent rows now provide the file workspace for allowed
+    OpenClaw instruction/memory files
+  - unknown agents and unsupported filenames still reject before file mutation
+  - path traversal protection remains in place for resolved file writes/reads
+- Added focused method/API proof coverage in:
+  - `tests/test_gateway_node_methods.py`
+  - `tests/test_gateway_nodes_api.py`
+- Verified with:
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "agent_files or agents_files or agents_mutation_lifecycle or agent_identity"`: `21 passed`
+  - `python -m ruff check src\openzues\services\gateway_agent_files.py src\openzues\services\gateway_agents.py src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`: clean
+  - `python -m mypy src\openzues\services\gateway_agent_files.py src\openzues\services\gateway_agents.py src\openzues\services\gateway_node_methods.py`: clean
+- Next exact seam:
+  - stay on nearby session/chat transcript/runtime ownership unless a smaller
+    custom-agent lifecycle gap is proven.
+
+## 2026-04-25 Deleted Custom-Agent Session Guard Addendum
+
+- Continued the adjacent custom-agent/session pass after the workspace-file
+  bridge.
+- Re-read the OpenClaw source-of-truth deleted-agent proof:
+  - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods\sessions.send-deleted-agent.test.ts`
+- Key finding:
+  - OpenClaw rejects `sessions.send` / `sessions.steer` when a session key
+    belongs to a deleted agent.
+  - OpenZues already had custom-agent creation/deletion and custom session keys,
+    but orphaned `agent:<id>:...` send/steer calls still reached the runtime.
+- Landed the smallest honest fix in `src/openzues/services/gateway_node_methods.py`:
+  - `sessions.send` and `sessions.steer` now resolve the owner agent from the
+    session key before runtime dispatch
+  - built-in `main` sessions remain unchanged
+  - custom-agent sessions now reject when the owner is no longer present in the
+    SQLite agent registry
+- Added focused proof coverage in:
+  - `tests/test_gateway_node_methods.py`
+- Verified with:
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "sessions_send or sessions_steer"`: `41 passed`
+  - `python -m ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`: clean
+  - `python -m mypy src\openzues\services\gateway_node_methods.py`: clean
+- Next exact seam:
+  - continue into `chat.history` / session read-model fidelity, starting from
+    the smallest local gap with an upstream OpenClaw proof.
+
+## 2026-04-25 Chat History Projection Fidelity Addendum
+
+- Continued into the session/chat read-model queue from the deleted-agent guard.
+- Re-read the OpenClaw history projection proofs in:
+  - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server.chat.gateway-server-chat.test.ts`
+  - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server.chat.gateway-server-chat-b.test.ts`
+- Key finding:
+  - OpenClaw hides assistant-only `NO_REPLY`, `ANNOUNCE_SKIP`, and `REPLY_SKIP`
+    transcript entries and strips inline `[[reply_to...]]` /
+    `[[audio_as_voice]]` directives before display.
+  - OpenZues projected raw persisted control-chat text, so skip-only assistant
+    rows and inline directives leaked into `chat.history`.
+- Landed the smallest honest fix in `src/openzues/services/gateway_node_methods.py`:
+  - the persistence layer remains unchanged
+  - `chat.history` projection now filters assistant skip-only rows
+  - displayed message content now strips inline reply/audio directives
+  - user-authored `NO_REPLY` text remains visible
+- Added focused proof coverage in:
+  - `tests/test_gateway_node_methods.py`
+- Verified with:
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "chat_history"`: `4 passed`
+  - `python -m ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`: clean
+  - `python -m mypy src\openzues\services\gateway_node_methods.py`: clean
+- Next exact seam:
+  - continue the bounded `chat.history` / session read-model pass, likely usage
+    and cost metadata fidelity if local persistence can carry the fields.
+
+## 2026-04-25 Chat History Usage/Cost Metadata Addendum
+
+- Stayed on the bounded `chat.history` read-model fidelity pass.
+- Re-read the OpenClaw history metadata proof in:
+  - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server.chat.gateway-server-chat-b.test.ts`
+- Key finding:
+  - OpenClaw preserves assistant `usage` and `cost` metadata in history while
+    withholding arbitrary `details` payloads.
+  - OpenZues persisted only role/content/session fields, so there was nowhere
+    for future assistant usage/cost metadata to survive into `chat.history`.
+- Landed the smallest honest fix in:
+  - `src/openzues/database.py`
+  - `src/openzues/services/gateway_node_methods.py`
+- Product effect:
+  - `control_chat_messages` now has nullable `usage_json` and `cost_json`
+    columns with migration coverage for existing databases
+  - `append_control_chat_message` accepts optional `usage` and `cost` dicts
+    without changing existing callers
+  - `chat.history` projects assistant usage/cost metadata when present and does
+    not invent or expose debug/details fields
+- Added focused proof coverage in:
+  - `tests/test_gateway_node_methods.py`
+- Verified with:
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "chat_history"`: `5 passed`
+  - `python -m ruff check src\openzues\database.py src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`: clean
+  - `python -m mypy src\openzues\database.py src\openzues\services\gateway_node_methods.py`: clean
+- Next exact seam:
+  - continue the session/history pass with truncation semantics or another
+    bounded `sessions.history` / `chat.history` parity proof.
+
+## 2026-04-25 Chat History Truncation Semantics Addendum
+
+- Stayed on the bounded history read-model pass.
+- Re-read the OpenClaw `chat.history maxChars` tests in:
+  - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server.chat.gateway-server-chat-b.test.ts`
+- Key finding:
+  - OpenClaw treats `maxChars` as a per-text-field display cap and keeps a
+    prefix plus `...(truncated)...`.
+  - OpenZues used a global tail budget, which could drop older messages and
+    return only the final suffix of the newest message.
+- Landed the smallest honest fix in `src/openzues/services/gateway_node_methods.py`:
+  - `chat.history` now keeps all returned rows within the requested `limit`
+  - each displayed text field is independently prefix-truncated when it exceeds
+    `maxChars`
+  - the OpenClaw truncation marker is included in the displayed text
+- Updated focused proof coverage in:
+  - `tests/test_gateway_node_methods.py`
+- Verified with:
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "chat_history"`: `5 passed`
+  - `python -m ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`: clean
+  - `python -m mypy src\openzues\services\gateway_node_methods.py`: clean
+- Next exact seam:
+  - continue to `sessions.get` / history API parity or another bounded
+    transcript read-model mismatch.
+
+## 2026-04-25 Chat History Default Display Cap Addendum
+
+- Stayed on the bounded `chat.history` read-model pass.
+- Key finding:
+  - OpenClaw applies a default `gateway.webchat.chatHistoryMaxChars` display cap
+    of 12,000 characters when callers omit RPC `maxChars`.
+  - OpenZues only truncated when `maxChars` was explicitly provided.
+- Landed the smallest honest fix in `src/openzues/services/gateway_node_methods.py`:
+  - `chat.history` now applies the 12,000-character default display cap
+  - explicit valid `maxChars` still overrides the default
+  - `sessions.get` remains unchanged because OpenClaw's `sessions.get` reads raw
+    session messages rather than the chat-history display cap path
+- Added focused proof coverage in:
+  - `tests/test_gateway_node_methods.py`
+- Verified with:
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "chat_history"`: `6 passed`
+  - `python -m ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`: clean
+  - `python -m mypy src\openzues\services\gateway_node_methods.py`: clean
+- Next exact seam:
+  - move to session event subscription or preview sanitization if a focused
+    OpenClaw mismatch is found.
+
+## 2026-04-25 Sessions Preview Sanitization Addendum
+
+- Stayed on the session read-model/display hygiene pass after the default
+  history cap.
+- Key finding:
+  - `chat.history` now hid assistant skip-only rows and stripped inline
+    directives, but `sessions.preview` still rendered raw control-chat text.
+- Landed the smallest honest fix in `src/openzues/services/gateway_node_methods.py`:
+  - `sessions.preview` now strips inline reply/audio directives from preview
+    text
+  - assistant-only `NO_REPLY`, `ANNOUNCE_SKIP`, and `REPLY_SKIP` rows are hidden
+  - user-authored `NO_REPLY` preview text remains visible
+- Added focused proof coverage in:
+  - `tests/test_gateway_node_methods.py`
+- Verified with:
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "sessions_preview"`: `3 passed`
+  - `python -m ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`: clean
+  - `python -m mypy src\openzues\services\gateway_node_methods.py`: clean
+- Next exact seam:
+  - inspect session message subscription/event shape for a bounded mismatch, or
+    return to the next concrete chat/session contract.
 
 ## 2026-04-22 Bootstrap Repair and Node Invoke Guard Rails Addendum
 
@@ -16813,3 +17207,2351 @@ Next best slice:
 - Queue effect from this run:
   - upload guardrails are closed.
   - next exact seam is read-only trace/profile metadata or another bounded browser debug diagnostic before broader debug/control mutation.
+
+### Recovery addendum 2026-04-25 browser trace artifact lifecycle America/Chicago
+
+- Queue-head seam before implementation:
+  - The installed `agent-browser` CLI exposes `trace start [path]` and `trace stop [path]`.
+  - OpenZues had controlled browser file upload/download seams but no structured trace artifact lifecycle, and a first slice needed to avoid caller-controlled trace output paths.
+- Landed the controlled write-scoped trace bridge:
+  - `GatewayBrowserRuntimeService.trace_start()` now runs `agent-browser trace start`.
+  - `GatewayBrowserRuntimeService.trace_stop()` now runs `agent-browser trace stop <controlled-temp-zip>`.
+  - Trace stop writes only to an OpenZues-generated temp ZIP artifact and reports the artifact path/size.
+  - `GatewayCommandsService` now advertises `browser.trace.start` and `browser.trace.stop`.
+  - `GatewayNodeMethodService` validates session-only payloads before dispatch.
+  - `gateway_method_policy` classifies both methods as operator write methods because trace state is mutating browser debug runtime state.
+- Product effect:
+  - operators can record and retrieve browser trace ZIP artifacts through structured gateway methods without granting arbitrary output paths.
+- Verified this continuation with:
+  - red proof: `test_commands_list_returns_bounded_native_operator_inventory` first showed `browser.trace.start` was absent from the native catalog.
+  - red proof: `test_browser_trace_dispatches_to_configured_runtime` first failed with `unsupported method: browser.trace.start`.
+  - red proof: `test_browser_trace_runtime_uses_controlled_trace_artifact` first failed because `GatewayBrowserRuntimeService` had no trace helpers.
+  - `pytest tests/test_gateway_node_methods.py -q -k "browser_trace or commands_list_returns_bounded_native_operator_inventory"`: `3 passed`
+  - `pytest tests/test_gateway_nodes_api.py -q -k "browser_trace or commands_list"`: `3 passed`
+  - `pytest tests/test_gateway_method_policy.py -q -k "mirrors_openclaw_operator_scope_groups or known_gateway_method_registry_covers_openclaw_base_registry"`: `2 passed`
+  - `ruff check src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_commands.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py tests/test_gateway_method_policy.py`: clean
+  - `mypy src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_commands.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - controlled browser trace artifact lifecycle is closed.
+  - next exact seam is the adjacent profiler artifact lifecycle (`browser.profiler.start` / `browser.profiler.stop`) or another bounded debug diagnostic.
+
+### Recovery addendum 2026-04-25 browser profiler artifact lifecycle America/Chicago
+
+- Queue-head seam before implementation:
+  - The installed `agent-browser` CLI exposes `profiler start [--categories <list>]` and `profiler stop [path]`.
+  - OpenZues had trace artifact lifecycle support but no structured performance profile lifecycle, and the stop path needed to stay OpenZues-controlled.
+- Landed the controlled write-scoped profiler bridge:
+  - `GatewayBrowserRuntimeService.profiler_start()` now runs `agent-browser profiler start`, with optional comma-separated `categories`.
+  - `GatewayBrowserRuntimeService.profiler_stop()` now runs `agent-browser profiler stop <controlled-temp-json>`.
+  - Profiler stop writes only to an OpenZues-generated temp JSON artifact and reports the artifact path/size.
+  - `GatewayCommandsService` now advertises `browser.profiler.start` and `browser.profiler.stop`.
+  - `GatewayNodeMethodService` validates session plus optional categories on start and session-only payloads on stop.
+  - `gateway_method_policy` classifies both methods as operator write methods because profiling mutates browser debug runtime state.
+- Product effect:
+  - operators can record browser performance profiles through structured gateway methods without granting arbitrary output paths.
+- Verified this continuation with:
+  - red proof: `test_commands_list_returns_bounded_native_operator_inventory` first showed `browser.profiler.start` was absent from the native catalog.
+  - red proof: `test_browser_profiler_dispatches_to_configured_runtime` first failed with `unsupported method: browser.profiler.start`.
+  - red proof: `test_browser_profiler_runtime_uses_controlled_profile_artifact` first failed because `GatewayBrowserRuntimeService` had no profiler helpers.
+  - `pytest tests/test_gateway_node_methods.py -q -k "browser_profiler or browser_trace or commands_list_returns_bounded_native_operator_inventory"`: `5 passed`
+  - `pytest tests/test_gateway_nodes_api.py -q -k "browser_profiler or browser_trace or commands_list"`: `4 passed`
+  - `pytest tests/test_gateway_method_policy.py -q -k "mirrors_openclaw_operator_scope_groups or known_gateway_method_registry_covers_openclaw_base_registry"`: `2 passed`
+  - `ruff check src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_commands.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py tests/test_gateway_method_policy.py`: clean
+  - `mypy src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_commands.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - controlled browser profiler artifact lifecycle is closed.
+  - next exact seam is another bounded browser debug/control command such as recording lifecycle, proxy/profile boundaries, or target-aware action breadth.
+
+### Recovery addendum 2026-04-25 browser recording lifecycle America/Chicago
+
+- Queue-head seam before implementation:
+  - The installed `agent-browser` CLI exposes `record start <path.webm> [url]`, `record stop`, and `record restart <path.webm> [url]`.
+  - OpenZues had trace/profiler artifact lifecycle support but no video recording lifecycle, and the WebM output path needed to stay OpenZues-controlled.
+- Landed the controlled write-scoped recording bridge:
+  - `GatewayBrowserRuntimeService.record_start()` now runs `agent-browser record start <controlled-temp-webm> [url]`.
+  - `GatewayBrowserRuntimeService.record_stop()` now runs `agent-browser record stop` and reports the tracked per-session WebM path/size.
+  - `GatewayBrowserRuntimeService.record_restart()` now runs `agent-browser record restart <controlled-temp-webm> [url]`.
+  - `GatewayCommandsService` now advertises `browser.record.start`, `browser.record.stop`, and `browser.record.restart`.
+  - `GatewayNodeMethodService` validates session plus optional URL on start/restart and session-only payloads on stop.
+  - `gateway_method_policy` classifies all three methods as operator write methods because recording creates browser contexts and mutates recording state.
+- Product effect:
+  - operators can record browser sessions to WebM artifacts through structured gateway methods without granting arbitrary output paths.
+- Verified this continuation with:
+  - red proof: `test_commands_list_returns_bounded_native_operator_inventory` first showed `browser.record.restart` was absent from the native catalog.
+  - red proof: `test_browser_record_dispatches_to_configured_runtime` first failed with `unsupported method: browser.record.start`.
+  - red proof: `test_browser_record_runtime_uses_controlled_recording_artifact` first failed because `GatewayBrowserRuntimeService` had no record helpers.
+  - `pytest tests/test_gateway_node_methods.py -q -k "browser_record or commands_list_returns_bounded_native_operator_inventory"`: `3 passed`
+  - `pytest tests/test_gateway_nodes_api.py -q -k "browser_record or commands_list"`: `3 passed`
+  - `pytest tests/test_gateway_method_policy.py -q -k "mirrors_openclaw_operator_scope_groups or known_gateway_method_registry_covers_openclaw_base_registry"`: `2 passed`
+  - `ruff check src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_commands.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py tests/test_gateway_method_policy.py`: clean
+  - `mypy src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_commands.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - controlled browser recording lifecycle is closed.
+  - next exact seam is proxy/profile mutation boundaries or target-aware action breadth.
+
+### Recovery addendum 2026-04-25 browser highlight and inspect debug commands America/Chicago
+
+- Queue-head seam before implementation:
+  - The installed `agent-browser` CLI exposes `highlight <selector>` and `inspect`.
+  - OpenZues had browser trace/profiler/recording artifact lifecycles, but these two bounded debug commands still fell through as unsupported gateway methods.
+  - Clipboard, proxy, and auth-vault mutation remain separate higher-risk seams and were intentionally not opened in this slice.
+- Landed the bounded write-scoped debug bridge:
+  - `GatewayBrowserRuntimeService.highlight()` now runs `agent-browser highlight <selector>`.
+  - `GatewayBrowserRuntimeService.inspect()` now runs `agent-browser inspect`.
+  - `GatewayCommandsService` now advertises `browser.highlight` and `browser.inspect`.
+  - `GatewayNodeMethodService` validates required selector for highlight and session-only payloads for inspect.
+  - `gateway_method_policy` classifies both methods as operator write methods because they mutate browser debug/visual state.
+- Product effect:
+  - operators can highlight page elements or open DevTools through structured gateway methods without unlocking clipboard, proxy, or auth-vault mutation.
+- Verified this continuation with:
+  - red proof: `test_commands_list_returns_bounded_native_operator_inventory` first showed `browser.highlight` was absent from the native catalog.
+  - red proof: `test_browser_debug_commands_dispatch_to_configured_runtime` first failed with `unsupported method: browser.highlight`.
+  - red proof: `test_browser_debug_runtime_uses_agent_browser_debug_commands` first failed because `GatewayBrowserRuntimeService` had no debug helpers.
+  - `pytest tests/test_gateway_node_methods.py -q -k "browser_debug or commands_list_returns_bounded_native_operator_inventory"`: `3 passed`
+  - `pytest tests/test_gateway_nodes_api.py -q -k "browser_debug or commands_list"`: `3 passed`
+  - `pytest tests/test_gateway_method_policy.py -q -k "mirrors_openclaw_operator_scope_groups or known_gateway_method_registry_covers_openclaw_base_registry"`: `2 passed`
+  - `ruff check src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_commands.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py tests/test_gateway_method_policy.py`: clean
+  - `mypy src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_commands.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - bounded highlight/inspect debug commands are closed.
+  - next exact seam is target-aware action breadth such as drag/mouse/keyboard/find, or a separately guarded clipboard/proxy decision.
+
+### Recovery addendum 2026-04-25 browser act drag action America/Chicago
+
+- Queue-head seam before implementation:
+  - The installed `agent-browser` CLI exposes `drag <src> <dst>`.
+  - OpenZues already had a bounded `browser.act` mapper for click, dblclick, type, fill, press, hover/focus/check, select, scroll, scrollintoview, evaluate, resize, and close, but drag still failed as an unsupported action kind.
+- Landed the bounded action-breadth bridge:
+  - `browser_act_args()` now maps `kind="drag"` to `agent-browser drag <source> <destination>`.
+  - `GatewayNodeMethodService` now allows source/destination aliases in both nested and flat `browser.act` payloads.
+- Product effect:
+  - operators can perform drag-and-drop interactions through the existing structured `browser.act` surface without introducing a separate arbitrary command runner.
+- Verified this continuation with:
+  - red proof: `test_browser_act_args_maps_bounded_action_subset` first failed with `unsupported browser.act kind: drag`.
+  - red proof: `test_gateway_node_method_call_endpoint_runs_browser_act_runtime` first failed before source/destination were accepted by request validation.
+  - `pytest tests/test_gateway_node_methods.py::test_browser_act_args_maps_bounded_action_subset -q`: `1 passed`
+  - `pytest tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_act_runtime -q`: `1 passed`
+  - `ruff check src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`: clean
+  - `mypy src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - drag action breadth is closed.
+  - next exact seam is remaining target-aware action breadth such as mouse/keyboard/find, or a separately guarded clipboard/proxy decision.
+
+### Recovery addendum 2026-04-25 browser act mouse action America/Chicago
+
+- Queue-head seam before implementation:
+  - The installed `agent-browser` CLI exposes `mouse move <x> <y>`, `mouse down [btn]`, `mouse up [btn]`, and `mouse wheel <dy> [dx]`.
+  - OpenZues already had `browser.act` drag and common element actions, but mouse movement, button, and wheel primitives still failed as unsupported actions or rejected payload keys.
+- Landed the bounded action-breadth bridge:
+  - `browser_act_args()` now maps `kind="mouse"` to structured `agent-browser mouse` commands for move, down, up, and wheel.
+  - `GatewayNodeMethodService` now allows mouse action, coordinate, button, and delta fields in both nested and flat `browser.act` payloads.
+- Product effect:
+  - operators can drive pointer movement, mouse button, and wheel interactions through the existing structured `browser.act` surface without opening arbitrary command execution.
+- Verified this continuation with:
+  - red proof: `test_browser_act_args_maps_bounded_action_subset` first failed with `unsupported browser.act kind: mouse`.
+  - red proof: `test_gateway_node_method_call_endpoint_runs_browser_act_runtime` first returned 400 before mouse-specific request keys were accepted.
+  - `pytest tests/test_gateway_node_methods.py::test_browser_act_args_maps_bounded_action_subset tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_act_runtime -q`: `2 passed`
+  - `pytest tests/test_gateway_node_methods.py -q -k "browser or commands_list_returns_bounded_native_operator_inventory"`: `62 passed`
+  - `pytest tests/test_gateway_nodes_api.py -q -k browser`: `34 passed`
+  - `pytest tests/test_gateway_method_policy.py -q`: `18 passed`
+  - `ruff check src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`: clean
+  - `mypy src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - mouse action breadth is closed.
+  - next exact seam is remaining keyboard/find action breadth or a separately guarded clipboard/proxy decision.
+
+### Recovery addendum 2026-04-25 browser act keyboard inserttext action America/Chicago
+
+- Queue-head seam before implementation:
+  - The installed `agent-browser` CLI exposes `keyboard type <text>` and `keyboard inserttext <text>`.
+  - OpenZues already mapped `kind="type"` without a selector to focused `keyboard type`, but did not expose the insert-text path used for paste-like focused editors.
+- Landed the bounded action-breadth bridge:
+  - `browser_act_args()` now maps `kind="keyboard"` plus `action="inserttext"` to `agent-browser keyboard inserttext <text>`.
+  - The branch is constrained to installed `type` and `inserttext` subcommands and still requires a structured `text` field.
+- Product effect:
+  - operators can insert text into the focused browser element without key events through the structured `browser.act` surface.
+- Verified this continuation with:
+  - red proof: `test_browser_act_args_maps_bounded_action_subset` first failed with `unsupported browser.act kind: keyboard`.
+  - `pytest tests/test_gateway_node_methods.py::test_browser_act_args_maps_bounded_action_subset -q`: `1 passed`
+  - `pytest tests/test_gateway_node_methods.py -q -k "browser or commands_list_returns_bounded_native_operator_inventory"`: `62 passed`
+  - `pytest tests/test_gateway_nodes_api.py -q -k browser`: `34 passed`
+  - `pytest tests/test_gateway_method_policy.py -q`: `18 passed`
+  - `ruff check src/openzues/services/gateway_browser_runtime.py tests/test_gateway_node_methods.py`: clean
+  - `mypy src/openzues/services/gateway_browser_runtime.py`: clean
+- Queue effect from this run:
+  - keyboard insert-text action breadth is closed.
+  - next exact seam is semantic `find` action breadth or a separately guarded clipboard/proxy decision.
+
+### Recovery addendum 2026-04-25 browser act semantic find action America/Chicago
+
+- Queue-head seam before implementation:
+  - The installed `agent-browser` CLI exposes `find <locator> <value> [action] [text]` for semantic role/text/label/placeholder/alt/title/testid/first/last/nth locators.
+  - OpenZues already had direct selector/ref actions, mouse actions, and focused keyboard insertion, but semantic locator actions still failed as unsupported or rejected request keys.
+- Landed the bounded action-breadth bridge:
+  - `browser_act_args()` now maps `kind="find"` to `agent-browser find ...` with locator/value validation.
+  - The bridge supports bounded actions `click`, `fill`, `type`, `hover`, `focus`, `check`, and `uncheck`, requiring text only for fill/type.
+  - Role name filtering and exact matching are exposed as structured `name` and `exact` fields.
+  - `GatewayNodeMethodService` now allows find locator, query, name, exact, and nth index fields in both nested and flat `browser.act` payloads.
+- Product effect:
+  - operators can use semantic locator-driven browser actions through structured JSON without falling back to natural-language chat or arbitrary shell commands.
+- Verified this continuation with:
+  - red proof: `test_browser_act_args_maps_bounded_action_subset` first failed with `unsupported browser.act kind: find`.
+  - red proof: `test_gateway_node_method_call_endpoint_runs_browser_act_runtime` first returned 400 before find-specific request keys were accepted.
+  - `pytest tests/test_gateway_node_methods.py::test_browser_act_args_maps_bounded_action_subset -q`: `1 passed`
+  - `pytest tests/test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_runs_browser_act_runtime -q`: `1 passed`
+  - `pytest tests/test_gateway_node_methods.py -q -k "browser or commands_list_returns_bounded_native_operator_inventory"`: `62 passed`
+  - `pytest tests/test_gateway_nodes_api.py -q -k browser`: `34 passed`
+  - `pytest tests/test_gateway_method_policy.py -q`: `18 passed`
+  - `ruff check src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`: clean
+  - `mypy src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - semantic find action breadth is closed.
+  - next exact seam is a separately guarded clipboard/proxy/settings decision.
+
+### Recovery addendum 2026-04-25 browser guarded settings method America/Chicago
+
+- Queue-head seam before implementation:
+  - The installed `agent-browser` CLI exposes `set <setting> [value]` for viewport, device, geo, offline, headers, credentials, and media.
+  - OpenZues had viewport coverage through `browser.act` resize, but no structured browser settings method and no explicit policy boundary for safer settings versus higher-risk headers/credentials/proxy decisions.
+- Landed the guarded write-scoped settings bridge:
+  - `GatewayCommandsService` now advertises `browser.set`.
+  - `GatewayNodeMethodService` validates `setting` plus string-array `values` and dispatches to the browser runtime.
+  - `GatewayBrowserRuntimeService.set_setting()` maps only low-risk settings: viewport, device, geo, offline, and media.
+  - The runtime validates viewport dimensions, geo bounds, offline on/off, and media dark/light plus optional reduced-motion before invoking `agent-browser set`.
+  - `gateway_method_policy` classifies `browser.set` as an operator write method.
+  - Headers, credentials, clipboard, and proxy remain separate higher-risk seams rather than generic passthroughs.
+- Product effect:
+  - operators can change common browser emulation/settings through a structured gateway method while preserving an honest boundary around secret-bearing or persistent-profile mutation.
+- Verified this continuation with:
+  - red proof: `test_commands_list_returns_bounded_native_operator_inventory` first showed `browser.set` was absent from the native catalog.
+  - red proof: `test_browser_set_dispatches_to_configured_runtime` first failed with `unsupported method: browser.set`.
+  - red proof: `test_browser_set_runtime_uses_guarded_low_risk_settings` first failed because `GatewayBrowserRuntimeService` had no settings method.
+  - red proof: `test_gateway_method_policy_mirrors_openclaw_operator_scope_groups` first failed until `browser.set` was classified.
+  - `pytest tests/test_gateway_node_methods.py -q -k "browser_set or commands_list_returns_bounded_native_operator_inventory"`: `3 passed`
+  - `pytest tests/test_gateway_nodes_api.py -q -k "browser_set or commands_list"`: `3 passed`
+  - `pytest tests/test_gateway_node_methods.py -q -k "browser or commands_list_returns_bounded_native_operator_inventory"`: `64 passed`
+  - `pytest tests/test_gateway_nodes_api.py -q -k browser`: `35 passed`
+  - `pytest tests/test_gateway_method_policy.py -q`: `18 passed`
+  - `ruff check src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_commands.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py tests/test_gateway_method_policy.py`: clean
+  - `mypy src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_commands.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - guarded low-risk browser settings are closed.
+  - next exact seam is a guarded clipboard bridge or scoped headers/credentials setting decision.
+
+### Recovery addendum 2026-04-25 browser clipboard bridge America/Chicago
+
+- Queue-head seam before implementation:
+  - The installed `agent-browser` CLI exposes `clipboard read`, `clipboard write <text>`, `clipboard copy`, and `clipboard paste`.
+  - OpenZues had intentionally guarded settings but no structured clipboard bridge, so clipboard operations still fell through as unsupported gateway methods.
+  - Proxy mutation and secret-bearing headers/credentials remain separate decisions and were intentionally not opened in this slice.
+- Landed the guarded clipboard bridge:
+  - `GatewayCommandsService` now advertises `browser.clipboard.read`, `browser.clipboard.write`, `browser.clipboard.copy`, and `browser.clipboard.paste`.
+  - `GatewayNodeMethodService` validates session/text payloads and dispatches each operation through the configured browser runtime.
+  - `GatewayBrowserRuntimeService` now maps the four methods to installed `agent-browser clipboard` operations and returns structured operation/session/output payloads.
+  - `gateway_method_policy` classifies clipboard read as read-scope and clipboard write/copy/paste as operator write-scope.
+- Product effect:
+  - operators can read, write, copy, and paste through a structured browser clipboard method family without arbitrary shell execution or generic settings passthroughs.
+- Verified this continuation with:
+  - red proof: `test_commands_list_returns_bounded_native_operator_inventory` first showed `browser.clipboard.copy` was absent from the native catalog.
+  - red proof: `test_browser_clipboard_dispatches_to_configured_runtime` first failed with `unsupported method: browser.clipboard.read`.
+  - red proof: `test_browser_clipboard_runtime_uses_installed_clipboard_commands` first failed because `GatewayBrowserRuntimeService` had no clipboard helpers.
+  - `pytest tests/test_gateway_node_methods.py -q -k "browser_clipboard or commands_list_returns_bounded_native_operator_inventory"`: `3 passed`
+  - `pytest tests/test_gateway_nodes_api.py -q -k "browser_clipboard or commands_list"`: `3 passed`
+  - `pytest tests/test_gateway_method_policy.py::test_gateway_method_policy_mirrors_openclaw_operator_scope_groups -q`: `1 passed`
+  - `pytest tests/test_gateway_node_methods.py -q -k "browser or commands_list_returns_bounded_native_operator_inventory"`: `66 passed`
+  - `pytest tests/test_gateway_nodes_api.py -q -k browser`: `36 passed`
+  - `pytest tests/test_gateway_method_policy.py -q`: `18 passed`
+  - `ruff check src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_commands.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py tests/test_gateway_method_policy.py`: clean
+  - `mypy src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_commands.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - guarded browser clipboard operations are closed.
+  - next exact seam is scoped headers/credentials settings, guarded storage/cookie mutation, HAR mutation, or auth save/login/delete.
+
+### Recovery addendum 2026-04-25 browser storage mutation America/Chicago
+
+- Queue-head seam before implementation:
+  - The installed `agent-browser` CLI exposes `storage local|session set <key> <value>` and `storage local|session clear`.
+  - OpenZues had read-only browser storage inventory, but storage mutation still fell through as unsupported gateway methods.
+  - Cookie mutation, headers/credentials, proxy, and auth-vault operations remain separate higher-risk seams.
+- Landed the guarded write-scoped storage bridge:
+  - `GatewayCommandsService` now advertises `browser.storage.set` and `browser.storage.clear`.
+  - `GatewayNodeMethodService` validates storage `type`, required `key` / string `value` for set, and session-scoped clear payloads.
+  - `GatewayBrowserRuntimeService` maps set/clear to installed `agent-browser storage local|session` operations and returns structured mutation payloads.
+  - `gateway_method_policy` classifies both storage mutation methods as operator write-scope.
+  - The runtime now also normalizes storage type for read paths so direct calls cannot smuggle an unsupported storage family.
+- Product effect:
+  - operators can update or clear localStorage/sessionStorage through typed JSON method calls without generic command execution.
+- Verified this continuation with:
+  - red proof: `test_commands_list_returns_bounded_native_operator_inventory` first showed `browser.storage.clear` was absent from the native catalog.
+  - red proof: `test_browser_storage_mutation_dispatches_to_configured_runtime` first failed with `unsupported method: browser.storage.set`.
+  - red proof: `test_browser_storage_mutation_runtime_uses_agent_browser_storage_commands` first failed because `GatewayBrowserRuntimeService` had no storage mutation helpers.
+  - `pytest tests/test_gateway_node_methods.py -q -k "browser_storage_mutation or commands_list_returns_bounded_native_operator_inventory"`: `3 passed`
+  - `pytest tests/test_gateway_nodes_api.py -q -k "browser_storage_mutation or commands_list"`: `3 passed`
+  - `pytest tests/test_gateway_method_policy.py::test_gateway_method_policy_mirrors_openclaw_operator_scope_groups -q`: `1 passed`
+  - `pytest tests/test_gateway_node_methods.py -q -k "browser or commands_list_returns_bounded_native_operator_inventory"`: `68 passed`
+  - `pytest tests/test_gateway_nodes_api.py -q -k browser`: `37 passed`
+  - `pytest tests/test_gateway_method_policy.py -q`: `18 passed`
+  - `ruff check src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_commands.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py tests/test_gateway_method_policy.py`: clean
+  - `mypy src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_commands.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - guarded browser storage mutation is closed.
+  - next exact seam is guarded cookie mutation, scoped headers/credentials settings, HAR mutation, or auth save/login/delete.
+
+### Recovery addendum 2026-04-25 browser cookie mutation America/Chicago
+
+- Queue-head seam before implementation:
+  - The installed `agent-browser` CLI exposes `cookies set <name> <value> [options]` and `cookies clear`.
+  - OpenZues had read-only cookie inventory, but cookie mutation still fell through as unsupported gateway methods.
+  - Headers/credentials, proxy, HAR mutation, auth-vault operations, and confirmation handling remain separate higher-risk seams.
+- Landed the guarded write-scoped cookie bridge:
+  - `GatewayCommandsService` now advertises `browser.cookies.set` and `browser.cookies.clear`.
+  - `GatewayNodeMethodService` validates cookie name/value, optional URL/domain/path, HttpOnly/Secure flags, SameSite policy, expiry, and session.
+  - `GatewayBrowserRuntimeService` maps set/clear to installed `agent-browser cookies` operations.
+  - Runtime cookie set payloads intentionally avoid echoing the real cookie value back to callers.
+  - `gateway_method_policy` classifies both cookie mutation methods as operator write-scope.
+- Product effect:
+  - operators can set and clear browser cookies through structured JSON method calls while keeping secret-like cookie values out of runtime echo payloads.
+- Verified this continuation with:
+  - red proof: `test_commands_list_returns_bounded_native_operator_inventory` first showed `browser.cookies.clear` was absent from the native catalog.
+  - red proof: `test_browser_cookie_mutation_dispatches_to_configured_runtime` first failed with `unsupported method: browser.cookies.set`.
+  - red proof: `test_browser_cookie_mutation_runtime_uses_agent_browser_cookie_commands` first failed because `GatewayBrowserRuntimeService` had no cookie mutation helpers.
+  - `pytest tests/test_gateway_node_methods.py -q -k "browser_cookie_mutation or commands_list_returns_bounded_native_operator_inventory"`: `3 passed`
+  - `pytest tests/test_gateway_nodes_api.py -q -k "browser_cookie_mutation or commands_list"`: `3 passed`
+  - `pytest tests/test_gateway_method_policy.py::test_gateway_method_policy_mirrors_openclaw_operator_scope_groups -q`: `1 passed`
+  - `pytest tests/test_gateway_node_methods.py -q -k "browser or commands_list_returns_bounded_native_operator_inventory"`: `70 passed`
+  - `pytest tests/test_gateway_nodes_api.py -q -k browser`: `38 passed`
+  - `pytest tests/test_gateway_method_policy.py -q`: `18 passed`
+  - `ruff check src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_commands.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py tests/test_gateway_method_policy.py`: clean
+  - `mypy src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_commands.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - guarded browser cookie mutation is closed.
+  - next exact seam is scoped headers/credentials settings, HAR mutation, auth save/login/delete, or confirmation handling.
+
+### Recovery addendum 2026-04-25 browser HAR lifecycle America/Chicago
+
+- Queue-head seam before implementation:
+  - The installed `agent-browser` CLI exposes `network har start` and `network har stop [path]`.
+  - OpenZues had request-list and request-detail network diagnostics, but HAR recording still fell through as unsupported gateway methods.
+  - Header/credential settings, proxy, auth-vault operations, confirmation handling, and batch/chat/dashboard commands remain separate seams.
+- Landed the controlled write-scoped HAR bridge:
+  - `GatewayCommandsService` now advertises `browser.network.har.start` and `browser.network.har.stop`.
+  - `GatewayNodeMethodService` validates session-only HAR payloads and dispatches to the configured browser runtime.
+  - `GatewayBrowserRuntimeService` maps start/stop to installed `agent-browser network har` operations.
+  - HAR stop writes only to an OpenZues-generated temp `.har` artifact and reports path plus size metadata.
+  - `gateway_method_policy` classifies both HAR methods as operator write-scope because they mutate network recording state and create artifacts.
+- Product effect:
+  - operators can capture network HAR files through structured browser gateway methods without caller-controlled output paths.
+- Verified this continuation with:
+  - red proof: `test_commands_list_returns_bounded_native_operator_inventory` first showed `browser.network.har.start` was absent from the native catalog.
+  - red proof: `test_browser_network_har_dispatches_to_configured_runtime` first failed with `unsupported method: browser.network.har.start`.
+  - red proof: `test_browser_network_har_runtime_uses_controlled_har_artifact` first failed because `GatewayBrowserRuntimeService` had no HAR helpers.
+  - `pytest tests/test_gateway_node_methods.py -q -k "browser_network_har or commands_list_returns_bounded_native_operator_inventory"`: `3 passed`
+  - `pytest tests/test_gateway_nodes_api.py -q -k "browser_network_har or commands_list"`: `3 passed`
+  - `pytest tests/test_gateway_method_policy.py::test_gateway_method_policy_mirrors_openclaw_operator_scope_groups -q`: `1 passed`
+  - `pytest tests/test_gateway_node_methods.py -q -k "browser or commands_list_returns_bounded_native_operator_inventory"`: `72 passed`
+  - `pytest tests/test_gateway_nodes_api.py -q -k browser`: `39 passed`
+  - `pytest tests/test_gateway_method_policy.py -q`: `18 passed`
+  - `ruff check src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_commands.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py tests/test_gateway_method_policy.py`: clean
+  - `mypy src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_commands.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - controlled browser HAR lifecycle is closed.
+  - next exact seam is scoped headers/credentials settings, auth save/login/delete, confirmation handling, or batch/chat/dashboard productization.
+
+### Recovery addendum 2026-04-25 browser confirmation handling America/Chicago
+
+- Queue-head seam before implementation:
+  - The installed `agent-browser` CLI exposes `confirm <id>` and `deny <id>` for pending browser actions.
+  - OpenZues had many browser command bridges but no structured confirmation decision methods, so pending-action approval still fell through as unsupported gateway methods.
+  - Header/credential settings, proxy, auth-vault operations, and batch/chat/dashboard commands remain separate seams.
+- Landed the bounded write-scoped confirmation bridge:
+  - `GatewayCommandsService` now advertises `browser.confirm` and `browser.deny`.
+  - `GatewayNodeMethodService` validates required pending action `id` / `actionId` and session before dispatch.
+  - `GatewayBrowserRuntimeService` maps the two methods to installed `agent-browser confirm <id>` and `agent-browser deny <id>`.
+  - `gateway_method_policy` classifies both confirmation methods as operator write-scope.
+- Product effect:
+  - operators can resolve pending browser actions through structured JSON methods instead of free chat or arbitrary shell commands.
+- Verified this continuation with:
+  - red proof: `test_commands_list_returns_bounded_native_operator_inventory` first showed `browser.confirm` was absent from the native catalog.
+  - red proof: `test_browser_confirmation_dispatches_to_configured_runtime` first failed with `unsupported method: browser.confirm`.
+  - red proof: `test_browser_confirmation_runtime_uses_agent_browser_confirmation_commands` first failed because `GatewayBrowserRuntimeService` had no confirmation helpers.
+  - `pytest tests/test_gateway_node_methods.py -q -k "browser_confirmation or commands_list_returns_bounded_native_operator_inventory"`: `3 passed`
+  - `pytest tests/test_gateway_nodes_api.py -q -k "browser_confirmation or commands_list"`: `3 passed`
+  - `pytest tests/test_gateway_method_policy.py::test_gateway_method_policy_mirrors_openclaw_operator_scope_groups -q`: `1 passed`
+  - `pytest tests/test_gateway_node_methods.py -q -k "browser or commands_list_returns_bounded_native_operator_inventory"`: `74 passed`
+  - `pytest tests/test_gateway_nodes_api.py -q -k browser`: `40 passed`
+  - `pytest tests/test_gateway_method_policy.py -q`: `18 passed`
+  - `ruff check src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_commands.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py tests/test_gateway_method_policy.py`: clean
+  - `mypy src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_commands.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - browser pending-action confirmation handling is closed.
+  - next exact seam is scoped headers/credentials settings, auth save/login/delete, or batch/chat/dashboard productization.
+
+### Recovery addendum 2026-04-25 browser auth login delete America/Chicago
+
+- Queue-head seam before implementation:
+  - The installed `agent-browser` CLI exposes `auth login <name>` and `auth delete <name>`.
+  - OpenZues had read-only auth profile list/show methods, but login/delete still fell through as unsupported gateway methods.
+  - Password-bearing `auth save`, header/credential settings, proxy, and batch/chat/dashboard commands remain separate seams.
+- Landed the bounded write-scoped auth profile bridge:
+  - `GatewayCommandsService` now advertises `browser.auth.login` and `browser.auth.delete`.
+  - `GatewayNodeMethodService` validates required profile name plus session before dispatch.
+  - `GatewayBrowserRuntimeService` maps the two methods to installed `agent-browser auth login/delete <name>`.
+  - `gateway_method_policy` classifies both auth profile mutation methods as operator write-scope.
+- Product effect:
+  - operators can use or remove existing browser auth profiles through structured JSON methods without introducing password-bearing payloads.
+- Verified this continuation with:
+  - red proof: `test_commands_list_returns_bounded_native_operator_inventory` first showed `browser.auth.delete` was absent from the native catalog.
+  - red proof: `test_browser_auth_profile_mutation_dispatches_to_configured_runtime` first failed with `unsupported method: browser.auth.login`.
+  - red proof: `test_browser_auth_profile_mutation_runtime_uses_agent_browser_auth_commands` first failed because `GatewayBrowserRuntimeService` had no auth login/delete helpers.
+  - `pytest tests/test_gateway_node_methods.py -q -k "browser_auth_profile_mutation or commands_list_returns_bounded_native_operator_inventory"`: `3 passed`
+  - `pytest tests/test_gateway_nodes_api.py -q -k "browser_auth_profile_mutation or commands_list"`: `3 passed`
+  - `pytest tests/test_gateway_method_policy.py::test_gateway_method_policy_mirrors_openclaw_operator_scope_groups -q`: `1 passed`
+  - `pytest tests/test_gateway_node_methods.py -q -k "browser or commands_list_returns_bounded_native_operator_inventory"`: `76 passed`
+  - `pytest tests/test_gateway_nodes_api.py -q -k browser`: `41 passed`
+  - `pytest tests/test_gateway_method_policy.py -q`: `18 passed`
+  - `ruff check src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_commands.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py tests/test_gateway_method_policy.py`: clean
+  - `mypy src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_commands.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - browser auth login/delete is closed.
+  - next exact seam is password-safe auth save, scoped headers/credentials settings, or batch/chat/dashboard productization.
+
+### Recovery addendum 2026-04-25 browser password-safe auth save America/Chicago
+
+- Queue-head seam before implementation:
+  - The installed `agent-browser` CLI exposes `auth save <name> --url <url> --username <user> --password-stdin`.
+  - OpenZues had auth profile list/show/login/delete, but auth profile creation still fell through as an unsupported gateway method.
+  - Header/credential settings, proxy, and batch/chat/dashboard commands remain separate seams.
+- Landed the password-safe write-scoped auth save bridge:
+  - `GatewayCommandsService` now advertises `browser.auth.save`.
+  - `GatewayNodeMethodService` validates required profile name, URL, username, password, optional selectors, and session before dispatch.
+  - `GatewayBrowserRuntimeService` maps the method to installed `agent-browser auth save` and passes the password through stdin only.
+  - The runtime keeps passwords out of argv and redacts exact password echoes from structured response payloads.
+  - `gateway_method_policy` classifies `browser.auth.save` as operator write-scope.
+- Product effect:
+  - operators can create saved browser auth profiles through a structured JSON method without putting the secret on the process command line.
+- Verified this continuation with:
+  - red proof: `test_commands_list_returns_bounded_native_operator_inventory` first showed `browser.auth.save` was absent from the native catalog.
+  - red proof: `test_browser_auth_profile_save_dispatches_to_configured_runtime` first failed with `unsupported method: browser.auth.save`.
+  - red proof: `test_browser_auth_profile_save_runtime_uses_password_stdin` first failed because `GatewayBrowserRuntimeService` had no auth save helper.
+  - `pytest tests/test_gateway_node_methods.py -q -k "browser_auth_profile_save or commands_list_returns_bounded_native_operator_inventory"`: `3 passed`
+  - `pytest tests/test_gateway_nodes_api.py -q -k "browser_auth_profile_save or commands_list"`: `3 passed`
+  - `pytest tests/test_gateway_method_policy.py::test_gateway_method_policy_mirrors_openclaw_operator_scope_groups -q`: `1 passed`
+  - `pytest tests/test_gateway_node_methods.py -q -k "browser or commands_list_returns_bounded_native_operator_inventory"`: `78 passed`
+  - `pytest tests/test_gateway_nodes_api.py -q -k browser`: `42 passed`
+  - `pytest tests/test_gateway_method_policy.py -q`: `18 passed`
+  - `ruff check src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_commands.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py tests/test_gateway_method_policy.py`: clean
+  - `mypy src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_commands.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - browser password-safe auth save is closed.
+  - next exact seam is scoped headers/credentials settings or batch/chat/dashboard productization.
+
+### Recovery addendum 2026-04-25 browser scoped headers credentials America/Chicago
+
+- Queue-head seam before implementation:
+  - The installed `agent-browser` CLI exposes `set headers <json>` and `set credentials <user> <pass>`.
+  - OpenZues `browser.set` covered only low-risk viewport/device/geo/offline/media settings, so headers and HTTP credentials were rejected before runtime dispatch.
+  - Persistent proxy mutation remains intentionally guarded by the `node.invoke` boundary.
+- Landed the scoped write bridge:
+  - `GatewayCommandsService` now documents headers and credentials as supported `browser.set` settings.
+  - `GatewayNodeMethodService` accepts `headers` and `credentials` while still rejecting unsupported settings such as proxy.
+  - `GatewayBrowserRuntimeService` validates headers as a JSON string object and maps both settings to installed `agent-browser set` commands.
+  - Runtime payloads redact header values and HTTP-auth passwords while preserving useful metadata such as header names and username.
+- Product effect:
+  - operators can set scoped HTTP headers and HTTP authentication through the structured browser JSON method instead of falling back to shell commands.
+- Verified this continuation with:
+  - red proof: `test_browser_set_dispatches_to_configured_runtime` first failed because `headers` was rejected by the dispatcher enum.
+  - red proof: `test_browser_set_runtime_uses_guarded_low_risk_settings` first failed because `GatewayBrowserRuntimeService` rejected `headers` as unsupported.
+  - red proof: `test_gateway_node_method_call_endpoint_runs_browser_set_runtime` first returned HTTP 400 for the headers setting.
+  - `pytest tests/test_gateway_node_methods.py -q -k "browser_set_dispatches or browser_set_runtime_uses_guarded_low_risk_settings"`: `2 passed`
+  - `pytest tests/test_gateway_nodes_api.py -q -k "browser_set_runtime"`: `1 passed`
+  - `pytest tests/test_gateway_node_methods.py -q -k "browser or commands_list_returns_bounded_native_operator_inventory"`: `78 passed`
+  - `pytest tests/test_gateway_nodes_api.py -q -k browser`: `42 passed`
+  - `pytest tests/test_gateway_method_policy.py -q`: `18 passed`
+  - `ruff check src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_commands.py src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`: clean
+  - `mypy src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_commands.py src/openzues/services/gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - scoped browser headers/credentials settings are closed.
+  - next exact seam is batch/chat/dashboard command productization or provider/iOS-specific command boundaries.
+
+### Recovery addendum 2026-04-25 browser batch America/Chicago
+
+- Queue-head seam before implementation:
+  - The installed `agent-browser` CLI exposes `batch [--bail] "<cmd>" ...` for sequential browser command execution.
+  - OpenZues had individual browser command bridges but no bounded structured batch gateway method.
+  - Chat/dashboard commands and provider/iOS-specific command boundaries remain separate seams.
+- Landed the bounded write-scoped batch bridge:
+  - `GatewayCommandsService` now advertises `browser.batch`.
+  - `GatewayNodeMethodService` validates up to 20 one-line command strings, optional `bail`, and session before dispatch.
+  - `GatewayBrowserRuntimeService` maps the method to installed `agent-browser batch` without invoking a shell.
+  - `gateway_method_policy` classifies `browser.batch` as operator write-scope.
+- Product effect:
+  - operators can run a small sequential browser plan through one structured JSON method call instead of relying on free-chat command chaining.
+- Verified this continuation with:
+  - red proof: `test_commands_list_returns_bounded_native_operator_inventory` first showed `browser.batch` was absent from the native catalog.
+  - red proof: `test_browser_batch_dispatches_to_configured_runtime` first failed with `unsupported method: browser.batch`.
+  - red proof: `test_browser_batch_runtime_uses_agent_browser_batch_commands` first failed because `GatewayBrowserRuntimeService` had no batch helper.
+  - `pytest tests/test_gateway_node_methods.py -q -k "browser_batch or commands_list_returns_bounded_native_operator_inventory"`: `3 passed`
+  - `pytest tests/test_gateway_nodes_api.py -q -k "browser_batch or commands_list"`: `3 passed`
+  - `pytest tests/test_gateway_method_policy.py::test_gateway_method_policy_mirrors_openclaw_operator_scope_groups -q`: `1 passed`
+  - `pytest tests/test_gateway_node_methods.py -q -k "browser or commands_list_returns_bounded_native_operator_inventory"`: `80 passed`
+  - `pytest tests/test_gateway_nodes_api.py -q -k browser`: `43 passed`
+  - `pytest tests/test_gateway_method_policy.py -q`: `18 passed`
+  - `ruff check src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_commands.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py tests/test_gateway_method_policy.py`: clean
+  - `mypy src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_commands.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - bounded browser batch execution is closed.
+  - next exact seam is chat/dashboard command productization or provider/iOS-specific command boundaries.
+
+### Recovery addendum 2026-04-25 browser dashboard lifecycle America/Chicago
+
+- Queue-head seam before implementation:
+  - The installed `agent-browser` CLI exposes `dashboard start [--port <n>]` and `dashboard stop`.
+  - OpenZues had streaming and browser command bridges but no structured dashboard lifecycle methods.
+  - AI chat and provider/iOS-specific command boundaries remain separate seams.
+- Landed the write-scoped dashboard bridge:
+  - `GatewayCommandsService` now advertises `browser.dashboard.start` and `browser.dashboard.stop`.
+  - `GatewayNodeMethodService` validates optional dashboard ports in the 1-65535 range and session before dispatch.
+  - `GatewayBrowserRuntimeService` maps start/stop to installed `agent-browser dashboard` operations and returns structured runtime metadata.
+  - `gateway_method_policy` classifies both dashboard lifecycle methods as operator write-scope.
+- Product effect:
+  - operators can start or stop the local agent-browser observability dashboard through structured gateway methods.
+- Verified this continuation with:
+  - red proof: `test_commands_list_returns_bounded_native_operator_inventory` first showed `browser.dashboard.start` was absent from the native catalog.
+  - red proof: `test_browser_dashboard_dispatches_to_configured_runtime` first failed with `unsupported method: browser.dashboard.start`.
+  - red proof: `test_browser_dashboard_runtime_uses_agent_browser_dashboard_commands` first failed because `GatewayBrowserRuntimeService` had no dashboard helpers.
+  - `pytest tests/test_gateway_node_methods.py -q -k "browser_dashboard or commands_list_returns_bounded_native_operator_inventory"`: `3 passed`
+  - `pytest tests/test_gateway_nodes_api.py -q -k "browser_dashboard or commands_list"`: `3 passed`
+  - `pytest tests/test_gateway_method_policy.py::test_gateway_method_policy_mirrors_openclaw_operator_scope_groups -q`: `1 passed`
+  - `pytest tests/test_gateway_node_methods.py -q -k "browser or commands_list_returns_bounded_native_operator_inventory"`: `82 passed`
+  - `pytest tests/test_gateway_nodes_api.py -q -k browser`: `44 passed`
+  - `pytest tests/test_gateway_method_policy.py -q`: `18 passed`
+  - `ruff check src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_commands.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py tests/test_gateway_method_policy.py`: clean
+  - `mypy src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_commands.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - browser dashboard lifecycle is closed.
+  - next exact seam is chat command productization or provider/iOS-specific command boundaries.
+
+### Recovery addendum 2026-04-25 browser chat command America/Chicago
+
+- Queue-head seam before implementation:
+  - The installed `agent-browser` CLI exposes `chat <message>` with optional model, quiet, and verbose controls.
+  - OpenZues had control-chat gateway methods and browser action methods, but no structured bridge for the installed agent-browser AI chat command.
+  - Provider/iOS-specific commands and persistent proxy mutation remain separate boundary decisions.
+- Landed the write-scoped single-shot chat bridge:
+  - `GatewayCommandsService` now advertises `browser.chat`.
+  - `GatewayNodeMethodService` validates required message, optional model, mutually exclusive quiet/verbose, and session before dispatch.
+  - `GatewayBrowserRuntimeService` maps the method to installed `agent-browser chat` with top-level model/quiet/verbose flags.
+  - `gateway_method_policy` classifies `browser.chat` as operator write-scope.
+- Product effect:
+  - operators can route a one-shot natural-language browser instruction through the structured gateway method surface; missing AI Gateway credentials remain a normal runtime unavailable error rather than a silent success.
+- Verified this continuation with:
+  - red proof: `test_commands_list_returns_bounded_native_operator_inventory` first showed `browser.chat` was absent from the native catalog.
+  - red proof: `test_browser_chat_dispatches_to_configured_runtime` first failed with `unsupported method: browser.chat`.
+  - red proof: `test_browser_chat_runtime_uses_agent_browser_chat_command` first failed because `GatewayBrowserRuntimeService` had no chat helper.
+  - `pytest tests/test_gateway_node_methods.py -q -k "browser_chat or commands_list_returns_bounded_native_operator_inventory"`: `3 passed`
+  - `pytest tests/test_gateway_nodes_api.py -q -k "browser_chat or commands_list"`: `3 passed`
+  - `pytest tests/test_gateway_method_policy.py::test_gateway_method_policy_mirrors_openclaw_operator_scope_groups -q`: `1 passed`
+  - `pytest tests/test_gateway_node_methods.py -q -k "browser or commands_list_returns_bounded_native_operator_inventory"`: `84 passed`
+  - `pytest tests/test_gateway_nodes_api.py -q -k browser`: `45 passed`
+  - `pytest tests/test_gateway_method_policy.py -q`: `18 passed`
+  - `ruff check src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_commands.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py tests/test_gateway_method_policy.py`: clean
+  - `mypy src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_commands.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - browser chat command productization is closed.
+  - next exact seam is provider/iOS-specific command boundaries.
+
+### Recovery addendum 2026-04-25 browser iOS provider bridge America/Chicago
+
+- Queue-head seam before implementation:
+  - The installed `agent-browser` CLI exposes iOS provider commands including `-p ios device list`, `-p ios swipe <direction> [distance]`, and `-p ios tap <selector>`.
+  - OpenZues browser gateway methods did not expose provider-scoped iOS command bridges.
+  - Windows/non-Xcode hosts still cannot execute iOS simulator commands successfully, so runtime availability must remain honest.
+- Landed the provider-scoped iOS bridge:
+  - `GatewayCommandsService` now advertises `browser.ios.device.list`, `browser.ios.swipe`, and `browser.ios.tap`.
+  - `GatewayNodeMethodService` validates session, swipe direction/distance, and tap target before dispatch.
+  - `GatewayBrowserRuntimeService` maps the methods to installed `agent-browser --provider ios` commands.
+  - `gateway_method_policy` classifies device list as read-scope and swipe/tap as write-scope.
+- Product effect:
+  - operators can issue structured iOS-provider browser commands through OpenZues; missing Xcode/Appium/platform support is surfaced as a runtime unavailable error instead of an unsupported-method gap.
+- Verified this continuation with:
+  - red proof: `test_commands_list_returns_bounded_native_operator_inventory` first showed `browser.ios.device.list` was absent from the native catalog.
+  - red proof: `test_browser_ios_provider_dispatches_to_configured_runtime` first failed with `unsupported method: browser.ios.device.list`.
+  - red proof: `test_browser_ios_provider_runtime_uses_agent_browser_ios_commands` first failed because `GatewayBrowserRuntimeService` had no iOS provider helpers.
+  - `pytest tests/test_gateway_node_methods.py -q -k "browser_ios_provider or commands_list_returns_bounded_native_operator_inventory"`: `3 passed`
+  - `pytest tests/test_gateway_nodes_api.py -q -k "browser_ios_provider or commands_list"`: `3 passed`
+  - `pytest tests/test_gateway_method_policy.py::test_gateway_method_policy_mirrors_openclaw_operator_scope_groups -q`: `1 passed`
+  - `pytest tests/test_gateway_node_methods.py -q -k "browser or commands_list_returns_bounded_native_operator_inventory"`: `86 passed`
+  - `pytest tests/test_gateway_nodes_api.py -q -k browser`: `46 passed`
+  - `pytest tests/test_gateway_method_policy.py -q`: `18 passed`
+  - `ruff check src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_commands.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py tests/test_gateway_method_policy.py`: clean
+  - `mypy src/openzues/services/gateway_browser_runtime.py src/openzues/services/gateway_commands.py src/openzues/services/gateway_method_policy.py src/openzues/services/gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - browser command productization for the current installed-command queue is effectively closed.
+  - persistent proxy/profile mutation remains intentionally guarded by existing `node.invoke` protections.
+  - next exact seam should be selected from the repo-level parity queue outside the browser command family.
+
+### Recovery addendum 2026-04-25 cron expression schedules America/Chicago
+
+- Queue-head seam before implementation:
+  - Upstream OpenClaw `cron.add` / `cron.update` accepts `schedule.kind="cron"` with `expr`, optional `tz`, and optional `staggerMs`.
+  - OpenZues cron gateway methods only accepted `every` and `at`, so cron-expression schedules failed before persistence or launch.
+  - Browser command productization was already effectively closed, so this became the next repo-level method parity head.
+- Landed the cron-expression bridge:
+  - `TaskBlueprintCreate` / `TaskBlueprintView` now carry cron expression metadata.
+  - `GatewayCronService` normalizes cron schedules, stores expression/timezone/stagger metadata, returns them through `cron.list`, and uses a dependency-free 5/6-field cron evaluator for next-run and due-run checks.
+  - `OpsMeshService` now computes task inbox due state for cron-expression schedules instead of treating them as manual tasks.
+- Product effect:
+  - operators can create, edit, list, and manually run due cron-expression jobs through the structured gateway method surface.
+- Verified this continuation with:
+  - red proof: `test_cron_add_supports_cron_expression_schedule` first failed because `cron.add` rejected `schedule.kind="cron"`.
+  - red proof: `test_cron_update_supports_cron_expression_schedule` first failed because `cron.update` rejected `patch.schedule.kind="cron"`.
+  - red proof: API cron-expression create/update tests first returned HTTP 400 before the schedule branch existed.
+  - `pytest tests/test_gateway_node_methods.py -q -k cron`: `48 passed`
+  - `pytest tests/test_gateway_nodes_api.py -q -k cron`: `35 passed`
+  - `pytest tests/test_ops_mesh.py -q -k "cron or scheduled or due"`: `23 passed`
+  - `ruff check src/openzues/services/gateway_cron.py src/openzues/services/ops_mesh.py src/openzues/schemas.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`: clean
+  - `mypy src/openzues/services/gateway_cron.py src/openzues/services/ops_mesh.py src/openzues/schemas.py`: clean
+- Queue effect from this run:
+  - cron-expression create/update/list/due-run parity is closed for the local gateway/task-blueprint scheduler.
+  - full Croner edge semantics and persisted scheduler error telemetry remain future hardening.
+  - next exact seam should move to gateway session or agent-file surfaces.
+
+### Recovery addendum 2026-04-25 agent files bootstrap memory breadth America/Chicago
+
+- Queue-head seam before implementation:
+  - Upstream OpenClaw `agents.files.*` allows workspace bootstrap and memory files including `SOUL.md`, `TOOLS.md`, `IDENTITY.md`, `USER.md`, `HEARTBEAT.md`, `BOOTSTRAP.md`, `MEMORY.md`, and `memory.md`.
+  - OpenZues only allowed `AGENTS.md` and `.codex/AGENTS.md`, so memory/bootstrap file inventory and mutation were rejected as unsupported agent files.
+- Landed the bounded filename breadth:
+  - `GatewayAgentFilesService` now lists, reads, and writes the OpenClaw bootstrap/memory filename set while keeping fixed path allowlisting.
+  - The existing `.codex/AGENTS.md` OpenZues file remains available.
+  - Workspace escape checks are unchanged; this does not open arbitrary path access.
+- Product effect:
+  - operators can manage the same bootstrap/memory instruction files through structured `agents.files.list`, `agents.files.get`, and `agents.files.set` calls.
+- Verified this continuation with:
+  - red proof: `test_agents_files_list_includes_openclaw_bootstrap_and_memory_files` first failed because `SOUL.md` and adjacent filenames were missing from inventory.
+  - red proof: `test_agents_files_get_and_set_support_openclaw_memory_file` first failed with `unsupported agent file` for `MEMORY.md`.
+  - red proof: `test_gateway_node_method_call_endpoint_supports_agents_memory_file` first returned HTTP 400 for `MEMORY.md`.
+  - `pytest tests/test_gateway_node_methods.py -q -k agents_files`: `5 passed`
+  - `pytest tests/test_gateway_nodes_api.py -q -k "agents_files or agents_memory_file"`: `3 passed`
+  - `ruff check src/openzues/services/gateway_agent_files.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`: clean
+  - `mypy src/openzues/services/gateway_agent_files.py`: clean
+- Queue effect from this run:
+  - agent-file filename breadth is closed for OpenClaw bootstrap/memory files.
+  - next exact seam should move to gateway session or runtime-control method surfaces.
+
+### Recovery addendum 2026-04-25 plugin approval runtime America/Chicago
+
+- Queue-head seam before implementation:
+  - Upstream OpenClaw `plugin.approval.request`, `plugin.approval.list`, `plugin.approval.resolve`, and `plugin.approval.waitDecision` use an in-memory approval manager with request/resolved gateway events.
+  - OpenZues advertised and validated the family, but every valid call returned a hard `503 UNAVAILABLE` placeholder.
+- Landed the bounded plugin approval lifecycle:
+  - `GatewayNodeMethodService` now keeps local in-memory plugin approval records, lazily expires old records, supports exact and prefix resolve lookup, and records decisions.
+  - `plugin.approval.request` publishes `plugin.approval.requested` and returns OpenClaw-style two-phase acceptance metadata.
+  - `plugin.approval.list` returns pending records, `plugin.approval.resolve` publishes `plugin.approval.resolved`, and `plugin.approval.waitDecision` returns the stored decision metadata.
+- Product effect:
+  - plugin approval requests can now move end to end through the structured gateway method surface instead of dying at the dispatcher boundary.
+- Verified this continuation with:
+  - red proof: `test_plugin_approval_family_tracks_pending_records_and_decisions` first failed at `plugin.approval.request is unavailable until plugin approval runtime is wired`.
+  - red proof: `test_gateway_node_method_call_endpoint_tracks_plugin_approval_lifecycle` first failed because the HTTP endpoint returned no approval `id`.
+  - `pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k plugin_approval`: `2 passed`
+  - `ruff check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`: clean
+  - `mypy src/openzues/services/gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - plugin approval runtime lifecycle is closed for the bounded local gateway manager.
+  - next exact seam should move to `device.pair.*` or `exec.approval.*`, whichever can be backed by existing OpenZues state without inventing external device or terminal approval infrastructure.
+
+### Recovery addendum 2026-04-25 device pair runtime aliases America/Chicago
+
+- Queue-head seam before implementation:
+  - Upstream OpenClaw exposes `device.pair.list`, `device.pair.approve`, `device.pair.reject`, and `device.pair.remove` over persisted device pairing state.
+  - OpenZues already had persisted `node.pair.*` state and approval flow, but the advertised `device.pair.*` family still returned hard `503 UNAVAILABLE` responses.
+- Landed the bounded device-pair lifecycle aliases:
+  - `device.pair.list` now projects existing pending/paired node-pair state into OpenClaw-shaped `deviceId` payloads.
+  - `device.pair.approve` and `device.pair.reject` now resolve persisted pending pairing requests and broadcast `device.pair.resolved`.
+  - `device.pair.remove` now deletes a persisted paired node through a new database-backed removal helper.
+  - Device-pair payloads redact the node pairing token and expose an empty `tokens` summary rather than leaking the secret-bearing node token.
+- Product effect:
+  - operators can inspect, approve, reject, and remove paired gateway devices through the OpenClaw method names while preserving the older OpenZues node-pair API.
+- Verified this continuation with:
+  - red proof: `test_device_pair_family_uses_persisted_node_pairing_runtime` first failed at `device.pair.list is unavailable until device auth pairing runtime is wired`.
+  - red proof: `test_device_pair_reject_removes_pending_request_and_broadcasts` first failed at `device.pair.reject is unavailable until device auth pairing runtime is wired`.
+  - red proof: `test_gateway_node_method_call_endpoint_supports_device_pair_lifecycle` first returned HTTP 503 for `device.pair.list`.
+  - `pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k device_pair`: `3 passed`
+  - `pytest tests/test_gateway_node_methods.py -q -k "node_pair or device_pair"`: `15 passed`
+  - `ruff check src/openzues/database.py src/openzues/services/gateway_node_pairing.py src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`: clean
+  - `mypy src/openzues/database.py src/openzues/services/gateway_node_pairing.py src/openzues/services/gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - device-pair list/approve/reject/remove parity is closed over OpenZues' persisted paired-node substrate.
+  - token rotation/revocation remains explicitly unavailable until OpenZues owns OpenClaw's richer role-scoped device token store.
+  - next exact seam should move to `exec.approval.*` or `exec.approvals.*`.
+
+### Recovery addendum 2026-04-25 exec approval runtime America/Chicago
+
+- Queue-head seam before implementation:
+  - Upstream OpenClaw exposes `exec.approval.request`, `exec.approval.list`, `exec.approval.get`, `exec.approval.resolve`, and `exec.approval.waitDecision` over an in-memory approval manager with request/resolved gateway events.
+  - OpenZues already advertised and validated the method family, but every valid call still returned `503 UNAVAILABLE`.
+- Landed the bounded exec approval lifecycle:
+  - `GatewayNodeMethodService` now keeps local in-memory exec approval records with lazy expiry and exact/prefix pending lookup.
+  - `exec.approval.request` now normalizes command/env/session metadata, derives ask-aware allowed decisions, publishes `exec.approval.requested`, and returns OpenClaw-style two-phase acceptance metadata.
+  - `exec.approval.list` and `exec.approval.get` expose pending approval metadata.
+  - `exec.approval.resolve` validates the chosen decision against the allowed-decision set, publishes `exec.approval.resolved`, and records the decision for `exec.approval.waitDecision`.
+- Product effect:
+  - command approvals now move through a structured gateway lifecycle instead of stopping at the dispatcher boundary.
+- Verified this continuation with:
+  - red proof: `test_exec_approval_family_tracks_pending_records_and_decisions` first failed at `exec.approval.request is unavailable until exec approval runtime is wired`.
+  - red proof: `test_gateway_node_method_call_endpoint_tracks_exec_approval_lifecycle` first returned HTTP 503 for `exec.approval.request`.
+  - `pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k exec_approval`: `12 passed`
+  - `pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "exec_approval or plugin_approval or device_pair"`: `17 passed`
+  - `ruff check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`: clean
+  - `mypy src/openzues/services/gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - exec approval runtime lifecycle is closed for the bounded local gateway manager.
+  - next exact seam should move to `exec.approvals.*` policy config or device token management.
+
+### Recovery addendum 2026-04-25 exec approvals policy config America/Chicago
+
+- Queue-head seam before implementation:
+  - Upstream OpenClaw persists `exec.approvals.get`, `exec.approvals.set`, `exec.approvals.node.get`, and `exec.approvals.node.set` as JSON approval-policy files with base-hash checks and socket token redaction.
+  - OpenZues validated the method family but still returned hard `503 UNAVAILABLE` responses.
+- Landed the bounded policy-config store:
+  - `GatewayNodeMethodService` now accepts an `exec_approvals_path`, wired from `active_settings.data_dir / "settings" / "exec-approvals.json"` in the app.
+  - global `exec.approvals.get/set` now read and write that JSON file, returning path, exists, hash, and a redacted policy file.
+  - node-scoped `exec.approvals.node.get/set` now persist per-node policy files under `exec-approvals-nodes`.
+  - socket tokens are removed from returned payloads, and set calls require a matching base hash once a file already exists.
+- Product effect:
+  - operators can inspect and update exec approval policy config through the structured gateway method surface instead of stopping at dispatcher fallback.
+- Verified this continuation with:
+  - `pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k exec_approvals`: `5 passed`
+  - `ruff check src/openzues/services/gateway_node_methods.py src/openzues/app.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`: clean
+  - `mypy src/openzues/services/gateway_node_methods.py src/openzues/app.py`: clean
+- Queue effect from this run:
+  - exec approval policy config parity is closed for bounded local/global node policy files.
+  - next exact seam should move to device token rotation/revocation or another advertised hard runtime gap.
+
+### Recovery addendum 2026-04-25 device token runtime America/Chicago
+
+- Queue-head seam before implementation:
+  - Upstream OpenClaw exposes `device.token.rotate` and `device.token.revoke` over paired-device role-scoped auth tokens, with summaries surfaced through `device.pair.list`.
+  - OpenZues had the paired-device alias lifecycle, but valid token rotate/revoke calls still returned hard `503 UNAVAILABLE` responses and no durable token store existed.
+- Landed the bounded device-token runtime:
+  - Added a SQLite-backed `gateway_node_device_tokens` table keyed by device and role.
+  - `GatewayNodePairingService` now rotates role-scoped tokens, lists redacted token summaries, revokes tokens, and deletes token rows when a paired device is removed.
+  - `device.token.rotate` now returns `{deviceId, role, token, scopes, rotatedAtMs}` for paired devices and rejects unknown devices as invalid requests.
+  - `device.token.revoke` now records `revokedAtMs` for a paired device/role.
+  - `device.pair.list` now reports token summaries without leaking the secret-bearing paired-node token.
+- Product effect:
+  - paired devices can now be issued and revoked OpenClaw-shaped role tokens end to end through the gateway method API.
+- Verified this continuation with:
+  - red proof: `test_device_token_family_persists_rotate_list_and_revoke` first failed at `device.token.rotate is unavailable until device auth token runtime is wired`.
+  - red proof: `test_gateway_node_method_call_endpoint_supports_device_token_lifecycle` first returned HTTP 503 for `device.token.rotate`.
+  - `pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k device_token`: `6 passed`
+  - `pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "device_pair or device_token or node_pair"`: `27 passed`
+  - `ruff check src/openzues/database.py src/openzues/services/gateway_node_pairing.py src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`: clean
+  - `mypy src/openzues/database.py src/openzues/services/gateway_node_pairing.py src/openzues/services/gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - device token rotation/revocation parity is closed for OpenZues' persisted paired-device substrate.
+  - next exact seam should move to channel/session delivery methods such as `send`, `poll`, `chat.*`, or `sessions.*`.
+
+### Recovery addendum 2026-04-25 agent registry mutation America/Chicago
+
+- Queue-head seam before implementation:
+  - Upstream OpenClaw exposes `agents.create`, `agents.update`, and `agents.delete` to mutate configured agents, ensure workspaces, and write identity metadata.
+  - OpenZues had `agents.list` and `agent.identity.get`, but all three mutation methods returned hard `503 UNAVAILABLE` responses.
+- Landed the bounded custom-agent registry:
+  - Added a SQLite-backed `gateway_agents` table keyed by agent id.
+  - `GatewayAgentsService` now creates, updates, lists, and deletes custom agents while preserving the built-in `main` agent.
+  - Create/update materialize the target workspace and write a bounded `IDENTITY.md` with name/emoji/avatar metadata.
+  - `agents.create/update/delete` now route through that service, while database-less service instances still preserve the explicit unavailable boundary.
+- Product effect:
+  - operators can now manage custom agents through the same gateway method family that already lists the built-in agent.
+- Verified this continuation with:
+  - red proof: `test_agents_mutate_methods_persist_custom_agent_lifecycle` first failed at `agents.create is unavailable until multi-agent registry mutation is wired`.
+  - red proof: `test_gateway_node_method_call_endpoint_supports_agents_mutation_lifecycle` first returned HTTP 503 for `agents.create`.
+  - `pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "agents_mutate or agents_mutation or agents_list_returns"`: `6 passed`
+  - `pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "agents_list or agents_files or agents_mutate or agents_mutation or agent_identity"`: `23 passed`
+  - `pytest tests/test_gateway_method_policy.py -q`: `18 passed`
+  - `ruff check src/openzues/database.py src/openzues/services/gateway_agents.py src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py tests/test_gateway_method_policy.py`: clean
+  - `mypy src/openzues/database.py src/openzues/services/gateway_agents.py src/openzues/services/gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - custom-agent mutation parity is closed for the bounded SQLite registry and workspace identity-file path.
+  - next exact seam should move to config mutation or the channel/session delivery methods.
+
+### Recovery addendum 2026-04-25 config mutation runtime America/Chicago
+
+- Queue-head seam before implementation:
+  - Upstream OpenClaw exposes `config.set`, `config.patch`, and `config.apply` as writable config methods with base-hash protection and durable file writes.
+  - OpenZues exposed `config.get` and `config.openFile`, but the write methods still returned hard `503 UNAVAILABLE` responses.
+- Landed the bounded OpenZues config owner:
+  - `GatewayConfigService` now owns `settings/control-ui-config.json` as a writable control-UI config file.
+  - `config.set` and `config.apply` validate full control-UI config JSON and persist it.
+  - `config.patch` merges JSON object patches into the current config before validation and write.
+  - Writes enforce base-hash guards once the config file exists, and `config.get` reads back the durable file.
+- Product effect:
+  - the gateway config write method family now moves through an actual durable OpenZues config file instead of stopping at dispatcher placeholders.
+- Verified this continuation with:
+  - red proof: the config write API test first expected hard-503 placeholders for set/patch/apply.
+  - `pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "config_get or config_open_file or config_write or control_ui_config"`: `12 passed`
+  - `ruff check src/openzues/services/gateway_config.py src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`: clean
+  - `mypy src/openzues/services/gateway_config.py src/openzues/services/gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - config write parity is closed for the bounded OpenZues control-UI config file.
+  - next exact seam should move to channel/session delivery methods or memory-doctor mutation.
+
+### Recovery addendum 2026-04-25 memory-doctor mutation runtime America/Chicago
+
+- Queue-head seam before implementation:
+  - Upstream OpenClaw exposes `doctor.memory.backfillDreamDiary`, `doctor.memory.resetDreamDiary`, `doctor.memory.resetGroundedShortTerm`, `doctor.memory.repairDreamingArtifacts`, and `doctor.memory.dedupeDreamDiary` as operator repair controls over dreaming artifacts.
+  - OpenZues had read-only `doctor.memory.status` and `doctor.memory.dreamDiary`, but every valid mutation call returned a hard `503 UNAVAILABLE` response.
+- Landed the bounded dreaming-artifact owner:
+  - `GatewayNodeMethodService` now mutates the configured memory-doctor workspace for the five doctor-memory mutation methods.
+  - Backfill scans workspace memory markdown and appends a marked OpenZues backfill block into `DREAMS.md`.
+  - Reset removes generated dream backfill entries, grounded short-term reset removes transient short-term markdown, repair recreates missing dream artifacts, and dedupe removes duplicate diary bullets.
+- Product effect:
+  - the memory-doctor gateway method family now performs bounded local repair work instead of stopping at dispatcher placeholders.
+- Verified this continuation with:
+  - `pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k doctor_memory`: `6 passed`
+  - `ruff check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`: clean
+  - `mypy src/openzues/services/gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - memory-doctor mutation parity is closed for bounded OpenZues workspace dreaming artifacts.
+  - next exact seam should move to channel/session delivery methods such as `send`, `poll`, `chat.*`, or `sessions.*`.
+
+### Recovery addendum 2026-04-25 chat origin-route provenance America/Chicago
+
+- Queue-head seam before implementation:
+  - Upstream OpenClaw accepts admin-scoped `chat.send` origin-route fields and passes them into the run context so the agent knows the external reply route.
+  - OpenZues validated the same fields but still returned hard `503 UNAVAILABLE` responses for valid admin calls.
+- Landed the bounded OpenZues route-provenance path:
+  - `chat.send` now preserves explicit `originatingChannel`, `originatingTo`, `originatingAccountId`, and `originatingThreadId` in a structured route-provenance envelope in the submitted runtime message.
+  - Non-admin callers remain blocked before runtime execution.
+  - Broader system-provenance injection remains an honest guarded seam.
+- Product effect:
+  - admin-originated gateway chat sends can now carry OpenClaw-style external route context into the control-chat runtime instead of failing at the dispatcher boundary.
+- Verified this continuation with:
+  - `pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "originating_fields or originating_route or system_provenance"`: `8 passed`
+  - `ruff check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`: clean
+  - `mypy src/openzues/services/gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - `chat.send` explicit origin-route fields are closed for bounded runtime context preservation.
+  - next exact seam should move to the next channel/session hard gap, likely `chat.send` system provenance or another `sessions.*` transcript/runtime delta.
+
+### Recovery addendum 2026-04-25 chat system provenance America/Chicago
+
+- Queue-head seam before implementation:
+  - Upstream OpenClaw accepts admin-scoped `chat.send` `systemInputProvenance` and `systemProvenanceReceipt` fields and carries them into the agent run.
+  - OpenZues validated and scope-gated those fields, but valid admin calls still returned hard `503 UNAVAILABLE` responses.
+- Landed the bounded OpenZues system-provenance path:
+  - `chat.send` now preserves valid input provenance in a structured OpenClaw input-provenance envelope in the submitted runtime message.
+  - `systemProvenanceReceipt` is prepended to the submitted runtime message, matching the OpenClaw behavior shape.
+  - Non-admin callers remain blocked before runtime execution, and falsey/invalid provenance remains omitted.
+- Product effect:
+  - admin-originated gateway chat sends can now carry OpenClaw-style system provenance into the control-chat runtime instead of failing at the dispatcher boundary.
+- Verified this continuation with:
+  - `pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "originating_fields or originating_route or system_provenance"`: `8 passed`
+  - `ruff check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`: clean
+  - `mypy src/openzues/services/gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - `chat.send` explicit system-provenance fields are closed for bounded runtime context preservation.
+  - next exact seam should move to the next channel/session transcript/runtime gap, likely `chat.inject` transcript fidelity or another `sessions.*` delta.
+
+### Recovery addendum 2026-04-25 idle sessions.steer runtime America/Chicago
+
+- Queue-head seam before implementation:
+  - `sessions.steer` is meant to interrupt an active run when one exists, then submit a new message.
+  - OpenZues required a chat abort runtime for every `sessions.steer` call, so an idle session with only the chat send runtime wired could still fail before it did useful work.
+- Landed the bounded idle-steer path:
+  - `sessions.steer` now requires the abort runtime only when a tracked active run exists or the message is an explicit stop command.
+  - Idle steer calls can send through the chat runtime without an abort service.
+  - Active-run interruption and stop-command behavior remain guarded by the abort runtime.
+- Product effect:
+  - OpenZues no longer rejects safe idle steering just because interruption support is absent in a narrow service wiring.
+- Verified this continuation with:
+  - `pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k sessions_steer`: `19 passed`
+  - `ruff check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`: clean
+  - `mypy src/openzues/services/gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - idle `sessions.steer` is closed as a false runtime blocker.
+  - next exact seam should move to the next channel/session transcript/runtime gap, likely `chat.inject` transcript fidelity or session preview/history breadth.
+
+### Recovery addendum 2026-04-25 custom-agent sessions bridge America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenZues could persist custom agents through `agents.create/update/delete`, but `sessions.create` still rejected every non-`main` `agentId`.
+  - `sessions.list agentId=...` also treated all custom agents as unknown, so the new agent registry could not participate in session orchestration.
+- Landed the bounded custom-agent session bridge:
+  - `GatewayAgentsService` now exposes an `agent_exists` check over the built-in agent plus the SQLite custom-agent registry.
+  - `sessions.create` validates custom agents through that registry and, when no explicit key is supplied, generates `agent:<id>:main:thread:<generated>` session keys.
+  - Created custom-agent sessions record `agentId` metadata and reject mismatched `agentId` / `sessionKey` pairs.
+  - `GatewaySessionsService` now accepts persisted custom agents for snapshot and resolve filtering.
+- Product effect:
+  - custom agents are no longer isolated registry entries; they can own sessions and be filtered through the gateway session inventory.
+- Verified this continuation with:
+  - `pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "sessions_create or sessions_list_filters_by_agent"`: `4 passed`
+  - `ruff check src/openzues/services/gateway_node_methods.py src/openzues/services/gateway_sessions.py src/openzues/services/gateway_agents.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`: clean
+  - `mypy src/openzues/services/gateway_node_methods.py src/openzues/services/gateway_sessions.py src/openzues/services/gateway_agents.py`: clean
+- Queue effect from this run:
+  - custom-agent session creation/filtering is closed for the bounded SQLite registry.
+  - next exact seam should move to the next channel/session gap, likely custom-agent identity/file/session consistency or remaining transcript runtime breadth.
+
+### Recovery addendum 2026-04-25 live session-event display hygiene America/Chicago
+
+- Queue-head seam before implementation:
+  - Upstream OpenClaw strips inline assistant directives such as `[[reply_to_current]]` and `[[audio_as_voice]]` from live chat/session events.
+  - Upstream OpenClaw also suppresses assistant-only `NO_REPLY`, `ANNOUNCE_SKIP`, and `REPLY_SKIP` live deltas instead of broadcasting them as visible messages.
+  - OpenZues had already applied that hygiene to `chat.history` and `sessions.preview`, but live `session.message` events still emitted raw directive text and skip-only control rows.
+- Landed the bounded OpenZues event projection path:
+  - `GatewaySessionsService.build_message_event_payload` now strips inline reply/audio directives before building the broadcast `message.content` text.
+  - Assistant-only skip/control rows now return no `session.message` event.
+  - The paired message-phase `sessions.changed` event is also suppressed for those skip-only assistant rows, while persisted transcript rows remain available for non-display read models.
+- Product effect:
+  - live gateway subscribers now see the same OpenClaw-style display text as history/preview consumers instead of leaking control directives or skip tokens.
+- Verified this continuation with:
+  - red proof: `test_chat_inject_sanitizes_live_session_message_events` first emitted two `session.message` events, including a visible `NO_REPLY` row.
+  - `pytest tests/test_gateway_node_methods.py -q -k "chat_inject_sanitizes_live_session_message_events"`: `1 passed`
+  - `pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "chat_inject or session_message or chat_history or sessions_preview"`: `14 passed`
+  - `ruff check src/openzues/services/gateway_sessions.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`: clean
+  - `mypy src/openzues/services/gateway_sessions.py`: clean
+- Queue effect from this run:
+  - live session event display hygiene is closed for the bounded `chat.inject`/session-event path.
+  - next exact seam should stay in `chat.*` / `sessions.*`, likely final/delta event shape, `sessions.get` fidelity, or another transcript replay mismatch proven from the upstream OpenClaw tests.
+
+### Recovery addendum 2026-04-25 live session-event usage metadata America/Chicago
+
+- Queue-head seam before implementation:
+  - Upstream OpenClaw includes live usage metadata on transcript `session.message` and message-phase `sessions.changed` events, including fresh token totals and estimated cost.
+  - OpenZues persisted assistant `usage_json` / `cost_json` for `chat.history`, but the live event builders still left `inputTokens`, `outputTokens`, and `totalTokens` empty.
+- Landed the bounded OpenZues event metadata path:
+  - `GatewaySessionsService` now reads message-level `usage_json` and `cost_json` when building `session.message` and message-phase `sessions.changed` events.
+  - Event payloads project `inputTokens`, `outputTokens`, `totalTokens`, `totalTokensFresh`, and `estimatedCostUsd` without widening the session snapshot model.
+  - Usage totals accept OpenClaw-style `input` / `output` keys and fall back to explicit total fields when present.
+- Product effect:
+  - live transcript subscribers can display fresh usage/cost telemetry for assistant rows instead of waiting for slower session-level usage summaries.
+- Verified this continuation with:
+  - red proof: `test_message_payloads_surface_live_usage_metadata` first failed with `inputTokens` still `None`.
+  - `pytest tests/test_gateway_sessions.py -q -k "live_usage_metadata"`: `1 passed`
+  - `pytest tests/test_gateway_sessions.py tests/test_gateway_node_methods.py -q -k "message_payloads_surface or chat_inject_sanitizes_live_session_message_events or chat_inject_appends"`: `4 passed`
+  - `ruff check src/openzues/services/gateway_sessions.py tests/test_gateway_sessions.py tests/test_gateway_node_methods.py`: clean
+  - `mypy src/openzues/services/gateway_sessions.py`: clean
+- Queue effect from this run:
+  - live usage/cost transcript event metadata is closed for persisted control-chat rows.
+  - next exact seam should stay in session event metadata breadth, `sessions.get` fidelity, or SSE/history replay parity.
+
+### Recovery addendum 2026-04-25 session event metadata breadth America/Chicago
+
+- Queue-head seam before implementation:
+  - Upstream OpenClaw includes spawned-session ownership metadata and route-thread metadata on live `session.message` and message-phase `sessions.changed` transcript events.
+  - OpenZues session snapshots already carried part of the spawned metadata, but transcript events only copied a narrow fixed subset and omitted `forkedFromParent` plus route fields.
+- Landed the bounded OpenZues event metadata copier:
+  - `GatewaySessionsService` now includes `forkedFromParent`, `lastChannel`, `lastTo`, `lastAccountId`, and `lastThreadId` in session payloads when present in persisted metadata.
+  - `session.message` and message-phase `sessions.changed` now copy persisted session metadata fields such as spawned ownership, execution settings, send policy, group activation, fork state, and route identity from the session payload.
+- Product effect:
+  - live transcript subscribers can recover session ownership and reply-route context directly from the event stream instead of needing a separate session snapshot refresh.
+- Verified this continuation with:
+  - red proof: `test_message_payloads_surface_spawn_and_route_metadata` first returned `None` for the expected spawned/route fields on live events.
+  - `pytest tests/test_gateway_sessions.py -q -k "spawn_and_route_metadata"`: `1 passed`
+  - `pytest tests/test_gateway_sessions.py tests/test_gateway_node_methods.py -q -k "message_payloads_surface or chat_inject_sanitizes_live_session_message_events or chat_inject_appends or sessions_patch_persists_current_session_metadata"`: `6 passed`
+  - `ruff check src/openzues/services/gateway_sessions.py tests/test_gateway_sessions.py tests/test_gateway_node_methods.py`: clean
+  - `mypy src/openzues/services/gateway_sessions.py`: clean
+- Queue effect from this run:
+  - live session event metadata breadth is closed for persisted OpenZues session metadata.
+  - next exact seam should move to session message subscription/filtering parity, `sessions.get` fidelity, or SSE fast-path replay gaps.
+
+### Recovery addendum 2026-04-25 sessions.get cursor pagination America/Chicago
+
+- Queue-head seam before implementation:
+  - Upstream OpenClaw direct session history reads support bounded cursor pagination while preserving the `messages` field.
+  - OpenZues `sessions.get` returned only a flat `messages` array and rejected a valid `cursor` parameter.
+- Landed the bounded OpenZues read-model path:
+  - `sessions.get` now accepts `cursor` alongside `key` / `sessionKey` and `limit`.
+  - When the visible transcript spans multiple pages or a cursor is supplied, the response includes `sessionKey`, `items`, `messages`, `hasMore`, and `nextCursor`.
+  - Returned messages carry raw `__openclaw.seq` metadata based on persisted row sequence, so hidden assistant skip rows do not renumber visible messages.
+  - The string `nextCursor` value can be passed directly back into the next `sessions.get` call.
+  - Legacy one-page reads still return the existing flat `{"messages": [...]}` shape.
+- Product effect:
+  - clients can page through bounded OpenZues session history without losing compatibility with the existing `messages` field or raw transcript sequence references.
+- Verified this continuation with:
+  - red proof: `test_sessions_get_supports_cursor_pagination_with_raw_sequence_metadata` first failed because `sessions.get` rejected `cursor`, then failed again until string `nextCursor` values were accepted on follow-up calls.
+  - `pytest tests/test_gateway_node_methods.py -q -k "sessions_get_supports_cursor_pagination"`: `1 passed`
+  - `pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "sessions_get"`: `5 passed`
+  - `ruff check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`: clean
+  - `mypy src/openzues/services/gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - `sessions.get` cursor pagination is closed for persisted control-chat transcripts.
+  - next exact seam should stay with session history read-model fidelity, unknown-session status, or SSE fast-path parity.
+
+### Recovery addendum 2026-04-25 sessions.patch target-session resolution America/Chicago
+
+- Queue-head seam before implementation:
+  - Upstream OpenClaw applies `sessions.patch` to the resolved target session entry in the session store.
+  - OpenZues validated the same family of patch fields, but only allowed the current session key and rejected metadata-backed child sessions as not found.
+- Landed the bounded OpenZues target-session path:
+  - `sessions.patch` now resolves the requested canonical session with `GatewaySessionsService.build_session_payload_for_key` before applying metadata updates.
+  - Metadata-backed child sessions and message-backed sessions can be patched without being the current control-chat session.
+  - The response now returns the patched target entry instead of always rebuilding the current session payload.
+- Product effect:
+  - subagent/thread sessions can be relabeled or updated through the gateway method runtime without first becoming the active session.
+- Verified this continuation with:
+  - red proof: `test_sessions_patch_persists_metadata_backed_child_session` first failed with `session not found` for a valid child session.
+  - `pytest tests/test_gateway_node_methods.py -q -k "sessions_patch_persists_metadata_backed_child_session"`: `1 passed`
+  - `pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "sessions_patch"`: `3 passed`
+  - `ruff check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`: clean
+  - `mypy src/openzues/services/gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - `sessions.patch` target-session resolution is closed for persisted OpenZues session metadata.
+  - next exact seam should stay with remaining `sessions.*` parameter breadth, lifecycle hook/event fidelity, or session history replay behavior.
+
+### Recovery addendum 2026-04-25 sessions.create agent-main alias America/Chicago
+
+- Queue-head seam before implementation:
+  - Upstream OpenClaw treats `sessions.create({ key: "main", agentId })` as an
+    agent-scoped main alias and stores `agent:<id>:main`.
+  - OpenZues accepted custom-agent session creation, but an explicit
+    `key="main"` canonicalized to `agent:main:main` and then failed the
+    existing `agentId` / `sessionKey` consistency guard.
+- Landed the bounded OpenZues alias path:
+  - `sessions.create` now rewrites an explicit `key="main"` with a requested
+    persisted custom `agentId` to `agent:<id>:main` before the mismatch guard.
+  - Other explicit keys continue through the existing canonicalization and
+    mismatch validation.
+  - Created metadata records still preserve the custom `agentId` and label.
+- Product effect:
+  - custom agents can now materialize their main session through the same
+    OpenClaw alias that dashboard clients send, instead of requiring callers to
+    pre-expand the full `agent:<id>:main` key.
+- Verified this continuation with:
+  - red proof: `test_sessions_create_scopes_main_alias_to_requested_agent`
+    first failed with `ValueError("agentId does not match sessionKey")`.
+  - `pytest tests/test_gateway_node_methods.py -q -k "sessions_create_scopes_main_alias"`: `1 passed`
+  - `pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "sessions_create"`: `5 passed`
+  - `ruff check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`: clean
+  - `mypy src/openzues/services/gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - `sessions.create` agent-main alias scoping is closed for persisted custom
+    agents.
+  - next exact seam should stay with `sessions.create` sentinel/parameter
+    fidelity or another adjacent session lifecycle gap from the upstream
+    session tests.
+
+### Recovery addendum 2026-04-25 sessions.create sentinel keys America/Chicago
+
+- Queue-head seam before implementation:
+  - Upstream OpenClaw preserves literal `global` and `unknown` keys during
+    `sessions.create`, even when callers supply an `agentId`.
+  - OpenZues canonicalized those keys correctly, but then rejected them through
+    the same `agentId` / `sessionKey` mismatch guard used for ordinary agent
+    sessions.
+- Landed the bounded OpenZues sentinel path:
+  - `sessions.create` now allows literal `global` and `unknown` keys to bypass
+    the agent-scope mismatch guard.
+  - The created metadata remains stored under `global` / `unknown`; no
+    `agent:<id>:global` or `agent:<id>:unknown` records are created.
+  - Ordinary explicit session keys still enforce the mismatch guard.
+- Product effect:
+  - OpenClaw dashboard/session-store clients can create or refresh sentinel
+    sessions without having to special-case OpenZues custom-agent validation.
+- Verified this continuation with:
+  - red proof: `test_sessions_create_preserves_global_and_unknown_sentinel_keys`
+    first failed with `ValueError("agentId does not match sessionKey")`.
+  - `pytest tests/test_gateway_node_methods.py -q -k "sessions_create_preserves_global_and_unknown_sentinel_keys"`: `1 passed`
+  - `pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "sessions_create"`: `6 passed`
+  - `ruff check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`: clean
+  - `mypy src/openzues/services/gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - `sessions.create` sentinel-key preservation is closed for literal
+    `global` / `unknown`.
+  - next exact seam should continue through session-create response fidelity or
+    session-list transcript usage/model fallback parity from the upstream
+    session tests.
+
+### Recovery addendum 2026-04-25 sessions.create initial-turn messageSeq America/Chicago
+
+- Queue-head seam before implementation:
+  - Upstream OpenClaw returns `messageSeq: 1` when `sessions.create` starts the
+    first agent turn from an initial `task` / `message`.
+  - OpenZues started the run and returned `runStarted`, `runId`, and `status`,
+    but omitted the pending transcript sequence from the create response.
+- Landed the bounded OpenZues response path:
+  - `sessions.create` now computes the pending message sequence before
+    submitting the initial message.
+  - Successful initial create runs attach `messageSeq` when the underlying
+    runtime did not already provide it.
+  - The broader `sessions.send` / `sessions.steer` response shapes remain
+    unchanged for existing `status="ok"` app-runtime responses.
+- Product effect:
+  - dashboard clients can link the first submitted user turn from
+    `sessions.create` to the same visible transcript sequence used by OpenClaw.
+- Verified this continuation with:
+  - red proof: the method/API tests first failed with missing `messageSeq`.
+  - `pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "sessions_create_registers_metadata_session_and_sends_initial_message or sessions_create_api_registers_session_and_sends_initial_message"`: `2 passed`
+  - `pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "sessions_send or sessions_steer or sessions_create"`: `47 passed`
+  - `ruff check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`: clean
+  - `mypy src/openzues/services/gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - initial-turn `sessions.create` response sequence parity is closed for the
+    bounded OpenZues runtime.
+  - next exact seam should move to `sessions.list` transcript usage/model
+    fallback parity from the adjacent upstream session tests.
+
+### Recovery addendum 2026-04-25 sessions.list transcript usage/model fallback America/Chicago
+
+- Queue-head seam before implementation:
+  - Upstream OpenClaw derives session-list token usage, fresh total status,
+    estimated cost, model identity, and context-token fallback from assistant
+    transcript rows when session-store metadata is stale or incomplete.
+  - OpenZues persisted assistant usage/cost JSON for history and live events,
+    but session snapshots still returned `None` for token totals and had no
+    transcript model identity persistence.
+- Landed the bounded OpenZues snapshot path:
+  - `control_chat_messages` now includes nullable `model_provider` and `model`
+    columns, with migration coverage for existing databases.
+  - `append_control_chat_message` accepts optional assistant model identity.
+  - `GatewaySessionsService` aggregates assistant transcript usage into
+    `inputTokens`, `outputTokens`, prompt-style `totalTokens`,
+    `totalTokensFresh`, and `estimatedCostUsd`.
+  - Delivery-mirror rows no longer replace the real model identity when they
+    only carry zero/no-op usage.
+  - Known Anthropic Claude Sonnet 4 transcript identity maps to the 1,048,576
+    context-token fallback used by the upstream proof.
+- Product effect:
+  - `sessions.list` can now display meaningful usage/model telemetry for
+    transcript-backed OpenZues sessions without waiting for a separate session
+    summary writer.
+- Verified this continuation with:
+  - red proof: `test_build_snapshot_surfaces_transcript_usage_and_model_fallbacks`
+    first failed because transcript rows could not carry model identity.
+  - `pytest tests/test_gateway_sessions.py -q -k "transcript_usage_and_model_fallbacks or discovers_mission_and_transcript_sessions_without_metadata or agent_filter_includes_main_legacy_sessions"`: `3 passed`
+  - `pytest tests/test_gateway_sessions.py -q -k "snapshot or message_payloads_surface or live_usage_metadata or spawn_and_route_metadata"`: `18 passed`
+  - `pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "sessions_list or sessions_create or chat_history"`: `32 passed`
+  - `ruff check src/openzues/database.py src/openzues/services/gateway_sessions.py tests/test_gateway_sessions.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`: clean
+  - `mypy src/openzues/database.py src/openzues/services/gateway_sessions.py`: clean
+- Queue effect from this run:
+  - `sessions.list` transcript usage/model fallback is closed for persisted
+    OpenZues assistant rows.
+  - next exact seam should continue with `sessions.changed` mutation-event
+    usage metadata or another adjacent session lifecycle/read-model gap.
+
+### Recovery addendum 2026-04-25 sessions.changed mutation usage metadata America/Chicago
+
+- Queue-head seam before implementation:
+  - Upstream OpenClaw includes live usage metadata on `sessions.changed`
+    mutation events, not only on message-phase transcript events.
+  - OpenZues session snapshots could now derive usage/model fields, but
+    `build_changed_event_payload` still omitted `totalTokensFresh` and
+    `estimatedCostUsd`.
+- Landed the bounded OpenZues event path:
+  - mutation `sessions.changed` payloads now copy optional
+    `totalTokensFresh` and `estimatedCostUsd` from the resolved session payload.
+  - Existing token counts, model identity, context tokens, and metadata copying
+    remain unchanged.
+- Product effect:
+  - subscribers receiving patch/reset/create-style session mutation events can
+    display the same fresh usage/cost status as `sessions.list`.
+- Verified this continuation with:
+  - red proof: `test_changed_event_payload_surfaces_transcript_usage_metadata`
+    first failed with missing `totalTokensFresh`.
+  - `pytest tests/test_gateway_sessions.py -q -k "changed_event_payload_surfaces_transcript_usage_metadata"`: `1 passed`
+  - `pytest tests/test_gateway_sessions.py -q -k "snapshot or changed_event_payload_surfaces_transcript_usage_metadata or message_payloads_surface or live_usage_metadata or spawn_and_route_metadata"`: `19 passed`
+  - `pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "sessions_list or sessions_create or chat_history or sessions_patch"`: `35 passed`
+  - `ruff check src/openzues/services/gateway_sessions.py tests/test_gateway_sessions.py`: clean
+  - `mypy src/openzues/database.py src/openzues/services/gateway_sessions.py`: clean
+- Queue effect from this run:
+  - mutation `sessions.changed` usage metadata is closed for transcript-derived
+    OpenZues session payloads.
+  - next exact seam should continue with remaining session lifecycle metadata
+    such as reset/delete/compaction event fidelity.
+
+### Recovery addendum 2026-04-25 sessions.changed setting/route metadata America/Chicago
+
+- Queue-head seam before implementation:
+  - Upstream OpenClaw mutation `sessions.changed` events include session
+    settings and external route metadata such as `responseUsage`, `fastMode`,
+    `lastChannel`, `lastTo`, `lastAccountId`, and `lastThreadId`.
+  - OpenZues snapshots and message-phase events carried those fields, but
+    mutation `sessions.changed` events only copied a narrower metadata subset.
+- Landed the bounded OpenZues event path:
+  - mutation `sessions.changed` payloads now copy persisted route metadata from
+    the resolved session payload.
+  - `forkedFromParent` is also copied for parity with the live transcript event
+    metadata path.
+- Product effect:
+  - subscribers receiving session mutation events can update route/reply context
+    without forcing a separate session-list refresh.
+- Verified this continuation with:
+  - red proof: `test_changed_event_payload_surfaces_session_setting_route_metadata`
+    first failed with missing `lastChannel`.
+  - `pytest tests/test_gateway_sessions.py -q -k "changed_event_payload_surfaces_session_setting_route_metadata"`: `1 passed`
+  - `pytest tests/test_gateway_sessions.py -q -k "snapshot or changed_event_payload_surfaces or message_payloads_surface or live_usage_metadata or spawn_and_route_metadata"`: `20 passed`
+  - `pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "sessions_list or sessions_create or chat_history or sessions_patch"`: `35 passed`
+  - `ruff check src/openzues/services/gateway_sessions.py tests/test_gateway_sessions.py`: clean
+  - `mypy src/openzues/database.py src/openzues/services/gateway_sessions.py`: clean
+- Queue effect from this run:
+  - mutation `sessions.changed` setting/route metadata is closed for persisted
+    OpenZues session metadata.
+  - next exact seam should stay in the adjacent session event metadata cluster.
+
+### Recovery addendum 2026-04-25 sessions.patch subagent alias resolution America/Chicago
+
+- Queue-head seam before implementation:
+  - Upstream OpenClaw accepts request aliases such as `subagent:child` and
+    mutates the stored `agent:main:subagent:child` session entry.
+  - OpenZues could resolve the alias enough to find the entry, but still wrote
+    metadata, returned `key`, and published `sessions.changed` under the raw
+    `subagent:child` request key.
+- Landed the bounded OpenZues alias path:
+  - `sessions.patch` now replaces the request key with the resolved session
+    payload key before reading/writing metadata.
+  - Patch responses and `sessions.changed` events now use the resolved
+    agent-store key.
+  - The existing subagent ownership fields continue to flow through the session
+    payload and event payload.
+- Product effect:
+  - dashboard clients can use OpenClaw request aliases while OpenZues keeps one
+    canonical persisted subagent session record.
+- Verified this continuation with:
+  - red proof: `test_sessions_patch_uses_resolved_subagent_store_key` first
+    returned `subagent:child` instead of `agent:main:subagent:child`.
+  - `pytest tests/test_gateway_node_methods.py -q -k "sessions_patch_uses_resolved_subagent_store_key"`: `1 passed`
+  - `pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "sessions_patch or sessions_reset or sessions_delete"`: `8 passed`
+  - `pytest tests/test_gateway_sessions.py -q -k "changed_event_payload_surfaces_session_setting_route_metadata or spawn_and_route_metadata"`: `2 passed`
+  - `ruff check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py`: clean
+  - `mypy src/openzues/services/gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - `sessions.patch` subagent alias resolution is closed for default-agent
+    subagent request keys.
+  - next exact seam should continue through session reset/delete alias fidelity
+    or list/read-model details.
+
+### Recovery addendum 2026-04-25 sessions route thread-id string fidelity America/Chicago
+
+- Queue-head seam before implementation:
+  - Upstream OpenClaw stores external delivery thread ids as strings when the
+    provider requires it, for example Slack-style decimal thread ids such as
+    `1737500000.123456`.
+  - OpenZues had just added `deliveryContext` projection, but route thread ids
+    still flowed through an integer-only parser. Decimal string ids were
+    silently dropped from both session snapshots and mutation
+    `sessions.changed` payloads.
+- Landed the bounded OpenZues route metadata path:
+  - `GatewaySessionsService` now preserves integer route thread ids as
+    integers and string route thread ids as strings.
+  - `deliveryContext.threadId`, raw `lastThreadId`, and mutation
+    `sessions.changed` payloads now all share the same preserved value.
+- Product effect:
+  - OpenClaw dashboard/session-store clients can round-trip provider-native
+    thread ids without losing reply context when the id is not an integer.
+- Verified this continuation with:
+  - red proof: `test_route_metadata_preserves_string_thread_ids` first failed
+    with missing `lastThreadId`.
+  - `pytest tests/test_gateway_sessions.py -q -k "route_metadata_preserves_string_thread_ids"`: `1 passed`
+  - `pytest tests/test_gateway_sessions.py -q -k "snapshot or route_metadata_preserves_string_thread_ids or delivery_context_from_route_metadata or changed_event_payload_surfaces or message_payloads_surface"`: `22 passed`
+  - `pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "sessions_list or sessions_reset or sessions_patch"`: `26 passed`
+  - `ruff check src/openzues/services/gateway_sessions.py tests/test_gateway_sessions.py`: clean
+  - `mypy src/openzues/services/gateway_sessions.py`: clean
+- Queue effect from this run:
+  - string `lastThreadId` route metadata is closed for persisted OpenZues
+    session metadata, snapshots, and mutation events.
+  - next exact seam should continue through adjacent session-store RPC
+    response fidelity.
+
+### Recovery addendum 2026-04-25 sessions.list defaults model-provider parity America/Chicago
+
+- Queue-head seam before implementation:
+  - Upstream OpenClaw includes `defaults.modelProvider` in the `sessions.list`
+    response header so clients know the default provider without inspecting a
+    specific session row.
+  - OpenZues returned `defaults.model`, `contextTokens`, and `mainSessionKey`,
+    but omitted `modelProvider`.
+- Landed the bounded OpenZues response-shape path:
+  - `GatewaySessionsService.build_snapshot` now includes
+    `defaults.modelProvider: "openai"` alongside the existing default model
+    fields.
+  - Existing session-row model provider resolution remains unchanged.
+- Product effect:
+  - OpenClaw-compatible clients can read provider/model defaults from the same
+    header object before selecting or creating a session.
+- Verified this continuation with:
+  - red proof: `test_build_snapshot_includes_current_main_session_without_persisted_rows`
+    first failed with missing `defaults.modelProvider`.
+  - `pytest tests/test_gateway_sessions.py -q -k "includes_current_main_session_without_persisted_rows"`: `1 passed`
+  - `pytest tests/test_gateway_node_methods.py -q -k "sessions_list_returns_bounded_singleton_control_chat_inventory"`: `1 passed`
+  - `pytest tests/test_gateway_sessions.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "sessions_list"`: `20 passed`
+  - `ruff check src/openzues/services/gateway_sessions.py tests/test_gateway_sessions.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`: clean
+  - `mypy src/openzues/services/gateway_sessions.py`: clean
+- Queue effect from this run:
+  - `sessions.list` default provider response-shape parity is closed for the
+    current OpenZues OpenAI-backed runtime.
+  - next exact seam should continue through adjacent `sessions.*` response
+    fidelity.
+
+### Recovery addendum 2026-04-25 sessions.list stale-token freshness parity America/Chicago
+
+- Queue-head seam before implementation:
+  - Upstream OpenClaw distinguishes fresh transcript token totals from stale or
+    absent usage by returning `totalTokensFresh: false` on rows without fresh
+    usage.
+  - OpenZues returned `totalTokensFresh: true` only when transcript aggregation
+    produced a fresh prompt-token total, and otherwise omitted the field.
+- Landed the bounded OpenZues freshness marker:
+  - session payloads now include `totalTokensFresh: false` when transcript
+    usage has not proved a fresh total.
+  - Existing fresh transcript rows still emit `totalTokensFresh: true`.
+- Product effect:
+  - dashboard/session clients can render a reliable freshness indicator instead
+    of inferring stale state from a missing field.
+- Verified this continuation with:
+  - red proof: `test_build_snapshot_includes_current_main_session_without_persisted_rows`
+    first failed because no-usage rows lacked `totalTokensFresh`.
+  - `pytest tests/test_gateway_sessions.py -q -k "includes_current_main_session_without_persisted_rows"`: `1 passed`
+  - `pytest tests/test_gateway_sessions.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "sessions_list or changed_event_payload_surfaces or message_payloads_surface or route_metadata_preserves_string_thread_ids"`: `26 passed`
+  - `ruff check src/openzues/services/gateway_sessions.py tests/test_gateway_sessions.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`: clean
+  - `mypy src/openzues/services/gateway_sessions.py`: clean
+- Queue effect from this run:
+  - stale/no-usage token freshness response-shape parity is closed for session
+    snapshots and mutation-event payloads.
+  - next exact seam should continue through adjacent `sessions.*` response
+    fidelity.
+
+### Recovery addendum 2026-04-25 sessions.patch provider/model override parity America/Chicago
+
+- Queue-head seam before implementation:
+  - Upstream OpenClaw preserves provider-qualified model overrides such as
+    `nvidia/moonshotai/kimi-k2.5` as separate `providerOverride` and
+    `modelOverride` fields, while also resolving list rows under that provider
+    and model identity.
+  - OpenZues treated every `sessions.patch model=...` value as a bare OpenAI
+    model override and returned/listed the full provider-qualified string as
+    the model.
+- Landed the bounded OpenZues override path:
+  - `sessions.patch` now splits explicit `provider/model-id` values into
+    persisted `providerOverride` and `modelOverride`.
+  - Bare model values continue to use the legacy `model` metadata override.
+  - Patch responses keep an OpenClaw-style `entry` shape for provider/model
+    overrides while returning the resolved provider/model separately.
+  - Session snapshots resolve provider/model override metadata into top-level
+    `modelProvider` and `model` fields for list/read consumers.
+- Product effect:
+  - OpenClaw-compatible clients can choose non-default providers without losing
+    the provider boundary or misclassifying the model as an OpenAI override.
+- Verified this continuation with:
+  - red proof: `test_sessions_patch_preserves_provider_model_override_split`
+    first failed with missing `providerOverride`.
+  - `pytest tests/test_gateway_node_methods.py -q -k "sessions_patch_preserves_provider_model_override_split"`: `1 passed`
+  - `pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py tests/test_gateway_sessions.py -q -k "sessions_patch or sessions_list or sessions_reset or provider_model_override_split"`: `27 passed`
+  - `ruff check src/openzues/services/gateway_node_methods.py src/openzues/services/gateway_sessions.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py tests/test_gateway_sessions.py`: clean
+  - `mypy src/openzues/services/gateway_node_methods.py src/openzues/services/gateway_sessions.py`: clean
+- Queue effect from this run:
+  - provider/model override response-shape parity is closed for session patch
+    and list/read payloads.
+  - next exact seam should continue through adjacent `sessions.*` response
+    fidelity.
+
+### Recovery addendum 2026-04-25 sessions.reset model metadata normalization parity America/Chicago
+
+- Queue-head seam before implementation:
+  - Upstream OpenClaw resets stale runtime model fields back to the selected
+    default while preserving explicit provider/model overrides as user-owned
+    overrides.
+  - OpenZues preserved all session metadata on reset, so stale runtime
+    `modelProvider` / `model` / `contextTokens` rows could survive as if they
+    were current overrides, and legacy provider/model overrides had no
+    `modelOverrideSource`.
+- Landed the bounded OpenZues reset normalization:
+  - `sessions.reset` now drops stale runtime model metadata when it is not an
+    explicit provider/model override.
+  - explicit `providerOverride` + `modelOverride` metadata survives reset and
+    gains `modelOverrideSource: "user"` when the source was missing.
+  - auto/fallback override metadata is cleared so reset returns to the selected
+    default model.
+- Product effect:
+  - reset sessions no longer inherit stale provider/runtime context, while
+    deliberate user model overrides remain visible and source-tagged.
+- Verified this continuation with:
+  - red proofs: `test_sessions_reset_discards_stale_runtime_model_metadata`
+    first returned the stale Qwen model, and
+    `test_sessions_reset_marks_legacy_provider_model_override_as_user` first
+    lacked `modelOverrideSource`.
+  - `pytest tests/test_gateway_node_methods.py -q -k "reset_discards_stale_runtime_model_metadata or reset_marks_legacy_provider_model_override_as_user"`: `2 passed`
+  - `pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py tests/test_gateway_sessions.py -q -k "sessions_reset or sessions_patch or sessions_list or reset_discards_stale_runtime_model_metadata or reset_marks_legacy_provider_model_override_as_user"`: `29 passed`
+  - `ruff check src/openzues/services/gateway_node_methods.py src/openzues/services/gateway_sessions.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py tests/test_gateway_sessions.py`: clean
+  - `mypy src/openzues/services/gateway_node_methods.py src/openzues/services/gateway_sessions.py`: clean
+- Queue effect from this run:
+  - session reset model metadata normalization is closed for stale runtime
+    fields, explicit user overrides, and auto/fallback override cleanup.
+  - next exact seam should continue through adjacent `sessions.*` response
+    fidelity.
+
+### Recovery addendum 2026-04-25 sessions.reset owned-child metadata parity America/Chicago
+
+- Queue-head seam before implementation:
+  - Upstream OpenClaw preserves spawned child session metadata through
+    `sessions.reset`, including group/channel fields, auth-profile overrides,
+    queue settings, CLI bindings, custom display name, and nested delivery
+    context.
+  - OpenZues reset preserved the SQLite metadata row, but the session payload
+    projector only surfaced a smaller subset, so clients could not see much of
+    that ownership metadata after reset/list/event refreshes.
+- Landed the bounded OpenZues read-model projection:
+  - session payloads now surface group/channel fields, TTS mode,
+    auth-profile override metadata, queue policy metadata, custom display name,
+    CLI session ids/bindings, and nested `deliveryContext`.
+  - existing spawned ownership, subagent, execution, route, and model metadata
+    projections remain intact.
+- Product effect:
+  - reset child sessions keep enough OpenClaw-shaped ownership context for
+    dashboard clients and gateway subscribers to resume the right lane without
+    losing queue/auth/CLI/delivery hints.
+- Verified this continuation with:
+  - red proof: `test_sessions_reset_preserves_owned_child_metadata` first
+    returned the default `OpenZues Control Chat Thread` display name instead of
+    the persisted child display name.
+  - `pytest tests/test_gateway_node_methods.py -q -k "sessions_reset_preserves_owned_child_metadata"`: `1 passed`
+  - `pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py tests/test_gateway_sessions.py -q -k "sessions_reset or sessions_patch or sessions_list or changed_event_payload_surfaces or message_payloads_surface or owned_child_metadata"`: `35 passed`
+  - `ruff check src/openzues/services/gateway_sessions.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py tests/test_gateway_sessions.py`: clean
+  - `mypy src/openzues/services/gateway_sessions.py src/openzues/services/gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - owned child reset metadata projection is closed for the bounded SQLite
+    session metadata OpenZues owns.
+  - next exact seam should continue through adjacent `sessions.*` response
+    fidelity.
+
+### Recovery addendum 2026-04-25 sessions.preview mixed-case alias parity America/Chicago
+
+- Queue-head seam before implementation:
+  - Upstream OpenClaw resolves legacy mixed-case main aliases and prefers the
+    freshest duplicate row for preview rendering.
+  - OpenZues preview queried the canonical alias set but then merged stale and
+    fresh mixed-case rows into one preview result.
+- Landed the bounded OpenZues preview lookup:
+  - `sessions.preview` now de-duplicates alias rows by keeping the newest exact
+    stored alias for a canonical request key.
+  - Normal canonical preview behavior and skip/directive suppression remain
+    unchanged.
+- Product effect:
+  - preview consumers no longer see stale duplicate transcript rows when older
+    mixed-case aliases exist alongside a fresher canonical-equivalent row.
+- Verified this continuation with:
+  - red proof: `test_sessions_preview_resolves_mixed_case_main_alias_duplicates`
+    first returned both stale and fresh preview rows.
+  - `pytest tests/test_gateway_node_methods.py -q -k "sessions_preview_resolves_mixed_case_main_alias_duplicates"`: `1 passed`
+  - `pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "sessions_preview"`: `4 passed`
+  - `ruff check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`: clean
+  - `mypy src/openzues/services/gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - mixed-case preview alias freshness is closed for OpenZues' SQLite-backed
+    transcript previews.
+  - next exact seam should continue through adjacent `sessions.*` alias cleanup
+    and response fidelity.
+
+### Recovery addendum 2026-04-25 sessions.delete alias resolution parity America/Chicago
+
+- Queue-head seam before implementation:
+  - Upstream OpenClaw mutators clean legacy/request aliases by resolving them
+    to the canonical session-store key before writing or deleting.
+  - OpenZues already resolved aliases for `sessions.patch` and `sessions.reset`,
+    but `sessions.delete` still deleted/responded under the raw request alias.
+- Landed the bounded OpenZues delete path:
+  - `sessions.delete` now resolves the request through
+    `GatewaySessionsService.build_session_payload_for_key` before main-session
+    protection, transcript deletion, metadata deletion, and response shaping.
+- Product effect:
+  - callers can delete with aliases such as `subagent:child` while OpenZues
+    removes the canonical `agent:main:subagent:child` metadata/transcript row.
+- Verified this continuation with:
+  - red proof: `test_sessions_delete_uses_resolved_subagent_store_key` first
+    returned `subagent:child` instead of `agent:main:subagent:child`.
+  - `pytest tests/test_gateway_node_methods.py -q -k "sessions_delete_uses_resolved_subagent_store_key"`: `1 passed`
+  - `pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "sessions_delete or sessions_patch or sessions_reset or sessions_compact"`: `27 passed`
+  - `ruff check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`: clean
+  - `mypy src/openzues/services/gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - delete alias resolution is closed for the bounded SQLite session mutation
+    path.
+  - next exact seam should continue through adjacent `sessions.*` alias cleanup
+    and response fidelity.
+
+### Recovery addendum 2026-04-25 sessions.compact alias resolution parity America/Chicago
+
+- Queue-head seam before implementation:
+  - Upstream OpenClaw mutators resolve request aliases to the backing
+    session-store key before writing checkpoint or transcript state.
+  - OpenZues already resolved aliases for patch/reset/delete, but compacting
+    `subagent:child` could still return and checkpoint under the raw request
+    alias.
+- Landed the bounded OpenZues compaction path:
+  - `sessions.compact` now resolves the request through
+    `GatewaySessionsService.build_session_payload_for_key` before calling the
+    compaction service and publishing the mutation event.
+- Product effect:
+  - callers can compact with aliases such as `subagent:child` while OpenZues
+    archives and rewrites the canonical `agent:main:subagent:child` transcript.
+- Verified this continuation with:
+  - red proof: `test_sessions_compact_uses_resolved_subagent_store_key` first
+    returned `subagent:child` instead of `agent:main:subagent:child`.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_compact_uses_resolved_subagent_store_key"`: `1 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "sessions_compact or sessions_delete or sessions_patch or sessions_reset"`: `28 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`: clean
+  - `python -m mypy src\openzues\services\gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - compact alias resolution is closed for the bounded SQLite session
+    compaction path.
+  - next exact seam should continue through adjacent `sessions.*` alias cleanup
+    and response fidelity.
+
+### Recovery addendum 2026-04-25 sessions.compaction.restore alias resolution parity America/Chicago
+
+- Queue-head seam before implementation:
+  - The compaction restore path should use the same resolved session-store key
+    as compact/delete/reset when it looks up checkpoints and republishes
+    session mutation events.
+  - OpenZues still sent raw request aliases such as `subagent:child` into the
+    checkpoint lookup, so a canonical subagent checkpoint could not be restored
+    through its short alias.
+- Landed the bounded OpenZues restore path:
+  - `sessions.compaction.restore` now resolves the request through
+    `GatewaySessionsService.build_session_payload_for_key` before aborting
+    tracked runs, loading metadata, restoring checkpoint history, rebuilding the
+    session entry, and publishing `checkpoint-restore`.
+- Product effect:
+  - callers can restore with aliases such as `subagent:child` while OpenZues
+    rehydrates the canonical `agent:main:subagent:child` transcript and emits a
+    canonical session change event.
+- Verified this continuation with:
+  - red proof: `test_sessions_compaction_restore_uses_resolved_subagent_store_key`
+    first failed with `checkpoint not found` because restore searched under
+    `subagent:child`.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_compaction_restore_uses_resolved_subagent_store_key"`: `1 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "sessions_compaction or sessions_compact"`: `16 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`: clean
+  - `python -m mypy src\openzues\services\gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - restore alias resolution is closed for the bounded SQLite session
+    compaction path.
+  - next exact seam should continue through compaction inventory read aliases or
+    adjacent `sessions.*` response fidelity.
+
+### Recovery addendum 2026-04-25 sessions.compaction inventory alias resolution parity America/Chicago
+
+- Queue-head seam before implementation:
+  - Compaction inventory reads should use the same resolved session-store key
+    as compact and restore, otherwise short aliases cannot see canonical
+    checkpoint rows.
+  - OpenZues still passed raw request aliases into
+    `sessions.compaction.list/get`.
+- Landed the bounded OpenZues inventory path:
+  - added one internal session-key resolver that canonicalizes a request key
+    and, when `GatewaySessionsService` can find an existing entry, upgrades it
+    to that entry's stored key.
+  - wired `sessions.compaction.list` and `sessions.compaction.get` through that
+    resolver before checkpoint inventory/detail lookup.
+- Product effect:
+  - callers can list or fetch checkpoint details with aliases such as
+    `subagent:child` while OpenZues reads the canonical
+    `agent:main:subagent:child` checkpoint rows.
+- Verified this continuation with:
+  - red proof: `test_sessions_compaction_inventory_reads_use_resolved_subagent_store_key`
+    first failed with `checkpoint not found` because get searched under
+    `subagent:child`.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_compaction_inventory_reads_use_resolved_subagent_store_key"`: `1 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "sessions_compaction or sessions_compact or sessions_delete or sessions_patch or sessions_reset"`: `30 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`: clean
+  - `python -m mypy src\openzues\services\gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - compaction list/get alias resolution is closed for the bounded SQLite
+    checkpoint inventory path.
+  - next exact seam should continue through compaction branch alias cleanup or
+    adjacent `sessions.*` response fidelity.
+
+### Recovery addendum 2026-04-25 sessions.compaction.branch alias resolution parity America/Chicago
+
+- Queue-head seam before implementation:
+  - Checkpoint branching should use the same resolved source session-store key
+    as compact, restore, and inventory reads.
+  - OpenZues looked up the source entry through the session service but kept
+    using the raw request alias for metadata copy, checkpoint branch lookup,
+    parent-session metadata, and source event publication.
+- Landed the bounded OpenZues branch path:
+  - `sessions.compaction.branch` now resolves the request through the shared
+    existing-session resolver before copying metadata, deriving the branch base,
+    calling the compaction branch service, and publishing source/target
+    `sessions.changed` events.
+- Product effect:
+  - callers can branch from a checkpoint with aliases such as `subagent:child`
+    while OpenZues forks the canonical `agent:main:subagent:child` checkpoint
+    and records the canonical parent session on the new branch entry.
+- Verified this continuation with:
+  - red proof: `test_sessions_compaction_branch_uses_resolved_subagent_store_key`
+    first failed with `checkpoint not found` because branch searched under
+    `subagent:child`.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_compaction_branch_uses_resolved_subagent_store_key"`: `1 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "sessions_compaction or sessions_compact or sessions_delete or sessions_patch or sessions_reset"`: `31 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`: clean
+  - `python -m mypy src\openzues\services\gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - compaction alias cleanup is closed for compact, restore, list, get, and
+    branch in the bounded SQLite session compaction path.
+  - next exact seam should move to adjacent `sessions.*` response fidelity.
+
+### Recovery addendum 2026-04-25 sessions.messages subscription alias resolution parity America/Chicago
+
+- Queue-head seam before implementation:
+  - Scoped session-message subscriptions should resolve short request aliases
+    before storing hub filters, otherwise canonical `session.message` events do
+    not reach short-alias subscribers.
+  - OpenZues returned and subscribed `subagent:child` even when the persisted
+    session-store key was `agent:main:subagent:child`.
+- Landed the bounded OpenZues subscription path:
+  - `sessions.messages.subscribe` and `sessions.messages.unsubscribe` now use
+    the shared existing-session resolver before returning the key and updating
+    `BroadcastHub` scoped message filters.
+- Product effect:
+  - clients can subscribe/unsubscribe with aliases such as `subagent:child`
+    while OpenZues routes canonical subagent `session.message` events to the
+    right client and removes that same filter on unsubscribe.
+- Verified this continuation with:
+  - red proof: `test_sessions_messages_subscribe_uses_resolved_subagent_store_key`
+    first returned `subagent:child` instead of `agent:main:subagent:child`.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_messages_subscribe_uses_resolved_subagent_store_key"`: `1 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "sessions_messages_subscribe or sessions_messages_unsubscribe or sessions_compaction or sessions_compact"`: `26 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`: clean
+  - `python -m mypy src\openzues\services\gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - scoped message subscription alias resolution is closed for the bounded hub
+    filter path.
+  - next exact seam should continue through adjacent `sessions.*` response
+    fidelity.
+
+### Recovery addendum 2026-04-25 sessions.get alias resolution parity America/Chicago
+
+- Queue-head seam before implementation:
+  - Session transcript reads should resolve short aliases to the existing
+    session-store key before querying persisted control-chat rows.
+  - OpenZues still passed `subagent:child` directly into transcript lookup,
+    which returned an empty message list even when the canonical
+    `agent:main:subagent:child` transcript existed.
+- Landed the bounded OpenZues read path:
+  - `sessions.get` now resolves the requested `key` / `sessionKey` through the
+    shared existing-session resolver before building the transcript payload.
+- Product effect:
+  - callers can fetch child transcripts with aliases such as `subagent:child`
+    while OpenZues reads the canonical stored transcript.
+- Verified this continuation with:
+  - red proof: `test_sessions_get_uses_resolved_subagent_store_key` first
+    returned `{"messages": []}` for a populated canonical child transcript.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_get_uses_resolved_subagent_store_key"`: `1 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "sessions_get or sessions_messages_subscribe or sessions_messages_unsubscribe or sessions_compaction"`: `27 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`: clean
+  - `python -m mypy src\openzues\services\gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - `sessions.get` alias resolution is closed for the bounded SQLite transcript
+    read path.
+  - next exact seam should continue through adjacent session usage/read-model
+    fidelity.
+
+### Recovery addendum 2026-04-25 sessions.usage alias resolution parity America/Chicago
+
+- Queue-head seam before implementation:
+  - Session usage read models should resolve short aliases to the existing
+    session-store key before reading persisted mission usage, transcript rows,
+    or usage-linked logs.
+  - OpenZues still routed `sessions.usage.timeseries` mission lookup through
+    `subagent:child`, which produced a valid session id but no usage points for
+    a populated canonical child mission.
+- Landed the bounded OpenZues usage path:
+  - `sessions.usage`, `sessions.usage.timeseries`, and `sessions.usage.logs`
+    now resolve request keys through the shared existing-session resolver before
+    their usage builders run.
+- Product effect:
+  - callers can fetch child usage summaries, timeseries points, and
+    usage-linked logs with aliases such as `subagent:child` while OpenZues reads
+    the canonical `agent:main:subagent:child` mission/transcript data.
+- Verified this continuation with:
+  - red proof: `test_sessions_usage_timeseries_uses_resolved_subagent_store_key`
+    first returned zero points for a populated canonical child mission.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_usage_summary_uses_resolved_subagent_store_key or sessions_usage_timeseries_uses_resolved_subagent_store_key or sessions_usage_logs_uses_resolved_subagent_store_key"`: `3 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "sessions_usage or sessions_get or sessions_messages_subscribe or sessions_messages_unsubscribe"`: `23 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`: clean
+  - `python -m mypy src\openzues\services\gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - session usage alias resolution is closed for summary, timeseries, and logs
+    in the bounded SQLite-backed read model.
+  - next exact seam should continue through adjacent session-keyed read/write
+    surfaces.
+
+### Recovery addendum 2026-04-25 chat.history alias resolution parity America/Chicago
+
+- Queue-head seam before implementation:
+  - `chat.history` should use the same resolved session-store key as
+    `sessions.get` before reading transcript rows and persisted session
+    settings.
+  - OpenZues still queried and returned `subagent:child`, producing empty
+    history and missing metadata for a populated canonical child transcript.
+- Landed the bounded OpenZues history path:
+  - `chat.history` now resolves `sessionKey` through the shared
+    existing-session resolver before building the OpenClaw-shaped history
+    payload.
+- Product effect:
+  - callers can fetch chat history with aliases such as `subagent:child` while
+    OpenZues returns the canonical child transcript and metadata.
+- Verified this continuation with:
+  - red proof: `test_chat_history_uses_resolved_subagent_store_key` first
+    returned `subagent:child` instead of `agent:main:subagent:child`.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history_uses_resolved_subagent_store_key"`: `1 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "chat_history or sessions_get or sessions_usage"`: `22 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`: clean
+  - `python -m mypy src\openzues\services\gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - `chat.history` alias resolution is closed for the bounded SQLite-backed
+    transcript history path.
+  - next exact seam should continue through adjacent session-keyed runtime
+    paths if a focused mismatch is proven.
+
+### Recovery addendum 2026-04-25 chat/session send alias resolution parity America/Chicago
+
+- Queue-head seam before implementation:
+  - Runtime send paths should resolve short aliases to the existing
+    session-store key before dispatching to the control-chat bridge, tracking
+    runs, counting pending messages, or publishing session-change events.
+  - `chat.send`, `sessions.send`, and `sessions.steer` still handed
+    `subagent:child` directly to the injected runtime.
+- Landed the bounded OpenZues runtime path:
+  - `chat.send` now resolves `sessionKey` through the shared existing-session
+    resolver before stop-command handling, attachment/runtime dispatch, run
+    tracking, and events.
+  - `sessions.send` and `sessions.steer` now resolve `key` before
+    deleted-agent checks, pending-message counts, stop handling, runtime
+    dispatch, run tracking, and events.
+- Product effect:
+  - callers can send or steer with aliases such as `subagent:child` while
+    OpenZues dispatches against the canonical
+    `agent:main:subagent:child` session.
+- Verified this continuation with:
+  - red proofs:
+    - `test_chat_send_uses_resolved_subagent_store_key` first observed runtime
+      dispatch to `subagent:child`.
+    - `test_sessions_send_and_steer_use_resolved_subagent_store_key` first
+      observed both wrapper methods dispatching to `subagent:child`.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_send_uses_resolved_subagent_store_key"`: `1 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_send_and_steer_use_resolved_subagent_store_key"`: `2 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "chat_send or sessions_send or sessions_steer or chat_history or sessions_get or sessions_usage"`: `106 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`: clean
+  - `python -m mypy src\openzues\services\gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - send/steer alias resolution is closed for the bounded injected
+    control-chat runtime path.
+  - next exact seam should continue through remaining session-keyed runtime
+    surfaces such as abort/wait if a focused mismatch is proven.
+
+### Recovery addendum 2026-04-25 chat.abort alias resolution parity America/Chicago
+
+- Queue-head seam before implementation:
+  - Runtime abort should resolve short aliases to the existing session-store key
+    before looking up and interrupting the active tracked run.
+  - `chat.abort` still handed `subagent:child` directly to the injected abort
+    runtime, so a canonical child run could not be interrupted through its short
+    alias and the returned `runIds` list lost the active run id.
+- Landed the bounded OpenZues abort path:
+  - `chat.abort` now resolves `sessionKey` through the shared existing-session
+    resolver before `_abort_gateway_chat_run` performs run lookup, runtime
+    interruption, and run-id cleanup.
+- Product effect:
+  - callers can abort with aliases such as `subagent:child` while OpenZues
+    interrupts the canonical `agent:main:subagent:child` active run.
+- Verified this continuation with:
+  - red proof: `test_chat_abort_uses_resolved_subagent_store_key` first
+    observed the abort runtime receiving `subagent:child`.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_abort_uses_resolved_subagent_store_key"`: `1 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "chat_abort or chat_send or sessions_send or sessions_steer"`: `91 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`: clean
+  - `python -m mypy src\openzues\services\gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - abort alias resolution is closed for the bounded injected control-chat
+    runtime path.
+  - next exact seam should continue through remaining session-keyed runtime
+    surfaces such as wait/result polling if a focused mismatch is proven.
+
+### Recovery addendum 2026-04-25 sessions.abort alias resolution parity America/Chicago
+
+- Queue-head seam before implementation:
+  - Session-level abort should resolve short aliases to the existing
+    session-store key before looking up the active tracked run and before
+    publishing the abort event.
+  - `sessions.abort` still handed `subagent:child` directly to the injected
+    abort runtime, so a canonical child run could not be interrupted through the
+    wrapper alias.
+- Landed the bounded OpenZues session-abort path:
+  - `sessions.abort` now resolves `key` through the shared existing-session
+    resolver before `_abort_gateway_chat_run` and before the abort
+    `sessions.changed` event is published.
+- Product effect:
+  - callers can abort with aliases such as `subagent:child` through either
+    `chat.abort` or `sessions.abort` while OpenZues interrupts and reports the
+    canonical `agent:main:subagent:child` active run.
+- Verified this continuation with:
+  - red proof: `test_sessions_abort_uses_resolved_subagent_store_key` first
+    observed the abort runtime receiving `subagent:child`.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_abort_uses_resolved_subagent_store_key"`: `1 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "sessions_abort or chat_abort or chat_send or sessions_send or sessions_steer"`: `96 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`: clean
+  - `python -m mypy src\openzues\services\gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - session-abort alias resolution is closed for the bounded injected
+    control-chat runtime path.
+  - next exact seam should continue through remaining session-keyed lifecycle
+    or runtime surfaces if a focused mismatch is proven.
+
+### Recovery addendum 2026-04-25 sessions.preview alias resolution parity America/Chicago
+
+- Queue-head seam before implementation:
+  - Multi-session preview should resolve short aliases to the existing
+    session-store key before reading transcript rows.
+  - `sessions.preview` still read `subagent:child` directly, so a populated
+    canonical `agent:main:subagent:child` child transcript returned `missing`.
+- Landed the bounded OpenZues preview path:
+  - each preview key now resolves through the shared existing-session resolver
+    for storage lookup while preserving the caller's requested key in the
+    response slot.
+- Product effect:
+  - callers can preview child sessions with aliases such as `subagent:child`
+    without losing the input-key mapping in the multi-preview response.
+- Verified this continuation with:
+  - red proof: `test_sessions_preview_uses_resolved_subagent_store_key` first
+    returned `missing` for a populated canonical child transcript.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_preview_uses_resolved_subagent_store_key"`: `1 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "sessions_preview or sessions_get or chat_history or sessions_usage"`: `27 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`: clean
+  - `python -m mypy src\openzues\services\gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - preview alias resolution is closed for the bounded SQLite-backed transcript
+    preview read model.
+  - next exact seam should continue through remaining session-keyed lifecycle
+    or runtime surfaces if a focused mismatch is proven.
+
+### Recovery addendum 2026-04-25 tools.effective alias resolution parity America/Chicago
+
+- Queue-head seam before implementation:
+  - Effective tool inventory should resolve short aliases to the existing
+    session-store key before deriving session-scoped toolsets.
+  - `tools.effective` still read metadata and mission toolsets through
+    `subagent:child`, so a canonical child session configured with
+    `hermes-cli` fell back to the minimal profile.
+- Landed the bounded OpenZues effective-tools path:
+  - `tools.effective` now resolves `sessionKey` through the shared
+    existing-session resolver before deriving the effective agent id and
+    calling `_resolve_effective_toolsets`.
+- Product effect:
+  - callers can request effective tools with aliases such as `subagent:child`
+    and receive the real canonical child session's tool posture.
+- Verified this continuation with:
+  - red proof: `test_tools_effective_uses_resolved_subagent_store_key` first
+    returned profile `minimal` for a canonical child session with
+    `toolsets=["hermes-cli"]`.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "tools_effective_uses_resolved_subagent_store_key"`: `1 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "tools_effective or tools_catalog or sessions_preview"`: `12 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`: clean
+  - `python -m mypy src\openzues\services\gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - effective-tool inventory alias resolution is closed for the bounded
+    SQLite-backed session metadata and mission toolset path.
+  - next exact seam should continue through remaining session-keyed lifecycle,
+    runtime, or provenance surfaces if a focused mismatch is proven.
+
+### Recovery addendum 2026-04-25 direct send provenance alias parity America/Chicago
+
+- Queue-head seam before implementation:
+  - direct channel `send` should resolve known source-session aliases before
+    handing provenance to the delivery runtime.
+  - the method still forwarded `subagent:child` directly as `session_key`, so
+    outbound delivery records could point at the alias instead of the canonical
+    child store key.
+- Landed the bounded OpenZues direct-send path:
+  - direct `send` now asks the session service whether the provided source key
+    is a known session; known aliases resolve to the stored key, while unknown
+    structural route keys are preserved exactly for backwards-compatible route
+    provenance.
+- Product effect:
+  - outbound delivery provenance can link to canonical child sessions for known
+    aliases such as `subagent:child` without lowercasing or rewriting unrelated
+    structural route source keys.
+- Verified this continuation with:
+  - red proof: `test_send_uses_resolved_subagent_store_key_for_delivery_provenance`
+    first observed channel delivery receiving `subagent:child`.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "send_uses_resolved_subagent_store_key_for_delivery_provenance"`: `1 passed`
+  - `python -m pytest tests\test_gateway_nodes_api.py -q -k "send_endpoint_delivers_channel_target_message_and_records_outbound_delivery or send_endpoint_delivers_channel_target_media_and_records_outbound_delivery"`: `2 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "send_ or poll_ or message_action"`: `140 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`: clean
+  - `python -m mypy src\openzues\services\gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - known source-session alias resolution is closed for direct channel send
+    delivery provenance.
+  - next exact seam should continue through remaining session-keyed lifecycle,
+    runtime, or provenance surfaces if a focused mismatch is proven.
+
+### Recovery addendum 2026-04-25 approval provenance alias parity America/Chicago
+
+- Queue-head seam before implementation:
+  - durable approval requests should resolve known source-session aliases before
+    storing and broadcasting approval provenance.
+  - `plugin.approval.request` and `exec.approval.request` still stored
+    `subagent:child` directly, so approval events and list/get responses could
+    point at the short alias instead of the canonical child session.
+- Landed the bounded OpenZues approval-provenance path:
+  - added a known-session resolver that preserves unknown legacy session ids but
+    maps recognized aliases to the stored session key.
+  - plugin approval requests, exec approval requests, nested exec
+    `systemRunPlan.sessionKey`, and direct send provenance now use that
+    known-session resolver.
+- Product effect:
+  - approval lifecycles can be correlated with canonical child sessions for
+    known aliases such as `subagent:child` without rewriting unrelated legacy
+    ids like `session-1`.
+- Verified this continuation with:
+  - red proof: `test_plugin_approval_request_uses_resolved_subagent_store_key`
+    first observed the approval event storing `subagent:child`.
+  - red proof: `test_exec_approval_request_uses_resolved_subagent_store_key`
+    first observed the approval event storing `subagent:child`.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "plugin_approval_request_uses_resolved_subagent_store_key"`: `1 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "exec_approval_request_uses_resolved_subagent_store_key"`: `1 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "plugin_approval or exec_approval or send_uses_resolved_subagent_store_key_for_delivery_provenance"`: `12 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`: clean
+  - `python -m mypy src\openzues\services\gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - known source-session alias resolution is closed for plugin/exec approval
+    provenance.
+  - next exact seam should continue through remaining session-keyed lifecycle,
+    runtime, or provenance surfaces if a focused mismatch is proven.
+
+### Recovery addendum 2026-04-25 node.event internal routing alias parity America/Chicago
+
+- Queue-head seam before implementation:
+  - node event handlers should resolve known source-session aliases before
+    subscribing nodes to chat streams or routing internal wake/runtime events.
+  - `node.event` still subscribed a node under `subagent:child`, so canonical
+    child session pushes to `agent:main:subagent:child` did not reach the node.
+- Landed the bounded OpenZues node-event routing path:
+  - internal node-event routing now resolves known `payload.sessionKey` values
+    through the known-session resolver before chat subscription, exec/notification
+    wake events, voice transcript routing, and agent-request routing.
+  - the raw recorded node event and public node-event broadcast are preserved as
+    received for auditability.
+- Product effect:
+  - mobile/remote nodes can subscribe or route work with aliases such as
+    `subagent:child` while OpenZues delivers follow-up session events through
+    the canonical child session.
+- Verified this continuation with:
+  - red proof: `test_node_event_chat_subscribe_uses_resolved_subagent_store_key`
+    first observed zero canonical child session deliveries after subscribing
+    with `subagent:child`.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "node_event_chat_subscribe_uses_resolved_subagent_store_key"`: `1 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "node_event or node_invoke"`: `37 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`: clean
+  - `python -m mypy src\openzues\services\gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - known source-session alias resolution is closed for internal node-event
+    routing.
+  - next exact seam should continue through remaining session-keyed lifecycle,
+    runtime, or provenance surfaces if a focused mismatch is proven.
+
+### Recovery addendum 2026-04-25 wake alias resolution parity America/Chicago
+
+- Queue-head seam before implementation:
+  - wake queue requests should resolve known source-session aliases before
+    deriving agent id and persisting the wake target.
+  - `wake` still queued `subagent:child` directly and did not derive the
+    `main` agent id from the canonical child session.
+- Landed the bounded OpenZues wake path:
+  - `wake` now resolves known `sessionKey` values through the known-session
+    resolver before validating/deriving agent identity and before queueing the
+    wake request.
+- Product effect:
+  - wake requests can target canonical child sessions for aliases such as
+    `subagent:child`, preserving de-dupe and dispatch semantics tied to the
+    stored session key.
+- Verified this continuation with:
+  - red proof: `test_wake_uses_resolved_subagent_store_key` first observed the
+    queued wake missing `agent_id` and not targeting the canonical child key.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "wake_uses_resolved_subagent_store_key"`: `1 passed`
+  - `python -m pytest tests\test_gateway_nodes_api.py -q -k "wake_now_auto_retries_after_submit_error"`: `1 passed` on rerun after one timing-sensitive broad-selection failure
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "wake or cron_wake"`: `50 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`: clean
+  - `python -m mypy src\openzues\services\gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - known source-session alias resolution is closed for direct wake queueing.
+  - next exact seam should continue through remaining session-keyed lifecycle,
+    runtime, or provenance surfaces if a focused mismatch is proven.
+
+### Recovery addendum 2026-04-25 custom-agent child alias parity America/Chicago
+
+- Queue-head seam before implementation:
+  - short child aliases such as `subagent:child` should resolve to the known
+    canonical session even when that canonical store key belongs to a custom
+    agent, for example `agent:builder-prime:subagent:child`.
+  - `agent.identity.get` still treated that request alias as the default main
+    agent and returned the OpenZues identity.
+- Landed the bounded OpenZues alias resolver path:
+  - shared known/existing session-key resolution now falls back to a unique
+    session-id lookup when direct key lookup misses.
+  - `agent.identity.get` applies the known-session resolver before deriving
+    the session agent id, while malformed agent keys are still rejected first.
+- Product effect:
+  - mobile/remote clients can use OpenClaw request aliases for custom-agent
+    child sessions without losing agent identity or routing scope.
+- Verified this continuation with:
+  - red proof:
+    `test_agent_identity_get_uses_resolved_custom_subagent_store_key` first
+    observed `subagent:child` returning the `main` identity instead of the
+    stored `builder-prime` custom-agent identity.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "agent_identity_get_uses_resolved_custom_subagent_store_key"`: `1 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "agent_identity or sessions_resolve or sessions_get or sessions_preview or chat_abort or sessions_abort or tools_effective or send_uses_resolved_subagent_store_key_for_delivery_provenance or plugin_approval or exec_approval or node_event_chat_subscribe or wake_uses_resolved"`: `72 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`: clean
+  - `python -m mypy src\openzues\services\gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - custom-agent child aliases are now covered by the shared resolver.
+  - next exact seam should continue through advertised session lifecycle or
+    runtime-control surfaces that still bypass canonical session metadata.
+
+### Recovery addendum 2026-04-25 custom-agent launch alias parity America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw-style `agent` launches should be able to target persisted custom
+    agents and their canonical child sessions.
+  - OpenZues still rejected `agentId=builder-prime` as unknown in the bounded
+    control-chat launch path and checked raw `subagent:child` as a main-agent
+    session before consulting the session inventory.
+- Landed the bounded OpenZues agent launch path:
+  - `agent` now validates `agentId` through the persisted agent registry
+    instead of hard-coding `main`.
+  - known `sessionKey` aliases are resolved before deriving launch scope, while
+    malformed or explicitly mismatched `agent:*` keys still fail early.
+- Product effect:
+  - custom-agent runtime launches can use request aliases such as
+    `subagent:child` and dispatch to canonical custom-agent sessions such as
+    `agent:builder-prime:subagent:child`.
+- Verified this continuation with:
+  - red proof: `test_agent_launch_uses_resolved_custom_subagent_store_key`
+    first observed `agent` rejecting the persisted custom agent before dispatch.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "agent_launch_uses_resolved_custom_subagent_store_key"`: `1 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "agent_launch or agent_rejects or agent_identity or sessions_create or sessions_list_filters_by_agent"`: `46 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`: clean
+  - `python -m mypy src\openzues\services\gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - custom-agent child launch dispatch is closed for the bounded control-chat
+    `agent` path.
+  - next exact seam should check custom-agent default-main launch behavior and
+    any adjacent runtime-control methods still scoped to `main` only.
+
+### Recovery addendum 2026-04-25 custom-agent default launch parity America/Chicago
+
+- Queue-head seam before implementation:
+  - `agent` launches with a persisted custom `agentId` but no explicit
+    `sessionKey` or `sessionId` should default to that agent's own main session.
+  - OpenZues still sent `agentId=builder-prime` launches to the default
+    `launch:mode:workspace_affinity` main lane.
+- Landed the bounded OpenZues agent default target path:
+  - `agent` now defaults persisted custom agents to
+    `agent:<id>:main` while preserving the existing default-main route for
+    omitted or `main` agent ids.
+  - custom-agent launch metadata now persists `agentId` on the target session
+    so the session remains discoverable by agent-aware snapshots.
+- Product effect:
+  - custom-agent one-shot launches no longer collapse into the OpenZues main
+    lane when the caller omits a session selector.
+- Verified this continuation with:
+  - red proof: `test_agent_launch_defaults_custom_agent_to_scoped_main_session`
+    first observed dispatch to `launch:mode:workspace_affinity`.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "agent_launch_defaults_custom_agent_to_scoped_main_session"`: `1 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "agent_launch or agent_rejects or agent_identity or sessions_create or sessions_list_filters_by_agent"`: `47 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`: clean
+  - `python -m mypy src\openzues\services\gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - custom-agent default launch dispatch is closed for the bounded `agent`
+    path.
+  - next exact seam should continue through adjacent session-keyed
+    runtime-control methods that still canonicalize without the shared resolver.
+
+### Recovery addendum 2026-04-25 custom-agent session patch alias parity America/Chicago
+
+- Queue-head seam before implementation:
+  - `sessions.patch` should use the same known-session resolver as the
+    runtime dispatch paths before mutating metadata.
+  - OpenZues still canonicalized `subagent:child` directly and failed to find
+    the stored custom-agent session `agent:builder-prime:subagent:child`.
+- Landed the bounded OpenZues sessions patch path:
+  - `sessions.patch` now resolves its `key` through the shared existing-session
+    resolver before reading, mutating, and publishing the session.
+- Product effect:
+  - custom-agent child sessions can be patched through OpenClaw request aliases
+    without creating stray short-key metadata records.
+- Verified this continuation with:
+  - red proof: `test_sessions_patch_uses_resolved_custom_subagent_store_key`
+    first observed `session not found: subagent:child`.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_patch_uses_resolved_custom_subagent_store_key"`: `1 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "sessions_patch or sessions_get or chat_history or sessions_usage or sessions_preview"`: `33 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`: clean
+  - `python -m mypy src\openzues\services\gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - custom-agent alias mutation is closed for `sessions.patch`.
+  - next exact seam should continue through adjacent session lifecycle methods
+    that still canonicalize request keys directly.
+
+### Recovery addendum 2026-04-25 custom-agent session reset alias parity America/Chicago
+
+- Queue-head seam before implementation:
+  - `sessions.reset` should resolve request aliases before clearing transcript
+    rows or pruning runtime-only metadata.
+  - OpenZues still canonicalized `subagent:child` directly and failed to find
+    the stored custom-agent session `agent:builder-prime:subagent:child`.
+- Landed the bounded OpenZues sessions reset path:
+  - `sessions.reset` now resolves its `key` through the shared existing-session
+    resolver before transcript deletion, metadata reset, run forgetting, and
+    session-change publication.
+- Product effect:
+  - custom-agent child sessions can be reset through OpenClaw request aliases
+    without dropping durable `agentId` metadata or touching a stray short-key
+    record.
+- Verified this continuation with:
+  - red proof: `test_sessions_reset_uses_resolved_custom_subagent_store_key`
+    first observed `session not found: subagent:child`.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_reset_uses_resolved_custom_subagent_store_key"`: `1 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "sessions_reset or sessions_delete or sessions_patch or sessions_preview"`: `20 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`: clean
+  - `python -m mypy src\openzues\services\gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - custom-agent alias lifecycle reset is closed for `sessions.reset`.
+  - next exact seam should continue through delete/compaction lifecycle methods
+    that still canonicalize request keys directly.
+
+### Recovery addendum 2026-04-25 custom-agent session delete alias parity America/Chicago
+
+- Queue-head seam before implementation:
+  - `sessions.delete` should resolve request aliases before archive/delete work.
+  - OpenZues returned a successful no-op for `subagent:child` while leaving the
+    stored custom-agent session `agent:builder-prime:subagent:child` intact.
+- Landed the bounded OpenZues sessions delete path:
+  - `sessions.delete` now resolves its `key` through the shared existing-session
+    resolver before main-session guard checks, transcript archival, metadata
+    deletion, and session-change publication.
+- Product effect:
+  - deleting a custom-agent child through an OpenClaw request alias now removes
+    the canonical transcript and metadata instead of acting on an empty short
+    key.
+- Verified this continuation with:
+  - red proof: `test_sessions_delete_uses_resolved_custom_subagent_store_key`
+    first observed the response key staying `subagent:child` while the stored
+    custom-agent session remained.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_delete_uses_resolved_custom_subagent_store_key"`: `1 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "sessions_delete or sessions_reset or sessions_patch or sessions_compact or sessions_compaction"`: `34 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`: clean
+  - `python -m mypy src\openzues\services\gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - custom-agent alias lifecycle delete is closed for `sessions.delete`.
+  - next exact seam should continue through compaction lifecycle methods that
+    still canonicalize request keys directly.
+
+### Recovery addendum 2026-04-25 custom-agent chat inject alias parity America/Chicago
+
+- Queue-head seam before implementation:
+  - `chat.inject` should resolve request aliases before appending assistant
+    messages into the durable transcript.
+  - OpenZues still passed raw `subagent:child` to session lookup, so custom
+    child sessions such as `agent:builder-prime:subagent:child` failed with
+    `session not found`.
+- Landed the bounded OpenZues chat inject path:
+  - `chat.inject` now resolves its `sessionKey` through the shared
+    existing-session resolver before materializing the session and appending the
+    assistant message.
+- Product effect:
+  - injected notes for custom-agent child sessions land in the canonical
+    transcript and emit live session events from that canonical key.
+- Verified this continuation with:
+  - red proof: `test_chat_inject_uses_resolved_custom_subagent_store_key`
+    first observed `session not found`.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_inject_uses_resolved_custom_subagent_store_key"`: `1 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "chat_inject or chat_history or chat_send or sessions_get or sessions_preview"`: `63 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`: clean
+  - `python -m mypy src\openzues\services\gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - custom-agent alias transcript injection is closed for `chat.inject`.
+  - next exact seam should continue through remaining session-keyed helper
+    surfaces that still canonicalize before resolving.
+
+### Recovery addendum 2026-04-25 custom-agent session create parent alias parity America/Chicago
+
+- Queue-head seam before implementation:
+  - `sessions.create parentSessionKey` should resolve request aliases before
+    deriving the generated child session key.
+  - OpenZues still passed raw `subagent:parent` to session lookup, so a stored
+    custom parent such as `agent:builder-prime:subagent:parent` failed as an
+    unknown parent.
+- Landed the bounded OpenZues sessions create parent path:
+  - `sessions.create` now resolves `parentSessionKey` through the shared
+    existing-session resolver before loading the parent payload and storing
+    `parentSessionKey` metadata.
+- Product effect:
+  - custom-agent child sessions can spawn under canonical custom-agent parents
+    while clients use OpenClaw request aliases.
+- Verified this continuation with:
+  - red proof: `test_sessions_create_resolves_custom_subagent_parent_key`
+    first observed `unknown parent session: subagent:parent`.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_create_resolves_custom_subagent_parent_key"`: `1 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "sessions_create or sessions_list_filters_by_agent or agent_launch or agent_identity"`: `42 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`: clean
+  - `python -m mypy src\openzues\services\gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - custom-agent alias parent resolution is closed for `sessions.create`.
+  - next exact seam should continue through remaining session-keyed methods or
+    helper paths that still canonicalize before resolving.
+
+### Recovery addendum 2026-04-25 custom-agent session create explicit key parity America/Chicago
+
+- Queue-head seam before implementation:
+  - `sessions.create key=subagent:* agentId=<custom>` should create the
+    explicit child session in the owning custom-agent store.
+  - OpenZues still canonicalized `subagent:child` as a main-agent structural
+    key, then rejected the request with `agentId does not match sessionKey`.
+- Landed the bounded OpenZues sessions create explicit-key path:
+  - `sessions.create` now routes explicit non-sentinel custom-agent keys
+    through the shared agent-store key helper before mismatch validation.
+  - literal `global`, `unknown`, and the existing `main` alias behavior remain
+    preserved.
+- Product effect:
+  - custom-agent clients can create a stable child session with
+    `key=subagent:child` and discover it as
+    `agent:builder-prime:subagent:child` with durable `agentId` metadata.
+- Verified this continuation with:
+  - red proof: `test_sessions_create_scopes_custom_agent_request_key` first
+    observed `agentId does not match sessionKey`.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_create_scopes_custom_agent_request_key"`: `1 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "sessions_create or sessions_list_filters_by_agent or agent_launch or agent_identity"`: `43 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`: clean
+  - `python -m mypy src\openzues\services\gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - custom-agent explicit child creation is closed for `sessions.create`.
+  - next exact seam should inspect the remaining session-keyed helper paths for
+    custom-agent aliases that still bypass the shared resolver.
+
+### Recovery addendum 2026-04-25 custom-agent sessions.resolve key alias parity America/Chicago
+
+- Queue-head seam before implementation:
+  - `sessions.resolve key=subagent:* agentId=<custom>` should resolve against
+    the custom-agent store instead of only probing the default `agent:main:*`
+    fallback.
+  - OpenZues still returned `unknown session key` for a persisted
+    `agent:builder-prime:subagent:child` session.
+- Landed the bounded OpenZues sessions resolver path:
+  - `GatewaySessionsService.resolve_key` now tries a scoped
+    `agent:<id>:<request-key>` lookup after direct explicit-key lookup and
+    before the legacy default-main fallback.
+  - `sessionId` and label lookups now require an actual agent-scoped session
+    when an `agentId` filter is supplied, while explicit key lookup still keeps
+    the existing OpenClaw behavior of ignoring filters.
+  - bounded `agent` launches continue to allow `agentId=main` to target legacy
+    control-chat threads by `sessionId` by resolving that selector without the
+    resolver's agent filter.
+- Product effect:
+  - direct resolver callers can use the same custom-agent short aliases now
+    honored by the session mutation/runtime methods, without regressing
+    legacy main-agent launch compatibility.
+- Verified this continuation with:
+  - red proof: `test_key_lookup_scopes_custom_agent_request_key_alias` first
+    observed `unknown session key`.
+  - `python -m pytest tests\test_gateway_sessions.py -q -k "key_lookup_scopes_custom_agent_request_key_alias"`: `1 passed`
+  - `python -m pytest tests\test_gateway_sessions.py tests\test_gateway_node_methods.py -q -k "resolve_key or sessions_resolve"`: `34 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "agent_launches_bounded_session_id_selected_run_and_wait_completes or bounded_agent_launch_by_session_id"`: `2 passed`
+  - `python -m pytest tests\test_gateway_sessions.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "sessions_list_filters_by_agent or sessions_resolve or resolve_key or sessions_create or agent_launch or agent_identity"`: `83 passed`
+  - `ruff check src\openzues\services\gateway_sessions.py src\openzues\services\gateway_node_methods.py tests\test_gateway_sessions.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`: clean
+  - `python -m mypy src\openzues\services\gateway_node_methods.py src\openzues\services\gateway_sessions.py`: clean
+- Queue effect from this run:
+  - custom-agent short-key resolution is now shared by `sessions.resolve` and
+    the method layer.
+  - next exact seam should move to the next advertised session/runtime field
+    that is still hard-coded, missing, or only partially projected.
+
+### Recovery addendum 2026-04-25 chat history oversized payload cap America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw replaces any single oversized `chat.history` message with
+    `[chat.history omitted: message too large]` and truncation metadata.
+  - OpenZues only applied text character truncation, so callers could request a
+    large `maxChars` value and receive a giant serialized history payload.
+- Landed the bounded OpenZues chat-history projection path:
+  - each finalized projected message is measured as UTF-8 JSON before response
+    emission.
+  - messages over the hard single-message cap are replaced by an OpenClaw-shaped
+    placeholder carrying `__openclaw: { truncated: true, reason: "oversized" }`.
+  - ordinary `maxChars` prefix truncation and usage/cost projection remain
+    unchanged for non-oversized messages.
+- Product effect:
+  - `chat.history` no longer leaks huge persisted transcript payloads into the
+    web/gateway response when an operator requests a large display cap.
+- Verified this continuation with:
+  - red proof:
+    `test_chat_history_replaces_single_oversized_message_with_placeholder`
+    first observed a `120066` byte serialized message response.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history_replaces_single_oversized_message_with_placeholder"`: `1 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "chat_history or sessions_preview or session_message"`: `17 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`: clean
+  - `python -m mypy src\openzues\services\gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - single-message history hard-cap parity is closed for the SQLite-backed
+    OpenZues transcript projector.
+  - next exact seam should prove whether recent small history messages survive
+    alongside an oversized latest message, matching the adjacent OpenClaw test.
+
+### Recovery addendum 2026-04-25 chat history total byte budget America/Chicago
+
+- Queue-head seam before implementation:
+  - after replacing an oversized latest history message, OpenClaw still caps the
+    whole returned `messages` array by serialized byte size while preserving the
+    newest small context that fits.
+  - OpenZues could return a `114455` byte history array made of older small
+    rows plus the oversized placeholder.
+- Landed the bounded OpenZues chat-history response-budget path:
+  - projected messages are now capped as a newest-first tail by UTF-8 JSON byte
+    size after text sanitation, normal `maxChars` truncation, and single-message
+    oversized replacement.
+  - older rows are dropped once adding them would exceed the response budget.
+- Product effect:
+  - recent small context survives next to an oversized latest placeholder, but
+    the serialized `chat.history` message array remains bounded.
+- Verified this continuation with:
+  - red proof:
+    `test_chat_history_keeps_recent_small_messages_under_total_byte_cap` first
+    observed a `114455` byte serialized message array.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_history_keeps_recent_small_messages_under_total_byte_cap or chat_history_replaces_single_oversized_message_with_placeholder or chat_history_applies_per_message_prefix_truncation_marker or chat_history_applies_default_text_truncation_marker"`: `4 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "chat_history or sessions_preview or session_message"`: `18 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`: clean
+  - `python -m mypy src\openzues\services\gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - total byte-budget parity is closed for `chat.history`.
+  - next exact seam should move to the next bounded transcript/event or
+    `sessions.get` read-model mismatch rather than further widening history
+    without an upstream proof.
+
+### Recovery addendum 2026-04-25 sessions.get seq cursor parity America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw accepts both bare numeric cursors and `seq:<n>` cursors for
+    paginated session history.
+  - OpenZues accepted `"3"` but rejected `"seq:3"` with `cursor must be an
+    integer`.
+- Landed the bounded OpenZues cursor parser path:
+  - `_optional_cursor_int` now strips a leading `seq:` prefix before applying
+    the existing integer bounds validation.
+  - existing numeric cursor strings and invalid cursor errors remain otherwise
+    unchanged.
+- Product effect:
+  - `sessions.get` cursor pagination now round-trips OpenClaw-style `seq:`
+    cursors while preserving the established `messages` / `items` response
+    shape.
+- Verified this continuation with:
+  - red proof:
+    `test_sessions_get_supports_cursor_pagination_with_raw_sequence_metadata`
+    first observed `cursor must be an integer` for `seq:3`.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_get_supports_cursor_pagination_with_raw_sequence_metadata"`: `1 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "sessions_get or sessions_resolve or chat_history"`: `32 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`: clean
+  - `python -m mypy src\openzues\services\gateway_node_methods.py`: clean
+- Queue effect from this run:
+  - `sessions.get` cursor prefix parity is closed.
+  - next exact seam should continue through session event replay/SSE parity or
+    another concrete read-model mismatch sourced from OpenClaw tests.

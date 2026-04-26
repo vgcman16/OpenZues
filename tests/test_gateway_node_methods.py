@@ -797,26 +797,6 @@ async def test_models_auth_status_returns_validated_unavailable_contract() -> No
     ("method", "params", "message"),
     [
         (
-            "device.pair.list",
-            {},
-            "device.pair.list is unavailable until device auth pairing runtime is wired",
-        ),
-        (
-            "device.pair.approve",
-            {"requestId": "device-request-1"},
-            "device.pair.approve is unavailable until device auth pairing runtime is wired",
-        ),
-        (
-            "device.pair.reject",
-            {"requestId": "device-request-1"},
-            "device.pair.reject is unavailable until device auth pairing runtime is wired",
-        ),
-        (
-            "device.pair.remove",
-            {"deviceId": "device-1"},
-            "device.pair.remove is unavailable until device auth pairing runtime is wired",
-        ),
-        (
             "device.token.rotate",
             {
                 "deviceId": "device-1",
@@ -832,7 +812,7 @@ async def test_models_auth_status_returns_validated_unavailable_contract() -> No
         ),
     ],
 )
-async def test_device_family_returns_explicit_unavailable_contract(
+async def test_device_token_family_returns_unavailable_without_pairing_runtime(
     method: str,
     params: dict[str, object],
     message: str,
@@ -848,208 +828,579 @@ async def test_device_family_returns_explicit_unavailable_contract(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("method", "params", "message"),
-    [
-        (
-            "plugin.approval.list",
-            {},
-            "plugin.approval.list is unavailable until plugin approval runtime is wired",
-        ),
-        (
+async def test_device_pair_family_uses_persisted_node_pairing_runtime(tmp_path) -> None:
+    database = Database(tmp_path / "data" / "openzues-test.db")
+    await database.initialize()
+    pairing_service = GatewayNodePairingService(database)
+    hub = BroadcastHub()
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        pairing_service=pairing_service,
+        hub=hub,
+    )
+
+    created = await service.call(
+        "node.pair.request",
+        {
+            "nodeId": "device-node-1",
+            "displayName": "Device Node",
+            "platform": "ios",
+            "deviceFamily": "phone",
+            "remoteIp": "10.0.0.51",
+        },
+        now_ms=1_000,
+    )
+    request_id = created["request"]["requestId"]
+
+    listed = await service.call("device.pair.list", {})
+    assert listed == {
+        "pending": [
+            {
+                "requestId": request_id,
+                "deviceId": "device-node-1",
+                "displayName": "Device Node",
+                "platform": "ios",
+                "deviceFamily": "phone",
+                "remoteIp": "10.0.0.51",
+                "ts": 1_000,
+                "requiredApproveScopes": ["operator.pairing"],
+            }
+        ],
+        "paired": [],
+    }
+
+    async with hub.subscribe() as queue:
+        approved = await service.call(
+            "device.pair.approve",
+            {"requestId": request_id},
+            now_ms=2_000,
+        )
+        approved_event = await asyncio.wait_for(queue.get(), timeout=1)
+
+    assert approved["requestId"] == request_id
+    assert approved["device"] == {
+        "deviceId": "device-node-1",
+        "displayName": "Device Node",
+        "platform": "ios",
+        "deviceFamily": "phone",
+        "remoteIp": "10.0.0.51",
+        "createdAtMs": 2_000,
+        "approvedAtMs": 2_000,
+        "lastConnectedAtMs": None,
+        "tokens": {},
+    }
+    assert "token" not in approved["device"]
+    assert approved_event["type"] == "gateway_event"
+    assert approved_event["event"] == "device.pair.resolved"
+    assert approved_event["payload"] == {
+        "requestId": request_id,
+        "deviceId": "device-node-1",
+        "decision": "approved",
+        "ts": 2_000,
+    }
+
+    paired = await service.call("device.pair.list", {})
+    assert paired["pending"] == []
+    assert paired["paired"] == [approved["device"]]
+
+    removed = await service.call("device.pair.remove", {"deviceId": "device-node-1"})
+    assert removed == {"deviceId": "device-node-1"}
+    assert await service.call("device.pair.list", {}) == {"pending": [], "paired": []}
+
+
+@pytest.mark.asyncio
+async def test_device_token_family_persists_rotate_list_and_revoke(tmp_path) -> None:
+    database = Database(tmp_path / "data" / "openzues-test.db")
+    await database.initialize()
+    pairing_service = GatewayNodePairingService(database)
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        pairing_service=pairing_service,
+    )
+
+    created = await service.call(
+        "node.pair.request",
+        {"nodeId": "device-token-node", "displayName": "Token Device"},
+        now_ms=1_000,
+    )
+    request_id = created["request"]["requestId"]
+    await service.call("device.pair.approve", {"requestId": request_id}, now_ms=2_000)
+
+    rotated = await service.call(
+        "device.token.rotate",
+        {
+            "deviceId": "device-token-node",
+            "role": "operator",
+            "scopes": ["operator.read", "operator.write"],
+        },
+        now_ms=3_000,
+    )
+
+    assert rotated["deviceId"] == "device-token-node"
+    assert rotated["role"] == "operator"
+    assert rotated["scopes"] == ["operator.read", "operator.write"]
+    assert rotated["rotatedAtMs"] == 3_000
+    assert isinstance(rotated["token"], str)
+    assert len(rotated["token"]) >= 32
+
+    listed = await service.call("device.pair.list", {})
+    assert listed["paired"][0]["tokens"] == [
+        {
+            "role": "operator",
+            "scopes": ["operator.read", "operator.write"],
+            "createdAtMs": 3_000,
+            "rotatedAtMs": 3_000,
+            "lastUsedAtMs": None,
+        }
+    ]
+
+    revoked = await service.call(
+        "device.token.revoke",
+        {"deviceId": "device-token-node", "role": "operator"},
+        now_ms=4_000,
+    )
+
+    assert revoked == {
+        "deviceId": "device-token-node",
+        "role": "operator",
+        "revokedAtMs": 4_000,
+    }
+    listed_after_revoke = await service.call("device.pair.list", {})
+    assert listed_after_revoke["paired"][0]["tokens"] == [
+        {
+            "role": "operator",
+            "scopes": ["operator.read", "operator.write"],
+            "createdAtMs": 3_000,
+            "rotatedAtMs": 3_000,
+            "revokedAtMs": 4_000,
+            "lastUsedAtMs": None,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_device_pair_reject_removes_pending_request_and_broadcasts(tmp_path) -> None:
+    database = Database(tmp_path / "data" / "openzues-test.db")
+    await database.initialize()
+    pairing_service = GatewayNodePairingService(database)
+    hub = BroadcastHub()
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        pairing_service=pairing_service,
+        hub=hub,
+    )
+    created = await service.call(
+        "node.pair.request",
+        {"nodeId": "device-node-reject", "displayName": "Reject Device"},
+        now_ms=1_000,
+    )
+    request_id = created["request"]["requestId"]
+
+    async with hub.subscribe() as queue:
+        rejected = await service.call(
+            "device.pair.reject",
+            {"requestId": request_id},
+            now_ms=2_000,
+        )
+        rejected_event = await asyncio.wait_for(queue.get(), timeout=1)
+
+    assert rejected == {"requestId": request_id, "deviceId": "device-node-reject"}
+    assert rejected_event["event"] == "device.pair.resolved"
+    assert rejected_event["payload"] == {
+        "requestId": request_id,
+        "deviceId": "device-node-reject",
+        "decision": "rejected",
+        "ts": 2_000,
+    }
+    assert await service.call("device.pair.list", {}) == {"pending": [], "paired": []}
+
+
+@pytest.mark.asyncio
+async def test_plugin_approval_family_tracks_pending_records_and_decisions() -> None:
+    class _RecordingBroadcastHub(BroadcastHub):
+        def __init__(self) -> None:
+            super().__init__()
+            self.published_events: list[dict[str, object]] = []
+
+        async def publish(self, event: dict[str, object]) -> None:
+            self.published_events.append(dict(event))
+            await super().publish(event)
+
+    hub = _RecordingBroadcastHub()
+    service = GatewayNodeMethodService(GatewayNodeRegistry(), hub=hub)
+    request = {
+        "pluginId": "alpha-plugin",
+        "title": "Install alpha plugin",
+        "description": "Approve installation of the alpha plugin bundle.",
+        "severity": "warning",
+        "toolName": "plugin.install",
+        "toolCallId": "call-1",
+        "agentId": "agent-1",
+        "sessionKey": "session-1",
+        "turnSourceChannel": "  slack  ",
+        "turnSourceTo": " ops ",
+        "turnSourceAccountId": " acct-1 ",
+        "turnSourceThreadId": 42,
+        "timeoutMs": 30_000,
+        "twoPhase": True,
+    }
+
+    async with hub.subscribe() as queue:
+        accepted = await service.call("plugin.approval.request", request, now_ms=1_000)
+        requested_event = await asyncio.wait_for(queue.get(), timeout=1)
+
+    approval_id = accepted["id"]
+    assert isinstance(approval_id, str)
+    assert approval_id.startswith("plugin:")
+    assert accepted == {
+        "status": "accepted",
+        "id": approval_id,
+        "createdAtMs": 1_000,
+        "expiresAtMs": 31_000,
+    }
+    assert requested_event["type"] == "gateway_event"
+    assert requested_event["event"] == "plugin.approval.requested"
+    assert requested_event["payload"] == {
+        "id": approval_id,
+        "request": {
+            "pluginId": "alpha-plugin",
+            "title": "Install alpha plugin",
+            "description": "Approve installation of the alpha plugin bundle.",
+            "severity": "warning",
+            "toolName": "plugin.install",
+            "toolCallId": "call-1",
+            "agentId": "agent-1",
+            "sessionKey": "session-1",
+            "turnSourceChannel": "slack",
+            "turnSourceTo": "ops",
+            "turnSourceAccountId": "acct-1",
+            "turnSourceThreadId": 42,
+        },
+        "createdAtMs": 1_000,
+        "expiresAtMs": 31_000,
+    }
+
+    listed = await service.call("plugin.approval.list", {}, now_ms=2_000)
+    assert listed == {
+        "approvals": [
+            {
+                "id": approval_id,
+                "request": requested_event["payload"]["request"],
+                "createdAtMs": 1_000,
+                "expiresAtMs": 31_000,
+            }
+        ]
+    }
+
+    async with hub.subscribe() as queue:
+        resolved = await service.call(
+            "plugin.approval.resolve",
+            {"id": approval_id[:16], "decision": "allow-once"},
+            now_ms=2_000,
+        )
+        resolved_event = await asyncio.wait_for(queue.get(), timeout=1)
+
+    assert resolved == {"ok": True}
+    assert resolved_event["type"] == "gateway_event"
+    assert resolved_event["event"] == "plugin.approval.resolved"
+    assert resolved_event["payload"] == {
+        "id": approval_id,
+        "decision": "allow-once",
+        "resolvedBy": None,
+        "ts": 2_000,
+        "request": requested_event["payload"]["request"],
+    }
+    assert await service.call("plugin.approval.list", {}, now_ms=3_000) == {"approvals": []}
+    assert await service.call(
+        "plugin.approval.waitDecision",
+        {"id": approval_id},
+        now_ms=3_000,
+    ) == {
+        "id": approval_id,
+        "decision": "allow-once",
+        "createdAtMs": 1_000,
+        "expiresAtMs": 31_000,
+    }
+
+
+@pytest.mark.asyncio
+async def test_plugin_approval_request_uses_resolved_subagent_store_key() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-plugin-approval-subagent-alias"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-plugin-approval-subagent-alias.db")
+    await database.initialize()
+    resolved_session_key = "agent:main:subagent:child"
+    await database.upsert_gateway_session_metadata(
+        session_key=resolved_session_key,
+        metadata={"label": "Child Session"},
+    )
+
+    hub = BroadcastHub()
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        hub=hub,
+    )
+
+    async with hub.subscribe() as queue:
+        accepted = await service.call(
             "plugin.approval.request",
             {
                 "pluginId": "alpha-plugin",
                 "title": "Install alpha plugin",
                 "description": "Approve installation of the alpha plugin bundle.",
-                "severity": "warning",
-                "toolName": "plugin.install",
-                "toolCallId": "call-1",
-                "agentId": "agent-1",
-                "sessionKey": "session-1",
-                "turnSourceChannel": "slack",
-                "turnSourceTo": "ops",
-                "turnSourceAccountId": "acct-1",
-                "turnSourceThreadId": 42,
-                "timeoutMs": 30_000,
-                "twoPhase": True,
+                "sessionKey": "subagent:child",
             },
-            "plugin.approval.request is unavailable until plugin approval runtime is wired",
-        ),
-        (
-            "plugin.approval.waitDecision",
-            {"id": "plugin:approval-1"},
-            "plugin.approval.waitDecision is unavailable until plugin approval runtime is wired",
-        ),
-        (
-            "plugin.approval.resolve",
-            {"id": "plugin:approval-1", "decision": "allow-once"},
-            "plugin.approval.resolve is unavailable until plugin approval runtime is wired",
-        ),
-    ],
-)
-async def test_plugin_approval_family_returns_explicit_unavailable_contract(
-    method: str,
-    params: dict[str, object],
-    message: str,
-) -> None:
-    service = GatewayNodeMethodService(GatewayNodeRegistry())
+            now_ms=1_000,
+        )
+        requested_event = await asyncio.wait_for(queue.get(), timeout=1)
 
-    with pytest.raises(GatewayNodeMethodError) as exc_info:
-        await service.call(method, params)
-
-    assert exc_info.value.code == "UNAVAILABLE"
-    assert exc_info.value.status_code == 503
-    assert str(exc_info.value) == message
+    approval_id = accepted["id"]
+    assert requested_event["payload"]["id"] == approval_id
+    assert requested_event["payload"]["request"]["sessionKey"] == resolved_session_key
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("method", "params", "message"),
-    [
-        (
-            "exec.approval.get",
-            {"id": "approval-1"},
-            "exec.approval.get is unavailable until exec approval runtime is wired",
-        ),
-        (
-            "exec.approval.list",
-            {},
-            "exec.approval.list is unavailable until exec approval runtime is wired",
-        ),
-        (
+async def test_exec_approval_family_tracks_pending_records_and_decisions() -> None:
+    hub = BroadcastHub()
+    service = GatewayNodeMethodService(GatewayNodeRegistry(), hub=hub)
+    request = {
+        "id": "exec-approval-1",
+        "command": "pytest -q",
+        "commandArgv": ["pytest", "-q"],
+        "env": {"PYTHONPATH": "src"},
+        "cwd": "/workspace",
+        "host": "gateway",
+        "security": "allowlist",
+        "ask": "always",
+        "agentId": "agent-1",
+        "resolvedPath": "/workspace",
+        "sessionKey": "session-1",
+        "turnSourceChannel": " slack ",
+        "turnSourceTo": " ops ",
+        "turnSourceAccountId": " acct-1 ",
+        "turnSourceThreadId": 42,
+        "timeoutMs": 30_000,
+        "twoPhase": True,
+    }
+
+    async with hub.subscribe() as queue:
+        accepted = await service.call("exec.approval.request", request, now_ms=1_000)
+        requested_event = await asyncio.wait_for(queue.get(), timeout=1)
+
+    expected_request = {
+        "command": "pytest -q",
+        "commandPreview": "pytest -q",
+        "commandArgv": ["pytest", "-q"],
+        "envKeys": ["PYTHONPATH"],
+        "systemRunBinding": None,
+        "systemRunPlan": None,
+        "cwd": "/workspace",
+        "nodeId": None,
+        "host": "gateway",
+        "security": "allowlist",
+        "ask": "always",
+        "allowedDecisions": ["allow-once", "deny"],
+        "agentId": "agent-1",
+        "resolvedPath": "/workspace",
+        "sessionKey": "session-1",
+        "turnSourceChannel": "slack",
+        "turnSourceTo": "ops",
+        "turnSourceAccountId": "acct-1",
+        "turnSourceThreadId": 42,
+    }
+    assert accepted == {
+        "status": "accepted",
+        "id": "exec-approval-1",
+        "createdAtMs": 1_000,
+        "expiresAtMs": 31_000,
+    }
+    assert requested_event["type"] == "gateway_event"
+    assert requested_event["event"] == "exec.approval.requested"
+    assert requested_event["payload"] == {
+        "id": "exec-approval-1",
+        "request": expected_request,
+        "createdAtMs": 1_000,
+        "expiresAtMs": 31_000,
+    }
+    assert await service.call("exec.approval.list", {}, now_ms=2_000) == {
+        "approvals": [
+            {
+                "id": "exec-approval-1",
+                "request": expected_request,
+                "createdAtMs": 1_000,
+                "expiresAtMs": 31_000,
+            }
+        ]
+    }
+    assert await service.call("exec.approval.get", {"id": "exec-approval"}, now_ms=2_000) == {
+        "id": "exec-approval-1",
+        "commandText": "pytest -q",
+        "commandPreview": "pytest -q",
+        "allowedDecisions": ["allow-once", "deny"],
+        "host": "gateway",
+        "nodeId": None,
+        "agentId": "agent-1",
+        "expiresAtMs": 31_000,
+    }
+
+    async with hub.subscribe() as queue:
+        resolved = await service.call(
+            "exec.approval.resolve",
+            {"id": "exec-approval-1", "decision": "allow-once"},
+            requester=GatewayNodeMethodRequester(client_id="operator-client"),
+            now_ms=3_000,
+        )
+        resolved_event = await asyncio.wait_for(queue.get(), timeout=1)
+
+    assert resolved == {"ok": True}
+    assert resolved_event["event"] == "exec.approval.resolved"
+    assert resolved_event["payload"] == {
+        "id": "exec-approval-1",
+        "decision": "allow-once",
+        "resolvedBy": "operator-client",
+        "ts": 3_000,
+        "request": expected_request,
+    }
+    assert await service.call("exec.approval.list", {}, now_ms=4_000) == {"approvals": []}
+    assert await service.call(
+        "exec.approval.waitDecision",
+        {"id": "exec-approval-1"},
+        now_ms=4_000,
+    ) == {
+        "id": "exec-approval-1",
+        "decision": "allow-once",
+        "createdAtMs": 1_000,
+        "expiresAtMs": 31_000,
+    }
+
+
+@pytest.mark.asyncio
+async def test_exec_approval_request_uses_resolved_subagent_store_key() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-exec-approval-subagent-alias"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-exec-approval-subagent-alias.db")
+    await database.initialize()
+    resolved_session_key = "agent:main:subagent:child"
+    await database.upsert_gateway_session_metadata(
+        session_key=resolved_session_key,
+        metadata={"label": "Child Session"},
+    )
+
+    hub = BroadcastHub()
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        hub=hub,
+    )
+
+    async with hub.subscribe() as queue:
+        accepted = await service.call(
             "exec.approval.request",
             {
-                "id": "approval-1",
-                "command": "npm test",
-                "commandArgv": ["npm", "test"],
-                "env": {"CI": "1"},
-                "cwd": "C:/workspace",
-                "host": "desktop",
-                "security": "strict",
-                "ask": "manual",
-                "agentId": "agent-1",
-                "resolvedPath": "C:/workspace/package.json",
-                "sessionKey": "session-1",
-                "turnSourceChannel": "slack",
-                "turnSourceTo": "ops",
-                "turnSourceAccountId": "acct-1",
-                "turnSourceThreadId": "thread-1",
-                "timeoutMs": 30_000,
-                "twoPhase": True,
+                "id": "exec-approval-subagent",
+                "command": "pytest -q",
+                "commandArgv": ["pytest", "-q"],
+                "host": "gateway",
+                "ask": "always",
+                "sessionKey": "subagent:child",
             },
-            "exec.approval.request is unavailable until exec approval runtime is wired",
-        ),
-        (
-            "exec.approval.waitDecision",
-            {"id": "approval-1"},
-            "exec.approval.waitDecision is unavailable until exec approval runtime is wired",
-        ),
-        (
-            "exec.approval.resolve",
-            {"id": "approval-1", "decision": "allow-once"},
-            "exec.approval.resolve is unavailable until exec approval runtime is wired",
-        ),
-    ],
-)
-async def test_exec_approval_family_returns_explicit_unavailable_contract(
-    method: str,
-    params: dict[str, object],
-    message: str,
-) -> None:
-    service = GatewayNodeMethodService(GatewayNodeRegistry())
+            now_ms=1_000,
+        )
+        requested_event = await asyncio.wait_for(queue.get(), timeout=1)
 
-    with pytest.raises(GatewayNodeMethodError) as exc_info:
-        await service.call(method, params)
-
-    assert exc_info.value.code == "UNAVAILABLE"
-    assert exc_info.value.status_code == 503
-    assert str(exc_info.value) == message
+    assert accepted["id"] == "exec-approval-subagent"
+    assert requested_event["payload"]["request"]["sessionKey"] == resolved_session_key
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("method", "params", "message"),
-    [
-        (
-            "exec.approvals.get",
-            {},
-            "exec.approvals.get is unavailable until exec approval policy config runtime is wired",
-        ),
-        (
-            "exec.approvals.set",
-            {
-                "file": {
-                    "version": 1,
-                    "socket": {"path": "C:/tmp/approvals.sock", "token": "secret-token"},
-                    "defaults": {
-                        "security": "strict",
-                        "ask": "manual",
-                        "askFallback": "deny",
-                        "autoAllowSkills": True,
-                    },
-                    "agents": {
-                        "main": {
-                            "security": "strict",
-                            "ask": "manual",
-                            "askFallback": "deny",
-                            "autoAllowSkills": False,
-                            "allowlist": [
-                                {
-                                    "id": "entry-1",
-                                    "pattern": "npm",
-                                    "argPattern": "test",
-                                    "lastUsedAt": 1,
-                                    "lastUsedCommand": "npm test",
-                                    "lastResolvedPath": "C:/workspace/package.json",
-                                }
-                            ],
-                        }
-                    },
-                },
-                "baseHash": "abc123",
-            },
-            "exec.approvals.set is unavailable until exec approval policy config runtime is wired",
-        ),
-        (
-            "exec.approvals.node.get",
-            {"nodeId": "node-1"},
-            "exec.approvals.node.get is unavailable until exec approval policy "
-            "config runtime is wired",
-        ),
-        (
-            "exec.approvals.node.set",
-            {
-                "nodeId": "node-1",
-                "file": {
-                    "version": 1,
-                    "defaults": {
-                        "security": "strict",
-                        "ask": "manual",
-                        "askFallback": "deny",
-                        "autoAllowSkills": True,
-                    },
-                },
-                "baseHash": "node-hash",
-            },
-            "exec.approvals.node.set is unavailable until exec approval policy "
-            "config runtime is wired",
-        ),
-    ],
-)
-async def test_exec_approvals_family_returns_explicit_unavailable_contract(
-    method: str,
-    params: dict[str, object],
-    message: str,
-) -> None:
-    service = GatewayNodeMethodService(GatewayNodeRegistry())
+async def test_exec_approvals_policy_config_persists_and_redacts_socket_token(tmp_path) -> None:
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        exec_approvals_path=tmp_path / "data" / "settings" / "exec-approvals.json",
+    )
+    file_config = {
+        "version": 1,
+        "socket": {"path": "C:/tmp/approvals.sock", "token": "secret-token"},
+        "defaults": {
+            "security": "strict",
+            "ask": "manual",
+            "askFallback": "deny",
+            "autoAllowSkills": True,
+        },
+        "agents": {
+            "main": {
+                "security": "strict",
+                "ask": "manual",
+                "askFallback": "deny",
+                "autoAllowSkills": False,
+                "allowlist": [
+                    {
+                        "id": "entry-1",
+                        "pattern": "npm",
+                        "argPattern": "test",
+                        "lastUsedAt": 1,
+                        "lastUsedCommand": "npm test",
+                        "lastResolvedPath": "C:/workspace/package.json",
+                    }
+                ],
+            }
+        },
+    }
 
-    with pytest.raises(GatewayNodeMethodError) as exc_info:
-        await service.call(method, params)
+    before = await service.call("exec.approvals.get", {})
+    saved = await service.call("exec.approvals.set", {"file": file_config})
+    after = await service.call("exec.approvals.get", {})
 
-    assert exc_info.value.code == "UNAVAILABLE"
-    assert exc_info.value.status_code == 503
-    assert str(exc_info.value) == message
+    assert before["exists"] is False
+    assert before["file"] == {"version": 1, "agents": {}}
+    assert saved["exists"] is True
+    assert saved["file"]["socket"] == {"path": "C:/tmp/approvals.sock"}
+    assert "token" not in saved["file"]["socket"]
+    assert after == saved
+
+    with pytest.raises(ValueError, match="base hash required"):
+        await service.call("exec.approvals.set", {"file": file_config})
+
+    updated = await service.call(
+        "exec.approvals.set",
+        {"file": {**file_config, "agents": {}}, "baseHash": saved["hash"]},
+    )
+    assert updated["hash"] != saved["hash"]
+    assert updated["file"]["agents"] == {}
+
+
+@pytest.mark.asyncio
+async def test_exec_approvals_node_policy_config_persists_by_node(tmp_path) -> None:
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        exec_approvals_path=tmp_path / "data" / "settings" / "exec-approvals.json",
+    )
+    file_config = {
+        "version": 1,
+        "defaults": {
+            "security": "strict",
+            "ask": "manual",
+            "askFallback": "deny",
+            "autoAllowSkills": True,
+        },
+    }
+
+    before = await service.call("exec.approvals.node.get", {"nodeId": "node-1"})
+    saved = await service.call(
+        "exec.approvals.node.set",
+        {"nodeId": "node-1", "file": file_config},
+    )
+    other = await service.call("exec.approvals.node.get", {"nodeId": "node-2"})
+
+    assert before["exists"] is False
+    assert saved["exists"] is True
+    assert saved["file"] == file_config
+    assert other["exists"] is False
 
 
 @pytest.mark.asyncio
@@ -1676,6 +2027,42 @@ async def test_tools_effective_returns_bounded_effective_inventory_from_session_
 
 
 @pytest.mark.asyncio
+async def test_tools_effective_uses_resolved_subagent_store_key() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-tools-effective-subagent-alias"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-tools-effective-subagent-alias.db")
+    await database.initialize()
+    resolved_session_key = "agent:main:subagent:child"
+    await database.upsert_gateway_session_metadata(
+        session_key=resolved_session_key,
+        metadata={"label": "Child Session", "toolsets": ["hermes-cli"]},
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    payload = await service.call(
+        "tools.effective",
+        {"sessionKey": "subagent:child", "agentId": "main"},
+    )
+
+    assert payload["agentId"] == "main"
+    assert payload["profile"] == "coding"
+    assert [tool["id"] for group in payload["groups"] for tool in group["tools"]] == [
+        "safe",
+        "skills",
+        "file",
+        "terminal",
+        "search",
+        "delegation",
+        "debugging",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_tools_effective_returns_minimal_profile_when_session_has_no_toolsets() -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-tools-effective-minimal-service"
     shutil.rmtree(tmp_path, ignore_errors=True)
@@ -1786,7 +2173,45 @@ async def test_chat_history_returns_openclaw_shaped_control_chat_projection() ->
 
 
 @pytest.mark.asyncio
-async def test_chat_history_applies_tail_char_budget_to_latest_message() -> None:
+async def test_chat_history_uses_resolved_subagent_store_key() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-chat-history-subagent-alias"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-chat-history.db")
+    await database.initialize()
+    resolved_session_key = "agent:main:subagent:child"
+    await database.upsert_gateway_session_metadata(
+        session_key=resolved_session_key,
+        metadata={"traceLevel": "verbose"},
+    )
+    await database.append_control_chat_message(
+        role="assistant",
+        content="Child transcript is visible.",
+        session_key=resolved_session_key,
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    payload = await service.call(
+        "chat.history",
+        {"sessionKey": "subagent:child", "limit": 5},
+    )
+
+    assert payload["sessionKey"] == resolved_session_key
+    assert payload["traceLevel"] == "verbose"
+    assert payload["messages"] == [
+        {
+            "role": "assistant",
+            "content": [{"type": "text", "text": "Child transcript is visible."}],
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_chat_history_applies_per_message_prefix_truncation_marker() -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-chat-history-char-budget"
     shutil.rmtree(tmp_path, ignore_errors=True)
     tmp_path.mkdir(parents=True, exist_ok=True)
@@ -1810,7 +2235,189 @@ async def test_chat_history_applies_tail_char_budget_to_latest_message() -> None
     )
 
     assert payload["messages"] == [
-        {"role": "assistant", "content": [{"type": "text", "text": "oint"}]}
+        {
+            "role": "user",
+            "content": [{"type": "text", "text": "Olde\n...(truncated)..."}],
+        },
+        {
+            "role": "assistant",
+            "content": [{"type": "text", "text": "chec\n...(truncated)..."}],
+        },
+    ]
+
+
+@pytest.mark.asyncio
+async def test_chat_history_applies_default_text_truncation_marker() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-chat-history-default-budget"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-chat-history.db")
+    await database.initialize()
+    await database.append_control_chat_message(
+        role="assistant",
+        content="a" * 12_001,
+        session_key="openzues:thread:demo",
+    )
+    service = GatewayNodeMethodService(GatewayNodeRegistry(), database=database)
+
+    payload = await service.call(
+        "chat.history",
+        {"sessionKey": "openzues:thread:demo"},
+    )
+
+    assert payload["messages"] == [
+        {
+            "role": "assistant",
+            "content": [{"type": "text", "text": f'{"a" * 12_000}\n...(truncated)...'}],
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_chat_history_replaces_single_oversized_message_with_placeholder() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-chat-history-oversized-message"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-chat-history.db")
+    await database.initialize()
+    huge_text = "n" * 120_000
+    await database.append_control_chat_message(
+        role="assistant",
+        content=huge_text,
+        session_key="openzues:thread:demo",
+    )
+    service = GatewayNodeMethodService(GatewayNodeRegistry(), database=database)
+
+    payload = await service.call(
+        "chat.history",
+        {
+            "sessionKey": "openzues:thread:demo",
+            "maxChars": 500_000,
+        },
+    )
+
+    assert len(json.dumps(payload["messages"]).encode("utf-8")) <= 64 * 1024
+    assert payload["messages"] == [
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "text", "text": "[chat.history omitted: message too large]"}
+            ],
+            "__openclaw": {"truncated": True, "reason": "oversized"},
+        }
+    ]
+    assert huge_text[:256] not in json.dumps(payload["messages"])
+
+
+@pytest.mark.asyncio
+async def test_chat_history_keeps_recent_small_messages_under_total_byte_cap() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-chat-history-total-budget"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-chat-history.db")
+    await database.initialize()
+    base_text = "s" * 1_200
+    for index in range(90):
+        await database.append_control_chat_message(
+            role="user",
+            content=f"small-{index}:{base_text}",
+            session_key="openzues:thread:demo",
+        )
+    huge_text = "z" * 120_000
+    await database.append_control_chat_message(
+        role="assistant",
+        content=huge_text,
+        session_key="openzues:thread:demo",
+    )
+    service = GatewayNodeMethodService(GatewayNodeRegistry(), database=database)
+
+    payload = await service.call(
+        "chat.history",
+        {
+            "sessionKey": "openzues:thread:demo",
+            "limit": 100,
+            "maxChars": 500_000,
+        },
+    )
+
+    serialized = json.dumps(payload["messages"])
+    assert len(serialized.encode("utf-8")) <= 64 * 1024
+    assert "small-89:" in serialized
+    assert "small-0:" not in serialized
+    assert "[chat.history omitted: message too large]" in serialized
+    assert huge_text[:256] not in serialized
+
+
+@pytest.mark.asyncio
+async def test_chat_history_hides_skip_only_assistant_entries_and_inline_directives() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-chat-history-directives"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-chat-history.db")
+    await database.initialize()
+    await database.append_control_chat_message(
+        role="user",
+        content="NO_REPLY",
+        session_key="openzues:thread:demo",
+    )
+    await database.append_control_chat_message(
+        role="assistant",
+        content="NO_REPLY",
+        session_key="openzues:thread:demo",
+    )
+    await database.append_control_chat_message(
+        role="assistant",
+        content="Hello [[reply_to_current]] world [[audio_as_voice]]",
+        session_key="openzues:thread:demo",
+    )
+    await database.append_control_chat_message(
+        role="assistant",
+        content="A [[ reply_to : abc-123 ]] B",
+        session_key="openzues:thread:demo",
+    )
+    service = GatewayNodeMethodService(GatewayNodeRegistry(), database=database)
+
+    payload = await service.call(
+        "chat.history",
+        {"sessionKey": "openzues:thread:demo"},
+    )
+
+    messages = payload["messages"]
+    assert messages == [
+        {"role": "user", "content": [{"type": "text", "text": "NO_REPLY"}]},
+        {"role": "assistant", "content": [{"type": "text", "text": "Hello  world "}]},
+        {"role": "assistant", "content": [{"type": "text", "text": "A  B"}]},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_chat_history_preserves_assistant_usage_and_cost_metadata() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-chat-history-usage-cost"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-chat-history.db")
+    await database.initialize()
+    await database.append_control_chat_message(
+        role="assistant",
+        content="Usage metadata is visible.",
+        session_key="openzues:thread:demo",
+        usage={"input": 12, "output": 5, "totalTokens": 17},
+        cost={"total": 0.0123},
+    )
+    service = GatewayNodeMethodService(GatewayNodeRegistry(), database=database)
+
+    payload = await service.call(
+        "chat.history",
+        {"sessionKey": "openzues:thread:demo"},
+    )
+
+    assert payload["messages"] == [
+        {
+            "role": "assistant",
+            "content": [{"type": "text", "text": "Usage metadata is visible."}],
+            "usage": {"input": 12, "output": 5, "totalTokens": 17},
+            "cost": {"total": 0.0123},
+        }
     ]
 
 
@@ -1868,6 +2475,61 @@ async def test_chat_send_returns_run_ack_from_injected_control_chat_bridge() -> 
         "timeout_ms": 30_000,
     }
     assert payload == {"runId": "run-chat-send-1", "status": "ok"}
+
+
+@pytest.mark.asyncio
+async def test_chat_send_uses_resolved_subagent_store_key() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-chat-send-subagent-alias"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-chat-send-subagent-alias.db")
+    await database.initialize()
+    resolved_session_key = "agent:main:subagent:child"
+    await database.upsert_gateway_session_metadata(
+        session_key=resolved_session_key,
+        metadata={"label": "Child Session"},
+    )
+    observed: dict[str, object] = {}
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        observed.update(
+            {
+                "session_key": session_key,
+                "message": message,
+                "idempotency_key": idempotency_key,
+                "thinking": thinking,
+                "deliver": deliver,
+                "timeout_ms": timeout_ms,
+            }
+        )
+        return {"runId": idempotency_key, "status": "ok"}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        chat_send_service=fake_chat_send_service,
+    )
+
+    payload = await service.call(
+        "chat.send",
+        {
+            "sessionKey": "subagent:child",
+            "message": "status",
+            "idempotencyKey": "run-chat-send-subagent-1",
+        },
+    )
+
+    assert observed["session_key"] == resolved_session_key
+    assert payload == {"runId": "run-chat-send-subagent-1", "status": "ok"}
 
 
 @pytest.mark.asyncio
@@ -2086,7 +2748,9 @@ async def test_chat_send_originating_route_fields_require_admin_scope_before_run
 
 
 @pytest.mark.asyncio
-async def test_chat_send_originating_route_fields_fail_as_unavailable_runtime() -> None:
+async def test_chat_send_originating_route_fields_preserve_route_provenance() -> None:
+    observed: dict[str, object] = {}
+
     async def fake_chat_send_service(
         *,
         session_key: str,
@@ -2096,33 +2760,56 @@ async def test_chat_send_originating_route_fields_fail_as_unavailable_runtime() 
         deliver: bool | None,
         timeout_ms: int | None,
     ) -> dict[str, object]:
-        del session_key, message, idempotency_key, thinking, deliver, timeout_ms
-        return {"runId": "unused", "status": "ok"}
+        observed.update(
+            {
+                "session_key": session_key,
+                "message": message,
+                "idempotency_key": idempotency_key,
+                "thinking": thinking,
+                "deliver": deliver,
+                "timeout_ms": timeout_ms,
+            }
+        )
+        return {"runId": idempotency_key, "status": "ok"}
 
     service = GatewayNodeMethodService(
         GatewayNodeRegistry(),
         chat_send_service=fake_chat_send_service,
     )
 
-    with pytest.raises(GatewayNodeMethodError) as exc_info:
-        await service.call(
-            "chat.send",
-            {
-                "sessionKey": "openzues:thread:demo",
-                "message": "status",
-                "originatingChannel": "slack",
-                "originatingTo": "C12345",
-                "idempotencyKey": "run-chat-send-origin-runtime-1",
-            },
-            requester=GatewayNodeMethodRequester(caller_scopes=(ADMIN_GATEWAY_METHOD_SCOPE,)),
-        )
-
-    assert exc_info.value.code == "UNAVAILABLE"
-    assert exc_info.value.status_code == 503
-    assert exc_info.value.message == (
-        "chat.send originating route fields are unavailable until control chat route "
-        "provenance is wired"
+    payload = await service.call(
+        "chat.send",
+        {
+            "sessionKey": "openzues:thread:demo",
+            "message": "status",
+            "originatingChannel": "slack",
+            "originatingTo": "C12345",
+            "originatingAccountId": "T999",
+            "originatingThreadId": "1714000000.000100",
+            "idempotencyKey": "run-chat-send-origin-runtime-1",
+        },
+        requester=GatewayNodeMethodRequester(caller_scopes=(ADMIN_GATEWAY_METHOD_SCOPE,)),
     )
+
+    assert observed == {
+        "session_key": "openzues:thread:demo",
+        "message": "\n".join(
+            [
+                "[OpenClaw route provenance]",
+                "OriginatingChannel: slack",
+                "OriginatingTo: C12345",
+                "OriginatingAccountId: T999",
+                "OriginatingThreadId: 1714000000.000100",
+                "",
+                "status",
+            ]
+        ),
+        "idempotency_key": "run-chat-send-origin-runtime-1",
+        "thinking": None,
+        "deliver": None,
+        "timeout_ms": None,
+    }
+    assert payload == {"runId": "run-chat-send-origin-runtime-1", "status": "ok"}
 
 
 @pytest.mark.asyncio
@@ -2158,7 +2845,9 @@ async def test_chat_send_system_provenance_fields_require_admin_scope_before_run
 
 
 @pytest.mark.asyncio
-async def test_chat_send_system_provenance_fields_fail_as_unavailable_runtime() -> None:
+async def test_chat_send_system_provenance_fields_preserve_runtime_context() -> None:
+    observed: dict[str, object] = {}
+
     async def fake_chat_send_service(
         *,
         session_key: str,
@@ -2168,33 +2857,62 @@ async def test_chat_send_system_provenance_fields_fail_as_unavailable_runtime() 
         deliver: bool | None,
         timeout_ms: int | None,
     ) -> dict[str, object]:
-        del session_key, message, idempotency_key, thinking, deliver, timeout_ms
-        return {"runId": "unused", "status": "ok"}
+        observed.update(
+            {
+                "session_key": session_key,
+                "message": message,
+                "idempotency_key": idempotency_key,
+                "thinking": thinking,
+                "deliver": deliver,
+                "timeout_ms": timeout_ms,
+            }
+        )
+        return {"runId": idempotency_key, "status": "ok"}
 
     service = GatewayNodeMethodService(
         GatewayNodeRegistry(),
         chat_send_service=fake_chat_send_service,
     )
 
-    with pytest.raises(GatewayNodeMethodError) as exc_info:
-        await service.call(
-            "chat.send",
-            {
-                "sessionKey": "openzues:thread:demo",
-                "message": "status",
-                "systemInputProvenance": {"kind": "internal_system"},
-                "systemProvenanceReceipt": "Gateway witness",
-                "idempotencyKey": "run-chat-send-system-runtime-1",
+    payload = await service.call(
+        "chat.send",
+        {
+            "sessionKey": "openzues:thread:demo",
+            "message": "status",
+            "systemInputProvenance": {
+                "kind": "internal_system",
+                "originSessionId": "session-123",
+                "sourceSessionKey": "openzues:thread:source",
+                "sourceChannel": "slack",
+                "sourceTool": "gateway",
             },
-            requester=GatewayNodeMethodRequester(caller_scopes=(ADMIN_GATEWAY_METHOD_SCOPE,)),
-        )
-
-    assert exc_info.value.code == "UNAVAILABLE"
-    assert exc_info.value.status_code == 503
-    assert exc_info.value.message == (
-        "chat.send system provenance fields are unavailable until control chat "
-        "provenance injection is wired"
+            "systemProvenanceReceipt": "Gateway witness",
+            "idempotencyKey": "run-chat-send-system-runtime-1",
+        },
+        requester=GatewayNodeMethodRequester(caller_scopes=(ADMIN_GATEWAY_METHOD_SCOPE,)),
     )
+
+    assert observed == {
+        "session_key": "openzues:thread:demo",
+        "message": "\n".join(
+            [
+                "Gateway witness",
+                "[OpenClaw input provenance]",
+                "Kind: internal_system",
+                "originSessionId: session-123",
+                "sourceSessionKey: openzues:thread:source",
+                "sourceChannel: slack",
+                "sourceTool: gateway",
+                "",
+                "status",
+            ]
+        ),
+        "idempotency_key": "run-chat-send-system-runtime-1",
+        "thinking": None,
+        "deliver": None,
+        "timeout_ms": None,
+    }
+    assert payload == {"runId": "run-chat-send-system-runtime-1", "status": "ok"}
 
 
 @pytest.mark.asyncio
@@ -2996,6 +3714,7 @@ async def test_chat_inject_appends_assistant_message_and_publishes_session_messa
         "id": "1",
         "role": "assistant",
         "content": [{"type": "text", "text": "Injected parity note"}],
+        "__openclaw": {"id": "1", "seq": 1},
     }
 
     sessions_changed_events = [
@@ -3007,6 +3726,142 @@ async def test_chat_inject_appends_assistant_message_and_publishes_session_messa
     assert sessions_changed_events[0]["payload"]["sessionKey"] == session_key
     assert sessions_changed_events[0]["payload"]["phase"] == "message"
     assert sessions_changed_events[0]["payload"]["messageId"] == "1"
+
+
+@pytest.mark.asyncio
+async def test_chat_inject_uses_resolved_custom_subagent_store_key() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-chat-inject-custom-alias"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-chat-inject-custom-alias.db")
+    await database.initialize()
+    await database.create_gateway_agent(
+        agent_id="builder-prime",
+        name="Builder Prime",
+        workspace=str(tmp_path / "agents" / "builder-prime"),
+        model="gpt-5.4-mini",
+        emoji="spark",
+        avatar="/static/builder-prime.png",
+    )
+    resolved_session_key = "agent:builder-prime:subagent:child"
+    await database.upsert_gateway_session_metadata(
+        session_key=resolved_session_key,
+        metadata={"agentId": "builder-prime", "label": "Builder child"},
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    payload = await service.call(
+        "chat.inject",
+        {
+            "sessionKey": "subagent:child",
+            "message": "Injected custom-agent child note.",
+        },
+        now_ms=111,
+    )
+
+    assert payload == {"ok": True, "messageId": "1"}
+    rows = await database.list_control_chat_messages(limit=10, session_key=resolved_session_key)
+    assert len(rows) == 1
+    assert rows[0]["session_key"] == resolved_session_key
+    assert rows[0]["content"] == "Injected custom-agent child note."
+    assert await database.count_control_chat_messages(session_key="subagent:child") == 0
+
+
+@pytest.mark.asyncio
+async def test_chat_inject_sanitizes_live_session_message_events() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-chat-inject-event-sanitize"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-chat-inject.db")
+    await database.initialize()
+    session_key = resolve_thread_session_keys(
+        base_session_key=build_launch_session_key(
+            mode="workspace_affinity",
+            preferred_instance_id=None,
+            task_id=None,
+            project_id=None,
+            operator_id=None,
+        ),
+        thread_id="thread-chat-inject-sanitize",
+    ).session_key
+    await database.create_mission(
+        name="Gateway Chat Inject Sanitize Loop",
+        objective="Verify live session event display hygiene.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread-chat-inject-sanitize",
+        session_key=session_key,
+        cwd=str(tmp_path),
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=False,
+        run_verification=False,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+    )
+
+    class _RecordingBroadcastHub(BroadcastHub):
+        def __init__(self) -> None:
+            super().__init__()
+            self.published_events: list[dict[str, object]] = []
+
+        async def publish(self, event: dict[str, object]) -> None:
+            self.published_events.append(dict(event))
+            await super().publish(event)
+
+    hub = _RecordingBroadcastHub()
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        hub=hub,
+    )
+
+    await service.call(
+        "chat.inject",
+        {
+            "sessionKey": session_key,
+            "message": "Hello [[reply_to_current]] world [[audio_as_voice]]",
+        },
+        now_ms=333,
+    )
+    await service.call(
+        "chat.inject",
+        {"sessionKey": session_key, "message": "NO_REPLY"},
+        now_ms=444,
+    )
+
+    session_message_events = [
+        event
+        for event in hub.published_events
+        if event.get("type") == "gateway_event" and event.get("event") == "session.message"
+    ]
+
+    assert len(session_message_events) == 1
+    assert session_message_events[0]["payload"]["message"] == {
+        "role": "assistant",
+        "content": [{"type": "text", "text": "Hello  world "}],
+        "id": "1",
+        "__openclaw": {"id": "1", "seq": 1},
+    }
+    sessions_changed_events = [
+        event
+        for event in hub.published_events
+        if event.get("type") == "gateway_event" and event.get("event") == "sessions.changed"
+    ]
+    assert [event["payload"]["messageId"] for event in sessions_changed_events] == ["1"]
 
 
 @pytest.mark.asyncio
@@ -3062,6 +3917,115 @@ async def test_sessions_send_routes_key_to_bounded_control_chat_runtime() -> Non
         "timeout_ms": 30_000,
     }
     assert payload == {"runId": "run-session-send-1", "status": "ok"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method", ["sessions.send", "sessions.steer"])
+async def test_sessions_send_and_steer_use_resolved_subagent_store_key(method: str) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / f"gateway-{method.replace('.', '-')}-alias"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-session-send-alias.db")
+    await database.initialize()
+    resolved_session_key = "agent:main:subagent:child"
+    await database.upsert_gateway_session_metadata(
+        session_key=resolved_session_key,
+        metadata={"label": "Child Session"},
+    )
+    observed: dict[str, object] = {}
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        observed.update(
+            {
+                "session_key": session_key,
+                "message": message,
+                "idempotency_key": idempotency_key,
+                "thinking": thinking,
+                "deliver": deliver,
+                "timeout_ms": timeout_ms,
+            }
+        )
+        return {"runId": idempotency_key, "status": "ok"}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        chat_send_service=fake_chat_send_service,
+    )
+
+    payload = await service.call(
+        method,
+        {
+            "key": "subagent:child",
+            "message": "status",
+            "idempotencyKey": f"run-{method.replace('.', '-')}-subagent-1",
+        },
+    )
+
+    assert observed["session_key"] == resolved_session_key
+    assert payload == {
+        "runId": f"run-{method.replace('.', '-')}-subagent-1",
+        "status": "ok",
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method", ["sessions.send", "sessions.steer"])
+async def test_sessions_send_and_steer_reject_deleted_custom_agent_sessions(
+    method: str,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-session-deleted-agent"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-session-deleted-agent.db")
+    await database.initialize()
+    await database.create_gateway_agent(
+        agent_id="builder-prime",
+        name="Builder Prime",
+        workspace=str(tmp_path / "agents" / "builder-prime"),
+        model="gpt-5.4-mini",
+        emoji=None,
+        avatar=None,
+    )
+    await database.delete_gateway_agent("builder-prime")
+
+    async def fail_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        raise AssertionError("deleted-agent sessions must be rejected before runtime send")
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        chat_send_service=fail_chat_send_service,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match='Agent "builder-prime" no longer exists in configuration',
+    ):
+        await service.call(
+            method,
+            {
+                "key": "agent:builder-prime:main",
+                "message": "Resume the deleted agent.",
+            },
+        )
 
 
 @pytest.mark.asyncio
@@ -3461,6 +4425,69 @@ async def test_chat_abort_interrupts_tracked_gateway_run_with_injected_runtime()
 
 
 @pytest.mark.asyncio
+async def test_chat_abort_uses_resolved_subagent_store_key() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-chat-abort-subagent-alias"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-chat-abort-subagent-alias.db")
+    await database.initialize()
+    resolved_session_key = "agent:main:subagent:child"
+    await database.upsert_gateway_session_metadata(
+        session_key=resolved_session_key,
+        metadata={"label": "Child Session"},
+    )
+    observed_interrupt: dict[str, object | None] = {}
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        del session_key, message, thinking, deliver, timeout_ms
+        return {"runId": idempotency_key, "status": "ok"}
+
+    async def fake_chat_abort_service(
+        *,
+        session_key: str,
+        run_id: str | None,
+    ) -> dict[str, object]:
+        observed_interrupt.update({"session_key": session_key, "run_id": run_id})
+        return {"ok": True}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        chat_send_service=fake_chat_send_service,
+        chat_abort_service=fake_chat_abort_service,
+    )
+
+    await service.call(
+        "chat.send",
+        {
+            "sessionKey": resolved_session_key,
+            "message": "status",
+            "idempotencyKey": "run-chat-abort-subagent-1",
+        },
+    )
+    payload = await service.call("chat.abort", {"sessionKey": "subagent:child"})
+
+    assert observed_interrupt == {
+        "session_key": resolved_session_key,
+        "run_id": None,
+    }
+    assert payload == {
+        "ok": True,
+        "aborted": True,
+        "runIds": ["run-chat-abort-subagent-1"],
+    }
+
+
+@pytest.mark.asyncio
 async def test_chat_abort_treats_empty_run_id_as_session_scoped_abort() -> None:
     observed_interrupt: dict[str, str | None] = {}
 
@@ -3593,6 +4620,7 @@ async def test_sessions_send_publishes_openclaw_sessions_changed_gateway_event()
         "inputTokens": None,
         "outputTokens": None,
         "totalTokens": None,
+        "totalTokensFresh": False,
         "contextTokens": None,
         "modelProvider": "openai",
         "model": "gpt-5.4",
@@ -3742,6 +4770,7 @@ async def test_sessions_steer_without_interrupt_publishes_send_reason_gateway_ev
         "inputTokens": None,
         "outputTokens": None,
         "totalTokens": None,
+        "totalTokensFresh": False,
         "contextTokens": None,
         "modelProvider": "openai",
         "model": "gpt-5.4",
@@ -3749,6 +4778,58 @@ async def test_sessions_steer_without_interrupt_publishes_send_reason_gateway_ev
     }
     assert isinstance(sessions_changed[0]["createdAt"], str)
     assert isinstance(sessions_changed[0]["payload"]["updatedAt"], int)
+
+
+@pytest.mark.asyncio
+async def test_sessions_steer_without_tracked_run_does_not_require_abort_runtime() -> None:
+    observed: dict[str, object] = {}
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        observed.update(
+            {
+                "session_key": session_key,
+                "message": message,
+                "idempotency_key": idempotency_key,
+                "thinking": thinking,
+                "deliver": deliver,
+                "timeout_ms": timeout_ms,
+            }
+        )
+        return {"runId": idempotency_key, "status": "ok"}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        chat_send_service=fake_chat_send_service,
+    )
+
+    payload = await service.call(
+        "sessions.steer",
+        {
+            "key": "openzues:thread:demo",
+            "message": "redirect",
+            "thinking": "low",
+            "timeoutMs": 30_000,
+            "idempotencyKey": "run-session-steer-no-abort-runtime-1",
+        },
+    )
+
+    assert observed == {
+        "session_key": "openzues:thread:demo",
+        "message": "redirect",
+        "idempotency_key": "run-session-steer-no-abort-runtime-1",
+        "thinking": "low",
+        "deliver": None,
+        "timeout_ms": 30_000,
+    }
+    assert payload == {"runId": "run-session-steer-no-abort-runtime-1", "status": "ok"}
 
 
 @pytest.mark.asyncio
@@ -4400,7 +5481,7 @@ async def test_sessions_steer_fails_explicitly_until_interrupt_runtime_is_wired(
     assert exc_info.value.code == "UNAVAILABLE"
     assert exc_info.value.status_code == 503
     assert exc_info.value.message == (
-        "sessions.steer is unavailable until control chat interruption is wired"
+        "sessions.steer is unavailable until control chat runtime is wired"
     )
 
 
@@ -4422,6 +5503,69 @@ async def test_sessions_abort_fails_as_explicit_unavailable_until_runtime_is_wir
     assert exc_info.value.message == (
         "chat.abort is unavailable until control chat cancellation is wired"
     )
+
+
+@pytest.mark.asyncio
+async def test_sessions_abort_uses_resolved_subagent_store_key() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-abort-subagent-alias"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-sessions-abort-subagent-alias.db")
+    await database.initialize()
+    resolved_session_key = "agent:main:subagent:child"
+    await database.upsert_gateway_session_metadata(
+        session_key=resolved_session_key,
+        metadata={"label": "Child Session"},
+    )
+    observed_interrupt: dict[str, object | None] = {}
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        del session_key, message, thinking, deliver, timeout_ms
+        return {"runId": idempotency_key, "status": "ok"}
+
+    async def fake_chat_abort_service(
+        *,
+        session_key: str,
+        run_id: str | None,
+    ) -> dict[str, object]:
+        observed_interrupt.update({"session_key": session_key, "run_id": run_id})
+        return {"ok": True}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        chat_send_service=fake_chat_send_service,
+        chat_abort_service=fake_chat_abort_service,
+    )
+
+    await service.call(
+        "sessions.send",
+        {
+            "key": resolved_session_key,
+            "message": "status",
+            "idempotencyKey": "run-sessions-abort-subagent-1",
+        },
+    )
+    payload = await service.call("sessions.abort", {"key": "subagent:child"})
+
+    assert observed_interrupt == {
+        "session_key": resolved_session_key,
+        "run_id": None,
+    }
+    assert payload == {
+        "ok": True,
+        "abortedRunId": "run-sessions-abort-subagent-1",
+        "status": "aborted",
+    }
 
 
 @pytest.mark.asyncio
@@ -4543,6 +5687,247 @@ async def test_sessions_reset_clears_transcript_and_preserves_session_entry() ->
     ]
     assert [event["payload"]["reason"] for event in sessions_changed] == ["new"]
     assert sessions_changed[0]["payload"]["sessionKey"] == session_key
+
+
+@pytest.mark.asyncio
+async def test_sessions_reset_discards_stale_runtime_model_metadata() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-reset-stale-model"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-sessions-reset-stale-model.db")
+    await database.initialize()
+    session_key = "agent:main:main"
+    await database.upsert_gateway_session_metadata(
+        session_key=session_key,
+        metadata={
+            "modelProvider": "qwencode",
+            "model": "qwen3.5-plus-2026-02-15",
+            "contextTokens": 123_456,
+        },
+    )
+    await database.append_control_chat_message(
+        role="assistant",
+        content="Stale runtime model should not survive reset.",
+        session_key=session_key,
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    payload = await service.call("sessions.reset", {"key": session_key}, now_ms=444)
+
+    assert payload["ok"] is True
+    assert payload["entry"]["modelProvider"] == "openai"
+    assert payload["entry"]["model"] == "gpt-5.4"
+    assert payload["entry"]["contextTokens"] is None
+    metadata_row = await database.get_gateway_session_metadata(session_key)
+    assert metadata_row is not None
+    assert "modelProvider" not in metadata_row["metadata"]
+    assert "model" not in metadata_row["metadata"]
+    assert "contextTokens" not in metadata_row["metadata"]
+
+
+@pytest.mark.asyncio
+async def test_sessions_reset_marks_legacy_provider_model_override_as_user() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-reset-legacy-override"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-sessions-reset-legacy-override.db")
+    await database.initialize()
+    session_key = "agent:main:main"
+    await database.upsert_gateway_session_metadata(
+        session_key=session_key,
+        metadata={
+            "providerOverride": "anthropic",
+            "modelOverride": "claude-opus-4-1",
+            "modelProvider": "openai",
+            "model": "gpt-5.4",
+        },
+    )
+    await database.append_control_chat_message(
+        role="assistant",
+        content="Legacy explicit override should survive reset.",
+        session_key=session_key,
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    payload = await service.call("sessions.reset", {"key": session_key}, now_ms=444)
+
+    assert payload["ok"] is True
+    assert payload["entry"]["providerOverride"] == "anthropic"
+    assert payload["entry"]["modelOverride"] == "claude-opus-4-1"
+    assert payload["entry"]["modelOverrideSource"] == "user"
+    assert payload["entry"]["modelProvider"] == "anthropic"
+    assert payload["entry"]["model"] == "claude-opus-4-1"
+    metadata_row = await database.get_gateway_session_metadata(session_key)
+    assert metadata_row is not None
+    assert metadata_row["metadata"] == {
+        "providerOverride": "anthropic",
+        "modelOverride": "claude-opus-4-1",
+        "modelOverrideSource": "user",
+    }
+
+
+@pytest.mark.asyncio
+async def test_sessions_reset_preserves_owned_child_metadata() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-reset-owned-child"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-sessions-reset-owned-child.db")
+    await database.initialize()
+    session_key = "agent:main:subagent:child"
+    await database.upsert_gateway_session_metadata(
+        session_key=session_key,
+        metadata={
+            "chatType": "group",
+            "channel": "discord",
+            "groupId": "group-1",
+            "groupChannel": "dev",
+            "spawnedBy": "agent:main:main",
+            "spawnedWorkspaceDir": "/tmp/child-workspace",
+            "parentSessionKey": "agent:main:main",
+            "forkedFromParent": True,
+            "spawnDepth": 2,
+            "subagentRole": "orchestrator",
+            "subagentControlScope": "children",
+            "elevatedLevel": "on",
+            "ttsAuto": "always",
+            "authProfileOverride": "work",
+            "authProfileOverrideSource": "user",
+            "authProfileOverrideCompactionCount": 7,
+            "sendPolicy": "deny",
+            "queueMode": "interrupt",
+            "queueDebounceMs": 250,
+            "queueCap": 9,
+            "queueDrop": "old",
+            "groupActivation": "always",
+            "groupActivationNeedsSystemIntro": True,
+            "execHost": "gateway",
+            "execSecurity": "allowlist",
+            "execAsk": "on-miss",
+            "execNode": "mac-mini",
+            "displayName": "Ops Child",
+            "cliSessionIds": {"claude-cli": "cli-session-123"},
+            "cliSessionBindings": {
+                "claude-cli": {
+                    "sessionId": "cli-session-123",
+                    "authProfileId": "anthropic:work",
+                    "extraSystemPromptHash": "prompt-hash",
+                },
+            },
+            "claudeCliSessionId": "cli-session-123",
+            "deliveryContext": {
+                "channel": "discord",
+                "to": "discord:child",
+                "accountId": "acct-1",
+                "threadId": "thread-1",
+            },
+            "label": "owned child",
+        },
+    )
+    await database.append_control_chat_message(
+        role="assistant",
+        content="Owned child metadata should survive reset.",
+        session_key=session_key,
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    payload = await service.call("sessions.reset", {"key": "subagent:child"}, now_ms=444)
+    entry = payload["entry"]
+
+    assert payload["ok"] is True
+    assert payload["key"] == session_key
+    assert entry["displayName"] == "Ops Child"
+    assert entry["chatType"] == "group"
+    assert entry["channel"] == "discord"
+    assert entry["groupId"] == "group-1"
+    assert entry["groupChannel"] == "dev"
+    assert entry["ttsAuto"] == "always"
+    assert entry["authProfileOverride"] == "work"
+    assert entry["authProfileOverrideSource"] == "user"
+    assert entry["authProfileOverrideCompactionCount"] == 7
+    assert entry["queueMode"] == "interrupt"
+    assert entry["queueDebounceMs"] == 250
+    assert entry["queueCap"] == 9
+    assert entry["queueDrop"] == "old"
+    assert entry["groupActivationNeedsSystemIntro"] is True
+    assert entry["cliSessionIds"] == {"claude-cli": "cli-session-123"}
+    assert entry["cliSessionBindings"] == {
+        "claude-cli": {
+            "sessionId": "cli-session-123",
+            "authProfileId": "anthropic:work",
+            "extraSystemPromptHash": "prompt-hash",
+        },
+    }
+    assert entry["claudeCliSessionId"] == "cli-session-123"
+    assert entry["deliveryContext"] == {
+        "channel": "discord",
+        "to": "discord:child",
+        "accountId": "acct-1",
+        "threadId": "thread-1",
+    }
+
+
+@pytest.mark.asyncio
+async def test_sessions_reset_uses_resolved_custom_subagent_store_key() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-reset-custom-alias"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-sessions-reset-custom-alias.db")
+    await database.initialize()
+    await database.create_gateway_agent(
+        agent_id="builder-prime",
+        name="Builder Prime",
+        workspace=str(tmp_path / "agents" / "builder-prime"),
+        model="gpt-5.4-mini",
+        emoji="spark",
+        avatar="/static/builder-prime.png",
+    )
+    resolved_session_key = "agent:builder-prime:subagent:child"
+    await database.upsert_gateway_session_metadata(
+        session_key=resolved_session_key,
+        metadata={
+            "agentId": "builder-prime",
+            "label": "Builder child",
+            "modelProvider": "openai",
+            "model": "stale-runtime-model",
+        },
+    )
+    await database.append_control_chat_message(
+        role="assistant",
+        content="This transcript should be reset.",
+        session_key=resolved_session_key,
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    payload = await service.call("sessions.reset", {"key": "subagent:child"}, now_ms=555)
+
+    assert payload["ok"] is True
+    assert payload["key"] == resolved_session_key
+    assert payload["entry"]["key"] == resolved_session_key
+    assert payload["entry"]["label"] == "Builder child"
+    assert await database.count_control_chat_messages(session_key=resolved_session_key) == 0
+    resolved_metadata = await database.get_gateway_session_metadata(resolved_session_key)
+    assert resolved_metadata is not None
+    assert resolved_metadata["metadata"] == {
+        "agentId": "builder-prime",
+        "label": "Builder child",
+    }
+    assert await database.get_gateway_session_metadata("subagent:child") is None
 
 
 @pytest.mark.asyncio
@@ -4681,6 +6066,84 @@ async def test_sessions_delete_removes_metadata_backed_session_and_transcript() 
 
 
 @pytest.mark.asyncio
+async def test_sessions_delete_uses_resolved_subagent_store_key() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-delete-subagent-alias"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-sessions-delete-subagent-alias.db")
+    await database.initialize()
+    resolved_session_key = "agent:main:subagent:child"
+    await database.upsert_gateway_session_metadata(
+        session_key=resolved_session_key,
+        metadata={"label": "Child Session"},
+    )
+    await database.append_control_chat_message(
+        role="assistant",
+        content="Delete this child session.",
+        session_key=resolved_session_key,
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    payload = await service.call(
+        "sessions.delete",
+        {"key": "subagent:child"},
+        now_ms=1_700_000_000_999,
+    )
+
+    assert payload["ok"] is True
+    assert payload["key"] == resolved_session_key
+    assert payload["deleted"] is True
+    assert await database.get_gateway_session_metadata(resolved_session_key) is None
+    assert await database.get_gateway_session_metadata("subagent:child") is None
+    assert await database.count_control_chat_messages(session_key=resolved_session_key) == 0
+
+
+@pytest.mark.asyncio
+async def test_sessions_delete_uses_resolved_custom_subagent_store_key() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-delete-custom-alias"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-sessions-delete-custom-alias.db")
+    await database.initialize()
+    await database.create_gateway_agent(
+        agent_id="builder-prime",
+        name="Builder Prime",
+        workspace=str(tmp_path / "agents" / "builder-prime"),
+        model="gpt-5.4-mini",
+        emoji="spark",
+        avatar="/static/builder-prime.png",
+    )
+    resolved_session_key = "agent:builder-prime:subagent:child"
+    await database.upsert_gateway_session_metadata(
+        session_key=resolved_session_key,
+        metadata={"agentId": "builder-prime", "label": "Builder child"},
+    )
+    await database.append_control_chat_message(
+        role="assistant",
+        content="This transcript should be deleted.",
+        session_key=resolved_session_key,
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    payload = await service.call("sessions.delete", {"key": "subagent:child"}, now_ms=666)
+
+    assert payload["ok"] is True
+    assert payload["key"] == resolved_session_key
+    assert payload["deleted"] is True
+    assert await database.get_gateway_session_metadata(resolved_session_key) is None
+    assert await database.count_control_chat_messages(session_key=resolved_session_key) == 0
+    assert await database.get_gateway_session_metadata("subagent:child") is None
+
+
+@pytest.mark.asyncio
 async def test_sessions_compact_archives_trimmed_messages_into_checkpoint_inventory() -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-compact-service"
     shutil.rmtree(tmp_path, ignore_errors=True)
@@ -4794,6 +6257,51 @@ async def test_sessions_compact_archives_trimmed_messages_into_checkpoint_invent
     assert (
         sessions_changed[0]["payload"]["latestCompactionCheckpoint"] == inventory["checkpoints"][0]
     )
+
+
+@pytest.mark.asyncio
+async def test_sessions_compact_uses_resolved_subagent_store_key() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-compact-subagent-alias"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-sessions-compact-subagent-alias.db")
+    await database.initialize()
+    resolved_session_key = "agent:main:subagent:child"
+    await database.upsert_gateway_session_metadata(
+        session_key=resolved_session_key,
+        metadata={"label": "Child Session"},
+    )
+    await database.append_control_chat_message(
+        role="user",
+        content="Alpha line 1\nAlpha line 2",
+        session_key=resolved_session_key,
+    )
+    await database.append_control_chat_message(
+        role="assistant",
+        content="Bravo line 1",
+        session_key=resolved_session_key,
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    payload = await service.call(
+        "sessions.compact",
+        {"key": "subagent:child", "maxLines": 1},
+        now_ms=1_700_000_001_111,
+    )
+
+    assert payload["ok"] is True
+    assert payload["key"] == resolved_session_key
+    assert payload["compacted"] is True
+    assert payload["archivedCount"] == 1
+    inventory = await service.call(
+        "sessions.compaction.list",
+        {"key": resolved_session_key},
+    )
+    assert inventory["checkpoints"][0]["sessionKey"] == resolved_session_key
 
 
 @pytest.mark.asyncio
@@ -5202,6 +6710,190 @@ async def test_sessions_compaction_restore_rehydrates_snapshot_and_publishes_eve
 
 
 @pytest.mark.asyncio
+async def test_sessions_compaction_restore_uses_resolved_subagent_store_key() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-restore-subagent-alias"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-sessions-restore-subagent-alias.db")
+    await database.initialize()
+
+    class _RecordingBroadcastHub(BroadcastHub):
+        def __init__(self) -> None:
+            super().__init__()
+            self.published_events: list[dict[str, object]] = []
+
+        async def publish(self, event: dict[str, object]) -> None:
+            self.published_events.append(dict(event))
+            await super().publish(event)
+
+    hub = _RecordingBroadcastHub()
+    resolved_session_key = "agent:main:subagent:child"
+    await database.upsert_gateway_session_metadata(
+        session_key=resolved_session_key,
+        metadata={"label": "Child Session", "traceLevel": "verbose"},
+    )
+    await database.append_control_chat_message(
+        role="user",
+        content="Alpha line 1\nAlpha line 2",
+        session_key=resolved_session_key,
+    )
+    await database.append_control_chat_message(
+        role="assistant",
+        content="Bravo line 1",
+        session_key=resolved_session_key,
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        hub=hub,
+        sessions_service=GatewaySessionsService(database),
+    )
+    compacted = await service.call(
+        "sessions.compact",
+        {"key": resolved_session_key, "maxLines": 1},
+        now_ms=1_700_000_000_123,
+    )
+    checkpoint_id = str(compacted["checkpointId"])
+
+    restored = await service.call(
+        "sessions.compaction.restore",
+        {"key": "subagent:child", "checkpointId": checkpoint_id},
+        now_ms=1_700_000_000_456,
+    )
+    restored_messages = await database.list_control_chat_messages(
+        limit=10,
+        session_key=resolved_session_key,
+    )
+    raw_alias_messages = await database.list_control_chat_messages(
+        limit=10,
+        session_key="subagent:child",
+    )
+
+    assert restored["ok"] is True
+    assert restored["key"] == resolved_session_key
+    assert restored["entry"]["key"] == resolved_session_key
+    assert restored["entry"]["traceLevel"] == "verbose"
+    assert [message["content"] for message in restored_messages] == [
+        "Alpha line 1\nAlpha line 2",
+        "Bravo line 1",
+    ]
+    assert raw_alias_messages == []
+    sessions_changed = [
+        event
+        for event in hub.published_events
+        if event.get("type") == "gateway_event" and event.get("event") == "sessions.changed"
+    ]
+    assert sessions_changed[-1]["payload"]["reason"] == "checkpoint-restore"
+    assert sessions_changed[-1]["payload"]["sessionKey"] == resolved_session_key
+
+
+@pytest.mark.asyncio
+async def test_sessions_compaction_inventory_reads_use_resolved_subagent_store_key() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-inventory-subagent-alias"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-sessions-inventory-subagent-alias.db")
+    await database.initialize()
+    resolved_session_key = "agent:main:subagent:child"
+    await database.upsert_gateway_session_metadata(
+        session_key=resolved_session_key,
+        metadata={"label": "Child Session"},
+    )
+    await database.append_control_chat_message(
+        role="user",
+        content="Alpha line 1\nAlpha line 2",
+        session_key=resolved_session_key,
+    )
+    await database.append_control_chat_message(
+        role="assistant",
+        content="Bravo line 1",
+        session_key=resolved_session_key,
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+    )
+    compacted = await service.call(
+        "sessions.compact",
+        {"key": resolved_session_key, "maxLines": 1},
+        now_ms=1_700_000_000_123,
+    )
+    checkpoint_id = str(compacted["checkpointId"])
+
+    inventory = await service.call(
+        "sessions.compaction.list",
+        {"key": "subagent:child"},
+    )
+    checkpoint_payload = await service.call(
+        "sessions.compaction.get",
+        {"key": "subagent:child", "checkpointId": checkpoint_id},
+    )
+
+    assert inventory["ok"] is True
+    assert inventory["key"] == resolved_session_key
+    assert inventory["checkpoints"][0]["sessionKey"] == resolved_session_key
+    assert inventory["checkpoints"][0]["checkpointId"] == checkpoint_id
+    assert checkpoint_payload["ok"] is True
+    assert checkpoint_payload["key"] == resolved_session_key
+    assert checkpoint_payload["checkpoint"]["sessionKey"] == resolved_session_key
+
+
+@pytest.mark.asyncio
+async def test_sessions_compaction_branch_uses_resolved_subagent_store_key() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-branch-subagent-alias"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-sessions-branch-subagent-alias.db")
+    await database.initialize()
+    resolved_session_key = "agent:main:subagent:child"
+    await database.upsert_gateway_session_metadata(
+        session_key=resolved_session_key,
+        metadata={"label": "Child Session", "traceLevel": "verbose"},
+    )
+    await database.append_control_chat_message(
+        role="user",
+        content="Alpha line 1\nAlpha line 2",
+        session_key=resolved_session_key,
+    )
+    await database.append_control_chat_message(
+        role="assistant",
+        content="Bravo line 1",
+        session_key=resolved_session_key,
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+    )
+    compacted = await service.call(
+        "sessions.compact",
+        {"key": resolved_session_key, "maxLines": 1},
+        now_ms=1_700_000_000_123,
+    )
+
+    branch = await service.call(
+        "sessions.compaction.branch",
+        {"key": "subagent:child", "checkpointId": str(compacted["checkpointId"])},
+        now_ms=1_700_000_000_456,
+    )
+
+    assert branch["ok"] is True
+    assert branch["sourceKey"] == resolved_session_key
+    assert branch["checkpoint"]["sessionKey"] == resolved_session_key
+    assert branch["entry"]["parentSessionKey"] == resolved_session_key
+    assert branch["entry"]["traceLevel"] == "verbose"
+    branch_messages = await database.list_control_chat_messages(
+        limit=10,
+        session_key=str(branch["key"]),
+    )
+    assert [message["content"] for message in branch_messages] == [
+        "Alpha line 1\nAlpha line 2",
+        "Bravo line 1",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_sessions_compaction_list_returns_empty_inventory_for_unknown_session() -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-compaction-list-empty-service"
     shutil.rmtree(tmp_path, ignore_errors=True)
@@ -5428,6 +7120,154 @@ async def test_sessions_preview_returns_current_session_items_and_missing_unknow
                 "status": "missing",
                 "items": [],
             },
+        ],
+    }
+
+
+@pytest.mark.asyncio
+async def test_sessions_preview_hides_skip_only_assistant_entries_and_inline_directives() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-preview-directives"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-sessions-preview.db")
+    await database.initialize()
+    session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+    )
+    await database.append_control_chat_message(
+        role="user",
+        content="NO_REPLY",
+        session_key=session_key,
+    )
+    await database.append_control_chat_message(
+        role="assistant",
+        content="NO_REPLY",
+        session_key=session_key,
+    )
+    await database.append_control_chat_message(
+        role="assistant",
+        content="Preview [[reply_to_current]] ready [[audio_as_voice]]",
+        session_key=session_key,
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    payload = await service.call(
+        "sessions.preview",
+        {"keys": [session_key], "limit": 12, "maxChars": 240},
+        now_ms=222,
+    )
+
+    assert payload == {
+        "ts": 222,
+        "previews": [
+            {
+                "key": session_key,
+                "status": "ok",
+                "items": [
+                    {"role": "user", "text": "NO_REPLY"},
+                    {"role": "assistant", "text": "Preview  ready"},
+                ],
+            }
+        ],
+    }
+
+
+@pytest.mark.asyncio
+async def test_sessions_preview_uses_resolved_subagent_store_key() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-preview-subagent-alias"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-sessions-preview-subagent-alias.db")
+    await database.initialize()
+    resolved_session_key = "agent:main:subagent:child"
+    await database.upsert_gateway_session_metadata(
+        session_key=resolved_session_key,
+        metadata={"label": "Child Session"},
+    )
+    await database.append_control_chat_message(
+        role="user",
+        content="Preview the child lane.",
+        mission_id=None,
+        session_key=resolved_session_key,
+    )
+    await database.append_control_chat_message(
+        role="assistant",
+        content="Child lane preview ready.",
+        mission_id=None,
+        session_key=resolved_session_key,
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    payload = await service.call(
+        "sessions.preview",
+        {"keys": ["subagent:child"], "limit": 12, "maxChars": 240},
+        now_ms=333,
+    )
+
+    assert payload == {
+        "ts": 333,
+        "previews": [
+            {
+                "key": "subagent:child",
+                "status": "ok",
+                "items": [
+                    {"role": "user", "text": "Preview the child lane."},
+                    {"role": "assistant", "text": "Child lane preview ready."},
+                ],
+            }
+        ],
+    }
+
+
+@pytest.mark.asyncio
+async def test_sessions_preview_resolves_mixed_case_main_alias_duplicates() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-preview-mixed-main"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-sessions-preview-mixed-main.db")
+    await database.initialize()
+    await database.append_control_chat_message(
+        role="assistant",
+        content="stale preview",
+        mission_id=None,
+        session_key="agent:main:MAIN",
+        created_at="2024-01-02T03:04:05Z",
+    )
+    await database.append_control_chat_message(
+        role="assistant",
+        content="fresh preview",
+        mission_id=None,
+        session_key="agent:main:Main",
+        created_at="2024-01-02T03:04:06Z",
+    )
+    service = GatewayNodeMethodService(GatewayNodeRegistry(), database=database)
+
+    payload = await service.call(
+        "sessions.preview",
+        {"keys": ["main"], "limit": 2},
+        now_ms=333,
+    )
+
+    assert payload == {
+        "ts": 333,
+        "previews": [
+            {
+                "key": "main",
+                "status": "ok",
+                "items": [{"role": "assistant", "text": "fresh preview"}],
+            }
         ],
     }
 
@@ -6119,6 +7959,69 @@ async def test_sessions_messages_subscribe_filters_by_client_id() -> None:
 
 
 @pytest.mark.asyncio
+async def test_sessions_messages_subscribe_uses_resolved_subagent_store_key() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-message-subscribe-alias"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-sessions-message-subscribe-alias.db")
+    await database.initialize()
+    resolved_session_key = "agent:main:subagent:child"
+    await database.upsert_gateway_session_metadata(
+        session_key=resolved_session_key,
+        metadata={"label": "Child Session"},
+    )
+    hub = BroadcastHub()
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        hub=hub,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    async with hub.subscribe(client_id="client-1") as subscribed_queue:
+        payload = await service.call(
+            "sessions.messages.subscribe",
+            {"key": "subagent:child"},
+            requester=GatewayNodeMethodRequester(client_id="client-1"),
+        )
+
+        assert payload == {"subscribed": True, "key": resolved_session_key}
+
+        await hub.publish(
+            {
+                "type": "gateway_event",
+                "event": "session.message",
+                "payload": {"sessionKey": resolved_session_key},
+                "createdAt": utcnow(),
+            }
+        )
+
+        delivered = await asyncio.wait_for(subscribed_queue.get(), timeout=0.2)
+        assert delivered["event"] == "session.message"
+        assert delivered["payload"]["sessionKey"] == resolved_session_key
+
+        payload = await service.call(
+            "sessions.messages.unsubscribe",
+            {"key": "subagent:child"},
+            requester=GatewayNodeMethodRequester(client_id="client-1"),
+        )
+
+        assert payload == {"subscribed": False, "key": resolved_session_key}
+
+        await hub.publish(
+            {
+                "type": "gateway_event",
+                "event": "session.message",
+                "payload": {"sessionKey": resolved_session_key},
+                "createdAt": utcnow(),
+            }
+        )
+
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(subscribed_queue.get(), timeout=0.05)
+
+
+@pytest.mark.asyncio
 async def test_sessions_subscribe_returns_stateless_ack_without_connection_context() -> None:
     service = GatewayNodeMethodService(GatewayNodeRegistry())
 
@@ -6157,6 +8060,24 @@ async def test_sessions_subscribe_registers_client_scoped_filter_when_client_id_
             with pytest.raises(asyncio.TimeoutError):
                 await asyncio.wait_for(other_queue.get(), timeout=0.05)
 
+            await hub.publish(
+                {
+                    "type": "gateway_event",
+                    "event": "session.message",
+                    "payload": {
+                        "sessionKey": "agent:main:main",
+                        "message": {"role": "assistant"},
+                    },
+                    "createdAt": utcnow(),
+                }
+            )
+
+            delivered = await asyncio.wait_for(subscribed_queue.get(), timeout=0.2)
+            assert delivered["event"] == "session.message"
+            assert delivered["payload"]["sessionKey"] == "agent:main:main"
+            with pytest.raises(asyncio.TimeoutError):
+                await asyncio.wait_for(other_queue.get(), timeout=0.05)
+
             payload = await service.call(
                 "sessions.unsubscribe",
                 {},
@@ -6170,6 +8091,21 @@ async def test_sessions_subscribe_registers_client_scoped_filter_when_client_id_
                     "type": "gateway_event",
                     "event": "sessions.changed",
                     "payload": {"sessionKey": "agent:main:main", "reason": "patch"},
+                    "createdAt": utcnow(),
+                }
+            )
+
+            with pytest.raises(asyncio.TimeoutError):
+                await asyncio.wait_for(subscribed_queue.get(), timeout=0.05)
+
+            await hub.publish(
+                {
+                    "type": "gateway_event",
+                    "event": "session.message",
+                    "payload": {
+                        "sessionKey": "agent:main:main",
+                        "message": {"role": "assistant"},
+                    },
                     "createdAt": utcnow(),
                 }
             )
@@ -6284,6 +8220,7 @@ async def test_sessions_create_registers_metadata_session_and_sends_initial_mess
     assert payload["sessionId"] == "thread-created-1"
     assert payload["runStarted"] is True
     assert payload["runId"] == "run-created-session-1"
+    assert payload["messageSeq"] == 1
     assert payload["status"] == "ok"
     assert payload["entry"]["key"] == created_session_key
     assert payload["entry"]["kind"] == "thread"
@@ -6325,6 +8262,269 @@ async def test_sessions_create_registers_metadata_session_and_sends_initial_mess
     assert [event["payload"]["reason"] for event in sessions_changed] == ["create", "send"]
     assert sessions_changed[0]["payload"]["sessionKey"] == created_session_key
     assert sessions_changed[1]["payload"]["sessionKey"] == created_session_key
+
+
+@pytest.mark.asyncio
+async def test_sessions_create_accepts_persisted_custom_agent_sessions() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-create-custom-agent"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-sessions-create-custom-agent.db")
+    await database.initialize()
+    await database.create_gateway_agent(
+        agent_id="builder-prime",
+        name="Builder Prime",
+        workspace=str(tmp_path / "agents" / "builder-prime"),
+        model="gpt-5.4-mini",
+        emoji=None,
+        avatar=None,
+    )
+    observed_send: dict[str, object] = {}
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        observed_send.update(
+            {
+                "session_key": session_key,
+                "message": message,
+                "idempotency_key": idempotency_key,
+                "thinking": thinking,
+                "deliver": deliver,
+                "timeout_ms": timeout_ms,
+            }
+        )
+        return {"runId": idempotency_key, "status": "ok"}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        chat_send_service=fake_chat_send_service,
+    )
+
+    payload = await service.call(
+        "sessions.create",
+        {
+            "agentId": "builder-prime",
+            "label": "Builder Prime Session",
+            "message": "Ship the custom-agent slice.",
+        },
+        now_ms=444,
+    )
+
+    created_key = str(payload["key"])
+    assert created_key.startswith("agent:builder-prime:main:thread:gateway-create-")
+    assert observed_send["session_key"] == created_key
+    assert observed_send["message"] == "Ship the custom-agent slice."
+    assert payload["ok"] is True
+    assert payload["entry"]["key"] == created_key
+    assert payload["entry"]["label"] == "Builder Prime Session"
+    metadata_row = await database.get_gateway_session_metadata(created_key)
+    assert metadata_row is not None
+    assert metadata_row["metadata"]["agentId"] == "builder-prime"
+
+    sessions_payload = await service.call(
+        "sessions.list",
+        {
+            "includeGlobal": True,
+            "includeUnknown": False,
+            "agentId": "builder-prime",
+            "limit": 10,
+        },
+        now_ms=555,
+    )
+
+    assert [session["key"] for session in sessions_payload["sessions"]] == [created_key]
+
+
+@pytest.mark.asyncio
+async def test_sessions_create_resolves_custom_subagent_parent_key() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-create-custom-parent"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-sessions-create-custom-parent.db")
+    await database.initialize()
+    await database.create_gateway_agent(
+        agent_id="builder-prime",
+        name="Builder Prime",
+        workspace=str(tmp_path / "agents" / "builder-prime"),
+        model="gpt-5.4-mini",
+        emoji=None,
+        avatar=None,
+    )
+    parent_session_key = "agent:builder-prime:subagent:parent"
+    await database.upsert_gateway_session_metadata(
+        session_key=parent_session_key,
+        metadata={"agentId": "builder-prime", "label": "Builder parent"},
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    payload = await service.call(
+        "sessions.create",
+        {
+            "agentId": "builder-prime",
+            "parentSessionKey": "subagent:parent",
+            "label": "Builder child thread",
+        },
+        now_ms=444,
+    )
+
+    created_key = str(payload["key"])
+    assert created_key.startswith("agent:builder-prime:subagent:parent:thread:gateway-create-")
+    assert payload["entry"]["parentSessionKey"] == parent_session_key
+    metadata_row = await database.get_gateway_session_metadata(created_key)
+    assert metadata_row is not None
+    assert metadata_row["metadata"]["agentId"] == "builder-prime"
+    assert metadata_row["metadata"]["parentSessionKey"] == parent_session_key
+
+
+@pytest.mark.asyncio
+async def test_sessions_create_scopes_custom_agent_request_key() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-create-custom-key"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-sessions-create-custom-key.db")
+    await database.initialize()
+    await database.create_gateway_agent(
+        agent_id="builder-prime",
+        name="Builder Prime",
+        workspace=str(tmp_path / "agents" / "builder-prime"),
+        model="gpt-5.4-mini",
+        emoji=None,
+        avatar=None,
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    payload = await service.call(
+        "sessions.create",
+        {
+            "key": "subagent:child",
+            "agentId": "builder-prime",
+            "label": "Builder explicit child",
+        },
+        now_ms=555,
+    )
+
+    assert payload["ok"] is True
+    assert payload["key"] == "agent:builder-prime:subagent:child"
+    assert payload["entry"]["key"] == "agent:builder-prime:subagent:child"
+    assert payload["entry"]["label"] == "Builder explicit child"
+    metadata_row = await database.get_gateway_session_metadata(
+        "agent:builder-prime:subagent:child"
+    )
+    assert metadata_row is not None
+    assert metadata_row["metadata"]["agentId"] == "builder-prime"
+    assert metadata_row["metadata"]["label"] == "Builder explicit child"
+    assert await database.get_gateway_session_metadata("subagent:child") is None
+
+
+@pytest.mark.asyncio
+async def test_sessions_create_scopes_main_alias_to_requested_agent() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-create-agent-main"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-sessions-create-agent-main.db")
+    await database.initialize()
+    await database.create_gateway_agent(
+        agent_id="longmemeval",
+        name="LongMemEval",
+        workspace=str(tmp_path / "agents" / "longmemeval"),
+        model="gpt-5.4-mini",
+        emoji=None,
+        avatar=None,
+    )
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    payload = await service.call(
+        "sessions.create",
+        {
+            "key": "main",
+            "agentId": "longmemeval",
+            "label": "LongMemEval Main",
+        },
+        now_ms=666,
+    )
+
+    assert payload["ok"] is True
+    assert payload["key"] == "agent:longmemeval:main"
+    assert payload["entry"]["key"] == "agent:longmemeval:main"
+    assert payload["entry"]["label"] == "LongMemEval Main"
+
+    metadata_row = await database.get_gateway_session_metadata("agent:longmemeval:main")
+    assert metadata_row is not None
+    assert metadata_row["metadata"] == {
+        "agentId": "longmemeval",
+        "label": "LongMemEval Main",
+    }
+    assert await database.get_gateway_session_metadata("agent:main:main") is None
+
+
+@pytest.mark.asyncio
+async def test_sessions_create_preserves_global_and_unknown_sentinel_keys() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-create-sentinels"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-sessions-create-sentinels.db")
+    await database.initialize()
+    await database.create_gateway_agent(
+        agent_id="longmemeval",
+        name="LongMemEval",
+        workspace=str(tmp_path / "agents" / "longmemeval"),
+        model="gpt-5.4-mini",
+        emoji=None,
+        avatar=None,
+    )
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    global_payload = await service.call(
+        "sessions.create",
+        {"key": "global", "agentId": "longmemeval", "label": "Global Sentinel"},
+        now_ms=777,
+    )
+    unknown_payload = await service.call(
+        "sessions.create",
+        {"key": "unknown", "agentId": "longmemeval", "label": "Unknown Sentinel"},
+        now_ms=888,
+    )
+
+    assert global_payload["ok"] is True
+    assert global_payload["key"] == "global"
+    assert global_payload["entry"]["key"] == "global"
+    assert global_payload["entry"]["label"] == "Global Sentinel"
+    assert unknown_payload["ok"] is True
+    assert unknown_payload["key"] == "unknown"
+    assert unknown_payload["entry"]["key"] == "unknown"
+    assert unknown_payload["entry"]["label"] == "Unknown Sentinel"
+
+    assert await database.get_gateway_session_metadata("global") is not None
+    assert await database.get_gateway_session_metadata("unknown") is not None
+    assert await database.get_gateway_session_metadata("agent:longmemeval:global") is None
+    assert await database.get_gateway_session_metadata("agent:longmemeval:unknown") is None
 
 
 @pytest.mark.asyncio
@@ -6414,6 +8614,7 @@ async def test_sessions_patch_persists_current_session_metadata_and_surfaces_it(
             "inputTokens": None,
             "outputTokens": None,
             "totalTokens": None,
+            "totalTokensFresh": False,
             "modelProvider": "openai",
             "model": "gpt-5.4-mini",
             "contextTokens": None,
@@ -6430,6 +8631,245 @@ async def test_sessions_patch_persists_current_session_metadata_and_surfaces_it(
     assert history_payload["fastMode"] is True
     assert history_payload["verboseLevel"] == "high"
     assert history_payload["traceLevel"] == "debug"
+
+
+@pytest.mark.asyncio
+async def test_sessions_patch_preserves_provider_model_override_split() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-patch-provider-model"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-sessions-patch-provider-model.db")
+    await database.initialize()
+    current_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+    )
+    await database.append_control_chat_message(
+        role="assistant",
+        content="Patch provider/model split.",
+        session_key=current_session_key,
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    payload = await service.call(
+        "sessions.patch",
+        {
+            "key": current_session_key,
+            "model": "nvidia/moonshotai/kimi-k2.5",
+        },
+        now_ms=222,
+    )
+
+    assert payload["ok"] is True
+    assert payload["key"] == current_session_key
+    assert payload["entry"]["providerOverride"] == "nvidia"
+    assert payload["entry"]["modelOverride"] == "moonshotai/kimi-k2.5"
+    assert "modelProvider" not in payload["entry"]
+    assert "model" not in payload["entry"]
+    assert payload["resolved"] == {
+        "modelProvider": "nvidia",
+        "model": "moonshotai/kimi-k2.5",
+    }
+
+    metadata_row = await database.get_gateway_session_metadata(current_session_key)
+    assert metadata_row is not None
+    assert metadata_row["metadata"] == {
+        "providerOverride": "nvidia",
+        "modelOverride": "moonshotai/kimi-k2.5",
+    }
+
+    sessions_payload = await service.call(
+        "sessions.list",
+        {"includeGlobal": True, "includeUnknown": False, "limit": 10},
+        now_ms=333,
+    )
+    main_session = sessions_payload["sessions"][0]
+    assert main_session["modelProvider"] == "nvidia"
+    assert main_session["model"] == "moonshotai/kimi-k2.5"
+    assert main_session["providerOverride"] == "nvidia"
+    assert main_session["modelOverride"] == "moonshotai/kimi-k2.5"
+
+
+@pytest.mark.asyncio
+async def test_sessions_patch_persists_metadata_backed_child_session() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-patch-child-service"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-sessions-patch-child.db")
+    await database.initialize()
+    parent_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+    )
+    child_session_key = resolve_thread_session_keys(
+        base_session_key=parent_session_key,
+        thread_id="thread-patch-child",
+    ).session_key
+    await database.upsert_gateway_session_metadata(
+        session_key=child_session_key,
+        metadata={"label": "Patch Child", "parentSessionKey": parent_session_key},
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    payload = await service.call(
+        "sessions.patch",
+        {
+            "key": child_session_key,
+            "label": "Patched Child",
+            "sendPolicy": "allow",
+        },
+        now_ms=224,
+    )
+
+    assert payload["ok"] is True
+    assert payload["key"] == child_session_key
+    assert payload["entry"]["key"] == child_session_key
+    assert payload["entry"]["label"] == "Patched Child"
+    assert payload["entry"]["sendPolicy"] == "allow"
+    assert payload["entry"]["parentSessionKey"] == parent_session_key
+    metadata_row = await database.get_gateway_session_metadata(child_session_key)
+    assert metadata_row is not None
+    assert metadata_row["metadata"]["label"] == "Patched Child"
+    assert metadata_row["metadata"]["sendPolicy"] == "allow"
+
+
+@pytest.mark.asyncio
+async def test_sessions_patch_uses_resolved_subagent_store_key() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-patch-subagent-alias"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-sessions-patch-subagent-alias.db")
+    await database.initialize()
+
+    class _RecordingBroadcastHub(BroadcastHub):
+        def __init__(self) -> None:
+            super().__init__()
+            self.published_events: list[dict[str, object]] = []
+
+        async def publish(self, event: dict[str, object]) -> None:
+            self.published_events.append(dict(event))
+            await super().publish(event)
+
+    hub = _RecordingBroadcastHub()
+    resolved_session_key = "agent:main:subagent:child"
+    await database.upsert_gateway_session_metadata(
+        session_key=resolved_session_key,
+        metadata={
+            "spawnedBy": "agent:main:main",
+            "spawnedWorkspaceDir": str(tmp_path / "subagent-workspace"),
+            "forkedFromParent": True,
+            "spawnDepth": 2,
+            "subagentRole": "orchestrator",
+            "subagentControlScope": "children",
+        },
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        hub=hub,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    payload = await service.call(
+        "sessions.patch",
+        {
+            "key": "subagent:child",
+            "label": "Child",
+        },
+        now_ms=999,
+    )
+
+    assert payload["ok"] is True
+    assert payload["key"] == resolved_session_key
+    assert payload["entry"]["key"] == resolved_session_key
+    assert payload["entry"]["label"] == "Child"
+    assert payload["entry"]["spawnedBy"] == "agent:main:main"
+    assert payload["entry"]["spawnedWorkspaceDir"] == str(tmp_path / "subagent-workspace")
+    assert payload["entry"]["forkedFromParent"] is True
+    assert payload["entry"]["spawnDepth"] == 2
+    assert payload["entry"]["subagentRole"] == "orchestrator"
+    assert payload["entry"]["subagentControlScope"] == "children"
+
+    resolved_metadata = await database.get_gateway_session_metadata(resolved_session_key)
+    assert resolved_metadata is not None
+    assert resolved_metadata["metadata"]["label"] == "Child"
+    assert await database.get_gateway_session_metadata("subagent:child") is None
+
+    sessions_changed = [
+        event
+        for event in hub.published_events
+        if event.get("type") == "gateway_event" and event.get("event") == "sessions.changed"
+    ]
+    assert len(sessions_changed) == 1
+    event_payload = sessions_changed[0]["payload"]
+    assert isinstance(event_payload, dict)
+    assert event_payload["sessionKey"] == resolved_session_key
+    assert event_payload["reason"] == "patch"
+    assert event_payload["spawnedBy"] == "agent:main:main"
+    assert event_payload["forkedFromParent"] is True
+    assert event_payload["spawnDepth"] == 2
+    assert event_payload["subagentRole"] == "orchestrator"
+    assert event_payload["subagentControlScope"] == "children"
+
+
+@pytest.mark.asyncio
+async def test_sessions_patch_uses_resolved_custom_subagent_store_key() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-patch-custom-alias"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-sessions-patch-custom-alias.db")
+    await database.initialize()
+    await database.create_gateway_agent(
+        agent_id="builder-prime",
+        name="Builder Prime",
+        workspace=str(tmp_path / "agents" / "builder-prime"),
+        model="gpt-5.4-mini",
+        emoji="spark",
+        avatar="/static/builder-prime.png",
+    )
+    resolved_session_key = "agent:builder-prime:subagent:child"
+    await database.upsert_gateway_session_metadata(
+        session_key=resolved_session_key,
+        metadata={"agentId": "builder-prime", "label": "Builder child"},
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    payload = await service.call(
+        "sessions.patch",
+        {
+            "key": "subagent:child",
+            "label": "Patched Builder Child",
+        },
+        now_ms=1001,
+    )
+
+    assert payload["ok"] is True
+    assert payload["key"] == resolved_session_key
+    assert payload["entry"]["key"] == resolved_session_key
+    assert payload["entry"]["label"] == "Patched Builder Child"
+    resolved_metadata = await database.get_gateway_session_metadata(resolved_session_key)
+    assert resolved_metadata is not None
+    assert resolved_metadata["metadata"]["agentId"] == "builder-prime"
+    assert resolved_metadata["metadata"]["label"] == "Patched Builder Child"
+    assert await database.get_gateway_session_metadata("subagent:child") is None
 
 
 @pytest.mark.asyncio
@@ -6548,6 +8988,71 @@ async def test_sessions_usage_returns_bounded_summary_from_latest_persisted_miss
         "toolResults": 0,
         "errors": 0,
     }
+
+
+@pytest.mark.asyncio
+async def test_sessions_usage_summary_uses_resolved_subagent_store_key() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-usage-summary-alias"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway.db")
+    await database.initialize()
+    resolved_session_key = "agent:main:subagent:child"
+    await database.upsert_gateway_session_metadata(
+        session_key=resolved_session_key,
+        metadata={"label": "Child Usage Session"},
+    )
+    await database.append_control_chat_message(
+        role="user",
+        content="Summarize child usage.",
+        session_key=resolved_session_key,
+    )
+    mission_id = await database.create_mission(
+        name="Usage child summary",
+        objective="Summarize child-agent usage.",
+        status="completed",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread-child-usage-summary",
+        session_key=resolved_session_key,
+        conversation_target=None,
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        toolsets=[],
+    )
+    await database.update_mission(
+        mission_id,
+        total_tokens=450,
+        output_tokens=120,
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    payload = await service.call(
+        "sessions.usage",
+        {"key": "subagent:child", "mode": "specific"},
+    )
+
+    assert len(payload["sessions"]) == 1
+    assert payload["sessions"][0]["key"] == resolved_session_key
+    assert payload["sessions"][0]["label"] == "Child Usage Session"
+    assert payload["sessions"][0]["usage"]["totalTokens"] == 450
+    assert payload["totals"]["totalTokens"] == 450
 
 
 @pytest.mark.asyncio
@@ -6704,6 +9209,65 @@ async def test_sessions_usage_timeseries_returns_bounded_mission_points_for_sess
 
 
 @pytest.mark.asyncio
+async def test_sessions_usage_timeseries_uses_resolved_subagent_store_key() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-usage-timeseries-alias"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway.db")
+    await database.initialize()
+    resolved_session_key = "agent:main:subagent:child"
+    await database.upsert_gateway_session_metadata(
+        session_key=resolved_session_key,
+        metadata={"label": "Child Session"},
+    )
+    mission_id = await database.create_mission(
+        name="Usage timeseries child slice",
+        objective="Record child-agent usage.",
+        status="completed",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread-child-usage",
+        session_key=resolved_session_key,
+        conversation_target=None,
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        toolsets=[],
+    )
+    await database.update_mission(
+        mission_id,
+        total_tokens=300,
+        output_tokens=80,
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    payload = await service.call(
+        "sessions.usage.timeseries",
+        {"key": "subagent:child"},
+    )
+
+    assert payload["sessionId"] == "thread-child-usage"
+    assert len(payload["points"]) == 1
+    assert payload["points"][0]["totalTokens"] == 300
+    assert payload["points"][0]["output"] == 80
+
+
+@pytest.mark.asyncio
 async def test_sessions_usage_logs_returns_bounded_transcript_entries_with_linked_usage() -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-usage-logs-service"
     shutil.rmtree(tmp_path, ignore_errors=True)
@@ -6801,6 +9365,76 @@ async def test_sessions_usage_logs_returns_bounded_transcript_entries_with_linke
         },
     ]
     assert payload["entries"][0]["timestamp"] <= payload["entries"][1]["timestamp"]
+
+
+@pytest.mark.asyncio
+async def test_sessions_usage_logs_uses_resolved_subagent_store_key() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-usage-logs-alias"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway.db")
+    await database.initialize()
+    resolved_session_key = "agent:main:subagent:child"
+    await database.upsert_gateway_session_metadata(
+        session_key=resolved_session_key,
+        metadata={"label": "Child Session"},
+    )
+    mission_id = await database.create_mission(
+        name="Usage log child slice",
+        objective="Link child transcript usage.",
+        status="completed",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread-child-usage-log",
+        session_key=resolved_session_key,
+        conversation_target=None,
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        toolsets=[],
+    )
+    await database.update_mission(
+        mission_id,
+        total_tokens=640,
+        output_tokens=160,
+    )
+    await database.append_control_chat_message(
+        role="assistant",
+        content="Child usage log entry.",
+        mission_id=mission_id,
+        session_key=resolved_session_key,
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    payload = await service.call(
+        "sessions.usage.logs",
+        {"key": "subagent:child", "limit": 10},
+    )
+
+    assert payload["sessionId"] == "thread-child-usage-log"
+    assert payload["entries"] == [
+        {
+            "timestamp": payload["entries"][0]["timestamp"],
+            "role": "assistant",
+            "content": "Child usage log entry.",
+            "tokens": 640,
+        }
+    ]
 
 
 @pytest.mark.asyncio
@@ -7442,6 +10076,155 @@ async def test_agent_launches_bounded_session_id_selected_run_and_wait_completes
     assert isinstance(wait_payload["endedAt"], int)
     assert wait_payload["endedAt"] >= wait_payload["startedAt"]
     assert sleep_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_agent_launch_uses_resolved_custom_subagent_store_key() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-agent-launch-custom-subagent-alias"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-agent-launch-custom-subagent-alias.db")
+    await database.initialize()
+    await database.create_gateway_agent(
+        agent_id="builder-prime",
+        name="Builder Prime",
+        workspace=str(tmp_path / "agents" / "builder-prime"),
+        model="gpt-5.4-mini",
+        emoji="spark",
+        avatar="/static/builder-prime.png",
+    )
+    canonical_child_key = "agent:builder-prime:subagent:child"
+    await database.upsert_gateway_session_metadata(
+        session_key=canonical_child_key,
+        metadata={"agentId": "builder-prime", "label": "Builder child"},
+    )
+    observed_send: dict[str, object] = {}
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        observed_send.update(
+            {
+                "session_key": session_key,
+                "message": message,
+                "idempotency_key": idempotency_key,
+                "thinking": thinking,
+                "deliver": deliver,
+                "timeout_ms": timeout_ms,
+            }
+        )
+        return {"runId": idempotency_key, "status": "ok"}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        chat_send_service=fake_chat_send_service,
+    )
+
+    payload = await service.call(
+        "agent",
+        {
+            "message": "Ship the custom-agent child slice.",
+            "agentId": "builder-prime",
+            "sessionKey": "subagent:child",
+            "idempotencyKey": "agent-run-custom-subagent-alias-1",
+        },
+        now_ms=777,
+    )
+
+    assert observed_send == {
+        "session_key": canonical_child_key,
+        "message": "Ship the custom-agent child slice.",
+        "idempotency_key": "agent-run-custom-subagent-alias-1",
+        "thinking": None,
+        "deliver": None,
+        "timeout_ms": None,
+    }
+    assert payload == {
+        "runId": "agent-run-custom-subagent-alias-1",
+        "status": "accepted",
+        "acceptedAt": 777,
+    }
+
+
+@pytest.mark.asyncio
+async def test_agent_launch_defaults_custom_agent_to_scoped_main_session() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-agent-launch-custom-main"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-agent-launch-custom-main.db")
+    await database.initialize()
+    await database.create_gateway_agent(
+        agent_id="builder-prime",
+        name="Builder Prime",
+        workspace=str(tmp_path / "agents" / "builder-prime"),
+        model="gpt-5.4-mini",
+        emoji="spark",
+        avatar="/static/builder-prime.png",
+    )
+    observed_send: dict[str, object] = {}
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        observed_send.update(
+            {
+                "session_key": session_key,
+                "message": message,
+                "idempotency_key": idempotency_key,
+                "thinking": thinking,
+                "deliver": deliver,
+                "timeout_ms": timeout_ms,
+            }
+        )
+        return {"runId": idempotency_key, "status": "ok"}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        chat_send_service=fake_chat_send_service,
+    )
+
+    payload = await service.call(
+        "agent",
+        {
+            "message": "Ship the custom-agent main slice.",
+            "agentId": "builder-prime",
+            "idempotencyKey": "agent-run-custom-main-1",
+        },
+        now_ms=888,
+    )
+
+    assert observed_send == {
+        "session_key": "agent:builder-prime:main",
+        "message": "Ship the custom-agent main slice.",
+        "idempotency_key": "agent-run-custom-main-1",
+        "thinking": None,
+        "deliver": None,
+        "timeout_ms": None,
+    }
+    metadata_row = await database.get_gateway_session_metadata("agent:builder-prime:main")
+    assert metadata_row is not None
+    assert metadata_row["metadata"]["agentId"] == "builder-prime"
+    assert payload == {
+        "runId": "agent-run-custom-main-1",
+        "status": "accepted",
+        "acceptedAt": 888,
+    }
 
 
 @pytest.mark.asyncio
@@ -9550,6 +12333,44 @@ async def test_cron_run_due_launches_due_one_shot_task() -> None:
 
 
 @pytest.mark.asyncio
+async def test_cron_run_due_launches_due_cron_expression_task() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-run-due-cron-service"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-cron-run-due-cron.db")
+    await database.initialize()
+    task_id = await database.create_task_blueprint(
+        name="Every Minute Repair",
+        summary="Repair on every cron minute.",
+        project_id=None,
+        instance_id=None,
+        cadence_minutes=None,
+        enabled=True,
+        payload={
+            **_task_blueprint_payload("Repair on every cron minute."),
+            "schedule_kind": "cron",
+            "schedule_cron_expr": "* * * * *",
+            "schedule_cron_tz": "UTC",
+        },
+    )
+    await database.update_task_blueprint(
+        task_id,
+        created_at=(datetime.now(UTC) - timedelta(minutes=2)).isoformat(),
+    )
+    runner = FakeCronTaskRunner()
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        run_task_blueprint_now=runner,
+    )
+
+    payload = await service.call("cron.run", {"id": f"task-blueprint:{task_id}", "mode": "due"})
+
+    assert payload == {"ok": True, "enqueued": True, "runId": "mission:52"}
+    assert runner.calls == [(task_id, "gateway-cron:due")]
+
+
+@pytest.mark.asyncio
 async def test_cron_remove_deletes_cadence_backed_task_blueprint() -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-remove-service"
     shutil.rmtree(tmp_path, ignore_errors=True)
@@ -9923,6 +12744,79 @@ async def test_cron_add_accepts_every_schedule_anchor_ms() -> None:
     assert len(created_payloads) == 1
     assert created_payloads[0].schedule_anchor_ms == 123
     assert payload["schedule"] == {"kind": "every", "everyMs": 3_600_000, "anchorMs": 123}
+
+
+@pytest.mark.asyncio
+async def test_cron_add_supports_cron_expression_schedule() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-add-cron-service"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-cron-add-cron.db")
+    await database.initialize()
+    created_payloads: list[TaskBlueprintCreate] = []
+
+    async def create_task(payload: TaskBlueprintCreate) -> object:
+        created_payloads.append(payload)
+        task_id = await database.create_task_blueprint(
+            name=payload.name,
+            summary=payload.summary,
+            project_id=payload.project_id,
+            instance_id=payload.instance_id,
+            cadence_minutes=payload.cadence_minutes,
+            enabled=payload.enabled,
+            payload={
+                **_task_blueprint_payload(payload.objective_template, model=payload.model),
+                "schedule_kind": payload.schedule_kind,
+                "schedule_cron_expr": payload.schedule_cron_expr,
+                "schedule_cron_tz": payload.schedule_cron_tz,
+                "schedule_cron_stagger_ms": payload.schedule_cron_stagger_ms,
+                "cron_session_target": payload.cron_session_target,
+                "cron_wake_mode": payload.cron_wake_mode,
+                "cron_payload_kind": payload.cron_payload_kind,
+                "cron_delivery_mode": payload.cron_delivery_mode,
+            },
+        )
+        return type("CreatedTask", (), {"id": task_id})()
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        create_task_blueprint=create_task,
+    )
+
+    payload = await service.call(
+        "cron.add",
+        {
+            "name": "Hourly Repair",
+            "enabled": True,
+            "schedule": {
+                "kind": "cron",
+                "expr": "0 * * * *",
+                "tz": "UTC",
+                "staggerMs": 30_000,
+            },
+            "sessionTarget": "isolated",
+            "wakeMode": "next-heartbeat",
+            "payload": {
+                "kind": "agentTurn",
+                "message": "Repair the hourly parity seam.",
+            },
+        },
+    )
+
+    assert len(created_payloads) == 1
+    created = created_payloads[0]
+    assert created.cadence_minutes is None
+    assert created.schedule_kind == "cron"
+    assert created.schedule_cron_expr == "0 * * * *"
+    assert created.schedule_cron_tz == "UTC"
+    assert created.schedule_cron_stagger_ms == 30_000
+    assert payload["schedule"] == {
+        "kind": "cron",
+        "expr": "0 * * * *",
+        "tz": "UTC",
+        "staggerMs": 30_000,
+    }
 
 
 @pytest.mark.asyncio
@@ -11336,19 +14230,16 @@ async def test_cron_add_rejects_unsupported_schedule_kind() -> None:
 
     with pytest.raises(
         ValueError,
-        match=(
-            "invalid cron.add params: "
-            "OpenZues currently supports only schedule.kind='every' or 'at'"
-        ),
+        match="invalid cron.add params: schedule.kind must be one of: at, cron, every",
     ):
         await service.call(
             "cron.add",
             {
                 "name": "One Shot",
-                "schedule": {"kind": "cron", "expr": "0 * * * *"},
+                "schedule": {"kind": "calendar", "expr": "0 * * * *"},
                 "sessionTarget": "main",
                 "wakeMode": "now",
-                "payload": {"kind": "agentTurn", "message": "Do the thing."},
+                "payload": {"kind": "systemEvent", "text": "Do the thing."},
             },
         )
 
@@ -11488,6 +14379,54 @@ async def test_cron_update_supports_one_shot_at_schedule() -> None:
     assert updated_task["cadence_minutes"] is None
     assert updated_task["schedule_kind"] == "at"
     assert updated_task["schedule_at"] == "2026-04-18T12:00:00.000Z"
+
+
+@pytest.mark.asyncio
+async def test_cron_update_supports_cron_expression_schedule() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-update-cron-service"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-cron-update-cron.db")
+    await database.initialize()
+    task_id = await database.create_task_blueprint(
+        name="Nightly Ship",
+        summary="Ship the next verified slice.",
+        project_id=None,
+        instance_id=None,
+        cadence_minutes=60,
+        enabled=True,
+        payload=_task_blueprint_payload("Ship the next verified slice."),
+    )
+    service = GatewayNodeMethodService(GatewayNodeRegistry(), database=database)
+
+    payload = await service.call(
+        "cron.update",
+        {
+            "id": f"task-blueprint:{task_id}",
+            "patch": {
+                "schedule": {
+                    "kind": "cron",
+                    "expr": "0 9 * * *",
+                    "tz": "America/Chicago",
+                    "staggerMs": 45_000,
+                },
+            },
+        },
+    )
+    updated_task = await database.get_task_blueprint(task_id)
+
+    assert payload["schedule"] == {
+        "kind": "cron",
+        "expr": "0 9 * * *",
+        "tz": "America/Chicago",
+        "staggerMs": 45_000,
+    }
+    assert updated_task is not None
+    assert updated_task["cadence_minutes"] is None
+    assert updated_task["schedule_kind"] == "cron"
+    assert updated_task["schedule_cron_expr"] == "0 9 * * *"
+    assert updated_task["schedule_cron_tz"] == "America/Chicago"
+    assert updated_task["schedule_cron_stagger_ms"] == 45_000
 
 
 @pytest.mark.asyncio
@@ -11918,16 +14857,13 @@ async def test_cron_update_rejects_unsupported_schedule_kind() -> None:
 
     with pytest.raises(
         ValueError,
-        match=(
-            "invalid cron.update params: "
-            "OpenZues currently supports only patch.schedule.kind='every' or 'at'"
-        ),
+        match="invalid cron.update params: patch.schedule.kind must be one of: at, cron, every",
     ):
         await service.call(
             "cron.update",
             {
                 "id": f"task-blueprint:{task_id}",
-                "patch": {"schedule": {"kind": "cron", "expr": "0 * * * *"}},
+                "patch": {"schedule": {"kind": "calendar", "expr": "0 * * * *"}},
             },
         )
 
@@ -12065,6 +15001,39 @@ async def test_wake_preserves_explicit_reason_metadata(tmp_path) -> None:
     assert wake_requests[0]["agent_id"] == "main"
     assert wake_requests[0]["session_key"] == "agent:main:thread:demo"
     assert wake_requests[0]["status"] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_wake_uses_resolved_subagent_store_key(tmp_path) -> None:
+    database = Database(tmp_path / "gateway-wake-subagent-alias.db")
+    await database.initialize()
+    resolved_session_key = "agent:main:subagent:child"
+    await database.upsert_gateway_session_metadata(
+        session_key=resolved_session_key,
+        metadata={"label": "Child Session"},
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        wake_service=GatewayWakeService(database),
+    )
+
+    payload = await service.call(
+        "wake",
+        {
+            "mode": "next-heartbeat",
+            "text": "Resume child parity.",
+            "reason": "child-alias",
+            "sessionKey": "subagent:child",
+        },
+    )
+    wake_requests = await database.list_gateway_wake_requests()
+
+    assert payload == {"ok": True}
+    assert len(wake_requests) == 1
+    assert wake_requests[0]["agent_id"] == "main"
+    assert wake_requests[0]["session_key"] == resolved_session_key
 
 
 @pytest.mark.asyncio
@@ -12250,6 +15219,37 @@ async def test_agents_files_list_returns_bounded_workspace_instruction_inventory
 
 
 @pytest.mark.asyncio
+async def test_agents_files_list_includes_openclaw_bootstrap_and_memory_files() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-agents-files-openclaw-list"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir(parents=True, exist_ok=True)
+    (workspace_root / "MEMORY.md").write_text("Durable memory.\n", encoding="utf-8")
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        agent_files_service=GatewayAgentFilesService(workspace_dir=workspace_root),
+    )
+
+    payload = await service.call("agents.files.list", {"agentId": "main"})
+
+    files_by_name = {entry["name"]: entry for entry in payload["files"]}
+    for name in (
+        "AGENTS.md",
+        "SOUL.md",
+        "TOOLS.md",
+        "IDENTITY.md",
+        "USER.md",
+        "HEARTBEAT.md",
+        "BOOTSTRAP.md",
+        "MEMORY.md",
+        "memory.md",
+    ):
+        assert name in files_by_name
+    assert files_by_name["MEMORY.md"]["missing"] is False
+    assert files_by_name["MEMORY.md"]["path"] == str(workspace_root / "MEMORY.md")
+
+
+@pytest.mark.asyncio
 async def test_agents_files_get_returns_workspace_instruction_file_content() -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-agents-files-get-service"
     shutil.rmtree(tmp_path, ignore_errors=True)
@@ -12275,6 +15275,114 @@ async def test_agents_files_get_returns_workspace_instruction_file_content() -> 
     assert payload["file"]["size"] == (workspace_root / "AGENTS.md").stat().st_size
     assert isinstance(payload["file"]["updatedAtMs"], int)
     assert payload["file"]["content"] == file_content
+
+
+@pytest.mark.asyncio
+async def test_agents_files_get_and_set_support_openclaw_memory_file() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-agents-files-memory-service"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir(parents=True, exist_ok=True)
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        agent_files_service=GatewayAgentFilesService(workspace_dir=workspace_root),
+    )
+
+    set_payload = await service.call(
+        "agents.files.set",
+        {
+            "agentId": "main",
+            "name": "MEMORY.md",
+            "content": "Durable memory.\n",
+        },
+    )
+    get_payload = await service.call(
+        "agents.files.get",
+        {"agentId": "main", "name": "MEMORY.md"},
+    )
+
+    written_path = workspace_root / "MEMORY.md"
+    assert set_payload["ok"] is True
+    assert set_payload["file"]["name"] == "MEMORY.md"
+    assert set_payload["file"]["path"] == str(written_path)
+    assert get_payload["file"]["content"] == "Durable memory.\n"
+    assert written_path.read_text(encoding="utf-8") == "Durable memory.\n"
+
+
+@pytest.mark.asyncio
+async def test_agents_files_get_and_set_use_persisted_custom_agent_workspace() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-agents-files-custom-service"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    main_workspace = tmp_path / "main-workspace"
+    agent_workspace = tmp_path / "agents" / "builder-prime"
+    main_workspace.mkdir(parents=True, exist_ok=True)
+    agent_workspace.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-agents-files-custom.db")
+    await database.initialize()
+    await database.upsert_gateway_bootstrap(
+        setup_mode="local",
+        setup_flow="quickstart",
+        route_binding_mode="saved_lane",
+        preferred_instance_id=None,
+        preferred_project_id=None,
+        team_id=None,
+        operator_id=None,
+        task_blueprint_id=None,
+        default_cwd=str(main_workspace),
+        bootstrap_roles=[],
+        bootstrap_scopes=[],
+        model="gpt-5.4",
+        max_turns=4,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        toolsets=[],
+    )
+    await database.create_gateway_agent(
+        agent_id="builder-prime",
+        name="Builder Prime",
+        workspace=str(agent_workspace),
+        model="gpt-5.4-mini",
+        emoji=None,
+        avatar=None,
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        agent_files_service=GatewayAgentFilesService(database=database),
+    )
+
+    set_payload = await service.call(
+        "agents.files.set",
+        {
+            "agentId": "builder-prime",
+            "name": "MEMORY.md",
+            "content": "Builder memory.\n",
+        },
+    )
+    list_payload = await service.call(
+        "agents.files.list",
+        {"agentId": "builder-prime"},
+    )
+    get_payload = await service.call(
+        "agents.files.get",
+        {"agentId": "builder-prime", "name": "MEMORY.md"},
+    )
+
+    written_path = agent_workspace / "MEMORY.md"
+    assert set_payload["agentId"] == "builder-prime"
+    assert set_payload["workspace"] == str(agent_workspace)
+    assert set_payload["file"]["path"] == str(written_path)
+    assert list_payload["agentId"] == "builder-prime"
+    assert list_payload["workspace"] == str(agent_workspace)
+    assert get_payload["file"]["content"] == "Builder memory.\n"
+    assert written_path.read_text(encoding="utf-8") == "Builder memory.\n"
+    assert not (main_workspace / "MEMORY.md").exists()
 
 
 @pytest.mark.asyncio
@@ -12423,6 +15531,69 @@ async def test_agents_mutate_methods_return_explicit_unavailable_contract(
 
 
 @pytest.mark.asyncio
+async def test_agents_mutate_methods_persist_custom_agent_lifecycle(tmp_path: Path) -> None:
+    database = Database(tmp_path / "data" / "openzues-test.db")
+    await database.initialize()
+    workspace = tmp_path / "builder-workspace"
+    updated_workspace = tmp_path / "builder-updated"
+    service = GatewayNodeMethodService(GatewayNodeRegistry(), database=database)
+
+    created = await service.call(
+        "agents.create",
+        {
+            "name": "Builder Prime",
+            "workspace": str(workspace),
+            "model": "gpt-5.4-mini",
+            "emoji": "hammer",
+            "avatar": "/static/builder.png",
+        },
+    )
+
+    assert created == {
+        "ok": True,
+        "agentId": "builder-prime",
+        "name": "Builder Prime",
+        "workspace": str(workspace),
+        "model": "gpt-5.4-mini",
+    }
+    assert workspace.exists()
+    assert "Builder Prime" in (workspace / "IDENTITY.md").read_text(encoding="utf-8")
+
+    listed = await service.call("agents.list", {})
+    custom = next(agent for agent in listed["agents"] if agent["id"] == "builder-prime")
+    assert custom["name"] == "Builder Prime"
+    assert custom["workspace"] == str(workspace)
+    assert custom["model"] == {"primary": "gpt-5.4-mini"}
+    assert custom["identity"]["emoji"] == "hammer"
+
+    updated = await service.call(
+        "agents.update",
+        {
+            "agentId": "builder-prime",
+            "name": "Builder Prime Updated",
+            "workspace": str(updated_workspace),
+            "model": "gpt-5.4",
+            "emoji": "wrench",
+        },
+    )
+
+    assert updated == {"ok": True, "agentId": "builder-prime"}
+    assert updated_workspace.exists()
+    assert "Builder Prime Updated" in (
+        updated_workspace / "IDENTITY.md"
+    ).read_text(encoding="utf-8")
+
+    deleted = await service.call(
+        "agents.delete",
+        {"agentId": "builder-prime", "deleteFiles": False},
+    )
+
+    assert deleted == {"ok": True, "agentId": "builder-prime", "removedBindings": []}
+    listed_after_delete = await service.call("agents.list", {})
+    assert all(agent["id"] != "builder-prime" for agent in listed_after_delete["agents"])
+
+
+@pytest.mark.asyncio
 async def test_doctor_memory_status_returns_missing_runtime_payload() -> None:
     service = GatewayNodeMethodService(GatewayNodeRegistry())
 
@@ -12459,46 +15630,45 @@ async def test_doctor_memory_dream_diary_reads_workspace_diary(tmp_path: Path) -
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("method", "message"),
-    [
-        (
-            "doctor.memory.backfillDreamDiary",
-            "doctor.memory.backfillDreamDiary is unavailable until gateway dreaming "
-            "runtime is wired",
-        ),
-        (
-            "doctor.memory.resetDreamDiary",
-            "doctor.memory.resetDreamDiary is unavailable until gateway dreaming runtime is wired",
-        ),
-        (
-            "doctor.memory.resetGroundedShortTerm",
-            "doctor.memory.resetGroundedShortTerm is unavailable until gateway dreaming "
-            "runtime is wired",
-        ),
-        (
-            "doctor.memory.repairDreamingArtifacts",
-            "doctor.memory.repairDreamingArtifacts is unavailable until gateway dreaming "
-            "runtime is wired",
-        ),
-        (
-            "doctor.memory.dedupeDreamDiary",
-            "doctor.memory.dedupeDreamDiary is unavailable until gateway dreaming runtime is wired",
-        ),
-    ],
-)
-async def test_doctor_memory_family_returns_explicit_unavailable_contract(
-    method: str,
-    message: str,
+async def test_doctor_memory_family_mutates_workspace_dreaming_artifacts(
+    tmp_path: Path,
 ) -> None:
-    service = GatewayNodeMethodService(GatewayNodeRegistry())
+    memory_dir = tmp_path / "memory"
+    grounded_dir = memory_dir / "grounded-short-term"
+    grounded_dir.mkdir(parents=True)
+    (memory_dir / "2026-04-25.md").write_text(
+        "# Daily Memory\n\n- Shipped parity work.\n",
+        encoding="utf-8",
+    )
+    (grounded_dir / "short-term.md").write_text("- transient\n", encoding="utf-8")
+    diary_path = tmp_path / "DREAMS.md"
+    diary_path.write_text("# Dream Diary\n\n- duplicate\n- duplicate\n", encoding="utf-8")
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        memory_doctor_workspace=tmp_path,
+    )
 
-    with pytest.raises(GatewayNodeMethodError) as exc_info:
-        await service.call(method, {})
+    dedupe = await service.call("doctor.memory.dedupeDreamDiary", {})
+    backfill = await service.call("doctor.memory.backfillDreamDiary", {})
+    reset = await service.call("doctor.memory.resetDreamDiary", {})
+    reset_short_term = await service.call("doctor.memory.resetGroundedShortTerm", {})
+    repair = await service.call("doctor.memory.repairDreamingArtifacts", {})
 
-    assert exc_info.value.code == "UNAVAILABLE"
-    assert exc_info.value.status_code == 503
-    assert str(exc_info.value) == message
+    assert dedupe["action"] == "dedupeDreamDiary"
+    assert dedupe["removedEntries"] == 1
+    assert backfill["action"] == "backfill"
+    assert backfill["scannedFiles"] == 2
+    assert backfill["written"] == 2
+    assert reset["action"] == "reset"
+    assert reset["removedEntries"] == 2
+    assert reset_short_term == {
+        "agentId": "openzues",
+        "action": "resetGroundedShortTerm",
+        "removedShortTermEntries": 1,
+    }
+    assert repair["action"] == "repairDreamingArtifacts"
+    assert repair["changed"] is False
+    assert "openzues:dream-backfill" not in diary_path.read_text(encoding="utf-8")
 
 
 @pytest.mark.asyncio
@@ -12558,6 +15728,72 @@ async def test_agent_identity_get_allows_blank_optional_selectors(
         "name": "OpenZues",
         "avatar": "/static/favicon.svg",
         "emoji": None,
+    }
+
+
+@pytest.mark.asyncio
+async def test_agent_identity_get_resolves_persisted_custom_agents() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-agent-identity-custom"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-agent-identity-custom.db")
+    await database.initialize()
+    await database.create_gateway_agent(
+        agent_id="builder-prime",
+        name="Builder Prime",
+        workspace=str(tmp_path / "agents" / "builder-prime"),
+        model="gpt-5.4-mini",
+        emoji="spark",
+        avatar="/static/builder-prime.png",
+    )
+    service = GatewayNodeMethodService(GatewayNodeRegistry(), database=database)
+
+    by_agent_id = await service.call(
+        "agent.identity.get",
+        {"agentId": "builder-prime"},
+    )
+    by_session_key = await service.call(
+        "agent.identity.get",
+        {"sessionKey": "agent:builder-prime:main"},
+    )
+
+    assert by_agent_id == {
+        "agentId": "builder-prime",
+        "name": "Builder Prime",
+        "avatar": "/static/builder-prime.png",
+        "emoji": "spark",
+    }
+    assert by_session_key == by_agent_id
+
+
+@pytest.mark.asyncio
+async def test_agent_identity_get_uses_resolved_custom_subagent_store_key() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-agent-identity-subagent-alias"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-agent-identity-subagent-alias.db")
+    await database.initialize()
+    await database.create_gateway_agent(
+        agent_id="builder-prime",
+        name="Builder Prime",
+        workspace=str(tmp_path / "agents" / "builder-prime"),
+        model="gpt-5.4-mini",
+        emoji="spark",
+        avatar="/static/builder-prime.png",
+    )
+    await database.upsert_gateway_session_metadata(
+        session_key="agent:builder-prime:subagent:child",
+        metadata={"agentId": "builder-prime", "label": "Builder child"},
+    )
+    service = GatewayNodeMethodService(GatewayNodeRegistry(), database=database)
+
+    payload = await service.call("agent.identity.get", {"sessionKey": "subagent:child"})
+
+    assert payload == {
+        "agentId": "builder-prime",
+        "name": "Builder Prime",
+        "avatar": "/static/builder-prime.png",
+        "emoji": "spark",
     }
 
 
@@ -12644,6 +15880,7 @@ async def test_sessions_list_returns_bounded_singleton_control_chat_inventory() 
     assert payload["path"] == "/api/control-chat"
     assert payload["count"] == 1
     assert payload["defaults"] == {
+        "modelProvider": "openai",
         "model": "gpt-5.4",
         "contextTokens": None,
         "mainSessionKey": main_session_key,
@@ -12667,6 +15904,7 @@ async def test_sessions_list_returns_bounded_singleton_control_chat_inventory() 
             "inputTokens": None,
             "outputTokens": None,
             "totalTokens": None,
+            "totalTokensFresh": False,
             "modelProvider": "openai",
             "model": "gpt-5.4",
             "contextTokens": None,
@@ -13221,6 +16459,52 @@ async def test_sessions_get_returns_openclaw_shaped_control_chat_messages() -> N
 
 
 @pytest.mark.asyncio
+async def test_sessions_get_uses_openclaw_default_limit_of_200() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-get-default-limit"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-sessions-get-default-limit.db")
+    await database.initialize()
+    session_key = "openzues:thread:default-limit"
+    for index in range(60):
+        await database.append_control_chat_message(
+            role="assistant",
+            content=f"message {index + 1}",
+            session_key=session_key,
+        )
+    service = GatewayNodeMethodService(GatewayNodeRegistry(), database=database)
+
+    payload = await service.call("sessions.get", {"key": session_key})
+
+    assert len(payload["messages"]) == 60
+    assert payload["messages"][0]["content"][0]["text"] == "message 1"
+    assert payload["messages"][-1]["content"][0]["text"] == "message 60"
+
+
+@pytest.mark.asyncio
+async def test_sessions_get_honors_explicit_limits_above_direct_rest_cap() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-get-large-limit"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-sessions-get-large-limit.db")
+    await database.initialize()
+    session_key = "openzues:thread:large-limit"
+    for index in range(1001):
+        await database.append_control_chat_message(
+            role="assistant",
+            content=f"message {index + 1}",
+            session_key=session_key,
+        )
+    service = GatewayNodeMethodService(GatewayNodeRegistry(), database=database)
+
+    payload = await service.call("sessions.get", {"key": session_key, "limit": 1001})
+
+    assert len(payload["messages"]) == 1001
+    assert payload["messages"][0]["content"][0]["text"] == "message 1"
+    assert payload["messages"][-1]["content"][0]["text"] == "message 1001"
+
+
+@pytest.mark.asyncio
 async def test_sessions_get_filters_control_chat_messages_by_session_key() -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-get-filtered-service"
     shutil.rmtree(tmp_path, ignore_errors=True)
@@ -13261,6 +16545,111 @@ async def test_sessions_get_filters_control_chat_messages_by_session_key() -> No
             },
         ]
     }
+
+
+@pytest.mark.asyncio
+async def test_sessions_get_uses_resolved_subagent_store_key() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-get-subagent-alias"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-sessions-get-subagent-alias.db")
+    await database.initialize()
+    resolved_session_key = "agent:main:subagent:child"
+    await database.upsert_gateway_session_metadata(
+        session_key=resolved_session_key,
+        metadata={"label": "Child Session"},
+    )
+    await database.append_control_chat_message(
+        role="user",
+        content="Need the child transcript.",
+        session_key=resolved_session_key,
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    payload = await service.call(
+        "sessions.get",
+        {"key": "subagent:child", "limit": 5},
+    )
+
+    assert payload == {
+        "messages": [
+            {
+                "role": "user",
+                "content": [{"type": "text", "text": "Need the child transcript."}],
+            }
+        ]
+    }
+
+
+@pytest.mark.asyncio
+async def test_sessions_get_supports_cursor_pagination_with_raw_sequence_metadata() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-get-cursor-service"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-sessions-get-cursor.db")
+    await database.initialize()
+    session_key = "openzues:thread:demo"
+    await database.append_control_chat_message(
+        role="user",
+        content="first message",
+        session_key=session_key,
+    )
+    await database.append_control_chat_message(
+        role="assistant",
+        content="NO_REPLY",
+        session_key=session_key,
+    )
+    await database.append_control_chat_message(
+        role="assistant",
+        content="second message",
+        session_key=session_key,
+    )
+    await database.append_control_chat_message(
+        role="assistant",
+        content="third message",
+        session_key=session_key,
+    )
+    service = GatewayNodeMethodService(GatewayNodeRegistry(), database=database)
+
+    first_page = await service.call("sessions.get", {"key": session_key, "limit": 2})
+    second_page = await service.call(
+        "sessions.get",
+        {"key": session_key, "limit": 2, "cursor": 3},
+    )
+
+    assert first_page["sessionKey"] == session_key
+    assert [item["content"][0]["text"] for item in first_page["items"]] == [
+        "second message",
+        "third message",
+    ]
+    assert first_page["messages"] == first_page["items"]
+    assert [item["__openclaw"]["seq"] for item in first_page["messages"]] == [3, 4]
+    assert first_page["hasMore"] is True
+    assert first_page["nextCursor"] == "3"
+
+    assert second_page["sessionKey"] == session_key
+    assert [item["content"][0]["text"] for item in second_page["items"]] == [
+        "first message"
+    ]
+    assert [item["__openclaw"]["seq"] for item in second_page["messages"]] == [1]
+    assert second_page["hasMore"] is False
+    assert "nextCursor" not in second_page
+
+    string_cursor_page = await service.call(
+        "sessions.get",
+        {"key": session_key, "limit": 2, "cursor": first_page["nextCursor"]},
+    )
+    assert string_cursor_page == second_page
+
+    prefixed_cursor_page = await service.call(
+        "sessions.get",
+        {"key": session_key, "limit": 2, "cursor": f"seq:{first_page['nextCursor']}"},
+    )
+    assert prefixed_cursor_page == second_page
 
 
 @pytest.mark.asyncio
@@ -13720,32 +17109,64 @@ async def test_commands_list_returns_bounded_native_operator_inventory() -> None
     }
     assert any(command["name"] == "agents.list" for command in commands)
     assert any(command["name"] == "browser.act" for command in commands)
+    assert any(command["name"] == "browser.auth.delete" for command in commands)
     assert any(command["name"] == "browser.auth.list" for command in commands)
+    assert any(command["name"] == "browser.auth.login" for command in commands)
+    assert any(command["name"] == "browser.auth.save" for command in commands)
     assert any(command["name"] == "browser.auth.show" for command in commands)
+    assert any(command["name"] == "browser.batch" for command in commands)
     assert any(command["name"] == "browser.back" for command in commands)
+    assert any(command["name"] == "browser.chat" for command in commands)
+    assert any(command["name"] == "browser.clipboard.copy" for command in commands)
+    assert any(command["name"] == "browser.clipboard.paste" for command in commands)
+    assert any(command["name"] == "browser.clipboard.read" for command in commands)
+    assert any(command["name"] == "browser.clipboard.write" for command in commands)
     assert any(command["name"] == "browser.close" for command in commands)
+    assert any(command["name"] == "browser.confirm" for command in commands)
+    assert any(command["name"] == "browser.cookies.clear" for command in commands)
     assert any(command["name"] == "browser.cookies.get" for command in commands)
+    assert any(command["name"] == "browser.cookies.set" for command in commands)
+    assert any(command["name"] == "browser.dashboard.start" for command in commands)
+    assert any(command["name"] == "browser.dashboard.stop" for command in commands)
     assert any(command["name"] == "browser.diff.snapshot" for command in commands)
     assert any(command["name"] == "browser.diff.screenshot" for command in commands)
     assert any(command["name"] == "browser.diff.url" for command in commands)
+    assert any(command["name"] == "browser.deny" for command in commands)
     assert any(command["name"] == "browser.download" for command in commands)
     assert any(command["name"] == "browser.focus" for command in commands)
     assert any(command["name"] == "browser.forward" for command in commands)
     assert any(command["name"] == "browser.get" for command in commands)
+    assert any(command["name"] == "browser.highlight" for command in commands)
+    assert any(command["name"] == "browser.inspect" for command in commands)
+    assert any(command["name"] == "browser.ios.device.list" for command in commands)
+    assert any(command["name"] == "browser.ios.swipe" for command in commands)
+    assert any(command["name"] == "browser.ios.tap" for command in commands)
     assert any(command["name"] == "browser.is" for command in commands)
     assert any(command["name"] == "browser.upload" for command in commands)
+    assert any(command["name"] == "browser.profiler.start" for command in commands)
+    assert any(command["name"] == "browser.profiler.stop" for command in commands)
+    assert any(command["name"] == "browser.record.restart" for command in commands)
+    assert any(command["name"] == "browser.record.start" for command in commands)
+    assert any(command["name"] == "browser.record.stop" for command in commands)
+    assert any(command["name"] == "browser.trace.start" for command in commands)
+    assert any(command["name"] == "browser.trace.stop" for command in commands)
     assert any(command["name"] == "browser.navigate" for command in commands)
+    assert any(command["name"] == "browser.network.har.start" for command in commands)
+    assert any(command["name"] == "browser.network.har.stop" for command in commands)
     assert any(command["name"] == "browser.network.request" for command in commands)
     assert any(command["name"] == "browser.network.requests" for command in commands)
     assert any(command["name"] == "browser.pdf" for command in commands)
     assert any(command["name"] == "browser.profiles" for command in commands)
     assert any(command["name"] == "browser.reload" for command in commands)
     assert any(command["name"] == "browser.screenshot" for command in commands)
+    assert any(command["name"] == "browser.set" for command in commands)
     assert any(command["name"] == "browser.session.current" for command in commands)
     assert any(command["name"] == "browser.session.list" for command in commands)
     assert any(command["name"] == "browser.start" for command in commands)
     assert any(command["name"] == "browser.stop" for command in commands)
+    assert any(command["name"] == "browser.storage.clear" for command in commands)
     assert any(command["name"] == "browser.storage.get" for command in commands)
+    assert any(command["name"] == "browser.storage.set" for command in commands)
     assert any(command["name"] == "browser.stream.disable" for command in commands)
     assert any(command["name"] == "browser.stream.enable" for command in commands)
     assert any(command["name"] == "browser.stream.status" for command in commands)
@@ -13822,6 +17243,14 @@ class _FakeBrowserRuntime:
             "targetId": target_id,
         }
 
+    def confirm(self, action_id: str, *, session: str) -> dict[str, object]:
+        self.calls.append(("confirm", action_id, session))
+        return {"ok": True, "session": session, "actionId": action_id, "decision": "confirm"}
+
+    def deny(self, action_id: str, *, session: str) -> dict[str, object]:
+        self.calls.append(("deny", action_id, session))
+        return {"ok": True, "session": session, "actionId": action_id, "decision": "deny"}
+
     def focus(self, target_id: str, *, session: str) -> dict[str, object]:
         self.calls.append(("focus", target_id, session))
         return {"ok": True, "session": session, "targetId": target_id}
@@ -13840,9 +17269,72 @@ class _FakeBrowserRuntime:
             "matched": True,
         }
 
+    def ios_device_list(self, *, session: str) -> dict[str, object]:
+        self.calls.append(("ios.device.list", "", session))
+        return {"ok": True, "session": session, "deviceCount": 1}
+
+    def ios_swipe(
+        self,
+        direction: str,
+        *,
+        session: str,
+        distance: int | None = None,
+    ) -> dict[str, object]:
+        self.calls.append(("ios.swipe", f"{direction}:{distance or ''}", session))
+        return {"ok": True, "session": session, "direction": direction, "distance": distance}
+
+    def ios_tap(self, target: str, *, session: str) -> dict[str, object]:
+        self.calls.append(("ios.tap", target, session))
+        return {"ok": True, "session": session, "target": target}
+
     def history(self, action: str, *, session: str) -> dict[str, object]:
         self.calls.append(("history", action, session))
         return {"ok": True, "session": session, "action": action}
+
+    def batch(
+        self,
+        commands: list[str],
+        *,
+        session: str,
+        bail: bool = False,
+    ) -> dict[str, object]:
+        self.calls.append(("batch", "|".join(commands), session, bail))
+        return {"ok": True, "session": session, "commandCount": len(commands), "bail": bail}
+
+    def dashboard_start(
+        self,
+        *,
+        session: str,
+        port: int | None = None,
+    ) -> dict[str, object]:
+        self.calls.append(("dashboard.start", str(port or ""), session))
+        return {"ok": True, "session": session, "dashboardRunning": True, "port": port}
+
+    def dashboard_stop(self, *, session: str) -> dict[str, object]:
+        self.calls.append(("dashboard.stop", "", session))
+        return {"ok": True, "session": session, "dashboardRunning": False}
+
+    def chat(
+        self,
+        message: str,
+        *,
+        session: str,
+        model: str | None = None,
+        quiet: bool = False,
+        verbose: bool = False,
+    ) -> dict[str, object]:
+        self.calls.append(("chat", f"{message}:{model or ''}:{quiet}:{verbose}", session))
+        return {"ok": True, "session": session, "message": message, "model": model}
+
+    def set_setting(
+        self,
+        setting: str,
+        values: list[str],
+        *,
+        session: str,
+    ) -> dict[str, object]:
+        self.calls.append(("set", f"{setting}:{','.join(values)}", session))
+        return {"ok": True, "session": session, "setting": setting, "values": values}
 
     def stream_status(self, *, session: str) -> dict[str, object]:
         self.calls.append(("stream.status", "", session))
@@ -13880,6 +17372,40 @@ class _FakeBrowserRuntime:
         self.calls.append(("cookies.get", "", session))
         return {"ok": True, "session": session, "cookieCount": 1}
 
+    def cookies_set(
+        self,
+        name: str,
+        value: str,
+        *,
+        session: str,
+        url: str | None = None,
+        domain: str | None = None,
+        path: str | None = None,
+        http_only: bool | None = None,
+        secure: bool | None = None,
+        same_site: str | None = None,
+        expires: int | None = None,
+    ) -> dict[str, object]:
+        cookie_filter = ":".join(
+            [
+                name,
+                value,
+                url or "",
+                domain or "",
+                path or "",
+                str(http_only),
+                str(secure),
+                same_site or "",
+                str(expires or ""),
+            ]
+        )
+        self.calls.append(("cookies.set", cookie_filter, session))
+        return {"ok": True, "session": session, "name": name}
+
+    def cookies_clear(self, *, session: str) -> dict[str, object]:
+        self.calls.append(("cookies.clear", "", session))
+        return {"ok": True, "session": session, "operation": "clear"}
+
     def storage_get(
         self,
         storage_type: str,
@@ -13889,6 +17415,26 @@ class _FakeBrowserRuntime:
     ) -> dict[str, object]:
         self.calls.append(("storage.get", f"{storage_type}:{key or ''}", session))
         return {"ok": True, "session": session, "type": storage_type, "key": key}
+
+    def storage_set(
+        self,
+        storage_type: str,
+        key: str,
+        value: str,
+        *,
+        session: str,
+    ) -> dict[str, object]:
+        self.calls.append(("storage.set", f"{storage_type}:{key}={value}", session))
+        return {"ok": True, "session": session, "type": storage_type, "key": key}
+
+    def storage_clear(
+        self,
+        storage_type: str,
+        *,
+        session: str,
+    ) -> dict[str, object]:
+        self.calls.append(("storage.clear", storage_type, session))
+        return {"ok": True, "session": session, "type": storage_type}
 
     def session_current(self, *, session: str) -> dict[str, object]:
         self.calls.append(("session.current", "", session))
@@ -13963,6 +17509,95 @@ class _FakeBrowserRuntime:
         self.calls.append(("upload", f"{selector}:{','.join(file_paths)}", session))
         return {"ok": True, "session": session, "selector": selector, "fileCount": 1}
 
+    def trace_start(self, *, session: str) -> dict[str, object]:
+        self.calls.append(("trace.start", "", session))
+        return {"ok": True, "session": session, "traceRecording": True}
+
+    def trace_stop(self, *, session: str) -> dict[str, object]:
+        self.calls.append(("trace.stop", "", session))
+        return {
+            "ok": True,
+            "session": session,
+            "path": "C:/Temp/openzues-browser-trace-parity-browser.zip",
+            "traceRecording": False,
+        }
+
+    def network_har_start(self, *, session: str) -> dict[str, object]:
+        self.calls.append(("network.har.start", "", session))
+        return {"ok": True, "session": session, "harRecording": True}
+
+    def network_har_stop(self, *, session: str) -> dict[str, object]:
+        self.calls.append(("network.har.stop", "", session))
+        return {
+            "ok": True,
+            "session": session,
+            "path": "C:/Temp/openzues-browser-har-parity-browser.har",
+            "harRecording": False,
+        }
+
+    def profiler_start(
+        self,
+        *,
+        session: str,
+        categories: str | None = None,
+    ) -> dict[str, object]:
+        self.calls.append(("profiler.start", categories or "", session))
+        return {"ok": True, "session": session, "profilerRecording": True}
+
+    def profiler_stop(self, *, session: str) -> dict[str, object]:
+        self.calls.append(("profiler.stop", "", session))
+        return {
+            "ok": True,
+            "session": session,
+            "path": "C:/Temp/openzues-browser-profiler-parity-browser.json",
+            "profilerRecording": False,
+        }
+
+    def record_start(
+        self,
+        *,
+        session: str,
+        url: str | None = None,
+    ) -> dict[str, object]:
+        self.calls.append(("record.start", url or "", session))
+        return {
+            "ok": True,
+            "session": session,
+            "path": "C:/Temp/openzues-browser-recording-parity-browser.webm",
+            "recording": True,
+        }
+
+    def record_stop(self, *, session: str) -> dict[str, object]:
+        self.calls.append(("record.stop", "", session))
+        return {
+            "ok": True,
+            "session": session,
+            "path": "C:/Temp/openzues-browser-recording-parity-browser.webm",
+            "recording": False,
+        }
+
+    def record_restart(
+        self,
+        *,
+        session: str,
+        url: str | None = None,
+    ) -> dict[str, object]:
+        self.calls.append(("record.restart", url or "", session))
+        return {
+            "ok": True,
+            "session": session,
+            "path": "C:/Temp/openzues-browser-recording-parity-browser-restart.webm",
+            "recording": True,
+        }
+
+    def highlight(self, selector: str, *, session: str) -> dict[str, object]:
+        self.calls.append(("highlight", selector, session))
+        return {"ok": True, "session": session, "selector": selector}
+
+    def inspect(self, *, session: str) -> dict[str, object]:
+        self.calls.append(("inspect", "", session))
+        return {"ok": True, "session": session, "inspectorOpen": True}
+
     def auth_list(self, *, session: str) -> dict[str, object]:
         self.calls.append(("auth.list", "", session))
         return {"ok": True, "session": session, "profileCount": 1}
@@ -13970,6 +17605,57 @@ class _FakeBrowserRuntime:
     def auth_show(self, name: str, *, session: str) -> dict[str, object]:
         self.calls.append(("auth.show", name, session))
         return {"ok": True, "session": session, "name": name}
+
+    def auth_save(
+        self,
+        name: str,
+        *,
+        session: str,
+        url: str,
+        username: str,
+        password: str,
+        username_selector: str | None = None,
+        password_selector: str | None = None,
+        submit_selector: str | None = None,
+    ) -> dict[str, object]:
+        self.calls.append(
+            (
+                "auth.save",
+                name,
+                session,
+                url,
+                username,
+                password,
+                username_selector,
+                password_selector,
+                submit_selector,
+            )
+        )
+        return {"ok": True, "session": session, "name": name, "saved": True}
+
+    def auth_login(self, name: str, *, session: str) -> dict[str, object]:
+        self.calls.append(("auth.login", name, session))
+        return {"ok": True, "session": session, "name": name, "loggedIn": True}
+
+    def auth_delete(self, name: str, *, session: str) -> dict[str, object]:
+        self.calls.append(("auth.delete", name, session))
+        return {"ok": True, "session": session, "name": name, "deleted": True}
+
+    def clipboard_read(self, *, session: str) -> dict[str, object]:
+        self.calls.append(("clipboard.read", "", session))
+        return {"ok": True, "session": session, "text": "copied text"}
+
+    def clipboard_write(self, text: str, *, session: str) -> dict[str, object]:
+        self.calls.append(("clipboard.write", text, session))
+        return {"ok": True, "session": session, "text": text}
+
+    def clipboard_copy(self, *, session: str) -> dict[str, object]:
+        self.calls.append(("clipboard.copy", "", session))
+        return {"ok": True, "session": session, "copied": True}
+
+    def clipboard_paste(self, *, session: str) -> dict[str, object]:
+        self.calls.append(("clipboard.paste", "", session))
+        return {"ok": True, "session": session, "pasted": True}
 
     def act(self, request: dict[str, object], *, session: str) -> dict[str, object]:
         self.calls.append(("act", str(request["kind"]), session))
@@ -14140,6 +17826,41 @@ async def test_browser_focus_dispatches_to_configured_runtime() -> None:
 
 
 @pytest.mark.asyncio
+async def test_browser_confirmation_dispatches_to_configured_runtime() -> None:
+    browser_runtime = _FakeBrowserRuntime()
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        browser_runtime_service=browser_runtime,
+    )
+
+    confirmed = await service.call(
+        "browser.confirm",
+        {"session": "parity-browser", "id": "pending-123"},
+    )
+    denied = await service.call(
+        "browser.deny",
+        {"session": "parity-browser", "id": "pending-456"},
+    )
+
+    assert confirmed == {
+        "ok": True,
+        "session": "parity-browser",
+        "actionId": "pending-123",
+        "decision": "confirm",
+    }
+    assert denied == {
+        "ok": True,
+        "session": "parity-browser",
+        "actionId": "pending-456",
+        "decision": "deny",
+    }
+    assert browser_runtime.calls == [
+        ("confirm", "pending-123", "parity-browser"),
+        ("deny", "pending-456", "parity-browser"),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_browser_lifecycle_dispatches_to_configured_runtime() -> None:
     browser_runtime = _FakeBrowserRuntime()
     service = GatewayNodeMethodService(
@@ -14226,6 +17947,204 @@ async def test_browser_history_dispatches_to_configured_runtime() -> None:
         ("history", "back", "parity-browser"),
         ("history", "forward", "parity-browser"),
         ("history", "reload", "parity-browser"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_browser_set_dispatches_to_configured_runtime() -> None:
+    browser_runtime = _FakeBrowserRuntime()
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        browser_runtime_service=browser_runtime,
+    )
+
+    payload = await service.call(
+        "browser.set",
+        {
+            "session": "parity-browser",
+            "setting": "media",
+            "values": ["dark", "reduced-motion"],
+        },
+    )
+    headers = await service.call(
+        "browser.set",
+        {
+            "session": "parity-browser",
+            "setting": "headers",
+            "values": ['{"Authorization":"Bearer token","X-Test":"yes"}'],
+        },
+    )
+    credentials = await service.call(
+        "browser.set",
+        {
+            "session": "parity-browser",
+            "setting": "credentials",
+            "values": ["admin", "secret-token"],
+        },
+    )
+
+    assert payload == {
+        "ok": True,
+        "session": "parity-browser",
+        "setting": "media",
+        "values": ["dark", "reduced-motion"],
+    }
+    assert headers == {
+        "ok": True,
+        "session": "parity-browser",
+        "setting": "headers",
+        "values": ['{"Authorization":"Bearer token","X-Test":"yes"}'],
+    }
+    assert credentials == {
+        "ok": True,
+        "session": "parity-browser",
+        "setting": "credentials",
+        "values": ["admin", "secret-token"],
+    }
+    assert browser_runtime.calls == [
+        ("set", "media:dark,reduced-motion", "parity-browser"),
+        (
+            "set",
+            'headers:{"Authorization":"Bearer token","X-Test":"yes"}',
+            "parity-browser",
+        ),
+        ("set", "credentials:admin,secret-token", "parity-browser"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_browser_batch_dispatches_to_configured_runtime() -> None:
+    browser_runtime = _FakeBrowserRuntime()
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        browser_runtime_service=browser_runtime,
+    )
+
+    payload = await service.call(
+        "browser.batch",
+        {
+            "session": "parity-browser",
+            "commands": ["open https://example.com", "snapshot -i"],
+            "bail": True,
+        },
+    )
+
+    assert payload == {
+        "ok": True,
+        "session": "parity-browser",
+        "commandCount": 2,
+        "bail": True,
+    }
+    assert browser_runtime.calls == [
+        (
+            "batch",
+            "open https://example.com|snapshot -i",
+            "parity-browser",
+            True,
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_browser_dashboard_dispatches_to_configured_runtime() -> None:
+    browser_runtime = _FakeBrowserRuntime()
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        browser_runtime_service=browser_runtime,
+    )
+
+    started = await service.call(
+        "browser.dashboard.start",
+        {"session": "parity-browser", "port": 4849},
+    )
+    stopped = await service.call(
+        "browser.dashboard.stop",
+        {"session": "parity-browser"},
+    )
+
+    assert started == {
+        "ok": True,
+        "session": "parity-browser",
+        "dashboardRunning": True,
+        "port": 4849,
+    }
+    assert stopped == {
+        "ok": True,
+        "session": "parity-browser",
+        "dashboardRunning": False,
+    }
+    assert browser_runtime.calls == [
+        ("dashboard.start", "4849", "parity-browser"),
+        ("dashboard.stop", "", "parity-browser"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_browser_chat_dispatches_to_configured_runtime() -> None:
+    browser_runtime = _FakeBrowserRuntime()
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        browser_runtime_service=browser_runtime,
+    )
+
+    payload = await service.call(
+        "browser.chat",
+        {
+            "session": "parity-browser",
+            "message": "summarize the current page",
+            "model": "openai/gpt-4o",
+            "quiet": True,
+        },
+    )
+
+    assert payload == {
+        "ok": True,
+        "session": "parity-browser",
+        "message": "summarize the current page",
+        "model": "openai/gpt-4o",
+    }
+    assert browser_runtime.calls == [
+        (
+            "chat",
+            "summarize the current page:openai/gpt-4o:True:False",
+            "parity-browser",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_browser_ios_provider_dispatches_to_configured_runtime() -> None:
+    browser_runtime = _FakeBrowserRuntime()
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        browser_runtime_service=browser_runtime,
+    )
+
+    devices = await service.call(
+        "browser.ios.device.list",
+        {"session": "parity-browser"},
+    )
+    swipe = await service.call(
+        "browser.ios.swipe",
+        {"session": "parity-browser", "direction": "up", "distance": 500},
+    )
+    tap = await service.call(
+        "browser.ios.tap",
+        {"session": "parity-browser", "target": "@e1"},
+    )
+
+    assert devices == {"ok": True, "session": "parity-browser", "deviceCount": 1}
+    assert swipe == {
+        "ok": True,
+        "session": "parity-browser",
+        "direction": "up",
+        "distance": 500,
+    }
+    assert tap == {"ok": True, "session": "parity-browser", "target": "@e1"}
+    assert browser_runtime.calls == [
+        ("ios.device.list", "", "parity-browser"),
+        ("ios.swipe", "up:500", "parity-browser"),
+        ("ios.tap", "@e1", "parity-browser"),
     ]
 
 
@@ -14336,6 +18255,88 @@ async def test_browser_storage_inventory_dispatches_to_configured_runtime() -> N
     assert browser_runtime.calls == [
         ("cookies.get", "", "parity-browser"),
         ("storage.get", "local:theme", "parity-browser"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_browser_cookie_mutation_dispatches_to_configured_runtime() -> None:
+    browser_runtime = _FakeBrowserRuntime()
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        browser_runtime_service=browser_runtime,
+    )
+
+    set_payload = await service.call(
+        "browser.cookies.set",
+        {
+            "session": "parity-browser",
+            "name": "session_id",
+            "value": "abc123",
+            "url": "https://app.example.test",
+            "path": "/app",
+            "httpOnly": True,
+            "secure": True,
+            "sameSite": "Strict",
+            "expires": 1_735_689_600,
+        },
+    )
+    clear_payload = await service.call(
+        "browser.cookies.clear",
+        {"session": "parity-browser"},
+    )
+
+    assert set_payload == {"ok": True, "session": "parity-browser", "name": "session_id"}
+    assert clear_payload == {
+        "ok": True,
+        "session": "parity-browser",
+        "operation": "clear",
+    }
+    assert browser_runtime.calls == [
+        (
+            "cookies.set",
+            "session_id:abc123:https://app.example.test::/app:True:True:Strict:1735689600",
+            "parity-browser",
+        ),
+        ("cookies.clear", "", "parity-browser"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_browser_storage_mutation_dispatches_to_configured_runtime() -> None:
+    browser_runtime = _FakeBrowserRuntime()
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        browser_runtime_service=browser_runtime,
+    )
+
+    set_payload = await service.call(
+        "browser.storage.set",
+        {
+            "session": "parity-browser",
+            "type": "local",
+            "key": "theme",
+            "value": "dark",
+        },
+    )
+    clear_payload = await service.call(
+        "browser.storage.clear",
+        {"session": "parity-browser", "type": "session"},
+    )
+
+    assert set_payload == {
+        "ok": True,
+        "session": "parity-browser",
+        "type": "local",
+        "key": "theme",
+    }
+    assert clear_payload == {
+        "ok": True,
+        "session": "parity-browser",
+        "type": "session",
+    }
+    assert browser_runtime.calls == [
+        ("storage.set", "local:theme=dark", "parity-browser"),
+        ("storage.clear", "session", "parity-browser"),
     ]
 
 
@@ -14497,6 +18498,184 @@ async def test_browser_upload_dispatches_to_configured_runtime() -> None:
 
 
 @pytest.mark.asyncio
+async def test_browser_trace_dispatches_to_configured_runtime() -> None:
+    browser_runtime = _FakeBrowserRuntime()
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        browser_runtime_service=browser_runtime,
+    )
+
+    start_payload = await service.call(
+        "browser.trace.start",
+        {"session": "parity-browser"},
+    )
+    stop_payload = await service.call(
+        "browser.trace.stop",
+        {"session": "parity-browser"},
+    )
+
+    assert start_payload == {"ok": True, "session": "parity-browser", "traceRecording": True}
+    assert stop_payload == {
+        "ok": True,
+        "session": "parity-browser",
+        "path": "C:/Temp/openzues-browser-trace-parity-browser.zip",
+        "traceRecording": False,
+    }
+    assert browser_runtime.calls == [
+        ("trace.start", "", "parity-browser"),
+        ("trace.stop", "", "parity-browser"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_browser_network_har_dispatches_to_configured_runtime() -> None:
+    browser_runtime = _FakeBrowserRuntime()
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        browser_runtime_service=browser_runtime,
+    )
+
+    start_payload = await service.call(
+        "browser.network.har.start",
+        {"session": "parity-browser"},
+    )
+    stop_payload = await service.call(
+        "browser.network.har.stop",
+        {"session": "parity-browser"},
+    )
+
+    assert start_payload == {"ok": True, "session": "parity-browser", "harRecording": True}
+    assert stop_payload == {
+        "ok": True,
+        "session": "parity-browser",
+        "path": "C:/Temp/openzues-browser-har-parity-browser.har",
+        "harRecording": False,
+    }
+    assert browser_runtime.calls == [
+        ("network.har.start", "", "parity-browser"),
+        ("network.har.stop", "", "parity-browser"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_browser_profiler_dispatches_to_configured_runtime() -> None:
+    browser_runtime = _FakeBrowserRuntime()
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        browser_runtime_service=browser_runtime,
+    )
+
+    start_payload = await service.call(
+        "browser.profiler.start",
+        {
+            "session": "parity-browser",
+            "categories": "devtools.timeline,v8.execute",
+        },
+    )
+    stop_payload = await service.call(
+        "browser.profiler.stop",
+        {"session": "parity-browser"},
+    )
+
+    assert start_payload == {
+        "ok": True,
+        "session": "parity-browser",
+        "profilerRecording": True,
+    }
+    assert stop_payload == {
+        "ok": True,
+        "session": "parity-browser",
+        "path": "C:/Temp/openzues-browser-profiler-parity-browser.json",
+        "profilerRecording": False,
+    }
+    assert browser_runtime.calls == [
+        ("profiler.start", "devtools.timeline,v8.execute", "parity-browser"),
+        ("profiler.stop", "", "parity-browser"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_browser_record_dispatches_to_configured_runtime() -> None:
+    browser_runtime = _FakeBrowserRuntime()
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        browser_runtime_service=browser_runtime,
+    )
+
+    start_payload = await service.call(
+        "browser.record.start",
+        {
+            "session": "parity-browser",
+            "url": "http://127.0.0.1:8884",
+        },
+    )
+    stop_payload = await service.call(
+        "browser.record.stop",
+        {"session": "parity-browser"},
+    )
+    restart_payload = await service.call(
+        "browser.record.restart",
+        {
+            "session": "parity-browser",
+            "url": "http://127.0.0.1:8884/again",
+        },
+    )
+
+    assert start_payload == {
+        "ok": True,
+        "session": "parity-browser",
+        "path": "C:/Temp/openzues-browser-recording-parity-browser.webm",
+        "recording": True,
+    }
+    assert stop_payload == {
+        "ok": True,
+        "session": "parity-browser",
+        "path": "C:/Temp/openzues-browser-recording-parity-browser.webm",
+        "recording": False,
+    }
+    assert restart_payload == {
+        "ok": True,
+        "session": "parity-browser",
+        "path": "C:/Temp/openzues-browser-recording-parity-browser-restart.webm",
+        "recording": True,
+    }
+    assert browser_runtime.calls == [
+        ("record.start", "http://127.0.0.1:8884", "parity-browser"),
+        ("record.stop", "", "parity-browser"),
+        ("record.restart", "http://127.0.0.1:8884/again", "parity-browser"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_browser_debug_commands_dispatch_to_configured_runtime() -> None:
+    browser_runtime = _FakeBrowserRuntime()
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        browser_runtime_service=browser_runtime,
+    )
+
+    highlight_payload = await service.call(
+        "browser.highlight",
+        {"session": "parity-browser", "selector": "@e2"},
+    )
+    inspect_payload = await service.call(
+        "browser.inspect",
+        {"session": "parity-browser"},
+    )
+
+    assert highlight_payload == {"ok": True, "session": "parity-browser", "selector": "@e2"}
+    assert inspect_payload == {
+        "ok": True,
+        "session": "parity-browser",
+        "inspectorOpen": True,
+    }
+    assert browser_runtime.calls == [
+        ("highlight", "@e2", "parity-browser"),
+        ("inspect", "", "parity-browser"),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_browser_auth_metadata_dispatches_to_configured_runtime() -> None:
     browser_runtime = _FakeBrowserRuntime()
     service = GatewayNodeMethodService(
@@ -14515,6 +18694,112 @@ async def test_browser_auth_metadata_dispatches_to_configured_runtime() -> None:
     assert browser_runtime.calls == [
         ("auth.list", "", "parity-browser"),
         ("auth.show", "github", "parity-browser"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_browser_auth_profile_save_dispatches_to_configured_runtime() -> None:
+    browser_runtime = _FakeBrowserRuntime()
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        browser_runtime_service=browser_runtime,
+    )
+
+    saved = await service.call(
+        "browser.auth.save",
+        {
+            "session": "parity-browser",
+            "name": "github",
+            "url": "https://github.com/login",
+            "username": "octo",
+            "password": "secret-token",
+            "usernameSelector": "#login",
+            "passwordSelector": "#password",
+            "submitSelector": "button[type=submit]",
+        },
+    )
+
+    assert saved == {
+        "ok": True,
+        "session": "parity-browser",
+        "name": "github",
+        "saved": True,
+    }
+    assert browser_runtime.calls == [
+        (
+            "auth.save",
+            "github",
+            "parity-browser",
+            "https://github.com/login",
+            "octo",
+            "secret-token",
+            "#login",
+            "#password",
+            "button[type=submit]",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_browser_auth_profile_mutation_dispatches_to_configured_runtime() -> None:
+    browser_runtime = _FakeBrowserRuntime()
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        browser_runtime_service=browser_runtime,
+    )
+
+    login = await service.call(
+        "browser.auth.login",
+        {"session": "parity-browser", "name": "github"},
+    )
+    delete = await service.call(
+        "browser.auth.delete",
+        {"session": "parity-browser", "name": "github"},
+    )
+
+    assert login == {
+        "ok": True,
+        "session": "parity-browser",
+        "name": "github",
+        "loggedIn": True,
+    }
+    assert delete == {
+        "ok": True,
+        "session": "parity-browser",
+        "name": "github",
+        "deleted": True,
+    }
+    assert browser_runtime.calls == [
+        ("auth.login", "github", "parity-browser"),
+        ("auth.delete", "github", "parity-browser"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_browser_clipboard_dispatches_to_configured_runtime() -> None:
+    browser_runtime = _FakeBrowserRuntime()
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        browser_runtime_service=browser_runtime,
+    )
+
+    read = await service.call("browser.clipboard.read", {"session": "parity-browser"})
+    write = await service.call(
+        "browser.clipboard.write",
+        {"session": "parity-browser", "text": "copied text"},
+    )
+    copy = await service.call("browser.clipboard.copy", {"session": "parity-browser"})
+    paste = await service.call("browser.clipboard.paste", {"session": "parity-browser"})
+
+    assert read == {"ok": True, "session": "parity-browser", "text": "copied text"}
+    assert write == {"ok": True, "session": "parity-browser", "text": "copied text"}
+    assert copy == {"ok": True, "session": "parity-browser", "copied": True}
+    assert paste == {"ok": True, "session": "parity-browser", "pasted": True}
+    assert browser_runtime.calls == [
+        ("clipboard.read", "", "parity-browser"),
+        ("clipboard.write", "copied text", "parity-browser"),
+        ("clipboard.copy", "", "parity-browser"),
+        ("clipboard.paste", "", "parity-browser"),
     ]
 
 
@@ -14576,6 +18861,72 @@ def test_browser_act_args_maps_bounded_action_subset() -> None:
     ) == [
         "scrollintoview",
         "@hero",
+    ]
+    assert browser_act_args(
+        "drag",
+        {"kind": "drag", "source": "@card", "destination": "@dropzone"},
+    ) == [
+        "drag",
+        "@card",
+        "@dropzone",
+    ]
+    assert browser_act_args("mouse", {"kind": "mouse", "action": "move", "x": 15, "y": 30}) == [
+        "mouse",
+        "move",
+        "15",
+        "30",
+    ]
+    assert browser_act_args(
+        "mouse",
+        {"kind": "mouse", "action": "wheel", "dy": 120, "dx": -5},
+    ) == [
+        "mouse",
+        "wheel",
+        "120",
+        "-5",
+    ]
+    assert browser_act_args(
+        "keyboard",
+        {"kind": "keyboard", "action": "inserttext", "text": "pasted content"},
+    ) == [
+        "keyboard",
+        "inserttext",
+        "pasted content",
+    ]
+    assert browser_act_args(
+        "find",
+        {
+            "kind": "find",
+            "locator": "role",
+            "value": "button",
+            "action": "click",
+            "name": "Submit",
+            "exact": True,
+        },
+    ) == [
+        "find",
+        "role",
+        "button",
+        "click",
+        "--name",
+        "Submit",
+        "--exact",
+    ]
+    assert browser_act_args(
+        "find",
+        {
+            "kind": "find",
+            "locator": "label",
+            "value": "Email",
+            "action": "fill",
+            "text": "user@example.com",
+        },
+    ) == [
+        "find",
+        "label",
+        "Email",
+        "fill",
+        "user@example.com",
     ]
 
 
@@ -14684,6 +19035,40 @@ def test_browser_history_runtime_uses_agent_browser_navigation(
     assert calls == [["agent-browser.cmd", "--session", "parity-browser", "reload"]]
     assert payload["action"] == "reload"
     assert payload["output"] == "ok"
+
+
+def test_browser_confirmation_runtime_uses_agent_browser_confirmation_commands(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+
+    class Completed:
+        def __init__(self, stdout: str) -> None:
+            self.returncode = 0
+            self.stdout = stdout
+            self.stderr = ""
+
+    def fake_run(invocation: list[str], **_: object) -> Completed:
+        calls.append(invocation)
+        return Completed("ok")
+
+    monkeypatch.setattr(
+        "openzues.services.gateway_browser_runtime.subprocess.run",
+        fake_run,
+    )
+
+    service = GatewayBrowserRuntimeService(command="agent-browser.cmd")
+    confirmed = service.confirm("pending-123", session="parity-browser")
+    denied = service.deny("pending-456", session="parity-browser")
+
+    assert calls == [
+        ["agent-browser.cmd", "--session", "parity-browser", "confirm", "pending-123"],
+        ["agent-browser.cmd", "--session", "parity-browser", "deny", "pending-456"],
+    ]
+    assert confirmed["decision"] == "confirm"
+    assert confirmed["actionId"] == "pending-123"
+    assert denied["decision"] == "deny"
+    assert denied["actionId"] == "pending-456"
 
 
 def test_browser_stream_status_runtime_uses_agent_browser_stream_status(
@@ -14879,6 +19264,121 @@ def test_browser_storage_inventory_runtime_uses_agent_browser_storage_commands(
     ]
     assert cookies["cookieCount"] == 1
     assert storage["entries"] == {"theme": "dark"}
+
+
+def test_browser_cookie_mutation_runtime_uses_agent_browser_cookie_commands(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+
+    class Completed:
+        def __init__(self, stdout: str) -> None:
+            self.returncode = 0
+            self.stdout = stdout
+            self.stderr = ""
+
+    def fake_run(invocation: list[str], **_: object) -> Completed:
+        calls.append(invocation)
+        return Completed("ok")
+
+    monkeypatch.setattr(
+        "openzues.services.gateway_browser_runtime.subprocess.run",
+        fake_run,
+    )
+
+    service = GatewayBrowserRuntimeService(command="agent-browser.cmd")
+    set_payload = service.cookies_set(
+        "session_id",
+        "abc123",
+        session="parity-browser",
+        url="https://app.example.test",
+        path="/app",
+        http_only=True,
+        secure=True,
+        same_site="Strict",
+        expires=1_735_689_600,
+    )
+    clear_payload = service.cookies_clear(session="parity-browser")
+
+    assert calls == [
+        [
+            "agent-browser.cmd",
+            "--session",
+            "parity-browser",
+            "cookies",
+            "set",
+            "session_id",
+            "abc123",
+            "--url",
+            "https://app.example.test",
+            "--path",
+            "/app",
+            "--httpOnly",
+            "--secure",
+            "--sameSite",
+            "Strict",
+            "--expires",
+            "1735689600",
+        ],
+        ["agent-browser.cmd", "--session", "parity-browser", "cookies", "clear"],
+    ]
+    assert set_payload["operation"] == "set"
+    assert set_payload["name"] == "session_id"
+    assert clear_payload["operation"] == "clear"
+
+
+def test_browser_storage_mutation_runtime_uses_agent_browser_storage_commands(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+
+    class Completed:
+        def __init__(self, stdout: str) -> None:
+            self.returncode = 0
+            self.stdout = stdout
+            self.stderr = ""
+
+    def fake_run(invocation: list[str], **_: object) -> Completed:
+        calls.append(invocation)
+        return Completed("ok")
+
+    monkeypatch.setattr(
+        "openzues.services.gateway_browser_runtime.subprocess.run",
+        fake_run,
+    )
+
+    service = GatewayBrowserRuntimeService(command="agent-browser.cmd")
+    set_payload = service.storage_set(
+        "local",
+        "theme",
+        "dark",
+        session="parity-browser",
+    )
+    clear_payload = service.storage_clear("session", session="parity-browser")
+
+    assert calls == [
+        [
+            "agent-browser.cmd",
+            "--session",
+            "parity-browser",
+            "storage",
+            "local",
+            "set",
+            "theme",
+            "dark",
+        ],
+        [
+            "agent-browser.cmd",
+            "--session",
+            "parity-browser",
+            "storage",
+            "session",
+            "clear",
+        ],
+    ]
+    assert set_payload["operation"] == "set"
+    assert set_payload["key"] == "theme"
+    assert clear_payload["operation"] == "clear"
 
 
 def test_browser_session_inventory_runtime_uses_agent_browser_session_commands(
@@ -15195,6 +19695,592 @@ def test_browser_upload_runtime_rejects_uncontrolled_files(tmp_path: Path) -> No
         service.upload("@e5", [str(upload_path)], session="parity-browser")
 
 
+def test_browser_set_runtime_uses_guarded_low_risk_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+
+    class Completed:
+        def __init__(self, stdout: str = "setting updated") -> None:
+            self.returncode = 0
+            self.stdout = stdout
+            self.stderr = ""
+
+    def fake_run(invocation: list[str], **_: object) -> Completed:
+        calls.append(invocation)
+        if invocation[-4:-2] == ["set", "credentials"]:
+            return Completed("credentials set for admin with secret-token")
+        if invocation[-3:-1] == ["set", "headers"]:
+            return Completed("headers set with Bearer token")
+        return Completed()
+
+    monkeypatch.setattr(
+        "openzues.services.gateway_browser_runtime.subprocess.run",
+        fake_run,
+    )
+
+    service = GatewayBrowserRuntimeService(command="agent-browser.cmd")
+    payload = service.set_setting(
+        "media",
+        ["dark", "reduced-motion"],
+        session="parity-browser",
+    )
+    headers = service.set_setting(
+        "headers",
+        ['{"Authorization":"Bearer token","X-Test":"yes"}'],
+        session="parity-browser",
+    )
+    credentials = service.set_setting(
+        "credentials",
+        ["admin", "secret-token"],
+        session="parity-browser",
+    )
+
+    assert calls == [
+        [
+            "agent-browser.cmd",
+            "--session",
+            "parity-browser",
+            "set",
+            "media",
+            "dark",
+            "reduced-motion",
+        ],
+        [
+            "agent-browser.cmd",
+            "--session",
+            "parity-browser",
+            "set",
+            "headers",
+            '{"Authorization":"Bearer token","X-Test":"yes"}',
+        ],
+        [
+            "agent-browser.cmd",
+            "--session",
+            "parity-browser",
+            "set",
+            "credentials",
+            "admin",
+            "secret-token",
+        ]
+    ]
+    assert payload["setting"] == "media"
+    assert payload["values"] == ["dark", "reduced-motion"]
+    assert headers["setting"] == "headers"
+    assert headers["values"] == ["[redacted]"]
+    assert headers["headerNames"] == ["Authorization", "X-Test"]
+    assert "Bearer token" not in str(headers)
+    assert credentials["setting"] == "credentials"
+    assert credentials["values"] == ["admin", "[redacted]"]
+    assert "secret-token" not in str(credentials)
+
+    with pytest.raises(GatewayBrowserRuntimeError, match="unsupported browser setting"):
+        service.set_setting(
+            "proxy",
+            ["http://127.0.0.1:8080"],
+            session="parity-browser",
+        )
+
+
+def test_browser_batch_runtime_uses_agent_browser_batch_commands(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+
+    class Completed:
+        returncode = 0
+        stdout = "opened\n\nsnapshot"
+        stderr = ""
+
+    def fake_run(invocation: list[str], **_: object) -> Completed:
+        calls.append(invocation)
+        return Completed()
+
+    monkeypatch.setattr(
+        "openzues.services.gateway_browser_runtime.subprocess.run",
+        fake_run,
+    )
+
+    service = GatewayBrowserRuntimeService(command="agent-browser.cmd")
+    payload = service.batch(
+        ["open https://example.com", "snapshot -i"],
+        session="parity-browser",
+        bail=True,
+    )
+
+    assert calls == [
+        [
+            "agent-browser.cmd",
+            "--session",
+            "parity-browser",
+            "batch",
+            "--bail",
+            "open https://example.com",
+            "snapshot -i",
+        ]
+    ]
+    assert payload["commandCount"] == 2
+    assert payload["bail"] is True
+    assert payload["lines"] == ["opened", "snapshot"]
+
+
+def test_browser_dashboard_runtime_uses_agent_browser_dashboard_commands(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+
+    class Completed:
+        returncode = 0
+        stdout = "dashboard running"
+        stderr = ""
+
+    def fake_run(invocation: list[str], **_: object) -> Completed:
+        calls.append(invocation)
+        return Completed()
+
+    monkeypatch.setattr(
+        "openzues.services.gateway_browser_runtime.subprocess.run",
+        fake_run,
+    )
+
+    service = GatewayBrowserRuntimeService(command="agent-browser.cmd")
+    started = service.dashboard_start(session="parity-browser", port=4849)
+    stopped = service.dashboard_stop(session="parity-browser")
+
+    assert calls == [
+        [
+            "agent-browser.cmd",
+            "--session",
+            "parity-browser",
+            "dashboard",
+            "start",
+            "--port",
+            "4849",
+        ],
+        [
+            "agent-browser.cmd",
+            "--session",
+            "parity-browser",
+            "dashboard",
+            "stop",
+        ],
+    ]
+    assert started["dashboardRunning"] is True
+    assert started["port"] == 4849
+    assert stopped["dashboardRunning"] is False
+
+
+def test_browser_chat_runtime_uses_agent_browser_chat_command(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+
+    class Completed:
+        returncode = 0
+        stdout = "The page is ready."
+        stderr = ""
+
+    def fake_run(invocation: list[str], **_: object) -> Completed:
+        calls.append(invocation)
+        return Completed()
+
+    monkeypatch.setattr(
+        "openzues.services.gateway_browser_runtime.subprocess.run",
+        fake_run,
+    )
+
+    service = GatewayBrowserRuntimeService(command="agent-browser.cmd")
+    payload = service.chat(
+        "summarize the current page",
+        session="parity-browser",
+        model="openai/gpt-4o",
+        quiet=True,
+    )
+
+    assert calls == [
+        [
+            "agent-browser.cmd",
+            "--session",
+            "parity-browser",
+            "--model",
+            "openai/gpt-4o",
+            "--quiet",
+            "chat",
+            "summarize the current page",
+        ]
+    ]
+    assert payload["message"] == "summarize the current page"
+    assert payload["model"] == "openai/gpt-4o"
+    assert payload["lines"] == ["The page is ready."]
+
+
+def test_browser_ios_provider_runtime_uses_agent_browser_ios_commands(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+
+    class Completed:
+        returncode = 0
+        stdout = "iPhone 15 Pro"
+        stderr = ""
+
+    def fake_run(invocation: list[str], **_: object) -> Completed:
+        calls.append(invocation)
+        return Completed()
+
+    monkeypatch.setattr(
+        "openzues.services.gateway_browser_runtime.subprocess.run",
+        fake_run,
+    )
+
+    service = GatewayBrowserRuntimeService(command="agent-browser.cmd")
+    devices = service.ios_device_list(session="parity-browser")
+    swipe = service.ios_swipe("up", session="parity-browser", distance=500)
+    tap = service.ios_tap("@e1", session="parity-browser")
+
+    assert calls == [
+        [
+            "agent-browser.cmd",
+            "--session",
+            "parity-browser",
+            "--provider",
+            "ios",
+            "device",
+            "list",
+        ],
+        [
+            "agent-browser.cmd",
+            "--session",
+            "parity-browser",
+            "--provider",
+            "ios",
+            "swipe",
+            "up",
+            "500",
+        ],
+        [
+            "agent-browser.cmd",
+            "--session",
+            "parity-browser",
+            "--provider",
+            "ios",
+            "tap",
+            "@e1",
+        ],
+    ]
+    assert devices["deviceCount"] == 1
+    assert swipe["direction"] == "up"
+    assert tap["target"] == "@e1"
+
+
+def test_browser_trace_runtime_uses_controlled_trace_artifact(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "openzues.services.gateway_browser_runtime.tempfile.gettempdir",
+        lambda: str(tmp_path),
+    )
+
+    class Completed:
+        returncode = 0
+        stdout = "trace complete"
+        stderr = ""
+
+    def fake_run(invocation: list[str], **_: object) -> Completed:
+        calls.append(invocation)
+        if invocation[-2:] and invocation[-2] == "stop":
+            Path(invocation[-1]).write_bytes(b"trace")
+        return Completed()
+
+    monkeypatch.setattr(
+        "openzues.services.gateway_browser_runtime.subprocess.run",
+        fake_run,
+    )
+
+    service = GatewayBrowserRuntimeService(command="agent-browser.cmd")
+    start_payload = service.trace_start(session="parity-browser")
+    stop_payload = service.trace_stop(session="parity-browser")
+
+    assert calls[0] == [
+        "agent-browser.cmd",
+        "--session",
+        "parity-browser",
+        "trace",
+        "start",
+    ]
+    assert calls[1][:5] == [
+        "agent-browser.cmd",
+        "--session",
+        "parity-browser",
+        "trace",
+        "stop",
+    ]
+    assert str(stop_payload["path"]).startswith(str(tmp_path))
+    assert str(stop_payload["path"]).endswith(".zip")
+    assert start_payload["traceRecording"] is True
+    assert stop_payload["traceRecording"] is False
+    assert stop_payload["sizeBytes"] == 5
+
+
+def test_browser_network_har_runtime_uses_controlled_har_artifact(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "openzues.services.gateway_browser_runtime.tempfile.gettempdir",
+        lambda: str(tmp_path),
+    )
+
+    class Completed:
+        returncode = 0
+        stdout = "har complete"
+        stderr = ""
+
+    def fake_run(invocation: list[str], **_: object) -> Completed:
+        calls.append(invocation)
+        if invocation[-2:] and invocation[-2] == "stop":
+            Path(invocation[-1]).write_bytes(b"har")
+        return Completed()
+
+    monkeypatch.setattr(
+        "openzues.services.gateway_browser_runtime.subprocess.run",
+        fake_run,
+    )
+
+    service = GatewayBrowserRuntimeService(command="agent-browser.cmd")
+    start_payload = service.network_har_start(session="parity-browser")
+    stop_payload = service.network_har_stop(session="parity-browser")
+
+    assert calls[0] == [
+        "agent-browser.cmd",
+        "--session",
+        "parity-browser",
+        "network",
+        "har",
+        "start",
+    ]
+    assert calls[1][:6] == [
+        "agent-browser.cmd",
+        "--session",
+        "parity-browser",
+        "network",
+        "har",
+        "stop",
+    ]
+    assert str(stop_payload["path"]).startswith(str(tmp_path))
+    assert str(stop_payload["path"]).endswith(".har")
+    assert start_payload["harRecording"] is True
+    assert stop_payload["harRecording"] is False
+    assert stop_payload["sizeBytes"] == 3
+
+
+def test_browser_profiler_runtime_uses_controlled_profile_artifact(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "openzues.services.gateway_browser_runtime.tempfile.gettempdir",
+        lambda: str(tmp_path),
+    )
+
+    class Completed:
+        returncode = 0
+        stdout = "profile complete"
+        stderr = ""
+
+    def fake_run(invocation: list[str], **_: object) -> Completed:
+        calls.append(invocation)
+        if len(invocation) >= 2 and invocation[-2] == "stop":
+            Path(invocation[-1]).write_text("{}", encoding="utf-8")
+        return Completed()
+
+    monkeypatch.setattr(
+        "openzues.services.gateway_browser_runtime.subprocess.run",
+        fake_run,
+    )
+
+    service = GatewayBrowserRuntimeService(command="agent-browser.cmd")
+    start_payload = service.profiler_start(
+        session="parity-browser",
+        categories="devtools.timeline,v8.execute",
+    )
+    stop_payload = service.profiler_stop(session="parity-browser")
+
+    assert calls[0] == [
+        "agent-browser.cmd",
+        "--session",
+        "parity-browser",
+        "profiler",
+        "start",
+        "--categories",
+        "devtools.timeline,v8.execute",
+    ]
+    assert calls[1][:5] == [
+        "agent-browser.cmd",
+        "--session",
+        "parity-browser",
+        "profiler",
+        "stop",
+    ]
+    assert str(stop_payload["path"]).startswith(str(tmp_path))
+    assert str(stop_payload["path"]).endswith(".json")
+    assert start_payload["profilerRecording"] is True
+    assert stop_payload["profilerRecording"] is False
+    assert stop_payload["sizeBytes"] == 2
+
+
+def test_browser_record_runtime_uses_controlled_recording_artifact(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    calls: list[list[str]] = []
+    recording_path: Path | None = None
+    monkeypatch.setattr(
+        "openzues.services.gateway_browser_runtime.tempfile.gettempdir",
+        lambda: str(tmp_path),
+    )
+
+    class Completed:
+        returncode = 0
+        stdout = "record complete"
+        stderr = ""
+
+    def fake_run(invocation: list[str], **_: object) -> Completed:
+        nonlocal recording_path
+        calls.append(invocation)
+        operation = invocation[4] if len(invocation) > 4 else ""
+        if operation in {"start", "restart"}:
+            recording_path = Path(invocation[5])
+        elif operation == "stop" and recording_path is not None:
+            recording_path.write_bytes(b"video")
+        return Completed()
+
+    monkeypatch.setattr(
+        "openzues.services.gateway_browser_runtime.subprocess.run",
+        fake_run,
+    )
+
+    service = GatewayBrowserRuntimeService(command="agent-browser.cmd")
+    start_payload = service.record_start(
+        session="parity-browser",
+        url="http://127.0.0.1:8884",
+    )
+    stop_payload = service.record_stop(session="parity-browser")
+    restart_payload = service.record_restart(session="parity-browser")
+
+    assert calls[0] == [
+        "agent-browser.cmd",
+        "--session",
+        "parity-browser",
+        "record",
+        "start",
+        str(start_payload["path"]),
+        "http://127.0.0.1:8884",
+    ]
+    assert calls[1] == [
+        "agent-browser.cmd",
+        "--session",
+        "parity-browser",
+        "record",
+        "stop",
+    ]
+    assert calls[2] == [
+        "agent-browser.cmd",
+        "--session",
+        "parity-browser",
+        "record",
+        "restart",
+        str(restart_payload["path"]),
+    ]
+    assert str(start_payload["path"]).startswith(str(tmp_path))
+    assert str(start_payload["path"]).endswith(".webm")
+    assert str(restart_payload["path"]).startswith(str(tmp_path))
+    assert stop_payload["path"] == start_payload["path"]
+    assert stop_payload["sizeBytes"] == 5
+    assert start_payload["recording"] is True
+    assert stop_payload["recording"] is False
+    assert restart_payload["recording"] is True
+
+
+def test_browser_debug_runtime_uses_agent_browser_debug_commands(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+
+    class Completed:
+        returncode = 0
+        stdout = "debug complete"
+        stderr = ""
+
+    def fake_run(invocation: list[str], **_: object) -> Completed:
+        calls.append(invocation)
+        return Completed()
+
+    monkeypatch.setattr(
+        "openzues.services.gateway_browser_runtime.subprocess.run",
+        fake_run,
+    )
+
+    service = GatewayBrowserRuntimeService(command="agent-browser.cmd")
+    highlight_payload = service.highlight("@e2", session="parity-browser")
+    inspect_payload = service.inspect(session="parity-browser")
+
+    assert calls == [
+        ["agent-browser.cmd", "--session", "parity-browser", "highlight", "@e2"],
+        ["agent-browser.cmd", "--session", "parity-browser", "inspect"],
+    ]
+    assert highlight_payload["selector"] == "@e2"
+    assert inspect_payload["inspectorOpen"] is True
+
+
+def test_browser_clipboard_runtime_uses_installed_clipboard_commands(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+
+    class Completed:
+        returncode = 0
+        stdout = "copied text"
+        stderr = ""
+
+    def fake_run(invocation: list[str], **_: object) -> Completed:
+        calls.append(invocation)
+        return Completed()
+
+    monkeypatch.setattr(
+        "openzues.services.gateway_browser_runtime.subprocess.run",
+        fake_run,
+    )
+
+    service = GatewayBrowserRuntimeService(command="agent-browser.cmd")
+    read = service.clipboard_read(session="parity-browser")
+    write = service.clipboard_write("copied text", session="parity-browser")
+    copy = service.clipboard_copy(session="parity-browser")
+    paste = service.clipboard_paste(session="parity-browser")
+
+    assert calls == [
+        ["agent-browser.cmd", "--session", "parity-browser", "clipboard", "read"],
+        [
+            "agent-browser.cmd",
+            "--session",
+            "parity-browser",
+            "clipboard",
+            "write",
+            "copied text",
+        ],
+        ["agent-browser.cmd", "--session", "parity-browser", "clipboard", "copy"],
+        ["agent-browser.cmd", "--session", "parity-browser", "clipboard", "paste"],
+    ]
+    assert read["text"] == "copied text"
+    assert write["text"] == "copied text"
+    assert copy["operation"] == "copy"
+    assert paste["operation"] == "paste"
+
+
 def test_browser_auth_metadata_runtime_uses_agent_browser_auth_commands(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -15227,6 +20313,100 @@ def test_browser_auth_metadata_runtime_uses_agent_browser_auth_commands(
     ]
     assert profiles["profileCount"] == 1
     assert profile["profile"] == {"name": "github", "url": "https://github.com/login"}
+
+
+def test_browser_auth_profile_mutation_runtime_uses_agent_browser_auth_commands(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+
+    class Completed:
+        def __init__(self, stdout: str) -> None:
+            self.returncode = 0
+            self.stdout = stdout
+            self.stderr = ""
+
+    def fake_run(invocation: list[str], **_: object) -> Completed:
+        calls.append(invocation)
+        return Completed("ok")
+
+    monkeypatch.setattr(
+        "openzues.services.gateway_browser_runtime.subprocess.run",
+        fake_run,
+    )
+
+    service = GatewayBrowserRuntimeService(command="agent-browser.cmd")
+    login = service.auth_login("github", session="parity-browser")
+    delete = service.auth_delete("github", session="parity-browser")
+
+    assert calls == [
+        ["agent-browser.cmd", "--session", "parity-browser", "auth", "login", "github"],
+        ["agent-browser.cmd", "--session", "parity-browser", "auth", "delete", "github"],
+    ]
+    assert login["operation"] == "login"
+    assert login["name"] == "github"
+    assert delete["operation"] == "delete"
+    assert delete["name"] == "github"
+
+
+def test_browser_auth_profile_save_runtime_uses_password_stdin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[list[str], str | None]] = []
+
+    class Completed:
+        def __init__(self, stdout: str) -> None:
+            self.returncode = 0
+            self.stdout = stdout
+            self.stderr = ""
+
+    def fake_run(invocation: list[str], **kwargs: object) -> Completed:
+        input_text = kwargs.get("input")
+        calls.append((invocation, input_text if isinstance(input_text, str) else None))
+        return Completed("saved github")
+
+    monkeypatch.setattr(
+        "openzues.services.gateway_browser_runtime.subprocess.run",
+        fake_run,
+    )
+
+    service = GatewayBrowserRuntimeService(command="agent-browser.cmd")
+    saved = service.auth_save(
+        "github",
+        session="parity-browser",
+        url="https://github.com/login",
+        username="octo",
+        password="secret-token",
+        username_selector="#login",
+        password_selector="#password",
+        submit_selector="button[type=submit]",
+    )
+
+    invocation, stdin_text = calls[0]
+    assert invocation == [
+        "agent-browser.cmd",
+        "--session",
+        "parity-browser",
+        "auth",
+        "save",
+        "github",
+        "--url",
+        "https://github.com/login",
+        "--username",
+        "octo",
+        "--password-stdin",
+        "--username-selector",
+        "#login",
+        "--password-selector",
+        "#password",
+        "--submit-selector",
+        "button[type=submit]",
+    ]
+    assert stdin_text == "secret-token\n"
+    assert "secret-token" not in invocation
+    assert saved["operation"] == "save"
+    assert saved["name"] == "github"
+    assert "secret-token" not in str(saved)
 
 
 @pytest.mark.asyncio
@@ -15679,6 +20859,72 @@ async def test_config_write_methods_return_explicit_unavailable_contract(
     assert exc_info.value.code == "UNAVAILABLE"
     assert exc_info.value.message == expected_message
     assert exc_info.value.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_config_write_methods_persist_control_ui_config_with_base_hash(tmp_path) -> None:
+    expected_path = tmp_path / "settings" / "control-ui-config.json"
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        config_service=GatewayConfigService(
+            assistant_name="OpenZues",
+            assistant_avatar="/static/favicon.svg",
+            assistant_agent_id="assistant-control-ui",
+            server_version="9.9.9",
+            data_dir=tmp_path,
+        ),
+    )
+    raw_snapshot = json.dumps(
+        {
+            "basePath": "/gateway",
+            "assistantName": "Parity Builder",
+            "assistantAvatar": "/static/parity.svg",
+            "assistantAgentId": "assistant-control-ui",
+            "serverVersion": "9.9.9",
+            "localMediaPreviewRoots": [],
+            "embedSandbox": "scripts",
+            "allowExternalEmbedUrls": False,
+        }
+    )
+
+    set_payload = await service.call("config.set", {"raw": raw_snapshot})
+    patch_payload = await service.call(
+        "config.patch",
+        {
+            "raw": '{"assistantName":"Patched Builder"}',
+            "baseHash": set_payload["hash"],
+            "sessionKey": "agent:main:thread:demo",
+            "deliveryContext": {
+                "channel": "slack",
+                "to": "user:U123",
+                "accountId": "default",
+                "threadId": 1771242986529939,
+            },
+            "note": "Patch the bounded config seam.",
+            "restartDelayMs": 0,
+        },
+    )
+    applied_raw = json.dumps({**patch_payload["config"], "allowExternalEmbedUrls": True})
+    apply_payload = await service.call(
+        "config.apply",
+        {
+            "raw": applied_raw,
+            "baseHash": patch_payload["hash"],
+            "sessionKey": "agent:main:thread:demo",
+            "note": "Apply the bounded config seam.",
+            "restartDelayMs": 0,
+        },
+    )
+
+    assert set_payload["ok"] is True
+    assert set_payload["path"] == str(expected_path)
+    assert set_payload["config"]["assistantName"] == "Parity Builder"
+    assert patch_payload["config"]["assistantName"] == "Patched Builder"
+    assert apply_payload["config"]["allowExternalEmbedUrls"] is True
+    assert apply_payload["restart"] is None
+    assert apply_payload["sentinel"] is None
+    assert await service.call("config.get", {}) == apply_payload["config"]
+    assert json.loads(expected_path.read_text(encoding="utf-8")) == apply_payload["config"]
 
 
 @pytest.mark.asyncio
@@ -18853,6 +24099,60 @@ async def test_node_event_chat_subscribe_routes_session_events_to_node(tmp_path)
 
 
 @pytest.mark.asyncio
+async def test_node_event_chat_subscribe_uses_resolved_subagent_store_key(tmp_path) -> None:
+    database = Database(tmp_path / "node-event-chat-subscribe-subagent.db")
+    await database.initialize()
+    resolved_session_key = "agent:main:subagent:child"
+    await database.upsert_gateway_session_metadata(
+        session_key=resolved_session_key,
+        metadata={"label": "Child Session"},
+    )
+    registry = GatewayNodeRegistry()
+    connection = FakeNodeConnection("conn-node-chat-subscribe-subagent")
+    registry.register(
+        connection,
+        GatewayNodeConnect(
+            client_id="live-node-chat-subscribe-subagent",
+            device_id="node-chat-subscribe-subagent",
+            client_mode="mobile",
+            display_name="Subscriber Phone",
+            platform="ios",
+            caps=("voice", "canvas"),
+            commands=("canvas.present",),
+        ),
+        connected_at_ms=321,
+    )
+    service = GatewayNodeMethodService(
+        registry,
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        hub=BroadcastHub(),
+    )
+    requester = GatewayNodeMethodRequester(node_id="node-chat-subscribe-subagent")
+
+    response = await service.call(
+        "node.event",
+        {
+            "event": "chat.subscribe",
+            "payload": {"sessionKey": "subagent:child"},
+        },
+        requester=requester,
+    )
+    sent_count = registry.send_to_session(
+        resolved_session_key,
+        "chat",
+        {"sessionKey": resolved_session_key, "state": "delta"},
+    )
+
+    assert response == {"ok": True}
+    assert sent_count == 1
+    assert connection.sent_events[-1] == {
+        "event": "chat",
+        "payload": {"sessionKey": resolved_session_key, "state": "delta"},
+    }
+
+
+@pytest.mark.asyncio
 async def test_node_event_exec_finished_queues_system_event_wake(tmp_path) -> None:
     database = Database(tmp_path / "node-event-exec-finished.db")
     await database.initialize()
@@ -20159,6 +25459,83 @@ async def test_send_uses_channel_message_runtime_and_derives_thread_from_session
         "messageId": "42",
         "sessionKey": expected_target_session_key,
         "deliveryId": 7,
+    }
+
+
+@pytest.mark.asyncio
+async def test_send_uses_resolved_subagent_store_key_for_delivery_provenance() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-send-subagent-alias"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-send-subagent-alias.db")
+    await database.initialize()
+    resolved_session_key = "agent:main:subagent:child"
+    await database.upsert_gateway_session_metadata(
+        session_key=resolved_session_key,
+        metadata={"label": "Child Session"},
+    )
+    calls: list[dict[str, object | None]] = []
+
+    async def fake_send_channel_message_service(
+        *,
+        channel: str,
+        to: str,
+        message: str,
+        account_id: str | None,
+        agent_id: str | None,
+        thread_id: str | None,
+        session_key: str | None,
+        idempotency_key: str,
+    ) -> dict[str, object]:
+        calls.append(
+            {
+                "channel": channel,
+                "to": to,
+                "message": message,
+                "account_id": account_id,
+                "agent_id": agent_id,
+                "thread_id": thread_id,
+                "session_key": session_key,
+                "idempotency_key": idempotency_key,
+            }
+        )
+        return {"ok": True, "messageId": "43", "sessionKey": session_key, "deliveryId": 8}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        send_channel_message_service=fake_send_channel_message_service,
+    )
+
+    payload = await service.call(
+        "send",
+        {
+            "to": " channel:C123 ",
+            "message": "Ship child parity.",
+            "channel": "slack",
+            "sessionKey": "subagent:child",
+            "idempotencyKey": "idem-send-subagent-runtime",
+        },
+    )
+
+    assert calls == [
+        {
+            "channel": "slack",
+            "to": "channel:C123",
+            "message": "Ship child parity.",
+            "account_id": None,
+            "agent_id": None,
+            "thread_id": None,
+            "session_key": resolved_session_key,
+            "idempotency_key": "idem-send-subagent-runtime",
+        }
+    ]
+    assert payload == {
+        "ok": True,
+        "messageId": "43",
+        "sessionKey": resolved_session_key,
+        "deliveryId": 8,
     }
 
 

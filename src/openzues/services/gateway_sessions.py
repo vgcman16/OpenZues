@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import math
+import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal, cast
@@ -25,6 +27,12 @@ _CONTROL_CHAT_SUBJECT_FALLBACK = "Operator control chat"
 _DERIVED_TITLE_MAX_LEN = 60
 _DERIVED_TITLE_ELLIPSIS = "\u2026"
 _SESSION_LABEL_MAX_LENGTH = 512
+_SESSION_MESSAGE_ASSISTANT_SKIP_TEXTS = {"NO_REPLY", "ANNOUNCE_SKIP", "REPLY_SKIP"}
+_TRANSCRIPT_USAGE_MESSAGE_LIMIT = 1_000
+_SESSION_MESSAGE_INLINE_DIRECTIVE_RE = re.compile(
+    r"\[\[\s*(?:reply_to(?:_current|\s*:\s*[^\]]+)?|audio_as_voice)\s*\]\]",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,7 +81,9 @@ class GatewaySessionsService:
         normalized_spawned_by = _string_or_none(spawned_by)
         normalized_agent_id = _normalize_lookup_token(agent_id)
         normalized_search = _string_or_none(search)
-        if normalized_agent_id is not None and normalized_agent_id != "main":
+        if normalized_agent_id is not None and not await self._agent_exists(
+            normalized_agent_id
+        ):
             raise ValueError(f'unknown agent id "{normalized_agent_id}"')
         sessions: list[dict[str, Any]] = []
         session = await self._current_control_chat_session()
@@ -171,6 +181,7 @@ class GatewaySessionsService:
             "path": _CONTROL_CHAT_PATH,
             "count": len(sessions),
             "defaults": {
+                "modelProvider": "openai",
                 "model": session.model,
                 "contextTokens": None,
                 "mainSessionKey": session.main_session_key,
@@ -222,6 +233,7 @@ class GatewaySessionsService:
         known_session = await self._known_session_for_lookup(
             session_key,
             default_session=session,
+            agent_id=None,
         )
         if known_session is None:
             return None
@@ -273,9 +285,19 @@ class GatewaySessionsService:
         )
         for field in (
             "label",
+            "displayName",
+            "chatType",
+            "channel",
+            "groupId",
+            "groupChannel",
             "responseUsage",
             "reasoningLevel",
             "elevatedLevel",
+            "ttsAuto",
+            "authProfileOverride",
+            "authProfileOverrideSource",
+            "queueMode",
+            "queueDrop",
             "execHost",
             "execSecurity",
             "execAsk",
@@ -287,6 +309,9 @@ class GatewaySessionsService:
             "sendPolicy",
             "groupActivation",
             "parentSessionKey",
+            "lastChannel",
+            "lastTo",
+            "lastAccountId",
         ):
             value = _string_or_none(session_payload.get(field))
             if value is not None:
@@ -294,9 +319,21 @@ class GatewaySessionsService:
         fast_mode = _bool_or_none(session_payload.get("fastMode"))
         if fast_mode is not None:
             payload["fastMode"] = fast_mode
+        forked_from_parent = _bool_or_none(session_payload.get("forkedFromParent"))
+        if forked_from_parent is not None:
+            payload["forkedFromParent"] = forked_from_parent
         spawn_depth = _int_or_none(session_payload.get("spawnDepth"))
         if spawn_depth is not None:
             payload["spawnDepth"] = spawn_depth
+        last_thread_id = _route_thread_id_or_none(session_payload.get("lastThreadId"))
+        if last_thread_id is not None:
+            payload["lastThreadId"] = last_thread_id
+        total_tokens_fresh = _bool_or_none(session_payload.get("totalTokensFresh"))
+        if total_tokens_fresh is not None:
+            payload["totalTokensFresh"] = total_tokens_fresh
+        estimated_cost_usd = _float_or_none(session_payload.get("estimatedCostUsd"))
+        if estimated_cost_usd is not None:
+            payload["estimatedCostUsd"] = estimated_cost_usd
         compaction_checkpoint_count = _int_or_none(
             session_payload.get("compactionCheckpointCount")
         )
@@ -319,6 +356,9 @@ class GatewaySessionsService:
         role = _string_or_none(message_row.get("role"))
         if role not in {"user", "assistant"}:
             return None
+        message_text = _session_message_display_text(str(message_row.get("content") or ""))
+        if _is_suppressed_assistant_session_message(role=role, text=message_text):
+            return None
 
         session = await self._session_for_message(message_row)
         session_payload = await self._session_payload(session=session, now_ms=now_ms)
@@ -328,8 +368,9 @@ class GatewaySessionsService:
             "sessionKey": session.current_session_key,
             "message": _message_payload(
                 role=role,
-                text=str(message_row.get("content") or ""),
+                text=message_text,
                 message_id=message_id,
+                message_seq=message_seq,
             ),
             "updatedAt": session_payload["updatedAt"],
             "sessionId": session_payload["sessionId"],
@@ -349,6 +390,8 @@ class GatewaySessionsService:
             "model": session_payload["model"],
             "space": session_payload["space"],
         }
+        _apply_session_event_metadata(payload, session_payload)
+        _apply_live_usage_metadata(payload, message_row)
         compaction_checkpoint_count = _int_or_none(
             session_payload.get("compactionCheckpointCount")
         )
@@ -374,6 +417,9 @@ class GatewaySessionsService:
     ) -> dict[str, Any] | None:
         role = _string_or_none(message_row.get("role"))
         if role not in {"user", "assistant"}:
+            return None
+        message_text = _session_message_display_text(str(message_row.get("content") or ""))
+        if _is_suppressed_assistant_session_message(role=role, text=message_text):
             return None
 
         session = await self._session_for_message(message_row)
@@ -402,6 +448,8 @@ class GatewaySessionsService:
             "model": session_payload["model"],
             "space": session_payload["space"],
         }
+        _apply_session_event_metadata(payload, session_payload)
+        _apply_live_usage_metadata(payload, message_row)
         compaction_checkpoint_count = _int_or_none(
             session_payload.get("compactionCheckpointCount")
         )
@@ -445,7 +493,9 @@ class GatewaySessionsService:
             raise ValueError("Provide either key, sessionId, or label (not multiple)")
         if selection_count == 0:
             raise ValueError("Either key, sessionId, or label is required")
-        if normalized_agent_id is not None and normalized_agent_id != "main":
+        if normalized_agent_id is not None and not await self._agent_exists(
+            normalized_agent_id
+        ):
             raise ValueError(f'unknown agent id "{normalized_agent_id}"')
         session = await self._current_control_chat_session()
         if (
@@ -481,6 +531,7 @@ class GatewaySessionsService:
             matched_session = await self._known_session_for_lookup(
                 normalized_key,
                 default_session=session,
+                agent_id=normalized_agent_id,
             )
             if matched_session is None:
                 raise ValueError("unknown session key")
@@ -540,7 +591,28 @@ class GatewaySessionsService:
             metadata,
             owner_session_key=session.current_session_key,
         )
+        provider_override = _string_or_none(metadata.get("providerOverride"))
+        model_id_override = _string_or_none(metadata.get("modelOverride"))
         model_override = _string_or_none(metadata.get("model"))
+        transcript_usage = await self._transcript_usage_snapshot(session.current_session_key)
+        transcript_model_provider = _string_or_none(transcript_usage.get("modelProvider"))
+        transcript_model = _string_or_none(transcript_usage.get("model"))
+        resolved_model = model_id_override or model_override or transcript_model or session.model
+        resolved_model_provider = (
+            provider_override
+            if model_id_override is not None and provider_override is not None
+            else (
+                "openai"
+                if model_override is not None
+                else transcript_model_provider or ("openai" if resolved_model else None)
+            )
+        )
+        context_tokens = _int_or_none(
+            transcript_usage.get("contextTokens")
+        ) or _context_tokens_for_model(
+            provider=resolved_model_provider,
+            model=resolved_model,
+        )
         updated_at_ms = await self._updated_at_ms(
             current_mission=session.current_mission,
             current_session_key=session.current_session_key,
@@ -570,24 +642,44 @@ class GatewaySessionsService:
             "thinkingLevel": _string_or_none(metadata.get("thinkingLevel")),
             "verboseLevel": _string_or_none(metadata.get("verboseLevel")),
             "traceLevel": _string_or_none(metadata.get("traceLevel")),
-            "inputTokens": None,
-            "outputTokens": None,
-            "totalTokens": None,
-            "modelProvider": "openai" if (model_override or session.model) else None,
-            "model": model_override or session.model,
-            "contextTokens": None,
+            "inputTokens": _int_or_none(transcript_usage.get("inputTokens")),
+            "outputTokens": _int_or_none(transcript_usage.get("outputTokens")),
+            "totalTokens": _int_or_none(transcript_usage.get("totalTokens")),
+            "modelProvider": resolved_model_provider,
+            "model": resolved_model,
+            "contextTokens": context_tokens,
         }
+        total_tokens_fresh = _bool_or_none(transcript_usage.get("totalTokensFresh"))
+        payload["totalTokensFresh"] = (
+            total_tokens_fresh if total_tokens_fresh is not None else False
+        )
+        estimated_cost_usd = _float_or_none(transcript_usage.get("estimatedCostUsd"))
+        if estimated_cost_usd is not None:
+            payload["estimatedCostUsd"] = estimated_cost_usd
         fast_mode = _bool_or_none(metadata.get("fastMode"))
         if fast_mode is not None:
             payload["fastMode"] = fast_mode
+        forked_from_parent = _bool_or_none(metadata.get("forkedFromParent"))
+        if forked_from_parent is not None:
+            payload["forkedFromParent"] = forked_from_parent
         if latest_owner_session_key is not None:
             payload["spawnedBy"] = latest_owner_session_key
             payload["parentSessionKey"] = latest_owner_session_key
         for field in (
             "label",
+            "displayName",
+            "chatType",
+            "channel",
+            "groupId",
+            "groupChannel",
             "responseUsage",
             "reasoningLevel",
             "elevatedLevel",
+            "ttsAuto",
+            "authProfileOverride",
+            "authProfileOverrideSource",
+            "queueMode",
+            "queueDrop",
             "execHost",
             "execSecurity",
             "execAsk",
@@ -599,6 +691,10 @@ class GatewaySessionsService:
             "sendPolicy",
             "groupActivation",
             "parentSessionKey",
+            "providerOverride",
+            "modelOverride",
+            "modelOverrideSource",
+            "claudeCliSessionId",
         ):
             if latest_owner_session_key is not None and field in {"spawnedBy", "parentSessionKey"}:
                 continue
@@ -615,6 +711,44 @@ class GatewaySessionsService:
         spawn_depth = _int_or_none(metadata.get("spawnDepth"))
         if spawn_depth is not None:
             payload["spawnDepth"] = spawn_depth
+        for field in (
+            "authProfileOverrideCompactionCount",
+            "queueDebounceMs",
+            "queueCap",
+        ):
+            int_value = _int_or_none(metadata.get(field))
+            if int_value is not None:
+                payload[field] = int_value
+        group_activation_needs_system_intro = _bool_or_none(
+            metadata.get("groupActivationNeedsSystemIntro")
+        )
+        if group_activation_needs_system_intro is not None:
+            payload["groupActivationNeedsSystemIntro"] = group_activation_needs_system_intro
+        cli_session_ids = _string_dict_or_none(metadata.get("cliSessionIds"))
+        if cli_session_ids is not None:
+            payload["cliSessionIds"] = cli_session_ids
+        cli_session_bindings = _nested_string_dict_or_none(metadata.get("cliSessionBindings"))
+        if cli_session_bindings is not None:
+            payload["cliSessionBindings"] = cli_session_bindings
+        delivery_context: dict[str, Any] = {}
+        metadata_delivery_context = _delivery_context_or_none(metadata.get("deliveryContext"))
+        if metadata_delivery_context is not None:
+            delivery_context.update(metadata_delivery_context)
+        for field, context_field in (
+            ("lastChannel", "channel"),
+            ("lastTo", "to"),
+            ("lastAccountId", "accountId"),
+        ):
+            value = _string_or_none(metadata.get(field))
+            if value is not None:
+                payload[field] = value
+                delivery_context[context_field] = value
+        last_thread_id = _route_thread_id_or_none(metadata.get("lastThreadId"))
+        if last_thread_id is not None:
+            payload["lastThreadId"] = last_thread_id
+            delivery_context["threadId"] = last_thread_id
+        if delivery_context:
+            payload["deliveryContext"] = delivery_context
         child_sessions = await self._child_session_keys(session.current_session_key)
         if child_sessions:
             payload["childSessions"] = child_sessions
@@ -758,6 +892,113 @@ class GatewaySessionsService:
             return None
         return _string_or_none(first_message.get("content"))
 
+    async def _transcript_usage_snapshot(self, session_key: str) -> dict[str, Any]:
+        messages = await self._database.list_control_chat_messages(
+            limit=_TRANSCRIPT_USAGE_MESSAGE_LIMIT,
+            session_key=session_key,
+        )
+        snapshot: dict[str, Any] = {}
+        input_tokens = 0
+        output_tokens = 0
+        cache_read = 0
+        cache_write = 0
+        saw_input_tokens = False
+        saw_output_tokens = False
+        latest_prompt_tokens: int | None = None
+        estimated_cost_usd = 0.0
+        saw_cost = False
+
+        for message in messages:
+            if _string_or_none(message.get("role")) != "assistant":
+                continue
+            usage = _json_object_or_none(message.get("usage_json"))
+            cost = _json_object_or_none(message.get("cost_json"))
+            provider = _string_or_none(message.get("model_provider")) or _string_or_none(
+                usage.get("provider") if usage is not None else None
+            )
+            model = _string_or_none(message.get("model")) or _string_or_none(
+                usage.get("model") if usage is not None else None
+            )
+            is_delivery_mirror = provider == "openclaw" and model == "delivery-mirror"
+
+            input_value = _first_int_value(
+                usage,
+                ("input", "inputTokens", "input_tokens", "promptTokens", "prompt_tokens"),
+            )
+            output_value = _first_int_value(
+                usage,
+                (
+                    "output",
+                    "outputTokens",
+                    "output_tokens",
+                    "completionTokens",
+                    "completion_tokens",
+                ),
+            )
+            cache_read_value = _first_int_value(
+                usage,
+                ("cacheRead", "cache_read", "cache_read_input_tokens", "cached_tokens"),
+            )
+            cache_write_value = _first_int_value(
+                usage,
+                ("cacheWrite", "cache_write", "cache_creation_input_tokens"),
+            )
+            cost_value = _usage_cost_usd(usage=usage, cost=cost)
+            has_meaningful_usage = any(
+                value is not None and value > 0
+                for value in (
+                    input_value,
+                    output_value,
+                    cache_read_value,
+                    cache_write_value,
+                )
+            ) or (cost_value is not None and cost_value > 0)
+            if is_delivery_mirror and not has_meaningful_usage:
+                continue
+
+            if provider is not None and not is_delivery_mirror:
+                snapshot["modelProvider"] = provider
+            if model is not None and not is_delivery_mirror:
+                snapshot["model"] = model
+            if input_value is not None:
+                input_tokens += input_value
+                saw_input_tokens = True
+            if output_value is not None:
+                output_tokens += output_value
+                saw_output_tokens = True
+            if cache_read_value is not None:
+                cache_read += cache_read_value
+            if cache_write_value is not None:
+                cache_write += cache_write_value
+
+            prompt_tokens = (
+                (input_value or 0)
+                + (cache_read_value or 0)
+                + (cache_write_value or 0)
+            )
+            if prompt_tokens > 0:
+                latest_prompt_tokens = prompt_tokens
+            if cost_value is not None:
+                estimated_cost_usd += cost_value
+                saw_cost = True
+
+        if saw_input_tokens:
+            snapshot["inputTokens"] = input_tokens
+        if saw_output_tokens:
+            snapshot["outputTokens"] = output_tokens
+        if latest_prompt_tokens is not None:
+            snapshot["totalTokens"] = latest_prompt_tokens
+            snapshot["totalTokensFresh"] = True
+        if saw_cost:
+            snapshot["estimatedCostUsd"] = estimated_cost_usd
+        context_tokens = _context_tokens_for_model(
+            provider=_string_or_none(snapshot.get("modelProvider")),
+            model=_string_or_none(snapshot.get("model")),
+        )
+        if context_tokens is not None:
+            snapshot["contextTokens"] = context_tokens
+        return snapshot
+
     async def _message_sequence(self, message_row: dict[str, Any]) -> int | None:
         stored_session_key = _string_or_none(message_row.get("session_key"))
         message_id = _int_or_none(message_row.get("id"))
@@ -798,6 +1039,7 @@ class GatewaySessionsService:
         session_key: str,
         *,
         default_session: _CurrentControlChatSession,
+        agent_id: str | None,
     ) -> _CurrentControlChatSession | None:
         requested_canonical = canonicalize_session_key(session_key)
         current_canonical = canonicalize_session_key(default_session.current_session_key)
@@ -810,6 +1052,24 @@ class GatewaySessionsService:
         )
         if direct_match is not None:
             return direct_match
+
+        agent_store_lookup_key = _scoped_agent_store_lookup_key(session_key, agent_id=agent_id)
+        agent_store_canonical = canonicalize_session_key(agent_store_lookup_key)
+        if (
+            agent_store_lookup_key is not None
+            and (
+                requested_canonical is None
+                or requested_canonical != agent_store_canonical
+            )
+        ):
+            if agent_store_canonical is not None and agent_store_canonical == current_canonical:
+                return default_session
+            scoped_match = await self._known_session_for_lookup_candidate(
+                agent_store_lookup_key,
+                default_session=default_session,
+            )
+            if scoped_match is not None:
+                return scoped_match
 
         agent_store_lookup_key = _default_agent_store_lookup_key(session_key)
         agent_store_canonical = canonicalize_session_key(agent_store_lookup_key)
@@ -1123,8 +1383,13 @@ class GatewaySessionsService:
             return True
         parsed_session_key = parse_agent_session_key(session_key)
         if parsed_session_key is None:
-            return agent_id == "main"
+            return False
         return parsed_session_key.agent_id == agent_id
+
+    async def _agent_exists(self, agent_id: str) -> bool:
+        if agent_id == "main":
+            return True
+        return await self._database.get_gateway_agent(agent_id) is not None
 
 
 def _main_session_key_from_gateway(gateway: dict[str, Any] | None) -> str:
@@ -1228,6 +1493,69 @@ def _int_or_none(value: object) -> int | None:
     return None
 
 
+def _route_thread_id_or_none(value: object) -> int | str | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        return _string_or_none(value)
+    return None
+
+
+def _delivery_context_or_none(value: object) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    delivery_context: dict[str, Any] = {}
+    for field in ("channel", "to", "accountId"):
+        field_value = _string_or_none(value.get(field))
+        if field_value is not None:
+            delivery_context[field] = field_value
+    thread_id = _route_thread_id_or_none(value.get("threadId"))
+    if thread_id is not None:
+        delivery_context["threadId"] = thread_id
+    return delivery_context or None
+
+
+def _string_dict_or_none(value: object) -> dict[str, str] | None:
+    if not isinstance(value, dict):
+        return None
+    normalized: dict[str, str] = {}
+    for key, item in value.items():
+        key_text = _string_or_none(key)
+        item_text = _string_or_none(item)
+        if key_text is not None and item_text is not None:
+            normalized[key_text] = item_text
+    return normalized or None
+
+
+def _nested_string_dict_or_none(value: object) -> dict[str, dict[str, str]] | None:
+    if not isinstance(value, dict):
+        return None
+    normalized: dict[str, dict[str, str]] = {}
+    for key, item in value.items():
+        key_text = _string_or_none(key)
+        item_value = _string_dict_or_none(item)
+        if key_text is not None and item_value:
+            normalized[key_text] = item_value
+    return normalized or None
+
+
+def _float_or_none(value: object) -> float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        number = float(value)
+    elif isinstance(value, str):
+        try:
+            number = float(value)
+        except ValueError:
+            return None
+    else:
+        return None
+    return number if math.isfinite(number) else None
+
+
 def _bool_or_none(value: object) -> bool | None:
     if isinstance(value, bool):
         return value
@@ -1270,6 +1598,7 @@ def _message_payload(
     role: str,
     text: str,
     message_id: str | None,
+    message_seq: int | None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "role": role,
@@ -1277,7 +1606,174 @@ def _message_payload(
     }
     if message_id is not None:
         payload["id"] = message_id
+    openclaw_meta: dict[str, str | int] = {}
+    if message_id is not None:
+        openclaw_meta["id"] = message_id
+    if message_seq is not None:
+        openclaw_meta["seq"] = message_seq
+    if openclaw_meta:
+        payload["__openclaw"] = openclaw_meta
     return payload
+
+
+def _session_message_display_text(text: str) -> str:
+    return _SESSION_MESSAGE_INLINE_DIRECTIVE_RE.sub("", text)
+
+
+def _is_suppressed_assistant_session_message(*, role: str, text: str) -> bool:
+    return role == "assistant" and text.strip().upper() in _SESSION_MESSAGE_ASSISTANT_SKIP_TEXTS
+
+
+def _apply_session_event_metadata(
+    payload: dict[str, Any],
+    session_payload: dict[str, Any],
+) -> None:
+    for field in (
+        "label",
+        "responseUsage",
+        "reasoningLevel",
+        "elevatedLevel",
+        "execHost",
+        "execSecurity",
+        "execAsk",
+        "execNode",
+        "fastMode",
+        "spawnedBy",
+        "spawnedWorkspaceDir",
+        "forkedFromParent",
+        "spawnDepth",
+        "subagentRole",
+        "subagentControlScope",
+        "sendPolicy",
+        "groupActivation",
+        "parentSessionKey",
+        "lastChannel",
+        "lastTo",
+        "lastAccountId",
+        "lastThreadId",
+    ):
+        if field in session_payload:
+            payload[field] = session_payload[field]
+
+
+def _usage_cost_usd(
+    *,
+    usage: dict[str, Any] | None,
+    cost: dict[str, Any] | None,
+) -> float | None:
+    estimated_cost = _first_float_value(cost, ("total", "estimatedCostUsd", "usd"))
+    if estimated_cost is not None:
+        return estimated_cost
+    if usage is None:
+        return None
+    nested_cost = usage.get("cost")
+    return _first_float_value(
+        nested_cost if isinstance(nested_cost, dict) else None,
+        ("total", "estimatedCostUsd", "usd"),
+    )
+
+
+def _context_tokens_for_model(
+    *,
+    provider: str | None,
+    model: str | None,
+) -> int | None:
+    normalized_provider = str(provider or "").strip().lower()
+    normalized_model = str(model or "").strip().lower()
+    if normalized_provider == "anthropic" and "claude-sonnet-4" in normalized_model:
+        return 1_048_576
+    return None
+
+
+def _apply_live_usage_metadata(
+    payload: dict[str, Any],
+    message_row: dict[str, Any],
+) -> None:
+    usage = _json_object_or_none(message_row.get("usage_json"))
+    cost = _json_object_or_none(message_row.get("cost_json"))
+    if usage is None and cost is None:
+        return
+
+    input_tokens = _first_int_value(
+        usage,
+        ("input", "inputTokens", "prompt", "promptTokens"),
+    )
+    output_tokens = _first_int_value(
+        usage,
+        ("output", "outputTokens", "completion", "completionTokens"),
+    )
+    total_tokens = _first_int_value(usage, ("totalTokens", "total", "total_tokens"))
+    if total_tokens is None and input_tokens is not None and output_tokens is not None:
+        total_tokens = input_tokens + output_tokens
+    estimated_cost = _usage_cost_usd(usage=usage, cost=cost)
+
+    if input_tokens is not None:
+        payload["inputTokens"] = input_tokens
+    if output_tokens is not None:
+        payload["outputTokens"] = output_tokens
+    if total_tokens is not None:
+        payload["totalTokens"] = total_tokens
+        payload["totalTokensFresh"] = True
+    if estimated_cost is not None:
+        payload["estimatedCostUsd"] = estimated_cost
+
+
+def _json_object_or_none(value: object) -> dict[str, Any] | None:
+    if isinstance(value, dict):
+        return value
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = json.loads(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _first_int_value(
+    payload: dict[str, Any] | None,
+    keys: tuple[str, ...],
+) -> int | None:
+    if payload is None:
+        return None
+    for key in keys:
+        value = payload.get(key)
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, int):
+            return value
+        if isinstance(value, float) and math.isfinite(value):
+            return int(value)
+        if isinstance(value, str):
+            try:
+                return int(value)
+            except ValueError:
+                continue
+    return None
+
+
+def _first_float_value(
+    payload: dict[str, Any] | None,
+    keys: tuple[str, ...],
+) -> float | None:
+    if payload is None:
+        return None
+    for key in keys:
+        value = payload.get(key)
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, (int, float)):
+            number = float(value)
+        elif isinstance(value, str):
+            try:
+                number = float(value)
+            except ValueError:
+                continue
+        else:
+            continue
+        if math.isfinite(number):
+            return number
+    return None
 
 
 def _normalize_lookup_token(value: object) -> str | None:
@@ -1418,6 +1914,16 @@ def _default_agent_store_lookup_key(value: object) -> str | None:
     if lowered in {"global", "unknown"}:
         return lowered
     return _string_or_none(to_agent_store_session_key(agent_id="main", request_key=text))
+
+
+def _scoped_agent_store_lookup_key(value: object, *, agent_id: str | None) -> str | None:
+    text = _string_or_none(value)
+    if text is None or agent_id is None or agent_id == "main":
+        return None
+    lowered = text.lower()
+    if lowered in {"global", "unknown"}:
+        return None
+    return _string_or_none(to_agent_store_session_key(agent_id=agent_id, request_key=text))
 
 
 def _session_id_selector_matches(

@@ -121,8 +121,8 @@ def test_gateway_method_policy_mirrors_openclaw_operator_scope_groups() -> None:
     } == {
             APPROVALS_GATEWAY_METHOD_SCOPE: 9,
             PAIRING_GATEWAY_METHOD_SCOPE: 12,
-            READ_GATEWAY_METHOD_SCOPE: 71,
-            WRITE_GATEWAY_METHOD_SCOPE: 43,
+            READ_GATEWAY_METHOD_SCOPE: 73,
+            WRITE_GATEWAY_METHOD_SCOPE: 73,
             ADMIN_GATEWAY_METHOD_SCOPE: 25,
             TALK_SECRETS_GATEWAY_METHOD_SCOPE: 0,
         }
@@ -130,6 +130,7 @@ def test_gateway_method_policy_mirrors_openclaw_operator_scope_groups() -> None:
     assert resolve_gateway_method_scope("browser.status") == READ_GATEWAY_METHOD_SCOPE
     assert resolve_gateway_method_scope("browser.auth.list") == READ_GATEWAY_METHOD_SCOPE
     assert resolve_gateway_method_scope("browser.auth.show") == READ_GATEWAY_METHOD_SCOPE
+    assert resolve_gateway_method_scope("browser.clipboard.read") == READ_GATEWAY_METHOD_SCOPE
     assert resolve_gateway_method_scope("browser.doctor") == READ_GATEWAY_METHOD_SCOPE
     assert resolve_gateway_method_scope("browser.diff.snapshot") == READ_GATEWAY_METHOD_SCOPE
     assert resolve_gateway_method_scope("browser.diff.screenshot") == READ_GATEWAY_METHOD_SCOPE
@@ -137,6 +138,7 @@ def test_gateway_method_policy_mirrors_openclaw_operator_scope_groups() -> None:
     assert resolve_gateway_method_scope("browser.cookies.get") == READ_GATEWAY_METHOD_SCOPE
     assert resolve_gateway_method_scope("browser.get") == READ_GATEWAY_METHOD_SCOPE
     assert resolve_gateway_method_scope("browser.is") == READ_GATEWAY_METHOD_SCOPE
+    assert resolve_gateway_method_scope("browser.ios.device.list") == READ_GATEWAY_METHOD_SCOPE
     assert resolve_gateway_method_scope("browser.network.request") == READ_GATEWAY_METHOD_SCOPE
     assert resolve_gateway_method_scope("browser.network.requests") == READ_GATEWAY_METHOD_SCOPE
     assert resolve_gateway_method_scope("browser.pdf") == READ_GATEWAY_METHOD_SCOPE
@@ -150,19 +152,49 @@ def test_gateway_method_policy_mirrors_openclaw_operator_scope_groups() -> None:
     assert resolve_gateway_method_scope("browser.stream.status") == READ_GATEWAY_METHOD_SCOPE
     assert resolve_gateway_method_scope("send") == WRITE_GATEWAY_METHOD_SCOPE
     assert resolve_gateway_method_scope("browser.act") == WRITE_GATEWAY_METHOD_SCOPE
+    assert resolve_gateway_method_scope("browser.auth.delete") == WRITE_GATEWAY_METHOD_SCOPE
+    assert resolve_gateway_method_scope("browser.auth.login") == WRITE_GATEWAY_METHOD_SCOPE
+    assert resolve_gateway_method_scope("browser.auth.save") == WRITE_GATEWAY_METHOD_SCOPE
+    assert resolve_gateway_method_scope("browser.batch") == WRITE_GATEWAY_METHOD_SCOPE
     assert resolve_gateway_method_scope("browser.back") == WRITE_GATEWAY_METHOD_SCOPE
+    assert resolve_gateway_method_scope("browser.chat") == WRITE_GATEWAY_METHOD_SCOPE
+    assert resolve_gateway_method_scope("browser.clipboard.copy") == WRITE_GATEWAY_METHOD_SCOPE
+    assert resolve_gateway_method_scope("browser.clipboard.paste") == WRITE_GATEWAY_METHOD_SCOPE
+    assert resolve_gateway_method_scope("browser.clipboard.write") == WRITE_GATEWAY_METHOD_SCOPE
     assert resolve_gateway_method_scope("browser.close") == WRITE_GATEWAY_METHOD_SCOPE
+    assert resolve_gateway_method_scope("browser.cookies.clear") == WRITE_GATEWAY_METHOD_SCOPE
+    assert resolve_gateway_method_scope("browser.cookies.set") == WRITE_GATEWAY_METHOD_SCOPE
+    assert resolve_gateway_method_scope("browser.confirm") == WRITE_GATEWAY_METHOD_SCOPE
+    assert resolve_gateway_method_scope("browser.dashboard.start") == WRITE_GATEWAY_METHOD_SCOPE
+    assert resolve_gateway_method_scope("browser.dashboard.stop") == WRITE_GATEWAY_METHOD_SCOPE
     assert resolve_gateway_method_scope("browser.diff.url") == WRITE_GATEWAY_METHOD_SCOPE
+    assert resolve_gateway_method_scope("browser.deny") == WRITE_GATEWAY_METHOD_SCOPE
     assert resolve_gateway_method_scope("browser.download") == WRITE_GATEWAY_METHOD_SCOPE
     assert resolve_gateway_method_scope("browser.focus") == WRITE_GATEWAY_METHOD_SCOPE
     assert resolve_gateway_method_scope("browser.forward") == WRITE_GATEWAY_METHOD_SCOPE
+    assert resolve_gateway_method_scope("browser.highlight") == WRITE_GATEWAY_METHOD_SCOPE
+    assert resolve_gateway_method_scope("browser.inspect") == WRITE_GATEWAY_METHOD_SCOPE
+    assert resolve_gateway_method_scope("browser.ios.swipe") == WRITE_GATEWAY_METHOD_SCOPE
+    assert resolve_gateway_method_scope("browser.ios.tap") == WRITE_GATEWAY_METHOD_SCOPE
     assert resolve_gateway_method_scope("browser.open") == WRITE_GATEWAY_METHOD_SCOPE
     assert resolve_gateway_method_scope("browser.navigate") == WRITE_GATEWAY_METHOD_SCOPE
+    assert resolve_gateway_method_scope("browser.network.har.start") == WRITE_GATEWAY_METHOD_SCOPE
+    assert resolve_gateway_method_scope("browser.network.har.stop") == WRITE_GATEWAY_METHOD_SCOPE
+    assert resolve_gateway_method_scope("browser.profiler.start") == WRITE_GATEWAY_METHOD_SCOPE
+    assert resolve_gateway_method_scope("browser.profiler.stop") == WRITE_GATEWAY_METHOD_SCOPE
+    assert resolve_gateway_method_scope("browser.record.restart") == WRITE_GATEWAY_METHOD_SCOPE
+    assert resolve_gateway_method_scope("browser.record.start") == WRITE_GATEWAY_METHOD_SCOPE
+    assert resolve_gateway_method_scope("browser.record.stop") == WRITE_GATEWAY_METHOD_SCOPE
     assert resolve_gateway_method_scope("browser.reload") == WRITE_GATEWAY_METHOD_SCOPE
+    assert resolve_gateway_method_scope("browser.set") == WRITE_GATEWAY_METHOD_SCOPE
     assert resolve_gateway_method_scope("browser.start") == WRITE_GATEWAY_METHOD_SCOPE
     assert resolve_gateway_method_scope("browser.stop") == WRITE_GATEWAY_METHOD_SCOPE
+    assert resolve_gateway_method_scope("browser.storage.clear") == WRITE_GATEWAY_METHOD_SCOPE
+    assert resolve_gateway_method_scope("browser.storage.set") == WRITE_GATEWAY_METHOD_SCOPE
     assert resolve_gateway_method_scope("browser.stream.disable") == WRITE_GATEWAY_METHOD_SCOPE
     assert resolve_gateway_method_scope("browser.stream.enable") == WRITE_GATEWAY_METHOD_SCOPE
+    assert resolve_gateway_method_scope("browser.trace.start") == WRITE_GATEWAY_METHOD_SCOPE
+    assert resolve_gateway_method_scope("browser.trace.stop") == WRITE_GATEWAY_METHOD_SCOPE
     assert resolve_gateway_method_scope("browser.upload") == WRITE_GATEWAY_METHOD_SCOPE
     assert resolve_gateway_method_scope("exec.approval.resolve") == APPROVALS_GATEWAY_METHOD_SCOPE
     assert resolve_gateway_method_scope("node.pair.approve") == PAIRING_GATEWAY_METHOD_SCOPE
@@ -357,41 +389,73 @@ def test_known_gateway_method_registry_covers_openclaw_base_registry() -> None:
     assert base_methods.issubset(registry_methods)
     assert openzues_only_methods == {
         "browser.act",
+        "browser.auth.delete",
         "browser.auth.list",
+        "browser.auth.login",
+        "browser.auth.save",
         "browser.auth.show",
+        "browser.batch",
         "browser.back",
+        "browser.chat",
+        "browser.clipboard.copy",
+        "browser.clipboard.paste",
+        "browser.clipboard.read",
+        "browser.clipboard.write",
         "browser.close",
+        "browser.confirm",
+        "browser.cookies.clear",
         "browser.console",
         "browser.cookies.get",
+        "browser.cookies.set",
+        "browser.dashboard.start",
+        "browser.dashboard.stop",
         "browser.diff.snapshot",
         "browser.diff.screenshot",
         "browser.diff.url",
         "browser.doctor",
+        "browser.deny",
         "browser.download",
         "browser.errors",
         "browser.focus",
         "browser.forward",
         "browser.get",
+        "browser.highlight",
+        "browser.inspect",
+        "browser.ios.device.list",
+        "browser.ios.swipe",
+        "browser.ios.tap",
         "browser.is",
         "browser.navigate",
+        "browser.network.har.start",
+        "browser.network.har.stop",
         "browser.network.request",
         "browser.network.requests",
         "browser.open",
         "browser.pdf",
         "browser.profiles",
+        "browser.profiler.start",
+        "browser.profiler.stop",
+        "browser.record.restart",
+        "browser.record.start",
+        "browser.record.stop",
         "browser.reload",
         "browser.screenshot",
+        "browser.set",
         "browser.session.current",
         "browser.session.list",
         "browser.snapshot",
         "browser.start",
         "browser.status",
         "browser.stop",
+        "browser.storage.clear",
         "browser.storage.get",
+        "browser.storage.set",
         "browser.stream.disable",
         "browser.stream.enable",
         "browser.stream.status",
         "browser.tabs",
+        "browser.trace.start",
+        "browser.trace.stop",
         "browser.upload",
         "browser.verify",
         "chat.inject",

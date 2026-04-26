@@ -55,6 +55,18 @@ class GatewayPairedNode:
     last_connected_at_ms: int | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class GatewayDeviceAuthToken:
+    device_id: str
+    role: str
+    token: str
+    scopes: tuple[str, ...] = ()
+    created_at_ms: int = 0
+    rotated_at_ms: int | None = None
+    revoked_at_ms: int | None = None
+    last_used_at_ms: int | None = None
+
+
 class GatewayNodePairingService:
     def __init__(self, database: Database) -> None:
         self.database = database
@@ -331,6 +343,74 @@ class GatewayNodePairingService:
             "node": _paired_detail_payload(paired),
         }
 
+    async def remove(self, node_id: str) -> dict[str, str] | None:
+        paired_row = await self.database.delete_gateway_node_paired_node(node_id)
+        if paired_row is None:
+            return None
+        paired = _paired_node_from_row(paired_row)
+        return {"deviceId": paired.node_id}
+
+    async def list_device_token_summaries(self, device_id: str) -> list[dict[str, object]]:
+        normalized_device_id = _normalize_device_id(device_id)
+        if normalized_device_id is None:
+            return []
+        rows = await self.database.list_gateway_node_device_tokens(normalized_device_id)
+        return [_device_token_summary_payload(_device_token_from_row(row)) for row in rows]
+
+    async def rotate_device_token(
+        self,
+        *,
+        device_id: str,
+        role: str,
+        scopes: list[str] | None,
+        now_ms: int,
+    ) -> GatewayDeviceAuthToken | None:
+        normalized_device_id = _normalize_device_id(device_id)
+        normalized_role = _normalize_role(role)
+        if normalized_device_id is None or normalized_role is None:
+            return None
+        paired_node = await self.database.get_gateway_node_paired_node(normalized_device_id)
+        if paired_node is None:
+            return None
+        existing_row = await self.database.get_gateway_node_device_token(
+            normalized_device_id,
+            normalized_role,
+        )
+        existing = _device_token_from_row(existing_row) if existing_row is not None else None
+        resolved_scopes = _string_list(scopes)
+        row = await self.database.upsert_gateway_node_device_token(
+            device_id=normalized_device_id,
+            role=normalized_role,
+            token=secrets.token_urlsafe(32),
+            scopes=resolved_scopes,
+            created_at_ms=existing.created_at_ms if existing is not None else now_ms,
+            rotated_at_ms=now_ms,
+            revoked_at_ms=None,
+            last_used_at_ms=existing.last_used_at_ms if existing is not None else None,
+        )
+        return _device_token_from_row(row)
+
+    async def revoke_device_token(
+        self,
+        *,
+        device_id: str,
+        role: str,
+        now_ms: int,
+    ) -> GatewayDeviceAuthToken | None:
+        normalized_device_id = _normalize_device_id(device_id)
+        normalized_role = _normalize_role(role)
+        if normalized_device_id is None or normalized_role is None:
+            return None
+        paired_node = await self.database.get_gateway_node_paired_node(normalized_device_id)
+        if paired_node is None:
+            return None
+        row = await self.database.revoke_gateway_node_device_token(
+            device_id=normalized_device_id,
+            role=normalized_role,
+            revoked_at_ms=now_ms,
+        )
+        return _device_token_from_row(row) if row is not None else None
+
     async def rename(self, node_id: str, display_name: str) -> dict[str, str] | None:
         trimmed = display_name.strip()
         if not trimmed:
@@ -387,6 +467,19 @@ def _paired_node_from_row(row: dict[str, object]) -> GatewayPairedNode:
         created_at_ms=cast(int, row["created_at_ms"]),
         approved_at_ms=cast(int, row["approved_at_ms"]),
         last_connected_at_ms=cast(int | None, row.get("last_connected_at_ms")),
+    )
+
+
+def _device_token_from_row(row: dict[str, object]) -> GatewayDeviceAuthToken:
+    return GatewayDeviceAuthToken(
+        device_id=str(row["device_id"]),
+        role=str(row["role"]),
+        token=str(row["token"]),
+        scopes=tuple(_string_list(row.get("scopes"))),
+        created_at_ms=cast(int, row["created_at_ms"]),
+        rotated_at_ms=cast(int | None, row.get("rotated_at_ms")),
+        revoked_at_ms=cast(int | None, row.get("revoked_at_ms")),
+        last_used_at_ms=cast(int | None, row.get("last_used_at_ms")),
     )
 
 
@@ -475,6 +568,20 @@ def _paired_detail_payload(node: GatewayPairedNode) -> dict[str, object]:
     }
 
 
+def _device_token_summary_payload(token: GatewayDeviceAuthToken) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "role": token.role,
+        "scopes": list(token.scopes),
+        "createdAtMs": token.created_at_ms,
+        "lastUsedAtMs": token.last_used_at_ms,
+    }
+    if token.rotated_at_ms is not None:
+        payload["rotatedAtMs"] = token.rotated_at_ms
+    if token.revoked_at_ms is not None:
+        payload["revokedAtMs"] = token.revoked_at_ms
+    return payload
+
+
 def _required_approve_scopes(commands: tuple[str, ...]) -> tuple[str, ...]:
     if any(command in _NODE_SYSTEM_RUN_COMMANDS for command in commands):
         return (PAIRING_GATEWAY_METHOD_SCOPE, ADMIN_GATEWAY_METHOD_SCOPE)
@@ -499,6 +606,16 @@ def _missing_scope(
 
 def _optional_string(value: object) -> str | None:
     return value if isinstance(value, str) else None
+
+
+def _normalize_device_id(device_id: str) -> str | None:
+    trimmed = device_id.strip()
+    return trimmed or None
+
+
+def _normalize_role(role: str) -> str | None:
+    trimmed = role.strip()
+    return trimmed or None
 
 
 def _string_list(value: object) -> list[str]:

@@ -9,6 +9,14 @@ from openzues.database import Database
 _ALLOWED_AGENT_IDS = {"main", "openzues"}
 _ALLOWED_FILES = {
     "AGENTS.md": Path("AGENTS.md"),
+    "SOUL.md": Path("SOUL.md"),
+    "TOOLS.md": Path("TOOLS.md"),
+    "IDENTITY.md": Path("IDENTITY.md"),
+    "USER.md": Path("USER.md"),
+    "HEARTBEAT.md": Path("HEARTBEAT.md"),
+    "BOOTSTRAP.md": Path("BOOTSTRAP.md"),
+    "MEMORY.md": Path("MEMORY.md"),
+    "memory.md": Path("memory.md"),
     ".codex/AGENTS.md": Path(".codex") / "AGENTS.md",
 }
 
@@ -24,8 +32,7 @@ class GatewayAgentFilesService:
         self._workspace_dir = Path(workspace_dir) if workspace_dir is not None else None
 
     async def list_files(self, *, agent_id: str) -> dict[str, Any]:
-        resolved_agent_id = self._resolve_agent_id(agent_id)
-        workspace_dir = await self._resolve_workspace_dir()
+        resolved_agent_id, workspace_dir = await self._resolve_agent_file_context(agent_id)
         files = [
             self._file_summary(workspace_dir, name=name, relative_path=relative_path)
             for name, relative_path in _ALLOWED_FILES.items()
@@ -37,11 +44,10 @@ class GatewayAgentFilesService:
         }
 
     async def get_file(self, *, agent_id: str, name: str) -> dict[str, Any]:
-        resolved_agent_id = self._resolve_agent_id(agent_id)
+        resolved_agent_id, workspace_dir = await self._resolve_agent_file_context(agent_id)
         relative_path = _ALLOWED_FILES.get(name)
         if relative_path is None:
             raise ValueError("unsupported agent file")
-        workspace_dir = await self._resolve_workspace_dir()
         file_path = workspace_dir / relative_path
         if not file_path.exists() or not file_path.is_file():
             return {
@@ -71,11 +77,10 @@ class GatewayAgentFilesService:
         }
 
     async def set_file(self, *, agent_id: str, name: str, content: str) -> dict[str, Any]:
-        resolved_agent_id = self._resolve_agent_id(agent_id)
+        resolved_agent_id, workspace_dir = await self._resolve_agent_file_context(agent_id)
         relative_path = _ALLOWED_FILES.get(name)
         if relative_path is None:
             raise ValueError("unsupported agent file")
-        workspace_dir = await self._resolve_workspace_dir()
         resolved_workspace_dir = workspace_dir.resolve()
         file_path = workspace_dir / relative_path
         resolved_file_path = file_path.resolve(strict=False)
@@ -108,11 +113,19 @@ class GatewayAgentFilesService:
                 return Path(default_cwd)
         return Path.cwd()
 
-    def _resolve_agent_id(self, agent_id: str) -> str:
+    async def _resolve_agent_file_context(self, agent_id: str) -> tuple[str, Path]:
         normalized_agent_id = agent_id.strip().lower()
-        if normalized_agent_id not in _ALLOWED_AGENT_IDS:
+        if normalized_agent_id in _ALLOWED_AGENT_IDS:
+            return "main", await self._resolve_workspace_dir()
+        if self._database is None:
             raise ValueError("unknown agent id")
-        return "main"
+        row = await self._database.get_gateway_agent(normalized_agent_id)
+        if row is None:
+            raise ValueError("unknown agent id")
+        workspace = str(row.get("workspace") or "").strip()
+        if not workspace:
+            raise ValueError("agent workspace is missing")
+        return str(row["agent_id"]), Path(workspace)
 
     def _file_summary(
         self,

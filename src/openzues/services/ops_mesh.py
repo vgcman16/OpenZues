@@ -67,6 +67,7 @@ from openzues.schemas import (
 from openzues.services.continuity import build_continuity_packet
 from openzues.services.ecc_catalog import build_ecc_workspace_lines
 from openzues.services.gateway_canvas_documents import resolve_canvas_http_path_to_local_path
+from openzues.services.gateway_cron import cron_expression_next_run_at
 from openzues.services.gateway_outbound_runtime import (
     GatewayOutboundRuntimeMessageRequest,
     GatewayOutboundRuntimePollRequest,
@@ -261,6 +262,13 @@ def _task_scheduled_next_run_at(task: TaskBlueprintView) -> str | None:
         if last is not None and status in {"completed", "failed"} and scheduled_at <= last:
             return None
         return scheduled_at.isoformat()
+    if task.schedule_kind == "cron":
+        base = _parse_timestamp(task.last_launched_at) or task.created_at
+        return cron_expression_next_run_at(
+            expr=task.schedule_cron_expr,
+            tz=task.schedule_cron_tz,
+            after=base,
+        )
     if task.cadence_minutes is None:
         return None
     last = _parse_timestamp(task.last_launched_at)
@@ -791,7 +799,10 @@ def _playbook_next_run_at(playbook: PlaybookView) -> str | None:
 
 
 def _format_task_cadence(task: TaskBlueprintView) -> str:
-    cadence_label = _format_cadence(task.cadence_minutes)
+    if task.schedule_kind == "cron" and task.schedule_cron_expr:
+        cadence_label = f"Cron {task.schedule_cron_expr}"
+    else:
+        cadence_label = _format_cadence(task.cadence_minutes)
     if not task.run_until_complete:
         return cadence_label
     continuation_label = f"Continuous relay ({task.continuation_cooldown_minutes}m cooldown)"

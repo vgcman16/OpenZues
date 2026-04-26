@@ -10,6 +10,7 @@ import os
 import re
 import sys
 import threading
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from ipaddress import ip_address
@@ -20,7 +21,14 @@ from typing import Any, Literal, cast
 
 from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi.responses import (
+    FileResponse,
+    HTMLResponse,
+    JSONResponse,
+    RedirectResponse,
+    Response,
+    StreamingResponse,
+)
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -217,6 +225,7 @@ from openzues.services.remote_ops import RemoteOpsService
 from openzues.services.run_pressure import has_checkpoint_pressure
 from openzues.services.runtime_updates import RuntimeUpdateService
 from openzues.services.scope_enforcer import build_scope_assessment
+from openzues.services.session_keys import session_key_lookup_aliases
 from openzues.services.setup import SetupService
 from openzues.services.vault import VaultService
 from openzues.settings import Settings, settings
@@ -227,6 +236,8 @@ logger = logging.getLogger(__name__)
 CHECKPOINT_HARDENER_COOLDOWN = timedelta(minutes=30)
 CONTROL_UI_BOOTSTRAP_CONFIG_PATH = "/__openclaw/control-ui-config.json"
 CONTROL_UI_ASSISTANT_AGENT_ID = "openzues"
+DIRECT_SESSION_HISTORY_DEFAULT_TEXT_MAX_CHARS = 12_000
+DIRECT_SESSION_HISTORY_SSE_KEEPALIVE_SECONDS = 15.0
 
 PLUGIN_DUPLICATE_SERVER_RE = re.compile(
     r"skipping duplicate plugin MCP server name.*?plugin\s*=\s*\"(?P<plugin>[^\"]+)\""
@@ -2313,6 +2324,7 @@ def create_app(
             probe_secret=active_vault_service.probe_secret,
             node_allow_commands=active_settings.gateway_node_allow_commands,
             node_deny_commands=active_settings.gateway_node_deny_commands,
+            exec_approvals_path=active_settings.data_dir / "settings" / "exec-approvals.json",
         )
     active_control_plane_lease = control_plane_lease or ControlPlaneLease(
         active_settings.data_dir / "control-plane.lock"
@@ -3886,6 +3898,203 @@ def create_app(
             raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    async def gateway_session_history_target_exists(session_key: str) -> bool:
+        if await active_database.count_control_chat_messages(session_key=session_key) > 0:
+            return True
+        if await active_database.get_gateway_session_metadata(session_key) is not None:
+            return True
+        normalized_session_key = session_key.strip().lower()
+        missions = await active_database.list_missions()
+        return any(
+            str(mission.get("session_key") or "").strip().lower() == normalized_session_key
+            for mission in missions
+        )
+
+    def apply_direct_session_history_text_cap(payload: dict[str, Any]) -> None:
+        seen_messages: set[int] = set()
+        for field in ("messages", "items"):
+            messages = payload.get(field)
+            if not isinstance(messages, list):
+                continue
+            for message in messages:
+                if not isinstance(message, dict):
+                    continue
+                message_identity = id(message)
+                if message_identity in seen_messages:
+                    continue
+                seen_messages.add(message_identity)
+                apply_direct_session_history_message_text_cap(message)
+
+    def apply_direct_session_history_message_text_cap(message: dict[str, Any]) -> None:
+        content = message.get("content")
+        if not isinstance(content, list):
+            return
+        for part in content:
+            if not isinstance(part, dict):
+                continue
+            text = part.get("text")
+            if not isinstance(text, str):
+                continue
+            if len(text) <= DIRECT_SESSION_HISTORY_DEFAULT_TEXT_MAX_CHARS:
+                continue
+            part["text"] = (
+                f"{text[:DIRECT_SESSION_HISTORY_DEFAULT_TEXT_MAX_CHARS]}"
+                "\n...(truncated)..."
+            )
+
+    @fastapi_app.get(
+        "/sessions/{session_key}/history",
+        include_in_schema=False,
+        response_model=None,
+    )
+    async def get_gateway_session_history(
+        request: Request,
+        session_key: str,
+    ) -> Response:
+        params: dict[str, Any] = {"sessionKey": session_key}
+        limit = request.query_params.get("limit")
+        limit_requested = limit is not None and bool(limit.strip())
+        if limit is not None and limit.strip():
+            try:
+                params["limit"] = max(1, min(int(limit), 1000))
+            except ValueError:
+                params["limit"] = 1
+        cursor = request.query_params.get("cursor")
+        cursor_requested = cursor is not None and bool(cursor.strip())
+        if cursor is not None and cursor.strip():
+            cursor_text = cursor.strip()
+            cursor_number = cursor_text[4:] if cursor_text.startswith("seq:") else cursor_text
+            try:
+                if int(cursor_number) > 0:
+                    params["cursor"] = cursor_text
+            except ValueError:
+                pass
+        if "cursor" not in params:
+            params["cursor"] = 1_000_000_000
+        requester = await resolve_gateway_node_method_requester(request)
+
+        async def load_history_payload() -> dict[str, Any]:
+            payload = await active_gateway_node_method_service.call(
+                "sessions.get",
+                params,
+                requester=requester,
+            )
+            response_payload = (
+                payload if "sessionKey" in payload else {"sessionKey": session_key, **payload}
+            )
+            apply_direct_session_history_text_cap(response_payload)
+            return response_payload
+
+        try:
+            response_payload = await load_history_payload()
+        except GatewayNodeMethodError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if not response_payload.get("messages") and not response_payload.get("items"):
+            history_session_key = str(response_payload.get("sessionKey") or session_key)
+            if not await gateway_session_history_target_exists(history_session_key):
+                return JSONResponse(
+                    status_code=404,
+                    content={
+                        "ok": False,
+                        "error": {
+                            "type": "not_found",
+                            "message": f"Session not found: {session_key}",
+                        },
+                    },
+                )
+        accept_header = str(request.headers.get("accept") or "").lower()
+        if "text/event-stream" in accept_header:
+            stream_session_key = str(response_payload.get("sessionKey") or session_key)
+            target_aliases = {
+                alias.lower() for alias in session_key_lookup_aliases(stream_session_key)
+            }
+            append_inline_messages = not limit_requested and not cursor_requested
+
+            def matching_session_event(
+                event: dict[str, Any],
+            ) -> tuple[str, dict[str, Any]] | None:
+                if str(event.get("type") or "") != "gateway_event":
+                    return None
+                event_name = str(event.get("event") or "")
+                if event_name not in {"session.message", "sessions.changed"}:
+                    return None
+                payload = event.get("payload")
+                if not isinstance(payload, dict):
+                    return None
+                event_session_key = str(payload.get("sessionKey") or "").strip()
+                if not event_session_key:
+                    return None
+                event_aliases = {
+                    alias.lower() for alias in session_key_lookup_aliases(event_session_key)
+                }
+                if not target_aliases.intersection(event_aliases):
+                    return None
+                return event_name, payload
+
+            def message_sse_payload(event_payload: dict[str, Any]) -> dict[str, Any] | None:
+                message = event_payload.get("message")
+                if not isinstance(message, dict):
+                    return None
+                message_payload = dict(message)
+                apply_direct_session_history_message_text_cap(message_payload)
+                payload: dict[str, Any] = {
+                    "sessionKey": stream_session_key,
+                    "message": message_payload,
+                }
+                message_id = event_payload.get("messageId")
+                if isinstance(message_id, str):
+                    payload["messageId"] = message_id
+                message_seq = event_payload.get("messageSeq")
+                if isinstance(message_seq, int):
+                    payload["messageSeq"] = message_seq
+                return payload
+
+            async def stream_session_history() -> AsyncIterator[str]:
+                async with active_hub.subscribe() as queue:
+                    yield "retry: 1000\n\n"
+                    yield f"event: history\ndata: {json.dumps(response_payload)}\n\n"
+                    while True:
+                        try:
+                            event = await asyncio.wait_for(
+                                queue.get(),
+                                timeout=DIRECT_SESSION_HISTORY_SSE_KEEPALIVE_SECONDS,
+                            )
+                        except TimeoutError:
+                            if await request.is_disconnected():
+                                break
+                            yield ": keepalive\n\n"
+                            continue
+                        if await request.is_disconnected():
+                            break
+                        matched_event = matching_session_event(event)
+                        if matched_event is None:
+                            continue
+                        event_name, event_payload = matched_event
+                        is_message_phase_change = (
+                            event_name == "sessions.changed"
+                            and str(event_payload.get("phase") or "") == "message"
+                            and event_payload.get("messageId") is not None
+                        )
+                        if is_message_phase_change:
+                            continue
+                        if append_inline_messages:
+                            if event_name == "session.message":
+                                live_payload = message_sse_payload(event_payload)
+                                if live_payload is None:
+                                    continue
+                                yield f"event: message\ndata: {json.dumps(live_payload)}\n\n"
+                                continue
+                        refreshed_payload = await load_history_payload()
+                        yield f"event: history\ndata: {json.dumps(refreshed_payload)}\n\n"
+
+            return StreamingResponse(
+                stream_session_history(),
+                media_type="text/event-stream",
+            )
+        return JSONResponse(content=response_payload)
 
     @fastapi_app.post("/api/gateway/nodes/{node_id}/method-call")
     async def call_gateway_node_method_as_node(

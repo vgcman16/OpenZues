@@ -109,7 +109,11 @@ class BroadcastHub:
             return bool(state and state.sessions_subscribed)
         if event_name == "session.message":
             state = self._client_subscription_state.get(client_id)
-            if state is None or not state.session_message_aliases:
+            if state is None:
+                return False
+            if state.sessions_subscribed:
+                return True
+            if not state.session_message_aliases:
                 return False
             payload = event.get("payload")
             if not isinstance(payload, dict):

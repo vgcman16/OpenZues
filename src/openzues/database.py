@@ -178,6 +178,10 @@ class Database:
                     opportunity_id TEXT,
                     target_label TEXT,
                     session_key TEXT,
+                    model_provider TEXT,
+                    model TEXT,
+                    usage_json TEXT,
+                    cost_json TEXT,
                     created_at TEXT NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS idx_control_chat_messages_created
@@ -276,6 +280,31 @@ class Database:
                     created_at_ms INTEGER NOT NULL,
                     approved_at_ms INTEGER NOT NULL,
                     last_connected_at_ms INTEGER,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS gateway_node_device_tokens (
+                    device_id TEXT NOT NULL,
+                    role TEXT NOT NULL,
+                    token TEXT NOT NULL,
+                    scopes_json TEXT NOT NULL DEFAULT '[]',
+                    created_at_ms INTEGER NOT NULL,
+                    rotated_at_ms INTEGER,
+                    revoked_at_ms INTEGER,
+                    last_used_at_ms INTEGER,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY(device_id, role)
+                );
+                CREATE INDEX IF NOT EXISTS idx_gateway_node_device_tokens_device
+                    ON gateway_node_device_tokens(device_id, role);
+                CREATE TABLE IF NOT EXISTS gateway_agents (
+                    agent_id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    workspace TEXT NOT NULL,
+                    model TEXT,
+                    emoji TEXT,
+                    avatar TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );
@@ -610,6 +639,10 @@ class Database:
             await self._ensure_column(db, "gateway_wake_requests", "agent_id", "TEXT")
             await self._ensure_column(db, "gateway_wake_requests", "session_key", "TEXT")
             await self._ensure_column(db, "control_chat_messages", "session_key", "TEXT")
+            await self._ensure_column(db, "control_chat_messages", "model_provider", "TEXT")
+            await self._ensure_column(db, "control_chat_messages", "model", "TEXT")
+            await self._ensure_column(db, "control_chat_messages", "usage_json", "TEXT")
+            await self._ensure_column(db, "control_chat_messages", "cost_json", "TEXT")
             await self._ensure_column(db, "missions", "session_key", "TEXT")
             await self._ensure_column(db, "missions", "conversation_target_json", "TEXT")
             await self._ensure_column(db, "missions", "toolsets_json", "TEXT NOT NULL DEFAULT '[]'")
@@ -1071,6 +1104,27 @@ class Database:
             raise RuntimeError("Failed to persist gateway node paired node.")
         return stored
 
+    async def delete_gateway_node_paired_node(self, node_id: str) -> dict[str, Any] | None:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT * FROM gateway_node_paired_nodes WHERE node_id = ?",
+                (node_id,),
+            )
+            existing = await cursor.fetchone()
+            if existing is None:
+                return None
+            await db.execute(
+                "DELETE FROM gateway_node_paired_nodes WHERE node_id = ?",
+                (node_id,),
+            )
+            await db.execute(
+                "DELETE FROM gateway_node_device_tokens WHERE device_id = ?",
+                (node_id,),
+            )
+            await db.commit()
+            return self._gateway_node_paired_node_row(existing)
+
     async def update_gateway_node_paired_node_display_name(
         self,
         node_id: str,
@@ -1096,6 +1150,286 @@ class Database:
             )
             await db.commit()
         return await self.get_gateway_node_paired_node(node_id)
+
+    @staticmethod
+    def _gateway_node_device_token_row(row: aiosqlite.Row | dict[str, Any]) -> dict[str, Any]:
+        payload = dict(row)
+        return {
+            "device_id": str(payload["device_id"]),
+            "role": str(payload["role"]),
+            "token": str(payload["token"]),
+            "scopes": Database._decode_json_list(payload.get("scopes_json")),
+            "created_at_ms": int(payload["created_at_ms"]),
+            "rotated_at_ms": (
+                int(payload["rotated_at_ms"]) if payload["rotated_at_ms"] is not None else None
+            ),
+            "revoked_at_ms": (
+                int(payload["revoked_at_ms"]) if payload["revoked_at_ms"] is not None else None
+            ),
+            "last_used_at_ms": (
+                int(payload["last_used_at_ms"])
+                if payload["last_used_at_ms"] is not None
+                else None
+            ),
+            "created_at": payload["created_at"],
+            "updated_at": payload["updated_at"],
+        }
+
+    async def list_gateway_node_device_tokens(
+        self,
+        device_id: str,
+    ) -> list[dict[str, Any]]:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            rows = await db.execute_fetchall(
+                """
+                SELECT *
+                FROM gateway_node_device_tokens
+                WHERE device_id = ?
+                ORDER BY role ASC
+                """,
+                (device_id,),
+            )
+            return [self._gateway_node_device_token_row(row) for row in rows]
+
+    async def get_gateway_node_device_token(
+        self,
+        device_id: str,
+        role: str,
+    ) -> dict[str, Any] | None:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                """
+                SELECT *
+                FROM gateway_node_device_tokens
+                WHERE device_id = ? AND role = ?
+                """,
+                (device_id, role),
+            )
+            row = await cursor.fetchone()
+            return self._gateway_node_device_token_row(row) if row else None
+
+    async def upsert_gateway_node_device_token(
+        self,
+        *,
+        device_id: str,
+        role: str,
+        token: str,
+        scopes: Sequence[str],
+        created_at_ms: int,
+        rotated_at_ms: int | None,
+        revoked_at_ms: int | None,
+        last_used_at_ms: int | None,
+    ) -> dict[str, Any]:
+        now = utcnow()
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute(
+                """
+                INSERT INTO gateway_node_device_tokens (
+                    device_id,
+                    role,
+                    token,
+                    scopes_json,
+                    created_at_ms,
+                    rotated_at_ms,
+                    revoked_at_ms,
+                    last_used_at_ms,
+                    created_at,
+                    updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(device_id, role) DO UPDATE SET
+                    token = excluded.token,
+                    scopes_json = excluded.scopes_json,
+                    created_at_ms = excluded.created_at_ms,
+                    rotated_at_ms = excluded.rotated_at_ms,
+                    revoked_at_ms = excluded.revoked_at_ms,
+                    last_used_at_ms = excluded.last_used_at_ms,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    device_id,
+                    role,
+                    token,
+                    json.dumps(list(scopes)),
+                    created_at_ms,
+                    rotated_at_ms,
+                    revoked_at_ms,
+                    last_used_at_ms,
+                    now,
+                    now,
+                ),
+            )
+            await db.commit()
+        stored = await self.get_gateway_node_device_token(device_id, role)
+        if stored is None:
+            raise RuntimeError("Failed to persist gateway node device token.")
+        return stored
+
+    async def revoke_gateway_node_device_token(
+        self,
+        *,
+        device_id: str,
+        role: str,
+        revoked_at_ms: int,
+    ) -> dict[str, Any] | None:
+        now = utcnow()
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                """
+                SELECT *
+                FROM gateway_node_device_tokens
+                WHERE device_id = ? AND role = ?
+                """,
+                (device_id, role),
+            )
+            existing = await cursor.fetchone()
+            if existing is None:
+                return None
+            await db.execute(
+                """
+                UPDATE gateway_node_device_tokens
+                SET revoked_at_ms = ?,
+                    updated_at = ?
+                WHERE device_id = ? AND role = ?
+                """,
+                (revoked_at_ms, now, device_id, role),
+            )
+            await db.commit()
+        return await self.get_gateway_node_device_token(device_id, role)
+
+    @staticmethod
+    def _gateway_agent_row(row: aiosqlite.Row | dict[str, Any]) -> dict[str, Any]:
+        payload = dict(row)
+        return {
+            "agent_id": str(payload["agent_id"]),
+            "name": str(payload["name"]),
+            "workspace": str(payload["workspace"]),
+            "model": payload["model"],
+            "emoji": payload["emoji"],
+            "avatar": payload["avatar"],
+            "created_at": payload["created_at"],
+            "updated_at": payload["updated_at"],
+        }
+
+    async def list_gateway_agents(self) -> list[dict[str, Any]]:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            rows = await db.execute_fetchall(
+                """
+                SELECT *
+                FROM gateway_agents
+                ORDER BY agent_id ASC
+                """
+            )
+            return [self._gateway_agent_row(row) for row in rows]
+
+    async def get_gateway_agent(self, agent_id: str) -> dict[str, Any] | None:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT * FROM gateway_agents WHERE agent_id = ?",
+                (agent_id,),
+            )
+            row = await cursor.fetchone()
+            return self._gateway_agent_row(row) if row else None
+
+    async def create_gateway_agent(
+        self,
+        *,
+        agent_id: str,
+        name: str,
+        workspace: str,
+        model: str | None,
+        emoji: str | None,
+        avatar: str | None,
+    ) -> dict[str, Any]:
+        now = utcnow()
+        async with aiosqlite.connect(self.path) as db:
+            try:
+                await db.execute(
+                    """
+                    INSERT INTO gateway_agents (
+                        agent_id,
+                        name,
+                        workspace,
+                        model,
+                        emoji,
+                        avatar,
+                        created_at,
+                        updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (agent_id, name, workspace, model, emoji, avatar, now, now),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise ValueError(f'agent "{agent_id}" already exists') from exc
+            await db.commit()
+        stored = await self.get_gateway_agent(agent_id)
+        if stored is None:
+            raise RuntimeError("Failed to persist gateway agent.")
+        return stored
+
+    async def update_gateway_agent(
+        self,
+        *,
+        agent_id: str,
+        name: str | None,
+        workspace: str | None,
+        model: str | None,
+        emoji: str | None,
+        avatar: str | None,
+    ) -> dict[str, Any] | None:
+        existing = await self.get_gateway_agent(agent_id)
+        if existing is None:
+            return None
+        now = utcnow()
+        next_name = name if name is not None else str(existing["name"])
+        next_workspace = workspace if workspace is not None else str(existing["workspace"])
+        next_model = model if model is not None else existing.get("model")
+        next_emoji = emoji if emoji is not None else existing.get("emoji")
+        next_avatar = avatar if avatar is not None else existing.get("avatar")
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute(
+                """
+                UPDATE gateway_agents
+                SET name = ?,
+                    workspace = ?,
+                    model = ?,
+                    emoji = ?,
+                    avatar = ?,
+                    updated_at = ?
+                WHERE agent_id = ?
+                """,
+                (
+                    next_name,
+                    next_workspace,
+                    next_model,
+                    next_emoji,
+                    next_avatar,
+                    now,
+                    agent_id,
+                ),
+            )
+            await db.commit()
+        return await self.get_gateway_agent(agent_id)
+
+    async def delete_gateway_agent(self, agent_id: str) -> dict[str, Any] | None:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT * FROM gateway_agents WHERE agent_id = ?",
+                (agent_id,),
+            )
+            existing = await cursor.fetchone()
+            if existing is None:
+                return None
+            await db.execute("DELETE FROM gateway_agents WHERE agent_id = ?", (agent_id,))
+            await db.commit()
+            return self._gateway_agent_row(existing)
 
     async def delete_instance(self, instance_id: int) -> None:
         async with aiosqlite.connect(self.path) as db:
@@ -3318,6 +3652,10 @@ class Database:
         opportunity_id: str | None = None,
         target_label: str | None = None,
         session_key: str | None = None,
+        usage: dict[str, Any] | None = None,
+        cost: dict[str, Any] | None = None,
+        model_provider: str | None = None,
+        model: str | None = None,
         created_at: str | None = None,
     ) -> int:
         now = created_at or utcnow()
@@ -3332,9 +3670,13 @@ class Database:
                     opportunity_id,
                     target_label,
                     session_key,
+                    model_provider,
+                    model,
+                    usage_json,
+                    cost_json,
                     created_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     role,
@@ -3344,6 +3686,10 @@ class Database:
                     opportunity_id,
                     target_label,
                     session_key,
+                    model_provider,
+                    model,
+                    json.dumps(usage) if usage is not None else None,
+                    json.dumps(cost) if cost is not None else None,
                     now,
                 ),
             )

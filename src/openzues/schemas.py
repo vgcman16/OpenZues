@@ -1192,8 +1192,11 @@ class TaskBlueprintCreate(BaseModel):
     project_id: int | None = None
     cadence_minutes: int | None = Field(default=None, ge=1)
     schedule_anchor_ms: int | None = Field(default=None, ge=0)
-    schedule_kind: Literal["every", "at"] | None = None
+    schedule_kind: Literal["every", "at", "cron"] | None = None
     schedule_at: str | None = None
+    schedule_cron_expr: str | None = None
+    schedule_cron_tz: str | None = None
+    schedule_cron_stagger_ms: int | None = Field(default=None, ge=0)
     cron_session_target: str | None = None
     cron_session_key: str | None = None
     cron_wake_mode: Literal["now", "next-heartbeat"] | None = None
