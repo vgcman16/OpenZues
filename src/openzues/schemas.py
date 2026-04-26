@@ -1644,6 +1644,63 @@ class GatewayBootstrapView(BaseModel):
     runtime_inventory: GatewayBootstrapRuntimeInventoryView | None = None
 
 
+class ControlUiGatewayWebchatConfigView(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    chat_history_max_chars: int | None = Field(
+        default=None,
+        alias="chatHistoryMaxChars",
+        ge=1,
+        le=500_000,
+    )
+
+
+class ControlUiGatewayAgentSubagentsConfigView(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    allow_agents: list[str] = Field(default_factory=list, alias="allowAgents")
+    max_spawn_depth: int | None = Field(
+        default=None,
+        alias="maxSpawnDepth",
+        ge=1,
+        le=5,
+    )
+    max_children_per_agent: int | None = Field(
+        default=None,
+        alias="maxChildrenPerAgent",
+        ge=1,
+        le=20,
+    )
+    require_agent_id: bool = Field(default=False, alias="requireAgentId")
+
+
+class ControlUiGatewayAgentDefaultsConfigView(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    subagents: ControlUiGatewayAgentSubagentsConfigView | None = None
+
+
+class ControlUiGatewayAgentsConfigView(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    defaults: ControlUiGatewayAgentDefaultsConfigView | None = None
+
+
+class ControlUiGatewayToolsConfigView(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    allow: list[str] = Field(default_factory=list)
+    deny: list[str] = Field(default_factory=list)
+
+
+class ControlUiGatewayConfigView(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    webchat: ControlUiGatewayWebchatConfigView | None = None
+    agents: ControlUiGatewayAgentsConfigView | None = None
+    tools: ControlUiGatewayToolsConfigView | None = None
+
+
 class ControlUiBootstrapConfigView(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -1661,6 +1718,7 @@ class ControlUiBootstrapConfigView(BaseModel):
         alias="embedSandbox",
     )
     allow_external_embed_urls: bool = Field(default=False, alias="allowExternalEmbedUrls")
+    gateway: ControlUiGatewayConfigView | None = None
 
 
 class SetupFootprintResourceView(BaseModel):

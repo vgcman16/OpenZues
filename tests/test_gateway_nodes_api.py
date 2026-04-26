@@ -4695,6 +4695,94 @@ def test_gateway_node_method_call_endpoint_supports_tools_catalog(tmp_path) -> N
     assert any(tool["id"] == "tts" for tool in group["tools"])
 
 
+def test_tools_invoke_endpoint_runs_agents_list_tool(tmp_path) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/tools/invoke",
+            json={"tool": "agents_list", "sessionKey": "main"},
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["result"]["agents"][0]["id"] == "main"
+
+
+def test_tools_invoke_endpoint_denies_sessions_spawn_by_default(tmp_path) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/tools/invoke",
+            json={
+                "tool": "sessions_spawn",
+                "args": {"task": "Ship this elsewhere."},
+                "sessionKey": "main",
+            },
+        )
+
+    assert response.status_code == 404
+    assert response.json() == {
+        "ok": False,
+        "error": {
+            "type": "not_found",
+            "message": "Tool not available: sessions_spawn",
+        },
+    }
+
+
+def test_tools_invoke_endpoint_allows_cron_when_gateway_tools_allow_configured(
+    tmp_path,
+) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        config_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "config.set",
+                "params": {
+                    "raw": json.dumps(
+                        {
+                            "assistantName": "OpenZues",
+                            "assistantAvatar": "/static/favicon.svg",
+                            "assistantAgentId": "assistant-control-ui",
+                            "serverVersion": "9.9.9",
+                            "gateway": {"tools": {"allow": ["cron"]}},
+                        }
+                    )
+                },
+            },
+        )
+        response = client.post(
+            "/tools/invoke",
+            json={"tool": "cron", "action": "status", "sessionKey": "main"},
+        )
+
+    assert config_response.status_code == 200
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["result"]["enabled"] is True
+
+
 def test_gateway_node_method_call_endpoint_supports_tools_effective_with_bootstrap_toolsets(
     tmp_path,
 ) -> None:
@@ -4885,6 +4973,98 @@ def test_gateway_node_method_call_endpoint_supports_chat_history() -> None:
         "verboseLevel": None,
         "traceLevel": None,
     }
+
+
+def test_gateway_node_method_call_endpoint_supports_sessions_history() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-history-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+    session_key = "agent:main:main"
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        database = client.app.state.database
+        asyncio.run(
+            database.append_control_chat_message(
+                role="user",
+                content="Authorization: Bearer abcdef1234567890zz",
+                session_key=session_key,
+            )
+        )
+        asyncio.run(
+            database.append_control_chat_message(
+                role="assistant",
+                content="Safe answer.",
+                session_key=session_key,
+                usage={"input": 2, "output": 3, "totalTokens": 5},
+                cost={"total": 0.001},
+            )
+        )
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.history",
+                "params": {"sessionKey": session_key},
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["sessionKey"] == session_key
+    assert payload["contentRedacted"] is True
+    assert payload["contentTruncated"] is False
+    assert payload["droppedMessages"] is False
+    assert payload["messages"] == [
+        {
+            "role": "user",
+            "content": [{"type": "text", "text": "Authorization: Bearer abcdef...90zz"}],
+        },
+        {"role": "assistant", "content": [{"type": "text", "text": "Safe answer."}]},
+    ]
+
+
+def test_gateway_node_method_call_endpoint_supports_session_status() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-session-status-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+    session_key = "agent:main:main"
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        asyncio.run(
+            client.app.state.database.upsert_gateway_session_metadata(
+                session_key=session_key,
+                metadata={
+                    "label": "API Status Lane",
+                    "providerOverride": "openai",
+                    "modelOverride": "gpt-5.4",
+                },
+            )
+        )
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "session.status",
+                "params": {"sessionKey": session_key},
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["details"]["ok"] is True
+    assert payload["details"]["sessionKey"] == session_key
+    assert "Session: API Status Lane" in payload["details"]["statusText"]
+    assert "Model: openai/gpt-5.4" in payload["content"][0]["text"]
 
 
 def test_gateway_node_method_call_endpoint_supports_chat_send() -> None:
@@ -5839,6 +6019,46 @@ def test_gateway_node_method_call_endpoint_supports_sessions_send() -> None:
     assert [message["session_key"] for message in messages[-2:]] == [
         "openzues:thread:demo",
         "openzues:thread:demo",
+    ]
+
+
+def test_gateway_node_method_call_endpoint_sessions_send_resolves_label() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-send-label-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+    resolved_session_key = "agent:main:subagent:child"
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        asyncio.run(
+            client.app.state.database.upsert_gateway_session_metadata(
+                session_key=resolved_session_key,
+                metadata={"label": "Target Child"},
+            )
+        )
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "sessions.send",
+                "params": {
+                    "label": "Target Child",
+                    "message": "status",
+                    "idempotencyKey": "run-session-send-label-api-1",
+                },
+            },
+        )
+        messages = asyncio.run(client.app.state.database.list_control_chat_messages())
+
+    assert response.status_code == 200
+    assert response.json() == {"runId": "run-session-send-label-api-1", "status": "ok"}
+    assert [message["session_key"] for message in messages[-2:]] == [
+        resolved_session_key,
+        resolved_session_key,
     ]
 
 
@@ -19595,6 +19815,334 @@ def test_gateway_session_history_rest_endpoint_streams_live_message_updates() ->
     }
 
 
+def test_gateway_session_history_rest_endpoint_suppresses_no_reply_live_messages() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-session-history-rest-no-reply-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+    app.state.control_plane_role = "leader"
+    app.state.control_plane_owner_pid = None
+    session_key = resolve_thread_session_keys(
+        base_session_key=build_launch_session_key(
+            mode="workspace_affinity",
+            preferred_instance_id=None,
+            task_id=None,
+            project_id=None,
+            operator_id=None,
+        ),
+        thread_id="thread-history-no-reply-sse-api",
+    ).session_key
+    asyncio.run(app.state.database.initialize())
+    asyncio.run(
+        app.state.database.create_mission(
+            name="Gateway History SSE Silent Reply Loop",
+            objective="Prove silent live messages do not leak into history streaming.",
+            status="active",
+            instance_id=7,
+            project_id=None,
+            thread_id="thread-history-no-reply-sse-api",
+            session_key=session_key,
+            cwd=str(tmp_path),
+            model="gpt-5.4",
+            reasoning_effort=None,
+            collaboration_mode=None,
+            max_turns=None,
+            use_builtin_agents=False,
+            run_verification=False,
+            auto_commit=False,
+            pause_on_approval=True,
+            allow_auto_reflexes=True,
+            auto_recover=True,
+            auto_recover_limit=2,
+            reflex_cooldown_seconds=900,
+            allow_failover=True,
+        )
+    )
+    asyncio.run(
+        app.state.database.append_control_chat_message(
+            role="assistant",
+            content="opening streamed history",
+            session_key=session_key,
+        )
+    )
+
+    base_url, server, thread = _start_test_server(app)
+    app.state.control_plane_role = "leader"
+    app.state.control_plane_owner_pid = None
+    encoded_key = quote(session_key, safe="")
+    try:
+        timeout = httpx.Timeout(5.0, read=5.0)
+        with httpx.Client(timeout=timeout) as client:
+            with client.stream(
+                "GET",
+                f"{base_url}/sessions/{encoded_key}/history",
+                headers={"accept": "text/event-stream"},
+            ) as stream:
+                assert stream.status_code == 200
+                lines = stream.iter_lines()
+                history_payload = _read_sse_payload(lines, "history")
+                assert history_payload["messages"][0]["content"][0]["text"] == (
+                    "opening streamed history"
+                )
+
+                no_reply_response = client.post(
+                    f"{base_url}/api/gateway/node-methods/call",
+                    json={
+                        "method": "chat.inject",
+                        "params": {
+                            "sessionKey": session_key,
+                            "message": "NO_REPLY",
+                            "label": "History Stream",
+                        },
+                    },
+                )
+                assert no_reply_response.status_code == 200
+                visible_response = client.post(
+                    f"{base_url}/api/gateway/node-methods/call",
+                    json={
+                        "method": "chat.inject",
+                        "params": {
+                            "sessionKey": session_key,
+                            "message": "visible after silent reply",
+                            "label": "History Stream",
+                        },
+                    },
+                )
+                assert visible_response.status_code == 200
+
+                message_payload = _read_sse_payload(lines, "message")
+    finally:
+        _stop_test_server(server, thread)
+
+    assert message_payload == {
+        "sessionKey": session_key,
+        "message": {
+            "id": "3",
+            "role": "assistant",
+            "content": [{"type": "text", "text": "visible after silent reply"}],
+            "__openclaw": {"id": "3", "seq": 3},
+        },
+        "messageId": "3",
+        "messageSeq": 3,
+    }
+
+
+def test_gateway_session_history_rest_endpoint_resyncs_sequence_after_silent_refresh() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-session-history-rest-resync-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+    app.state.control_plane_role = "leader"
+    app.state.control_plane_owner_pid = None
+    session_key = resolve_thread_session_keys(
+        base_session_key=build_launch_session_key(
+            mode="workspace_affinity",
+            preferred_instance_id=None,
+            task_id=None,
+            project_id=None,
+            operator_id=None,
+        ),
+        thread_id="thread-history-resync-sse-api",
+    ).session_key
+    asyncio.run(app.state.database.initialize())
+    asyncio.run(
+        app.state.database.create_mission(
+            name="Gateway History SSE Sequence Resync Loop",
+            objective="Prove live streams resync raw sequence after silent transcript refreshes.",
+            status="active",
+            instance_id=7,
+            project_id=None,
+            thread_id="thread-history-resync-sse-api",
+            session_key=session_key,
+            cwd=str(tmp_path),
+            model="gpt-5.4",
+            reasoning_effort=None,
+            collaboration_mode=None,
+            max_turns=None,
+            use_builtin_agents=False,
+            run_verification=False,
+            auto_commit=False,
+            pause_on_approval=True,
+            allow_auto_reflexes=True,
+            auto_recover=True,
+            auto_recover_limit=2,
+            reflex_cooldown_seconds=900,
+            allow_failover=True,
+        )
+    )
+    asyncio.run(
+        app.state.database.append_control_chat_message(
+            role="assistant",
+            content="first visible history",
+            session_key=session_key,
+        )
+    )
+
+    base_url, server, thread = _start_test_server(app)
+    app.state.control_plane_role = "leader"
+    app.state.control_plane_owner_pid = None
+    encoded_key = quote(session_key, safe="")
+    try:
+        timeout = httpx.Timeout(5.0, read=5.0)
+        with httpx.Client(timeout=timeout) as client:
+            with client.stream(
+                "GET",
+                f"{base_url}/sessions/{encoded_key}/history",
+                headers={"accept": "text/event-stream"},
+            ) as stream:
+                assert stream.status_code == 200
+                lines = stream.iter_lines()
+                opening_payload = _read_sse_payload(lines, "history")
+                assert [
+                    message["content"][0]["text"] for message in opening_payload["messages"]
+                ] == ["first visible history"]
+
+                second_response = client.post(
+                    f"{base_url}/api/gateway/node-methods/call",
+                    json={
+                        "method": "chat.inject",
+                        "params": {
+                            "sessionKey": session_key,
+                            "message": "second visible history",
+                            "label": "History Stream",
+                        },
+                    },
+                )
+                assert second_response.status_code == 200
+                second_payload = _read_sse_payload(lines, "message")
+                assert second_payload["messageSeq"] == 2
+
+                asyncio.run(
+                    app.state.database.append_control_chat_message(
+                        role="assistant",
+                        content="NO_REPLY",
+                        session_key=session_key,
+                    )
+                )
+                patch_response = client.post(
+                    f"{base_url}/api/gateway/node-methods/call",
+                    json={
+                        "method": "sessions.patch",
+                        "params": {"key": session_key, "label": "Resynced History"},
+                    },
+                )
+                assert patch_response.status_code == 200
+                refresh_payload = _read_sse_payload(lines, "history")
+                assert [
+                    message["content"][0]["text"] for message in refresh_payload["messages"]
+                ] == ["first visible history", "second visible history"]
+
+                third_response = client.post(
+                    f"{base_url}/api/gateway/node-methods/call",
+                    json={
+                        "method": "chat.inject",
+                        "params": {
+                            "sessionKey": session_key,
+                            "message": "third visible history",
+                            "label": "History Stream",
+                        },
+                    },
+                )
+                assert third_response.status_code == 200
+                third_payload = _read_sse_payload(lines, "message")
+    finally:
+        _stop_test_server(server, thread)
+
+    assert third_payload == {
+        "sessionKey": session_key,
+        "message": {
+            "id": "4",
+            "role": "assistant",
+            "content": [{"type": "text", "text": "third visible history"}],
+            "__openclaw": {"id": "4", "seq": 4},
+        },
+        "messageId": "4",
+        "messageSeq": 4,
+    }
+
+
+def test_gateway_session_history_rest_endpoint_keeps_bounded_window_on_silent_refresh() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-session-history-rest-silent-window-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+    app.state.control_plane_role = "leader"
+    app.state.control_plane_owner_pid = None
+    session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+    )
+    asyncio.run(app.state.database.initialize())
+    for content in ("first visible history", "second visible history"):
+        asyncio.run(
+            app.state.database.append_control_chat_message(
+                role="assistant",
+                content=content,
+                session_key=session_key,
+            )
+        )
+
+    base_url, server, thread = _start_test_server(app)
+    app.state.control_plane_role = "leader"
+    app.state.control_plane_owner_pid = None
+    encoded_key = quote(session_key, safe="")
+    try:
+        timeout = httpx.Timeout(5.0, read=5.0)
+        with httpx.Client(timeout=timeout) as client:
+            with client.stream(
+                "GET",
+                f"{base_url}/sessions/{encoded_key}/history?limit=1",
+                headers={"accept": "text/event-stream"},
+            ) as stream:
+                assert stream.status_code == 200
+                lines = stream.iter_lines()
+                opening_payload = _read_sse_payload(lines, "history")
+                assert [
+                    message["content"][0]["text"] for message in opening_payload["messages"]
+                ] == ["second visible history"]
+
+                asyncio.run(
+                    app.state.database.append_control_chat_message(
+                        role="assistant",
+                        content="NO_REPLY",
+                        session_key=session_key,
+                    )
+                )
+                patch_response = client.post(
+                    f"{base_url}/api/gateway/node-methods/call",
+                    json={
+                        "method": "sessions.patch",
+                        "params": {"key": session_key, "label": "Silent Window"},
+                    },
+                )
+                assert patch_response.status_code == 200
+                refresh_payload = _read_sse_payload(lines, "history")
+    finally:
+        _stop_test_server(server, thread)
+
+    assert refresh_payload["sessionKey"] == session_key
+    assert [message["content"][0]["text"] for message in refresh_payload["messages"]] == [
+        "second visible history"
+    ]
+    assert refresh_payload["hasMore"] is True
+    assert refresh_payload["nextCursor"] == "2"
+
+
 def test_gateway_session_history_rest_endpoint_streams_bounded_history_refresh() -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-session-history-rest-refresh-api"
     shutil.rmtree(tmp_path, ignore_errors=True)
@@ -19799,7 +20347,7 @@ def test_gateway_session_history_rest_endpoint_applies_default_text_cap() -> Non
         asyncio.run(
             client.app.state.database.append_control_chat_message(
                 role="assistant",
-                content="a" * 12_005,
+                content="a" * 8_005,
                 session_key=session_key,
             )
         )
@@ -19811,7 +20359,55 @@ def test_gateway_session_history_rest_endpoint_applies_default_text_cap() -> Non
     body = response.json()
     assert body["hasMore"] is False
     assert body["messages"][0]["__openclaw"]["seq"] == 1
-    assert body["messages"][0]["content"][0]["text"] == f'{"a" * 12_000}\n...(truncated)...'
+    assert body["messages"][0]["content"][0]["text"] == f'{"a" * 8_000}\n...(truncated)...'
+
+
+def test_gateway_session_history_rest_endpoint_applies_configured_text_cap() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-session-history-rest-config-cap-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+    session_key = "openzues:thread:rest-config-cap"
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        config_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "config.set",
+                "params": {
+                    "raw": json.dumps(
+                        {
+                            "basePath": "",
+                            "assistantName": "OpenZues",
+                            "assistantAvatar": "/static/favicon.svg",
+                            "assistantAgentId": "assistant-control-ui",
+                            "serverVersion": "9.9.9",
+                            "gateway": {"webchat": {"chatHistoryMaxChars": 5}},
+                        }
+                    )
+                },
+            },
+        )
+        assert config_response.status_code == 200
+        asyncio.run(
+            client.app.state.database.append_control_chat_message(
+                role="assistant",
+                content="abcdefghij",
+                session_key=session_key,
+            )
+        )
+
+        encoded_key = quote(session_key, safe="")
+        response = client.get(f"/sessions/{encoded_key}/history")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["messages"][0]["content"][0]["text"] == "abcde\n...(truncated)..."
 
 
 def test_gateway_session_history_rest_endpoint_ignores_invalid_cursor() -> None:

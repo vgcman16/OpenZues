@@ -618,9 +618,9 @@ def test_emit_gateway_capability_surfaces_staged_local_method_registry_summary(c
                 "memory_summary": "Idle.",
                 "method_catalog": {
                     "summary": (
-                        "141 built-in gateway method(s) are registered locally while "
+                        "217 built-in gateway method(s) are registered locally while "
                         "lane-published MCP catalogs are offline. Scope coverage: "
-                        "operator.admin 38, operator.read 47, operator.write 28, "
+                        "operator.admin 39, operator.read 75, operator.write 75, "
                         "operator.approvals 9, operator.pairing 12, node.role 7. "
                         "14 reserved admin method(s) require operator.admin."
                     ),
@@ -649,9 +649,9 @@ def test_emit_gateway_capability_surfaces_staged_local_method_registry_summary(c
                         "wizard.status",
                     ],
                     "scopes": [
-                        {"scope": "operator.admin", "method_count": 38},
-                        {"scope": "operator.read", "method_count": 47},
-                        {"scope": "operator.write", "method_count": 28},
+                        {"scope": "operator.admin", "method_count": 39},
+                        {"scope": "operator.read", "method_count": 75},
+                        {"scope": "operator.write", "method_count": 75},
                         {"scope": "operator.approvals", "method_count": 9},
                         {"scope": "operator.pairing", "method_count": 12},
                         {"scope": "node.role", "method_count": 7},
@@ -667,7 +667,7 @@ def test_emit_gateway_capability_surfaces_staged_local_method_registry_summary(c
 
     output = capsys.readouterr().out
     assert (
-        "method catalog: 141 built-in gateway method(s) are registered locally while "
+        "method catalog: 217 built-in gateway method(s) are registered locally while "
         "lane-published MCP catalogs are offline."
     ) in output
     assert (
@@ -679,7 +679,7 @@ def test_emit_gateway_capability_surfaces_staged_local_method_registry_summary(c
         "config.schema, config.set, exec.approvals.get"
     ) in output
     assert (
-        "method scopes: operator.admin (38), operator.read (47), operator.write (28), "
+        "method scopes: operator.admin (39), operator.read (75), operator.write (75), "
         "operator.approvals (9), operator.pairing (12), node.role (7)"
     ) in output
 

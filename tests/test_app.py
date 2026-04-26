@@ -5931,9 +5931,9 @@ def test_gateway_capability_falls_back_to_staged_local_registry_when_lane_catalo
     assert [
         (entry["scope"], entry["method_count"]) for entry in method_catalog["scopes"]
     ] == [
-        ("operator.admin", 38),
-        ("operator.read", 47),
-        ("operator.write", 28),
+        ("operator.admin", 39),
+        ("operator.read", 75),
+        ("operator.write", 75),
         ("operator.approvals", 9),
         ("operator.pairing", 12),
         ("node.role", 7),
@@ -5955,11 +5955,11 @@ def test_gateway_capability_falls_back_to_staged_local_registry_when_lane_catalo
         "wizard.status",
     ]
     assert method_catalog["summary"].startswith(
-        "141 built-in gateway method(s) are registered locally while lane-published "
+        "217 built-in gateway method(s) are registered locally while lane-published "
         "MCP catalogs are offline."
     )
     assert (
-        "Scope coverage: operator.admin 38, operator.read 47, operator.write 28, "
+        "Scope coverage: operator.admin 39, operator.read 75, operator.write 75, "
         "operator.approvals 9, operator.pairing 12, node.role 7."
     ) in method_catalog["summary"]
     assert "14 reserved admin method(s) require operator.admin." in method_catalog["summary"]

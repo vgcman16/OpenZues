@@ -114,6 +114,74 @@ _SPECS: tuple[HermesToolsetSpec, ...] = (
         ),
     ),
     HermesToolsetSpec(
+        name="agents_list",
+        capability_family="session operations",
+        summary="List agent ids available for sessions_spawn targeting.",
+        posture="partial",
+        warning=(
+            "Agents-list posture maps to OpenZues persisted agent inventory for "
+            "sessions_spawn targeting, including persisted allowAgents projection; native "
+            "agent-tool executor parity is still in progress."
+        ),
+        aliases=("agent_list", "agents.list"),
+    ),
+    HermesToolsetSpec(
+        name="sessions_list",
+        capability_family="session operations",
+        summary="List visible sessions with kind filters and bounded recent message context.",
+        posture="partial",
+        warning=(
+            "Sessions-list posture maps to OpenZues session inventory and bounded message "
+            "projection; full OpenClaw sandbox visibility parity is still in progress."
+        ),
+        aliases=("session_list", "sessions.list"),
+    ),
+    HermesToolsetSpec(
+        name="sessions_history",
+        capability_family="memory",
+        summary="Read bounded, redaction-ready transcript history for a visible session.",
+        posture="partial",
+        warning=(
+            "Sessions-history posture maps to bounded OpenZues chat.history reads today; "
+            "full OpenClaw agent-tool sandbox parity is still in progress."
+        ),
+        aliases=("session_history", "chat_history"),
+    ),
+    HermesToolsetSpec(
+        name="session_status",
+        capability_family="session operations",
+        summary="Show a bounded session status card with model, usage, and route context.",
+        posture="partial",
+        warning=(
+            "Session-status posture maps to the OpenZues session snapshot and model override "
+            "metadata; full OpenClaw status-card runtime parity is still in progress."
+        ),
+        aliases=("session.status", "sessions_status"),
+    ),
+    HermesToolsetSpec(
+        name="sessions_send",
+        capability_family="session operations",
+        summary="Send a bounded message to a visible session by key or label.",
+        posture="partial",
+        warning=(
+            "Sessions-send posture maps to OpenZues sessions.send dispatch; full OpenClaw "
+            "agent-to-agent announce and ping-pong runtime parity is still in progress."
+        ),
+        aliases=("session_send", "sessions.send"),
+    ),
+    HermesToolsetSpec(
+        name="sessions_spawn",
+        capability_family="session operations",
+        summary="Spawn an isolated sub-agent session from a bounded task.",
+        posture="partial",
+        warning=(
+            "Sessions-spawn posture maps to OpenZues session creation and runtime send today; "
+            "full OpenClaw ACP harness, sandbox runtime, lifecycle cleanup, and native "
+            "agent-tool executor parity is still in progress."
+        ),
+        aliases=("session_spawn", "sessions.spawn"),
+    ),
+    HermesToolsetSpec(
         name="clarify",
         capability_family="operator alignment",
         summary=(

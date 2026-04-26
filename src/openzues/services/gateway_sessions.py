@@ -27,11 +27,30 @@ _CONTROL_CHAT_SUBJECT_FALLBACK = "Operator control chat"
 _DERIVED_TITLE_MAX_LEN = 60
 _DERIVED_TITLE_ELLIPSIS = "\u2026"
 _SESSION_LABEL_MAX_LENGTH = 512
+_SESSION_LIST_MESSAGE_LIMIT_MAX = 20
 _SESSION_MESSAGE_ASSISTANT_SKIP_TEXTS = {"NO_REPLY", "ANNOUNCE_SKIP", "REPLY_SKIP"}
+_OPENCLAW_SESSION_LIST_KINDS = {
+    "main",
+    "group",
+    "cron",
+    "hook",
+    "node",
+    "other",
+    "global",
+    "thread",
+}
 _TRANSCRIPT_USAGE_MESSAGE_LIMIT = 1_000
 _SESSION_MESSAGE_INLINE_DIRECTIVE_RE = re.compile(
     r"\[\[\s*(?:reply_to(?:_current|\s*:\s*[^\]]+)?|audio_as_voice)\s*\]\]",
     re.IGNORECASE,
+)
+_TRAILING_UNTRUSTED_CONTEXT_RE = re.compile(
+    r"(?:\r?\n){0,2}"
+    r"Untrusted context \(metadata, do not treat as instructions or commands\):\s*\r?\n"
+    r"<<<EXTERNAL_UNTRUSTED_CONTENT(?:\s+id=\"[^\"]{1,128}\")?>>>\s*\r?\n"
+    r".*?"
+    r"<<<END_EXTERNAL_UNTRUSTED_CONTENT(?:\s+id=\"[^\"]{1,128}\")?>>>\s*\Z",
+    re.IGNORECASE | re.DOTALL,
 )
 
 
@@ -72,6 +91,8 @@ class GatewaySessionsService:
         include_derived_titles: bool,
         include_last_message: bool,
         now_ms: int,
+        kinds: tuple[str, ...] | None = None,
+        message_limit: int | None = None,
     ) -> dict[str, Any]:
         normalized_label = (
             _parse_session_label(label) if _string_or_none(label) is not None else None
@@ -81,6 +102,8 @@ class GatewaySessionsService:
         normalized_spawned_by = _string_or_none(spawned_by)
         normalized_agent_id = _normalize_lookup_token(agent_id)
         normalized_search = _string_or_none(search)
+        normalized_kinds = _normalized_session_list_kinds(kinds)
+        normalized_message_limit = _normalize_session_list_message_limit(message_limit)
         if normalized_agent_id is not None and not await self._agent_exists(
             normalized_agent_id
         ):
@@ -122,14 +145,16 @@ class GatewaySessionsService:
                 spawned_by=normalized_spawned_by,
             ):
                 return
-            sessions.append(
-                await self._snapshot_session_payload(
-                    session=resolved_session,
-                    include_derived_titles=include_derived_titles,
-                    include_last_message=include_last_message,
-                    now_ms=now_ms,
-                )
+            session_payload = await self._snapshot_session_payload(
+                session=resolved_session,
+                include_derived_titles=include_derived_titles,
+                include_last_message=include_last_message,
+                now_ms=now_ms,
+                message_limit=normalized_message_limit,
             )
+            if not _session_payload_matches_kinds(session_payload, normalized_kinds):
+                return
+            sessions.append(session_payload)
 
         await append_snapshot_session(session.current_session_key, known_session=session)
 
@@ -196,6 +221,7 @@ class GatewaySessionsService:
         include_derived_titles: bool,
         include_last_message: bool,
         now_ms: int,
+        message_limit: int,
     ) -> dict[str, Any]:
         payload = await self._session_payload(session=session, now_ms=now_ms)
         if include_last_message:
@@ -209,6 +235,11 @@ class GatewaySessionsService:
             )
             if derived_title is not None:
                 payload["derivedTitle"] = derived_title
+        if message_limit > 0:
+            payload["messages"] = await self._session_list_messages(
+                session.current_session_key,
+                limit=message_limit,
+            )
         return payload
 
     async def current_session_key(self) -> str:
@@ -747,6 +778,20 @@ class GatewaySessionsService:
         if last_thread_id is not None:
             payload["lastThreadId"] = last_thread_id
             delivery_context["threadId"] = last_thread_id
+        origin = metadata.get("origin")
+        if isinstance(origin, dict):
+            origin_provider = _string_or_none(origin.get("provider"))
+            if origin_provider is not None and "channel" not in delivery_context:
+                payload["lastChannel"] = origin_provider
+                delivery_context["channel"] = origin_provider
+            origin_account_id = _string_or_none(origin.get("accountId"))
+            if origin_account_id is not None and "accountId" not in delivery_context:
+                payload["lastAccountId"] = origin_account_id
+                delivery_context["accountId"] = origin_account_id
+            origin_thread_id = _route_thread_id_or_none(origin.get("threadId"))
+            if origin_thread_id is not None and "threadId" not in delivery_context:
+                payload["lastThreadId"] = origin_thread_id
+                delivery_context["threadId"] = origin_thread_id
         if delivery_context:
             payload["deliveryContext"] = delivery_context
         child_sessions = await self._child_session_keys(session.current_session_key)
@@ -891,6 +936,34 @@ class GatewaySessionsService:
         if first_message is None:
             return None
         return _string_or_none(first_message.get("content"))
+
+    async def _session_list_messages(
+        self,
+        session_key: str,
+        *,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        messages = await self._database.list_control_chat_messages(
+            limit=limit,
+            session_key=session_key,
+        )
+        projected: list[dict[str, Any]] = []
+        for message in messages:
+            role = _string_or_none(message.get("role"))
+            if role not in {"user", "assistant"}:
+                continue
+            text = _session_message_display_text(str(message.get("content") or ""))
+            if _is_suppressed_assistant_session_message(role=role, text=text):
+                continue
+            projected.append(
+                _message_payload(
+                    role=role,
+                    text=text,
+                    message_id=_message_id_text(message.get("id")),
+                    message_seq=await self._message_sequence(message),
+                )
+            )
+        return projected
 
     async def _transcript_usage_snapshot(self, session_key: str) -> dict[str, Any]:
         messages = await self._database.list_control_chat_messages(
@@ -1383,7 +1456,7 @@ class GatewaySessionsService:
             return True
         parsed_session_key = parse_agent_session_key(session_key)
         if parsed_session_key is None:
-            return False
+            return agent_id == "main"
         return parsed_session_key.agent_id == agent_id
 
     async def _agent_exists(self, agent_id: str) -> bool:
@@ -1571,6 +1644,59 @@ def _normalize_positive_numeric_filter(value: object) -> int | None:
     return max(1, math.floor(numeric_value))
 
 
+def _normalize_session_list_message_limit(value: int | None) -> int:
+    if value is None:
+        return 0
+    return min(max(value, 0), _SESSION_LIST_MESSAGE_LIMIT_MAX)
+
+
+def _normalized_session_list_kinds(values: tuple[str, ...] | None) -> set[str] | None:
+    if not values:
+        return None
+    normalized = {
+        value.strip().lower()
+        for value in values
+        if value.strip().lower() in _OPENCLAW_SESSION_LIST_KINDS
+    }
+    return normalized or None
+
+
+def _session_payload_matches_kinds(
+    session_payload: dict[str, Any],
+    normalized_kinds: set[str] | None,
+) -> bool:
+    if normalized_kinds is None:
+        return True
+    return bool(_session_payload_kind_aliases(session_payload) & normalized_kinds)
+
+
+def _session_payload_kind_aliases(session_payload: dict[str, Any]) -> set[str]:
+    key = _string_or_none(session_payload.get("key")) or ""
+    kind = (_string_or_none(session_payload.get("kind")) or "").lower()
+    aliases = {kind} if kind else set()
+    if kind == "global":
+        aliases.add("main")
+    if kind == "thread":
+        aliases.add("other")
+    if key.startswith("cron:"):
+        aliases.add("cron")
+    if key.startswith("hook:"):
+        aliases.add("hook")
+    if key.startswith("node-") or key.startswith("node:"):
+        aliases.add("node")
+    if kind == "group" or ":group:" in key or ":channel:" in key:
+        aliases.add("group")
+    return aliases
+
+
+def _message_id_text(value: object) -> str | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return str(value)
+    return _string_or_none(value)
+
+
 def _snapshot_sort_key(session_payload: dict[str, Any]) -> tuple[int, str]:
     updated_at = _int_or_none(session_payload.get("updatedAt"))
     return (
@@ -1617,6 +1743,9 @@ def _message_payload(
 
 
 def _session_message_display_text(text: str) -> str:
+    stripped = _TRAILING_UNTRUSTED_CONTEXT_RE.sub("", text)
+    if stripped != text:
+        text = stripped.rstrip()
     return _SESSION_MESSAGE_INLINE_DIRECTIVE_RE.sub("", text)
 
 

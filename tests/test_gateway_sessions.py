@@ -461,7 +461,7 @@ async def test_changed_event_payload_surfaces_session_setting_route_metadata(
     assert payload["lastChannel"] == "telegram"
     assert payload["lastTo"] == "-100123"
     assert payload["lastAccountId"] == "acct-1"
-    assert payload["lastThreadId"] == 42
+    assert payload["lastThreadId"] == "42"
 
 
 @pytest.mark.asyncio
@@ -537,6 +537,44 @@ async def test_route_metadata_preserves_string_thread_ids(
         "threadId": "1737500000.123456",
     }
     assert changed_payload["lastThreadId"] == "1737500000.123456"
+
+
+@pytest.mark.asyncio
+async def test_build_snapshot_derives_delivery_context_from_origin_metadata(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "gateway-sessions.db")
+    await database.initialize()
+
+    session_key = "agent:main:work"
+    await database.upsert_gateway_session_metadata(
+        session_key=session_key,
+        metadata={
+            "origin": {
+                "provider": "telegram",
+                "accountId": "default",
+                "threadId": "42",
+            },
+            "lastTo": "telegram:6812765697",
+        },
+    )
+
+    payload = await GatewaySessionsService(database).build_session_payload_for_key(
+        session_key=session_key,
+        now_ms=1_700_000_000_890,
+    )
+
+    assert payload is not None
+    assert payload["lastChannel"] == "telegram"
+    assert payload["lastTo"] == "telegram:6812765697"
+    assert payload["lastAccountId"] == "default"
+    assert payload["lastThreadId"] == "42"
+    assert payload["deliveryContext"] == {
+        "channel": "telegram",
+        "to": "telegram:6812765697",
+        "accountId": "default",
+        "threadId": "42",
+    }
 
 
 @pytest.mark.asyncio

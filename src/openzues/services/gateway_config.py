@@ -107,23 +107,27 @@ class GatewayConfigService:
         return result
 
     def _default_snapshot(self) -> dict[str, Any]:
-        return ControlUiBootstrapConfigView.model_validate(
-            {
-                "basePath": self._base_path,
-                "assistantName": self._assistant_name,
-                "assistantAvatar": self._assistant_avatar,
-                "assistantAgentId": self._assistant_agent_id,
-                "serverVersion": self._server_version,
-                "localMediaPreviewRoots": self._local_media_preview_roots,
-                "embedSandbox": self._embed_sandbox,
-                "allowExternalEmbedUrls": self._allow_external_embed_urls,
-            }
-        ).model_dump(mode="json", by_alias=True)
+        return _clean_config_snapshot(
+            ControlUiBootstrapConfigView.model_validate(
+                {
+                    "basePath": self._base_path,
+                    "assistantName": self._assistant_name,
+                    "assistantAvatar": self._assistant_avatar,
+                    "assistantAgentId": self._assistant_agent_id,
+                    "serverVersion": self._server_version,
+                    "localMediaPreviewRoots": self._local_media_preview_roots,
+                    "embedSandbox": self._embed_sandbox,
+                    "allowExternalEmbedUrls": self._allow_external_embed_urls,
+                }
+            ).model_dump(mode="json", by_alias=True)
+        )
 
     def _validated_snapshot(self, payload: dict[str, Any]) -> dict[str, Any]:
-        return ControlUiBootstrapConfigView.model_validate(payload).model_dump(
-            mode="json",
-            by_alias=True,
+        return _clean_config_snapshot(
+            ControlUiBootstrapConfigView.model_validate(payload).model_dump(
+                mode="json",
+                by_alias=True,
+            )
         )
 
     def _require_config_path(self) -> Path:
@@ -197,3 +201,10 @@ def _merge_config_patch(current: dict[str, Any], patch: dict[str, Any]) -> dict[
         else:
             merged[key] = value
     return merged
+
+
+def _clean_config_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
+    if snapshot.get("gateway") is None:
+        snapshot = dict(snapshot)
+        snapshot.pop("gateway", None)
+    return snapshot

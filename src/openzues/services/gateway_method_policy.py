@@ -169,8 +169,10 @@ EXPLICIT_GATEWAY_METHOD_SCOPE_GROUPS: dict[str, tuple[str, ...]] = {
         "skills.search",
         "skills.detail",
         "voicewake.get",
+        "session.status",
         "sessions.list",
         "sessions.get",
+        "sessions.history",
         "sessions.preview",
         "sessions.resolve",
         "sessions.compaction.list",
@@ -199,6 +201,7 @@ EXPLICIT_GATEWAY_METHOD_SCOPE_GROUPS: dict[str, tuple[str, ...]] = {
     ),
     WRITE_GATEWAY_METHOD_SCOPE: (
         "message.action",
+        "tools.invoke",
         "send",
         "poll",
         "agent",
@@ -260,6 +263,7 @@ EXPLICIT_GATEWAY_METHOD_SCOPE_GROUPS: dict[str, tuple[str, ...]] = {
         "chat.send",
         "chat.abort",
         "sessions.create",
+        "sessions.spawn",
         "sessions.send",
         "sessions.steer",
         "sessions.abort",
@@ -331,6 +335,8 @@ class GatewayMethodAuthorization:
 
 
 def is_reserved_admin_gateway_method(method: str) -> bool:
+    if method in EXPLICIT_GATEWAY_METHOD_SCOPE_BY_NAME:
+        return False
     return any(method.startswith(prefix) for prefix in RESERVED_ADMIN_GATEWAY_METHOD_PREFIXES)
 
 

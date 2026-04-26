@@ -2,6 +2,124 @@
 
 Updated: 2026-04-25
 
+Current queue-head adjustment: OpenZues now advertises an explicit
+`sessions_history` tool posture and exposes `sessions.history` as an
+agent-tool-style gateway read: it resolves session aliases, hides tool rows by
+default, allows `includeTools`, redacts secrets, strips usage/cost metadata, and
+applies the OpenClaw-inspired 4k text cap plus 80 KiB response budget. The next
+bounded seam should either wire this through a native agent-tool executor or
+continue to the next source-backed `chat.*` / `sessions.*` runtime mismatch.
+
+Current queue-head adjustment: OpenZues now also advertises `session_status`
+and exposes `session.status` as a bounded status-card gateway read. It returns
+OpenClaw-style `content` plus `details`, resolves session aliases through the
+session snapshot owner, and can apply the same provider/model override metadata
+used by `sessions.patch`. The next bounded seam should stay with neighboring
+agent session tools (`sessions_send`, `sessions_list`, `sessions_spawn`, or
+native executor wiring) rather than broad product inventory.
+
+Current queue-head adjustment: `sessions.send` now accepts OpenClaw-style
+label targeting, with optional `agentId`, and rejects ambiguous key+label calls
+before runtime dispatch. The gateway API path resolves the label through the
+existing session inventory and sends to the canonical session key. The next
+neighboring seam should inspect `sessions_list`, `sessions_spawn`, or native
+agent-tool executor wiring.
+
+Current queue-head adjustment: `sessions_list` is now an explicit tool posture,
+and `sessions.list` accepts OpenClaw-style `kinds` plus `messageLimit`.
+Snapshots can filter `main`/`other` aliases without breaking existing
+OpenZues `global`/`thread` kinds, and can attach bounded non-tool recent
+message context. The next neighboring seam should inspect `sessions_spawn`,
+native agent-tool executor wiring, or another concrete upstream session-tool
+mismatch.
+
+Current queue-head adjustment: `sessions_spawn` is now an explicit tool
+posture, and `sessions.spawn` can create a bounded subagent-style child session
+from a task. It stores spawn ownership/depth metadata, sends the initial task
+with optional thinking and timeout, rejects channel-delivery params, and
+returns an OpenClaw-style accepted payload. Remaining spawn parity includes ACP
+harness spawning, attachment materialization, sandbox/depth guardrails, and
+lifecycle hook cleanup.
+
+Current queue-head adjustment: `agents_list` is now an explicit tool posture,
+and `agents.list toolProjection=sessions_spawn` returns an OpenClaw-style
+`requester`, `allowAny`, and bounded `agents` list for spawn targeting while
+preserving the existing broad OpenZues agent inventory by default. Remaining
+agent-target parity is the richer OpenClaw subagent allowlist config model.
+
+Current queue-head adjustment: `sessions.spawn` now materializes inline
+subagent attachments into `.openclaw/attachments/<id>` under the target
+workspace, writes a manifest, returns a receipt, persists the receipt in session
+metadata, and appends an untrusted-attachment prompt suffix to the child task.
+Remaining attachment parity is cleanup/retention policy and deeper config
+limits; remaining spawn parity also includes ACP and sandbox/depth guardrails.
+
+Current queue-head adjustment: `sessions.spawn` now accepts internal
+`requesterSessionKey` context for native executor calls, resolves that requester
+session, reads its stored `spawnDepth`, and returns OpenClaw-style `forbidden`
+when the caller is already at the default max depth. Remaining depth parity is
+configurable max depth, ancestry fallback, and active-child counting until the
+next slice closes the legacy fallback.
+
+Current queue-head adjustment: `sessions.spawn requesterSessionKey=...` now
+falls back to legacy `spawnedBy` / `parentSessionKey` ancestry when a requester
+session has no stored `spawnDepth`, preserving the default max-depth guard for
+older child-session metadata. Remaining depth parity is configurable max depth
+and active-child counting; remaining spawn parity also includes ACP harness
+spawning, sandbox behavior, lifecycle hooks, and native agent-tool executor
+wiring.
+
+Current queue-head adjustment: `sessions.spawn` now honors persisted
+`gateway.agents.defaults.subagents.maxSpawnDepth` from the control config schema,
+so operators can allow bounded nested subagent launches above the default max
+depth of 1. Remaining depth/concurrency parity is active-child counting through
+`maxChildrenPerAgent`; remaining spawn parity also includes ACP harness
+spawning, sandbox behavior, lifecycle hooks, and native agent-tool executor
+wiring.
+
+Current queue-head adjustment: `sessions.spawn` now honors persisted
+`gateway.agents.defaults.subagents.maxChildrenPerAgent` by counting live tracked
+child runs for the requester and returning OpenClaw-style `forbidden` before
+submitting another task when the cap is reached. Remaining spawn parity includes
+ACP harness spawning, sandbox behavior, lifecycle hooks, role/control-scope
+metadata, and native agent-tool executor wiring.
+
+Current queue-head adjustment: `sessions.spawn` now persists depth-derived
+`subagentRole` (`orchestrator` or `leaf`) and `subagentControlScope`
+(`children` or `none`) on spawned session metadata. Remaining spawn parity
+includes ACP harness spawning, sandbox behavior, lifecycle hooks, and native
+agent-tool executor wiring.
+
+Current queue-head adjustment: `sessions.spawn sandbox="require"` now returns
+the OpenClaw-style `forbidden` response before runtime dispatch when OpenZues
+has no sandboxed target runtime to provide. Remaining spawn parity includes ACP
+harness spawning, thread/session-mode hooks, lifecycle cleanup, and native
+agent-tool executor wiring.
+
+Current queue-head adjustment: `sessions.spawn mode="session"` now returns the
+upstream-shaped error unless `thread=true` is also supplied, avoiding
+half-bound persistent child sessions. Remaining spawn parity includes ACP
+harness spawning, configured target policy (`allowAgents` / `requireAgentId`),
+thread-binding hooks, lifecycle cleanup, and native agent-tool executor wiring.
+
+Current queue-head adjustment: `sessions.spawn` now honors persisted
+`requireAgentId` and `allowAgents` target policy, and
+`agents.list toolProjection=sessions_spawn` now exposes the matching requester,
+`allowAny`, and allowed target list instead of advertising every configured
+agent. Remaining spawn parity includes ACP harness spawning, thread-binding
+hooks, lifecycle cleanup, and native agent-tool executor wiring.
+
+Current queue-head adjustment: `sessions.spawn thread=true` now returns the
+upstream-shaped no-hook error before runtime dispatch because OpenZues has no
+channel plugin `subagent_spawning` hook wired to bind persistent child threads.
+Remaining spawn parity includes ACP harness spawning, lifecycle cleanup, and
+native agent-tool executor wiring.
+
+Current queue-head adjustment: `sessions.spawn runtime="acp" sandbox="require"`
+now returns the upstream-shaped ACP sandbox policy error before the generic
+ACP-unavailable boundary. Remaining spawn parity includes actual ACP harness
+spawning, lifecycle cleanup, and native agent-tool executor wiring.
+
 Current queue-head adjustment: live `session.message` payloads now carry nested
 OpenClaw transcript identity metadata (`message.__openclaw.id` /
 `message.__openclaw.seq`) alongside the existing top-level `messageId` /
@@ -18,7 +136,7 @@ gap.
 Current queue-head adjustment: direct `GET /sessions/{sessionKey}/history` now
 serves OpenClaw-style JSON/SSE history, including cursor pagination, preserved
 `messages`, `items`, `hasMore`, `nextCursor`, raw `__openclaw.seq` metadata,
-default 12k text caps, lenient invalid-cursor handling, initial `history` SSE
+default 8k text caps, lenient invalid-cursor handling, initial `history` SSE
 events, and `not_found` responses for unknown session keys. The next bounded
 seam should inspect live SSE update behavior or the next source-backed
 transcript replay gap.
@@ -63,6 +181,14 @@ no-header API-key behavior. Remaining direct-history edges that depend on
 OpenClaw's file-backed duplicate transcript store should be treated carefully
 because OpenZues' current source of truth is SQLite-backed control-chat rows.
 
+Current queue-head adjustment: direct session-history SSE now covers the
+remaining OpenClaw history-state invariants that map to the SQLite transcript
+store: silent `NO_REPLY` rows do not emit fast-path `message` events, bounded
+windows stay anchored on visible history after silent refreshes, and later
+visible messages retain raw `messageSeq` numbering after transcript-only
+refreshes. The next bounded seam should move to a source-backed `chat.history`
+or `sessions.*` mismatch rather than OpenClaw-only file-store duplicate rows.
+
 Current queue-head adjustment: persisted custom agents now flow through
 `agent.identity.get` by explicit `agentId` and by `agent:<id>:main` session keys,
 using the SQLite agent registry as the truth source while preserving malformed
@@ -97,21 +223,31 @@ prefix truncation with the OpenClaw `...(truncated)...` marker instead of using
 a global tail budget that drops older messages. The next transcript seam should
 move to `sessions.get`/history parity or a narrow API mirror if found.
 
-Current queue-head adjustment: `chat.history` now applies the OpenClaw default
-12,000-character text cap when callers omit `maxChars`, while `sessions.get`
-keeps its raw-session behavior. The next bounded seam should inspect session
-event subscriptions or preview sanitization rather than keep widening history.
+Current queue-head adjustment: `chat.history` now applies the current OpenClaw
+default 8,000-character text cap when callers omit `maxChars`, while
+`sessions.get` keeps its raw-session behavior. The next bounded seam should
+inspect session event subscriptions or preview sanitization rather than keep
+widening history.
+
+Current queue-head adjustment: `chat.history` and direct
+`GET /sessions/{sessionKey}/history` now honor the persisted
+`gateway.webchat.chatHistoryMaxChars` control-UI config value, while explicit
+RPC `maxChars` still overrides config. The next bounded seam should inspect a
+new source-backed `chat.*` / `sessions.*` read-model mismatch, not the now-closed
+default/config text cap path.
 
 Current queue-head adjustment: `chat.history` now replaces single oversized
 projected messages with `[chat.history omitted: message too large]` and
-OpenClaw truncation metadata before serialization, even when callers request a
-large `maxChars`. The next bounded history seam should prove whether recent
-small messages survive alongside an oversized latest message.
+OpenClaw truncation metadata before serialization once they exceed the current
+128 KiB single-message budget, while preserving large-but-valid messages below
+that cap. The next bounded history seam should prove whether recent small
+messages survive alongside an oversized latest message.
 
 Current queue-head adjustment: `chat.history` now enforces a final serialized
-message-array byte budget after single-message placeholder replacement, keeping
-the newest rows that fit and dropping older rows. The next bounded transcript
-seam should move to event replay or `sessions.get` fidelity.
+message-array byte budget after single-message placeholder replacement, using
+OpenClaw's 6 MiB default and keeping the newest rows that fit while dropping
+older rows. The next bounded transcript seam should move to event replay or
+`sessions.get` fidelity.
 
 Current queue-head adjustment: `sessions.preview` now reuses chat-history
 display hygiene by hiding assistant skip-only rows and stripping inline
@@ -917,4 +1053,20 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
 - Verified custom-agent explicit-key create routing with `pytest tests/test_gateway_node_methods.py -q -k "sessions_create_scopes_custom_agent_request_key"`, the adjacent `pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "sessions_create or sessions_list_filters_by_agent or agent_launch or agent_identity"`, `ruff check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py`, and `mypy src/openzues/services/gateway_node_methods.py`.
 - `sessions.resolve key=subagent:* agentId=<custom>` now probes the custom-agent store before falling back to default-main aliases, and agent-filtered `sessionId` / label lookups no longer mistake legacy launch sessions for agent-owned sessions.
 - Verified custom-agent resolver alias routing with `pytest tests/test_gateway_sessions.py -q -k "key_lookup_scopes_custom_agent_request_key_alias"`, `pytest tests/test_gateway_sessions.py tests/test_gateway_node_methods.py -q -k "resolve_key or sessions_resolve"`, the adjacent `pytest tests/test_gateway_sessions.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "sessions_list_filters_by_agent or sessions_resolve or resolve_key or sessions_create or agent_launch or agent_identity"`, `ruff check src/openzues/services/gateway_sessions.py src/openzues/services/gateway_node_methods.py tests/test_gateway_sessions.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`, and `mypy src/openzues/services/gateway_node_methods.py src/openzues/services/gateway_sessions.py`.
-- The queue head now tracks the remaining advertised runtime-control hard gaps, especially channel/session transcript/runtime methods (`chat.*` and `sessions.*`), rather than the older approval lifecycle/config/device-token/agent-mutation/memory-doctor/placeheld provenance/false steer-runtime/custom-agent-session placeholders.
+- Direct `POST /tools/invoke` now exists in OpenZues and can invoke safe core tool aliases such as `agents_list` with OpenClaw-shaped `{ok:true,result}` payloads; high-risk tool names such as `sessions_spawn` remain 404-hidden by default.
+- Persisted `gateway.tools.allow` / `gateway.tools.deny` now flows into `tools.invoke` for the bounded `cron` tool bridge: `allow=["cron"]` opens `cron.status`, while `deny=["cron"]` wins over allow.
+- `tools.invoke` now has an injected before-call hook boundary, so hook owners can block with OpenClaw-shaped `tool_call_blocked` errors or rewrite params before the mapped gateway method executes.
+- Injected plugin/non-core executors can now run through `tools.invoke` after persisted `gateway.tools.allow` explicitly opens the tool, while unallowed plugin executors remain 404-hidden.
+- Plugin executor input/auth/crash failures now map to OpenClaw-shaped `tool_error` responses instead of leaking raw executor exceptions.
+- Owner-only filtering now survives `gateway.tools.allow`, so scoped non-admin callers cannot invoke owner-only control-plane tools such as `cron` even when the gateway allowlist opens them.
+- Injected plugin executors can now declare custom owner-only metadata, so OpenZues can mirror OpenClaw's `ownerOnly: true` custom tool behavior without exposing those tools to scoped non-admin callers.
+- `chat.inject`, `chat.history`, and live session transcript projection now strip trailing OpenClaw external-untrusted metadata suffix blocks from visible message text.
+- `chat.send` final payload projection now strips trailing OpenClaw external-untrusted metadata suffix blocks from returned text blocks while preserving normal run-ack payloads.
+- `chat.send deliver=true` now inherits persisted channel-scoped `deliveryContext` routes when the resolved session key is scoped to the same external channel token.
+- Gateway requester metadata now carries `clientMode`, so configured-main CLI `chat.send` delivery can inherit saved external routes while UI/webchat callers remain route-local.
+- Session snapshots now derive missing `deliveryContext` fields from `origin.provider/accountId/threadId` route metadata, allowing configured-main delivery inheritance for older route records.
+- Webchat `chat.send deliver=true` callers no longer inherit external delivery routes from channel-scoped sessions, preserving the internal webchat surface.
+- `tools.invoke` now maps native `sessions_spawn` only after explicit `gateway.tools.allow`, preserving the default 404-hidden high-risk posture.
+- `tools.invoke` now maps native `sessions_send` only after explicit `gateway.tools.allow`, preserving the default 404-hidden high-risk posture.
+- Verified the `tools.invoke` bridge with `pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "tools_invoke"`, the adjacent `pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "tools_invoke or tools_catalog or tools_effective or config_get or config_set or cron_status"`, staged-registry app/CLI catalog tests, touched-file Ruff, and touched-source mypy.
+- The queue head now tracks the remaining advertised runtime-control hard gaps, especially richer `tools.invoke` executor parity (real plugin HTTP ordering and any additional intentional high-risk mappings), broader runtime/client integration, and session runtime methods (`chat.*`, `sessions.*`), rather than the older approval lifecycle/config/device-token/agent-mutation/memory-doctor/placeheld provenance/false steer-runtime/custom-agent-session placeholders.

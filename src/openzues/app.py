@@ -240,7 +240,7 @@ logger = logging.getLogger(__name__)
 CHECKPOINT_HARDENER_COOLDOWN = timedelta(minutes=30)
 CONTROL_UI_BOOTSTRAP_CONFIG_PATH = "/__openclaw/control-ui-config.json"
 CONTROL_UI_ASSISTANT_AGENT_ID = "openzues"
-DIRECT_SESSION_HISTORY_DEFAULT_TEXT_MAX_CHARS = 12_000
+DIRECT_SESSION_HISTORY_DEFAULT_TEXT_MAX_CHARS = 8_000
 DIRECT_SESSION_HISTORY_SSE_KEEPALIVE_SECONDS = 15.0
 
 PLUGIN_DUPLICATE_SERVER_RE = re.compile(
@@ -3056,17 +3056,29 @@ def create_app(
         header_value = str(request.headers.get("x-openzues-client-id") or "").strip()
         return header_value or None
 
+    def extract_gateway_client_mode_from_request(request: Request) -> str | None:
+        client_mode = str(request.query_params.get("clientMode") or "").strip()
+        if client_mode:
+            return client_mode
+        for header in ("x-openzues-client-mode", "x-openclaw-client-mode"):
+            header_value = str(request.headers.get(header) or "").strip()
+            if header_value:
+                return header_value
+        return None
+
     async def resolve_gateway_node_method_requester(
         request: Request,
     ) -> GatewayNodeMethodRequester:
         client_id = extract_gateway_client_id_from_request(request)
+        client_mode = extract_gateway_client_mode_from_request(request)
         host = request.client.host if request.client is not None else None
         if _is_loopback_host(host):
-            return GatewayNodeMethodRequester(client_id=client_id)
+            return GatewayNodeMethodRequester(client_id=client_id, client_mode=client_mode)
         auth = await require_remote_operator(request, "dashboard.read")
         return GatewayNodeMethodRequester(
             caller_scopes=resolve_gateway_method_scopes_for_role(auth.operator.role),
             client_id=client_id,
+            client_mode=client_mode,
         )
 
     def extract_gateway_node_token(headers: dict[str, str]) -> str | None:
@@ -3084,9 +3096,14 @@ def create_app(
         node_id: str,
     ) -> GatewayNodeMethodRequester:
         client_id = extract_gateway_client_id_from_request(request)
+        client_mode = extract_gateway_client_mode_from_request(request)
         host = request.client.host if request.client is not None else None
         if _is_loopback_host(host):
-            return GatewayNodeMethodRequester(node_id=node_id, client_id=client_id)
+            return GatewayNodeMethodRequester(
+                node_id=node_id,
+                client_id=client_id,
+                client_mode=client_mode,
+            )
         token = extract_gateway_node_token(dict(request.headers))
         if not token:
             raise HTTPException(
@@ -3099,7 +3116,11 @@ def create_app(
         verification = await active_gateway_node_pairing_service.verify(node_id, token)
         if verification.get("ok") is not True:
             raise HTTPException(status_code=401, detail="Unknown node token.")
-        return GatewayNodeMethodRequester(node_id=node_id, client_id=client_id)
+        return GatewayNodeMethodRequester(
+            node_id=node_id,
+            client_id=client_id,
+            client_mode=client_mode,
+        )
 
     def build_readiness_payload() -> dict[str, Any]:
         ready = fastapi_app.state.control_plane_role == "leader"
@@ -3274,6 +3295,7 @@ def create_app(
     @fastapi_app.get(
         CONTROL_UI_BOOTSTRAP_CONFIG_PATH,
         response_model=ControlUiBootstrapConfigView,
+        response_model_exclude_none=True,
         include_in_schema=False,
     )
     async def get_control_ui_bootstrap_config(request: Request) -> ControlUiBootstrapConfigView:
@@ -3903,6 +3925,79 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    def gateway_tools_invoke_error_response(
+        status_code: int,
+        error_type: str,
+        message: str,
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=status_code,
+            content={
+                "ok": False,
+                "error": {
+                    "type": error_type,
+                    "message": message,
+                },
+            },
+        )
+
+    @fastapi_app.post("/tools/invoke", include_in_schema=False, response_model=None)
+    async def invoke_gateway_tool(request: Request) -> JSONResponse:
+        try:
+            body_unknown = await request.json()
+        except json.JSONDecodeError:
+            return gateway_tools_invoke_error_response(
+                400,
+                "bad_request",
+                "Invalid JSON body",
+            )
+        if body_unknown is None:
+            body_unknown = {}
+        if not isinstance(body_unknown, dict):
+            return gateway_tools_invoke_error_response(
+                400,
+                "invalid_request",
+                "tools.invoke requires a JSON object body",
+            )
+        tool = body_unknown.get("tool")
+        if not isinstance(tool, str) or not tool.strip():
+            return gateway_tools_invoke_error_response(
+                400,
+                "invalid_request",
+                "tools.invoke requires body.tool",
+            )
+        args_unknown = body_unknown.get("args")
+        args = dict(args_unknown) if isinstance(args_unknown, dict) else {}
+        params: dict[str, Any] = {"tool": tool.strip(), "args": args}
+        for source_key, param_key in (
+            ("action", "action"),
+            ("sessionKey", "sessionKey"),
+            ("dryRun", "dryRun"),
+        ):
+            if source_key in body_unknown:
+                params[param_key] = body_unknown[source_key]
+        try:
+            payload = await active_gateway_node_method_service.call(
+                "tools.invoke",
+                params,
+                requester=await resolve_gateway_node_method_requester(request),
+            )
+        except GatewayNodeMethodError as exc:
+            if exc.details is not None:
+                return JSONResponse(status_code=exc.status_code, content=exc.details)
+            error_type = "not_found" if exc.status_code == 404 else "tool_error"
+            return gateway_tools_invoke_error_response(
+                exc.status_code,
+                error_type,
+                str(exc),
+            )
+        except ValueError as exc:
+            message = str(exc)
+            error_type = "forbidden" if message.startswith("missing scope:") else "tool_error"
+            status_code = 403 if error_type == "forbidden" else 400
+            return gateway_tools_invoke_error_response(status_code, error_type, message)
+        return JSONResponse(content=payload)
+
     async def gateway_session_history_target_exists(session_key: str) -> bool:
         if await active_database.count_control_chat_messages(session_key=session_key) > 0:
             return True
@@ -3950,6 +4045,7 @@ def create_app(
         )
 
     def apply_direct_session_history_text_cap(payload: dict[str, Any]) -> None:
+        max_chars = direct_session_history_text_max_chars()
         seen_messages: set[int] = set()
         for field in ("messages", "items"):
             messages = payload.get(field)
@@ -3962,9 +4058,32 @@ def create_app(
                 if message_identity in seen_messages:
                     continue
                 seen_messages.add(message_identity)
-                apply_direct_session_history_message_text_cap(message)
+                apply_direct_session_history_message_text_cap(message, max_chars=max_chars)
 
-    def apply_direct_session_history_message_text_cap(message: dict[str, Any]) -> None:
+    def direct_session_history_text_max_chars() -> int:
+        try:
+            snapshot = active_gateway_config_service.build_snapshot()
+        except Exception:
+            return DIRECT_SESSION_HISTORY_DEFAULT_TEXT_MAX_CHARS
+        gateway = snapshot.get("gateway")
+        if not isinstance(gateway, dict):
+            return DIRECT_SESSION_HISTORY_DEFAULT_TEXT_MAX_CHARS
+        webchat = gateway.get("webchat")
+        if not isinstance(webchat, dict):
+            return DIRECT_SESSION_HISTORY_DEFAULT_TEXT_MAX_CHARS
+        value = webchat.get("chatHistoryMaxChars")
+        if isinstance(value, bool) or not isinstance(value, int):
+            return DIRECT_SESSION_HISTORY_DEFAULT_TEXT_MAX_CHARS
+        if 1 <= value <= 500_000:
+            return value
+        return DIRECT_SESSION_HISTORY_DEFAULT_TEXT_MAX_CHARS
+
+    def apply_direct_session_history_message_text_cap(
+        message: dict[str, Any],
+        *,
+        max_chars: int | None = None,
+    ) -> None:
+        effective_max_chars = max_chars or direct_session_history_text_max_chars()
         content = message.get("content")
         if not isinstance(content, list):
             return
@@ -3974,10 +4093,10 @@ def create_app(
             text = part.get("text")
             if not isinstance(text, str):
                 continue
-            if len(text) <= DIRECT_SESSION_HISTORY_DEFAULT_TEXT_MAX_CHARS:
+            if len(text) <= effective_max_chars:
                 continue
             part["text"] = (
-                f"{text[:DIRECT_SESSION_HISTORY_DEFAULT_TEXT_MAX_CHARS]}"
+                f"{text[:effective_max_chars]}"
                 "\n...(truncated)..."
             )
 
