@@ -35,6 +35,12 @@ the child run dispatcher as `bootstrap_context_mode="lightweight"` /
 the spawned session. Remaining work is to make the deeper subagent lifecycle
 owner consume the metadata the same way OpenClaw's child runtime does.
 
+Current queue-head adjustment: `sessions.spawn` now wraps spawned child runs in
+the OpenClaw-shaped `[Subagent Context]` / `[Subagent Task]` bootstrap envelope
+instead of sending raw task text directly. Remaining spawn gaps are now deeper:
+ACP harness execution, thread-bound session spawns, sandboxed target runtimes,
+and lifecycle cleanup/announce handling.
+
 Current queue-head adjustment: OpenZues now advertises an explicit
 `sessions_history` tool posture and exposes `sessions.history` as an
 agent-tool-style gateway read: it resolves session aliases, hides tool rows by

@@ -653,6 +653,29 @@ def _sessions_spawn_accepted_note(
     return _SESSIONS_SPAWN_ACCEPTED_NOTE
 
 
+def _sessions_spawn_child_task_message(
+    *,
+    task: str,
+    spawn_mode: Literal["run", "session"],
+    depth: int,
+    max_spawn_depth: int,
+) -> str:
+    lines = [
+        (
+            f"[Subagent Context] You are running as a subagent "
+            f"(depth {depth}/{max_spawn_depth}). Results auto-announce to your requester; "
+            "do not busy-poll for status."
+        ),
+    ]
+    if spawn_mode == "session":
+        lines.append(
+            "[Subagent Context] This subagent session is persistent and remains available "
+            "for thread follow-up messages."
+        )
+    lines.append(f"[Subagent Task]: {task}")
+    return "\n\n".join(lines)
+
+
 def _session_patch_supports_spawn_lineage(session_key: str) -> bool:
     return is_subagent_session_key(session_key) or is_acp_session_key(session_key)
 
@@ -7084,12 +7107,18 @@ class GatewayNodeMethodService:
                     if light_context
                     else {}
                 )
+                child_task_message = _sessions_spawn_child_task_message(
+                    task=task,
+                    spawn_mode=tracked_mode,
+                    depth=child_spawn_depth,
+                    max_spawn_depth=max_spawn_depth,
+                )
                 send_result = await self._chat_send_service(
                     session_key=canonical_key,
                     message=(
-                        f"{task}\n\n{attachment_suffix}".rstrip()
+                        f"{child_task_message}\n\n{attachment_suffix}".rstrip()
                         if attachment_suffix is not None
-                        else task
+                        else child_task_message
                     ),
                     idempotency_key=secrets.token_urlsafe(18),
                     thinking=thinking,

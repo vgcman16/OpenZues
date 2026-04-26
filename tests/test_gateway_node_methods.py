@@ -2301,7 +2301,15 @@ async def test_tools_invoke_allows_sessions_spawn_when_gateway_tools_allow_confi
     assert str(payload["result"]["childSessionKey"]).startswith(
         "launch:mode:workspace_affinity:thread:gateway-spawn-"
     )
-    assert observed_send["message"] == "Ship this through tools.invoke."
+    assert observed_send["message"] == "\n\n".join(
+        [
+            (
+                "[Subagent Context] You are running as a subagent (depth 1/1). "
+                "Results auto-announce to your requester; do not busy-poll for status."
+            ),
+            "[Subagent Task]: Ship this through tools.invoke.",
+        ]
+    )
     assert observed_send["thinking"] == "low"
     assert observed_send["deliver"] is None
     assert observed_send["timeout_ms"] == 4_000
@@ -13326,7 +13334,15 @@ async def test_sessions_spawn_creates_openclaw_style_subagent_session() -> None:
     child_key = str(payload["childSessionKey"])
     assert child_key.startswith("launch:mode:workspace_affinity:thread:gateway-spawn-")
     assert observed_send["session_key"] == child_key
-    assert observed_send["message"] == "Ship the spawned parity slice."
+    assert observed_send["message"] == "\n\n".join(
+        [
+            (
+                "[Subagent Context] You are running as a subagent (depth 1/1). "
+                "Results auto-announce to your requester; do not busy-poll for status."
+            ),
+            "[Subagent Task]: Ship the spawned parity slice.",
+        ]
+    )
     assert observed_send["thinking"] == "medium"
     assert observed_send["deliver"] is None
     assert observed_send["timeout_ms"] == 7_000

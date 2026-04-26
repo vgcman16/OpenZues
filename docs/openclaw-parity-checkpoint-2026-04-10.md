@@ -5,7 +5,7 @@
 - Estimated parity progress: roughly `43%` of the full OpenClaw product surface is now covered, with a reasonable confidence band of `38-48%`. Gateway/control-plane, session/chat contracts, direct history, cron, browser/canvas command bridges, and bounded tool invocation are materially further along than whole-product parity; packaging, companion apps, provider-native runtimes, ACP harness spawning, and broad CLI/TUI parity still keep the repo-wide percentage conservative.
 - Active feature family progress: the live queue is now the gateway/session/tool-contract family, and it is roughly `94%` complete along the current bounded local parity path. The chat/session contract subfamily is roughly `96%` after closing `chat.send` timeout/session-key/provenance schema parity, `chat.inject` schema parity, `chat.abort` run-id validation, `sessions.create` key/run-error behavior, `sessions.patch` lineage/normalization guards, `sessions.delete deleteTranscript=false`, and `tools.invoke` session-tool projection/visibility seams.
 - Fully completed bounded slices: gateway method registry and policy wiring; config lookup/mutation; node invoke guard rails; device pair/token lifecycle; plugin and exec approval lifecycles; cron expression/due-run/session-wake behavior; browser/canvas/nodes/voice bounded command bridges; direct session history REST/SSE; transcript projection/sanitization/usage-cost metadata; custom-agent registry/identity/files/session ownership; and core `tools.invoke` allow/deny/hook/plugin-envelope behavior are locked for the OpenZues-local contract.
-- Latest completed seams: the freshest landed seams are `sessions.spawn lightContext bootstrap metadata`, `sessions.spawn completion-expectation metadata`, `sessions.spawn configured default runTimeoutSeconds`, `chat.abort empty runId rejection`, `chat.inject non-empty message and label cap`, `chat.send strict systemInputProvenance schema validation`, `chat.send 512-character sessionKey cap`, `chat.send timer-safe timeoutMs clamping`, `sessions.delete retained-transcript delete/archive split`, `sessions.patch groupActivation/sendPolicy/elevatedLevel/exec* normalization`, `sessions.patch lineage support/immutability/duplicate-label guards`, `sessions.create key-agent mismatch and initial-run error shape`, `sessions.spawn accepted note/modelApplied/requester lineage`, and `tools.invoke` projection hardening for `sessions_spawn`, `sessions_send`, `sessions_yield`, `session_status`, `sessions_history`, and `sessions_list`.
+- Latest completed seams: the freshest landed seams are `sessions.spawn child bootstrap task envelope`, `sessions.spawn lightContext bootstrap metadata`, `sessions.spawn completion-expectation metadata`, `sessions.spawn configured default runTimeoutSeconds`, `chat.abort empty runId rejection`, `chat.inject non-empty message and label cap`, `chat.send strict systemInputProvenance schema validation`, `chat.send 512-character sessionKey cap`, `chat.send timer-safe timeoutMs clamping`, `sessions.delete retained-transcript delete/archive split`, `sessions.patch groupActivation/sendPolicy/elevatedLevel/exec* normalization`, `sessions.patch lineage support/immutability/duplicate-label guards`, `sessions.create key-agent mismatch and initial-run error shape`, `sessions.spawn accepted note/modelApplied/requester lineage`, and `tools.invoke` projection hardening for `sessions_spawn`, `sessions_send`, `sessions_yield`, `session_status`, `sessions_history`, and `sessions_list`.
 - Current queue head: continue source-backed `sessions.*` / gateway tool-runtime parity. The strongest remaining gaps are ACP-backed `sessions.spawn` harness execution, sandboxed target runtimes, persistent thread-binding/lifecycle hooks, provider-native outbound delivery behind the shared direct/poll/announce owner, richer native plugin executor ordering, and broader companion/CLI/runtime surfaces.
 - How to read this checkpoint: treat the dated checkpoint sections near the top as seam locks and re-anchors, then use the newest `Recovery addendum` entries later in the file for the live edge. The final addendum's "Next exact seam" callout is the current queue head unless a newer dated section overrides it.
 
@@ -23197,3 +23197,34 @@ Next best slice:
   - remaining spawn work is still deeper ACP harness execution, sandboxed
     target runtimes, thread-binding lifecycle hooks, and completion/cleanup
     orchestration.
+
+### Recovery addendum 2026-04-26 sessions_spawn child task envelope parity America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw does not send raw task text directly to spawned subagents. It
+    wraps the child run in a `[Subagent Context]` bootstrap envelope plus a
+    `[Subagent Task]` line so the child knows its depth and push-based
+    completion expectations.
+  - OpenZues created the child session correctly, but sent only the raw task
+    body to the child runtime.
+- Landed the bounded child-bootstrap slice:
+  - `sessions.spawn` now formats the child run message with the upstream-shaped
+    subagent context envelope.
+  - inline attachment instructions are appended after that envelope instead of
+    replacing it.
+- Product effect:
+  - spawned child sessions now start with the same operator-facing contract
+    OpenClaw gives subagents: know your depth, do not busy-poll, and treat the
+    task as the child assignment.
+- Verified this continuation with:
+  - red proof:
+    `test_tools_invoke_allows_sessions_spawn_when_gateway_tools_allow_configured`
+    and `test_sessions_spawn_creates_openclaw_style_subagent_session` first
+    failed because child runs received raw task text.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "allows_sessions_spawn_when_gateway_tools_allow_configured or sessions_spawn_creates_openclaw_style_subagent_session"`:
+    `2 passed`
+- Queue effect from this run:
+  - local child task bootstrap shape is now aligned for the bounded subagent
+    runtime path.
+  - deeper open work remains ACP harness execution, thread-bound session
+    spawns, sandboxed target runtimes, and lifecycle cleanup/announce handling.
