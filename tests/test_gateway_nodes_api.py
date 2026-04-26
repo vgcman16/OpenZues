@@ -19345,6 +19345,111 @@ def test_gateway_session_history_rest_endpoint_reports_unknown_session() -> None
     }
 
 
+def test_gateway_session_history_rest_endpoint_rejects_non_get_methods() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-session-history-rest-method-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post("/sessions/agent%3Amain%3Amain/history")
+
+    assert response.status_code == 405
+    assert response.headers["allow"] == "GET"
+    assert response.headers["content-type"].startswith("text/plain")
+    assert response.text == "Method Not Allowed"
+
+
+def test_gateway_session_history_rest_endpoint_rejects_blank_session_key() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-session-history-rest-key-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.get("/sessions/%20/history")
+
+    assert response.status_code == 400
+    assert response.json() == {
+        "error": {
+            "message": "invalid session key",
+            "type": "invalid_request_error",
+        }
+    }
+
+
+def test_gateway_session_history_rest_endpoint_honors_remote_declared_scopes() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-session-history-rest-scopes-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    local_app = create_app(app_settings)
+    session_key = "agent:main:main"
+
+    with TestClient(local_app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        operator_response = client.post(
+            "/api/operators",
+            json={
+                "name": "Remote History Reader",
+                "role": "operator",
+                "issue_api_key": True,
+            },
+        )
+        assert operator_response.status_code == 200
+        api_key = operator_response.json()["api_key"]
+        asyncio.run(
+            client.app.state.database.append_control_chat_message(
+                role="assistant",
+                content="scope-guarded history",
+                session_key=session_key,
+            )
+        )
+
+    remote_app = create_app(app_settings)
+    with TestClient(remote_app, client=("203.0.113.7", 50000)) as client:
+        blocked_response = client.get(
+            f"/sessions/{quote(session_key, safe='')}/history",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "x-openclaw-scopes": "operator.approvals",
+            },
+        )
+        allowed_response = client.get(
+            f"/sessions/{quote(session_key, safe='')}/history",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "x-openclaw-scopes": "operator.read",
+            },
+        )
+
+    assert blocked_response.status_code == 403
+    assert blocked_response.json() == {
+        "ok": False,
+        "error": {
+            "type": "forbidden",
+            "message": "missing scope: operator.read",
+        },
+    }
+    assert allowed_response.status_code == 200
+    assert allowed_response.json()["messages"][0]["content"][0]["text"] == (
+        "scope-guarded history"
+    )
+
+
 def test_gateway_session_history_rest_endpoint_streams_initial_sse_history() -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-session-history-rest-sse-api"
     shutil.rmtree(tmp_path, ignore_errors=True)

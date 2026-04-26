@@ -186,6 +186,10 @@ from openzues.services.gateway_config import GatewayConfigService
 from openzues.services.gateway_health import GatewayHealthService
 from openzues.services.gateway_identity import GatewayIdentityService
 from openzues.services.gateway_logs import GatewayLogsService
+from openzues.services.gateway_method_policy import (
+    READ_GATEWAY_METHOD_SCOPE,
+    authorize_operator_scopes_for_method,
+)
 from openzues.services.gateway_models import GatewayModelsService
 from openzues.services.gateway_node_methods import (
     GatewayNodeMethodError,
@@ -3911,6 +3915,40 @@ def create_app(
             for mission in missions
         )
 
+    def gateway_session_history_invalid_key_response() -> JSONResponse:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "error": {
+                    "message": "invalid session key",
+                    "type": "invalid_request_error",
+                }
+            },
+        )
+
+    def gateway_session_history_scope_response(request: Request) -> JSONResponse | None:
+        host = request.client.host if request.client is not None else None
+        if _is_loopback_host(host):
+            return None
+        header_value = request.headers.get("x-openclaw-scopes")
+        if header_value is None:
+            return None
+        scopes = [scope.strip() for scope in header_value.split(",") if scope.strip()]
+        authorization = authorize_operator_scopes_for_method("chat.history", scopes)
+        if authorization.allowed:
+            return None
+        missing_scope = authorization.missing_scope or READ_GATEWAY_METHOD_SCOPE
+        return JSONResponse(
+            status_code=403,
+            content={
+                "ok": False,
+                "error": {
+                    "type": "forbidden",
+                    "message": f"missing scope: {missing_scope}",
+                },
+            },
+        )
+
     def apply_direct_session_history_text_cap(payload: dict[str, Any]) -> None:
         seen_messages: set[int] = set()
         for field in ("messages", "items"):
@@ -3952,6 +3990,8 @@ def create_app(
         request: Request,
         session_key: str,
     ) -> Response:
+        if not session_key.strip():
+            return gateway_session_history_invalid_key_response()
         params: dict[str, Any] = {"sessionKey": session_key}
         limit = request.query_params.get("limit")
         limit_requested = limit is not None and bool(limit.strip())
@@ -3973,6 +4013,9 @@ def create_app(
         if "cursor" not in params:
             params["cursor"] = 1_000_000_000
         requester = await resolve_gateway_node_method_requester(request)
+        scope_response = gateway_session_history_scope_response(request)
+        if scope_response is not None:
+            return scope_response
 
         async def load_history_payload() -> dict[str, Any]:
             payload = await active_gateway_node_method_service.call(
@@ -4095,6 +4138,22 @@ def create_app(
                 media_type="text/event-stream",
             )
         return JSONResponse(content=response_payload)
+
+    @fastapi_app.api_route(
+        "/sessions/{session_key}/history",
+        methods=["POST", "PUT", "PATCH", "DELETE"],
+        include_in_schema=False,
+        response_model=None,
+    )
+    async def reject_gateway_session_history_method(session_key: str) -> Response:
+        if not session_key.strip():
+            return gateway_session_history_invalid_key_response()
+        return Response(
+            content="Method Not Allowed",
+            status_code=405,
+            headers={"Allow": "GET"},
+            media_type="text/plain; charset=utf-8",
+        )
 
     @fastapi_app.post("/api/gateway/nodes/{node_id}/method-call")
     async def call_gateway_node_method_as_node(

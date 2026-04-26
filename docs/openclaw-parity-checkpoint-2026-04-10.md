@@ -80,6 +80,94 @@
   - continue with the next source-backed `chat.*` / `sessions.*` mismatch,
     keeping direct REST history caps separate from RPC method semantics.
 
+## 2026-04-25 Direct Session History Method Guard Addendum
+
+- Continued through direct session-history HTTP edge cases after live SSE and
+  RPC limit parity landed.
+- Re-read the OpenClaw direct REST source:
+  - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\sessions-history-http.ts`
+  - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\http-common.ts`
+- Key finding:
+  - OpenClaw rejects non-GET `/sessions/{sessionKey}/history` calls with
+    `405`, `Allow: GET`, and plain-text `Method Not Allowed`.
+  - OpenZues relied on FastAPI's default JSON `405` response for the route.
+- Landed the smallest honest fix in `src/openzues/app.py`:
+  - added an explicit non-GET direct-history method guard for POST/PUT/PATCH/DELETE
+  - returned `Method Not Allowed` as `text/plain; charset=utf-8`
+  - preserved `Allow: GET`
+- Added focused proof coverage in:
+  - `tests/test_gateway_nodes_api.py`
+- Verified with:
+  - `python -m pytest tests\test_gateway_nodes_api.py -q -k "session_history_rest_endpoint"`: `9 passed`
+  - `ruff check src\openzues\app.py tests\test_gateway_nodes_api.py`: clean
+  - `python -m mypy src\openzues\app.py`: clean
+- Next exact seam:
+  - continue with source-backed direct-history edge cases if they map cleanly to
+    OpenZues, or move to the next bounded `chat.*` / `sessions.*` runtime
+    mismatch.
+
+## 2026-04-25 Direct Session History Blank Key Addendum
+
+- Continued through direct session-history HTTP edge cases after the method
+  guard landed.
+- Re-read the OpenClaw direct REST source:
+  - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\sessions-history-http.ts`
+  - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\http-common.ts`
+- Key finding:
+  - OpenClaw rejects a blank decoded `/sessions/{sessionKey}/history` key with
+    `400` and JSON `invalid_request_error` before lookup or method-specific
+    handling.
+  - OpenZues passed the blank key into the RPC history path, producing a
+    FastAPI `detail` error shape instead.
+- Landed the smallest honest fix in `src/openzues/app.py`:
+  - added a shared direct-history invalid-key response helper
+  - guarded the GET history route before calling `sessions.get`
+  - reused the same invalid-key guard for non-GET direct-history methods
+- Added focused proof coverage in:
+  - `tests/test_gateway_nodes_api.py`
+- Verified with:
+  - `python -m pytest tests\test_gateway_nodes_api.py -q -k "session_history_rest_endpoint"`: `10 passed`
+  - `python -m pytest tests\test_gateway_nodes_api.py tests\test_gateway_node_methods.py -q -k "sessions_get or session_history_rest or session_message or sessions_subscribe"`: `28 passed`
+  - `ruff check src\openzues\app.py tests\test_gateway_nodes_api.py`: clean
+  - `python -m mypy src\openzues\app.py`: clean
+- Next exact seam:
+  - continue with direct-history source edges only when they map cleanly to
+    OpenZues' SQLite-backed store; otherwise rotate back to the next concrete
+    `chat.*` / `sessions.*` runtime mismatch.
+
+## 2026-04-25 Direct Session History Declared Scope Addendum
+
+- Continued through direct session-history HTTP edge cases after method and
+  blank-key guards landed.
+- Re-read the OpenClaw direct REST auth source and proof:
+  - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\sessions-history-http.ts`
+  - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\http-utils.ts`
+  - `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\sessions-history-http.test.ts`
+- Key finding:
+  - OpenClaw direct history honors trusted declared HTTP scopes from
+    `x-openclaw-scopes`.
+  - A declared set such as `operator.approvals` must be rejected for history
+    reads because it omits `operator.read`.
+  - OpenZues authenticated the remote operator API key but ignored the declared
+    scope header on this direct REST endpoint.
+- Landed the smallest honest fix in `src/openzues/app.py`:
+  - parsed comma-separated `x-openclaw-scopes` for non-loopback direct-history
+    calls when the header is present
+  - reused the existing gateway method authorization policy for `chat.history`
+  - returned OpenClaw-style forbidden JSON for missing `operator.read`
+  - preserved loopback behavior and no-header API-key behavior
+- Added focused proof coverage in:
+  - `tests/test_gateway_nodes_api.py`
+- Verified with:
+  - `python -m pytest tests\test_gateway_nodes_api.py -q -k "session_history_rest_endpoint"`: `11 passed`
+  - `python -m pytest tests\test_gateway_nodes_api.py tests\test_gateway_node_methods.py -q -k "sessions_get or session_history_rest or session_message or sessions_subscribe"`: `29 passed`
+  - `ruff check src\openzues\app.py tests\test_gateway_nodes_api.py`: clean
+  - `python -m mypy src\openzues\app.py`: clean
+- Next exact seam:
+  - rotate back to the next concrete `chat.*` / `sessions.*` runtime mismatch
+    unless a remaining direct-history edge maps cleanly to OpenZues'
+    SQLite-backed store.
+
 ## 2026-04-25 Direct Session History REST Addendum
 
 - Continued the transcript replay pass after broad `sessions.subscribe`

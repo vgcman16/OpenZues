@@ -295,6 +295,17 @@
 - `pytest tests/test_gateway_nodes_api.py tests/test_gateway_node_methods.py -q -k "sessions_get or session_history_rest or session_message or sessions_subscribe"`: 26 passed after rechecking the session read/event/subscription pack.
 - `ruff check src/openzues/app.py src/openzues/services/gateway_node_methods.py src/openzues/services/hub.py src/openzues/services/gateway_sessions.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`: clean after the RPC `sessions.get` large-limit seam.
 - `mypy src/openzues/app.py src/openzues/services/gateway_node_methods.py src/openzues/services/hub.py src/openzues/services/gateway_sessions.py`: clean after the RPC `sessions.get` large-limit seam.
+- `pytest tests/test_gateway_nodes_api.py -q -k "session_history_rest_endpoint"`: 9 passed after making non-GET direct session-history calls return OpenClaw's plain-text `405` with `Allow: GET`.
+- `ruff check src/openzues/app.py tests/test_gateway_nodes_api.py`: clean after the direct history method guard seam.
+- `mypy src/openzues/app.py`: clean after the direct history method guard seam.
+- `pytest tests/test_gateway_nodes_api.py -q -k "session_history_rest_endpoint"`: 10 passed after making blank decoded direct history session keys return OpenClaw's `invalid_request_error`.
+- `ruff check src/openzues/app.py tests/test_gateway_nodes_api.py`: clean after the direct history blank-key guard seam.
+- `mypy src/openzues/app.py`: clean after the direct history blank-key guard seam.
+- `pytest tests/test_gateway_nodes_api.py tests/test_gateway_node_methods.py -q -k "sessions_get or session_history_rest or session_message or sessions_subscribe"`: 28 passed after rechecking adjacent session read/event/subscription paths.
+- `pytest tests/test_gateway_nodes_api.py -q -k "session_history_rest_endpoint"`: 11 passed after making remote direct history calls honor declared `x-openclaw-scopes`.
+- `pytest tests/test_gateway_nodes_api.py tests/test_gateway_node_methods.py -q -k "sessions_get or session_history_rest or session_message or sessions_subscribe"`: 29 passed after rechecking adjacent session read/event/subscription paths.
+- `ruff check src/openzues/app.py tests/test_gateway_nodes_api.py`: clean after the declared direct-history scope seam.
+- `mypy src/openzues/app.py`: clean after the declared direct-history scope seam.
 
 ## Current Queue Head
 
@@ -378,6 +389,9 @@
 - RPC `sessions.get` now defaults to OpenClaw's 200-message limit instead of clipping no-limit reads to 50 messages.
 - direct session-history SSE streams now remain live: unbounded streams emit inline OpenClaw-style `message` events from `session.message`, bounded or cursor streams emit refreshed `history` snapshots, and non-message `sessions.changed` updates refresh history without duplicating normal message-phase changes.
 - RPC `sessions.get` now honors explicit limits above the direct REST history cap, matching OpenClaw's method behavior while the HTTP history endpoint still clamps REST `limit` to 1000.
+- direct session-history HTTP now rejects non-GET methods with OpenClaw's `Allow: GET` plus plain-text `Method Not Allowed` response instead of FastAPI's default JSON 405.
+- direct session-history HTTP now rejects blank decoded session keys with OpenClaw's `invalid_request_error` JSON before lookup or method-specific handling.
+- remote direct session-history HTTP now honors declared `x-openclaw-scopes`, rejecting declared scope sets that omit `operator.read` while preserving loopback and no-header API-key behavior.
 - Next repo-level parity work should continue outside the browser command family, with remaining channel/session transcript/runtime gaps (`chat.*`, `sessions.*`) now the strongest nearby seam.
 
 ## References

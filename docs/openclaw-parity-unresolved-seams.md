@@ -44,6 +44,25 @@ above 1000 like OpenClaw's WebSocket method, while direct HTTP
 bounded transcript seam should inspect another source-backed `chat.*` /
 `sessions.*` mismatch instead of conflating RPC limits with direct REST limits.
 
+Current queue-head adjustment: direct session-history HTTP now rejects non-GET
+methods with OpenClaw's `405`, `Allow: GET`, and plain-text
+`Method Not Allowed` response instead of FastAPI's default JSON 405. The next
+bounded transcript seam should stay on source-backed direct-history edge cases
+or move to the next concrete `chat.*` / `sessions.*` runtime mismatch.
+
+Current queue-head adjustment: direct session-history HTTP now rejects blank
+decoded session keys with OpenClaw's `400` `invalid_request_error` JSON before
+dispatching to history lookup or method-specific handling. The next bounded
+transcript seam should stay on direct-history source edges only when they map
+cleanly to OpenZues' SQLite-backed session store.
+
+Current queue-head adjustment: remote direct session-history HTTP now honors a
+declared `x-openclaw-scopes` header, rejecting scope sets that omit
+`operator.read` with OpenClaw-style forbidden JSON while preserving loopback and
+no-header API-key behavior. Remaining direct-history edges that depend on
+OpenClaw's file-backed duplicate transcript store should be treated carefully
+because OpenZues' current source of truth is SQLite-backed control-chat rows.
+
 Current queue-head adjustment: persisted custom agents now flow through
 `agent.identity.get` by explicit `agentId` and by `agent:<id>:main` session keys,
 using the SQLite agent registry as the truth source while preserving malformed
