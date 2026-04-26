@@ -13630,6 +13630,63 @@ async def test_sessions_spawn_honors_configured_max_spawn_depth(tmp_path) -> Non
 
 
 @pytest.mark.asyncio
+async def test_sessions_spawn_uses_configured_default_run_timeout(tmp_path) -> None:
+    database = Database(tmp_path / "gateway-sessions-spawn-config-timeout.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "gateway": {
+                    "agents": {
+                        "defaults": {
+                            "subagents": {
+                                "runTimeoutSeconds": 120,
+                            },
+                        },
+                    },
+                },
+            }
+        )
+    )
+    observed_send: dict[str, object] = {}
+
+    async def fake_chat_send_service(**kwargs: object) -> dict[str, object]:
+        observed_send.update(kwargs)
+        return {"runId": "run-default-timeout", "status": "ok", "messageSeq": 1}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        config_service=config_service,
+        chat_send_service=fake_chat_send_service,
+    )
+
+    payload = await service.call(
+        "sessions.spawn",
+        {"task": "Use the configured default timeout."},
+    )
+
+    assert payload["status"] == "accepted"
+    assert observed_send["timeout_ms"] == 120_000
+
+
+@pytest.mark.asyncio
 async def test_sessions_spawn_honors_configured_max_children_per_agent(tmp_path) -> None:
     database = Database(tmp_path / "gateway-sessions-spawn-max-children.db")
     await database.initialize()

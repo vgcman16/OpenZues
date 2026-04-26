@@ -17,6 +17,12 @@ Current percentage rollup:
   execution, sandbox/thread lifecycle hooks, provider-native outbound runtime,
   richer plugin executor ordering, and broader companion/CLI/runtime parity.
 
+Current queue-head adjustment: `sessions.spawn` now preserves and applies
+OpenClaw's `gateway.agents.defaults.subagents.runTimeoutSeconds` config default
+when callers omit explicit `runTimeoutSeconds` / legacy `timeoutSeconds`.
+Remaining spawn work should stay on ACP harness execution, sandboxed target
+runtimes, thread-binding lifecycle hooks, and completion/cleanup orchestration.
+
 Current queue-head adjustment: OpenZues now advertises an explicit
 `sessions_history` tool posture and exposes `sessions.history` as an
 agent-tool-style gateway read: it resolves session aliases, hides tool rows by

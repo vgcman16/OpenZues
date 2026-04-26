@@ -5,7 +5,7 @@
 - Estimated parity progress: roughly `43%` of the full OpenClaw product surface is now covered, with a reasonable confidence band of `38-48%`. Gateway/control-plane, session/chat contracts, direct history, cron, browser/canvas command bridges, and bounded tool invocation are materially further along than whole-product parity; packaging, companion apps, provider-native runtimes, ACP harness spawning, and broad CLI/TUI parity still keep the repo-wide percentage conservative.
 - Active feature family progress: the live queue is now the gateway/session/tool-contract family, and it is roughly `94%` complete along the current bounded local parity path. The chat/session contract subfamily is roughly `96%` after closing `chat.send` timeout/session-key/provenance schema parity, `chat.inject` schema parity, `chat.abort` run-id validation, `sessions.create` key/run-error behavior, `sessions.patch` lineage/normalization guards, `sessions.delete deleteTranscript=false`, and `tools.invoke` session-tool projection/visibility seams.
 - Fully completed bounded slices: gateway method registry and policy wiring; config lookup/mutation; node invoke guard rails; device pair/token lifecycle; plugin and exec approval lifecycles; cron expression/due-run/session-wake behavior; browser/canvas/nodes/voice bounded command bridges; direct session history REST/SSE; transcript projection/sanitization/usage-cost metadata; custom-agent registry/identity/files/session ownership; and core `tools.invoke` allow/deny/hook/plugin-envelope behavior are locked for the OpenZues-local contract.
-- Latest completed seams: the freshest landed seams are `chat.abort empty runId rejection`, `chat.inject non-empty message and label cap`, `chat.send strict systemInputProvenance schema validation`, `chat.send 512-character sessionKey cap`, `chat.send timer-safe timeoutMs clamping`, `sessions.delete retained-transcript delete/archive split`, `sessions.patch groupActivation/sendPolicy/elevatedLevel/exec* normalization`, `sessions.patch lineage support/immutability/duplicate-label guards`, `sessions.create key-agent mismatch and initial-run error shape`, `sessions.spawn accepted note/modelApplied/requester lineage`, and `tools.invoke` projection hardening for `sessions_spawn`, `sessions_send`, `sessions_yield`, `session_status`, `sessions_history`, and `sessions_list`.
+- Latest completed seams: the freshest landed seams are `sessions.spawn configured default runTimeoutSeconds`, `chat.abort empty runId rejection`, `chat.inject non-empty message and label cap`, `chat.send strict systemInputProvenance schema validation`, `chat.send 512-character sessionKey cap`, `chat.send timer-safe timeoutMs clamping`, `sessions.delete retained-transcript delete/archive split`, `sessions.patch groupActivation/sendPolicy/elevatedLevel/exec* normalization`, `sessions.patch lineage support/immutability/duplicate-label guards`, `sessions.create key-agent mismatch and initial-run error shape`, `sessions.spawn accepted note/modelApplied/requester lineage`, and `tools.invoke` projection hardening for `sessions_spawn`, `sessions_send`, `sessions_yield`, `session_status`, `sessions_history`, and `sessions_list`.
 - Current queue head: continue source-backed `sessions.*` / gateway tool-runtime parity. The strongest remaining gaps are ACP-backed `sessions.spawn` harness execution, sandboxed target runtimes, persistent thread-binding/lifecycle hooks, provider-native outbound delivery behind the shared direct/poll/announce owner, richer native plugin executor ordering, and broader companion/CLI/runtime surfaces.
 - How to read this checkpoint: treat the dated checkpoint sections near the top as seam locks and re-anchors, then use the newest `Recovery addendum` entries later in the file for the live edge. The final addendum's "Next exact seam" callout is the current queue head unless a newer dated section overrides it.
 
@@ -23108,3 +23108,32 @@ Next best slice:
   - direct `chat.abort` run-id validation parity is closed.
   - next queue head should resume `sessions.*` lifecycle/method gaps unless a
     smaller remaining `chat.history` schema gap is proven.
+
+### Recovery addendum 2026-04-26 sessions_spawn default timeout parity America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw `sessions_spawn` resolves omitted `runTimeoutSeconds` through
+    `agents.defaults.subagents.runTimeoutSeconds`, falling back to no-timeout
+    only when the config key is absent.
+  - OpenZues accepted the same gateway config shape for other subagent limits,
+    but the schema dropped `runTimeoutSeconds` and the spawn path forwarded
+    `timeout_ms=None` whenever the caller omitted an explicit timeout.
+- Landed the bounded default-timeout slice:
+  - `ControlUiGatewayAgentSubagentsConfigView` now preserves
+    `runTimeoutSeconds`.
+  - `sessions.spawn` now uses that configured default when explicit
+    `runTimeoutSeconds` / legacy `timeoutSeconds` are absent.
+- Product effect:
+  - OpenZues subagent spawns now honor the same default timeout control that
+    OpenClaw agents use for long-running child work.
+- Verified this continuation with:
+  - red proof:
+    `test_sessions_spawn_uses_configured_default_run_timeout` first failed
+    because the runtime call received `timeout_ms=None`.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_spawn_uses_configured_default_run_timeout"`:
+    `1 passed`
+- Queue effect from this run:
+  - configured default subagent timeout parity is closed.
+  - remaining `sessions.spawn` gaps are still ACP harness execution,
+    sandboxed target runtimes, thread-binding lifecycle hooks, and richer
+    subagent completion/cleanup orchestration.

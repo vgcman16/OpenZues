@@ -1671,6 +1671,11 @@ class ControlUiGatewayAgentSubagentsConfigView(BaseModel):
         ge=1,
         le=20,
     )
+    run_timeout_seconds: int | None = Field(
+        default=None,
+        alias="runTimeoutSeconds",
+        ge=0,
+    )
     require_agent_id: bool = Field(default=False, alias="requireAgentId")
 
 

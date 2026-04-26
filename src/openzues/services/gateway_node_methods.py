@@ -6984,7 +6984,7 @@ class GatewayNodeMethodService:
             run_timeout_seconds = (
                 int(run_timeout_seconds_value)
                 if run_timeout_seconds_value is not None
-                else None
+                else _sessions_spawn_default_run_timeout_seconds(self._config_service)
             )
             timeout_ms = (
                 run_timeout_seconds * 1000 if run_timeout_seconds is not None else None
@@ -11422,6 +11422,22 @@ def _sessions_spawn_max_children_per_agent(config_service: GatewayConfigService 
     if configured_max_children is None:
         return _SESSIONS_SPAWN_DEFAULT_MAX_CHILDREN_PER_AGENT
     return min(20, max(1, configured_max_children))
+
+
+def _sessions_spawn_default_run_timeout_seconds(
+    config_service: GatewayConfigService | None,
+) -> int | None:
+    if config_service is None:
+        return None
+    subagents_config = _sessions_spawn_subagents_config(config_service)
+    if subagents_config is None:
+        return None
+    raw_timeout = subagents_config.get("runTimeoutSeconds")
+    if isinstance(raw_timeout, bool) or not isinstance(raw_timeout, int | float):
+        return None
+    if not math.isfinite(float(raw_timeout)):
+        return None
+    return max(0, math.floor(float(raw_timeout)))
 
 
 def _sessions_spawn_requires_agent_id(config_service: GatewayConfigService | None) -> bool:
