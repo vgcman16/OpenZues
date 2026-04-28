@@ -3125,6 +3125,53 @@ class Database:
             )
             return item
 
+    async def get_latest_terminal_mission_by_run_id(
+        self,
+        run_id: str,
+        *,
+        instance_id: int | None = None,
+        require_session_key: bool = False,
+    ) -> dict[str, Any] | None:
+        normalized_run_id = str(run_id or "").strip()
+        if not normalized_run_id:
+            return None
+        query = [
+            "SELECT * FROM missions",
+            "WHERE CASE",
+            "    WHEN json_valid(swarm_state_json)",
+            "        THEN COALESCE(json_extract(swarm_state_json, '$.run_id'), '')",
+            "    ELSE ''",
+            "END = ?",
+            "AND status IN ('completed', 'failed')",
+        ]
+        params: list[Any] = [normalized_run_id]
+        if instance_id is not None:
+            query.append("AND instance_id = ?")
+            params.append(instance_id)
+        if require_session_key:
+            query.append("AND session_key IS NOT NULL AND TRIM(session_key) <> ''")
+        query.extend(
+            [
+                "ORDER BY",
+                "updated_at DESC,",
+                "id DESC",
+                "LIMIT 1",
+            ]
+        )
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute("\n".join(query), params)
+            row = await cursor.fetchone()
+            if row is None:
+                return None
+            item = dict(row)
+            item["swarm"] = self._decode_json_object(item.pop("swarm_state_json", None))
+            item["toolsets"] = self._decode_json_list(item.pop("toolsets_json", "[]"))
+            item["conversation_target"] = self._decode_json_object(
+                item.pop("conversation_target_json", None)
+            )
+            return item
+
     async def update_mission(self, mission_id: int, **fields: Any) -> None:
         if "swarm" in fields:
             swarm = fields.pop("swarm")

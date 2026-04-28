@@ -23686,3 +23686,40 @@ Next best slice:
     rows when it is specifically looking for terminal child state.
   - remaining spawn lifecycle work is push-native announcement delivery,
     thread-binding hooks, ACP harness execution, and sandboxed target runtimes.
+
+### Recovery addendum 2026-04-28 agent_wait terminal exact-run lookup parity America/Chicago
+
+- Queue-head seam before implementation:
+  - exact `agent.wait` lookup already preferred durable `swarm.run_id` rows over
+    session fallback.
+  - that durable lookup still used active-first mission ordering, so duplicate
+    rows for the same run id could return a stale active mission while a
+    completed or failed exact-run mission existed.
+  - the wait then returned `timeout` because it never reached the terminal
+    duplicate row.
+- Landed the bounded terminal exact-run lookup slice:
+  - `Database.get_latest_terminal_mission_by_run_id` now returns the freshest
+    completed or failed mission for a durable `swarm.run_id`.
+  - `agent.wait` checks that terminal exact-run lookup first, then falls back to
+    the existing active-aware lookup when no terminal row exists.
+- Product effect:
+  - exact waits now surface completed or failed durable run state even when a
+    stale active row for the same `swarm.run_id` remains in the mission table.
+- Verified this continuation with:
+  - red proof:
+    `test_agent_wait_prefers_terminal_exact_run_id_over_stale_active` first
+    failed because the wait returned `timeout` while a completed exact-run
+    duplicate existed behind a stale active duplicate.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "agent_wait_prefers_terminal_exact_run_id_over_stale_active"`:
+    `1 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "agent_wait or sessions_spawn_child_cap_pruning_does_not_consume_wait_lifecycle or sessions_spawn_creates_openclaw_style_subagent_session or sessions_spawn_persists_completion_expectation_override or sessions_spawn_defaults_omitted_run_timeout_to_zero"`:
+    `18 passed`
+  - `ruff check src\openzues\database.py src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`:
+    clean
+  - `mypy src\openzues\database.py src\openzues\services\gateway_node_methods.py`:
+    clean
+- Queue effect from this run:
+  - bounded local `agent.wait` exact-run lookup now ignores duplicate stale
+    active rows when terminal exact-run state exists.
+  - remaining spawn lifecycle work is push-native announcement delivery,
+    thread-binding hooks, ACP harness execution, and sandboxed target runtimes.

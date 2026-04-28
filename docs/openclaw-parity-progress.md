@@ -730,6 +730,10 @@ These are complete within the bounded OpenZues-local parity contract verified in
   missions under the tracked parent session with terminal-only ordering, so
   stale active child rows cannot mask completed or failed child terminal state.
 - Verified the terminal thread-child wait fallback seam with `python -m pytest tests\test_gateway_node_methods.py -q -k "agent_wait_prefers_terminal_thread_child_mission_over_stale_active"`, adjacent `python -m pytest tests\test_gateway_node_methods.py -q -k "agent_wait or sessions_spawn_child_cap_pruning_does_not_consume_wait_lifecycle or sessions_spawn_creates_openclaw_style_subagent_session or sessions_spawn_persists_completion_expectation_override or sessions_spawn_defaults_omitted_run_timeout_to_zero"`, `ruff check src\openzues\database.py src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`, and `mypy src\openzues\database.py src\openzues\services\gateway_node_methods.py`.
+- exact `agent.wait` run-id lookup now prefers terminal `swarm.run_id`
+  missions before falling back to the existing active-aware run lookup, so
+  duplicate stale active rows cannot mask completed or failed exact-run state.
+- Verified the terminal exact-run wait lookup seam with `python -m pytest tests\test_gateway_node_methods.py -q -k "agent_wait_prefers_terminal_exact_run_id_over_stale_active"`, adjacent `python -m pytest tests\test_gateway_node_methods.py -q -k "agent_wait or sessions_spawn_child_cap_pruning_does_not_consume_wait_lifecycle or sessions_spawn_creates_openclaw_style_subagent_session or sessions_spawn_persists_completion_expectation_override or sessions_spawn_defaults_omitted_run_timeout_to_zero"`, `ruff check src\openzues\database.py src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`, and `mypy src\openzues\database.py src\openzues\services\gateway_node_methods.py`.
 - Next repo-level parity work should continue outside the browser command family, with remaining channel/session transcript/runtime gaps (`chat.*`, `sessions.*`) now the strongest nearby seam.
 
 ## References

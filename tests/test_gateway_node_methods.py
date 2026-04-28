@@ -16009,6 +16009,83 @@ async def test_agent_wait_prefers_exact_run_id_over_active_session_fallback(
 
 
 @pytest.mark.asyncio
+async def test_agent_wait_prefers_terminal_exact_run_id_over_stale_active(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-agent-wait-exact-run-terminal.db")
+    await database.initialize()
+    session_key = "openzues:thread:agent-wait-exact-run-terminal"
+    await database.create_mission(
+        name="Gateway Agent Wait Exact Run Stale Active",
+        objective="This active duplicate should not hide terminal exact state.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread-agent-wait-exact-run-terminal-active",
+        session_key=session_key,
+        cwd=str(tmp_path),
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=False,
+        run_verification=False,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        swarm={"run_id": "run-agent-wait-exact-terminal-1"},
+    )
+    await database.create_mission(
+        name="Gateway Agent Wait Exact Run Terminal",
+        objective="This terminal exact run id should complete the wait.",
+        status="completed",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread-agent-wait-exact-run-terminal-completed",
+        session_key=session_key,
+        cwd=str(tmp_path),
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=False,
+        run_verification=False,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        swarm={"run_id": "run-agent-wait-exact-terminal-1"},
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+    )
+    service._remember_gateway_chat_run(
+        session_key,
+        {"runId": "run-agent-wait-exact-terminal-1", "status": "ok"},
+        started_at_ms=1,
+    )
+
+    payload = await service.call(
+        "agent.wait",
+        {"runId": "run-agent-wait-exact-terminal-1", "timeoutMs": 0},
+    )
+
+    assert payload["runId"] == "run-agent-wait-exact-terminal-1"
+    assert payload["status"] == "ok"
+    assert payload["startedAt"] == 1
+    assert isinstance(payload["endedAt"], int)
+    assert payload["endedAt"] >= payload["startedAt"]
+
+
+@pytest.mark.asyncio
 async def test_agent_wait_prefers_terminal_session_mission_over_stale_active(
     tmp_path,
 ) -> None:
