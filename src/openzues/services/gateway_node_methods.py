@@ -10915,7 +10915,13 @@ class GatewayNodeMethodService:
         requester_aliases = set(_session_key_aliases(requester_session_key))
         active_count = 0
         for run_id, tracked_run in list(self._gateway_tracked_chat_runs_by_id.items()):
-            if await self._gateway_chat_terminal_snapshot(run_id=run_id) is not None:
+            if (
+                await self._gateway_chat_terminal_snapshot(
+                    run_id=run_id,
+                    consume_lifecycle=False,
+                )
+                is not None
+            ):
                 continue
             metadata_row = await self._database.get_gateway_session_metadata(
                 tracked_run.session_key
@@ -10963,7 +10969,12 @@ class GatewayNodeMethodService:
             await self._sleep(sleep_seconds)
             slept = True
 
-    async def _gateway_chat_terminal_snapshot(self, *, run_id: str) -> dict[str, object] | None:
+    async def _gateway_chat_terminal_snapshot(
+        self,
+        *,
+        run_id: str,
+        consume_lifecycle: bool = True,
+    ) -> dict[str, object] | None:
         if self._database is None:
             return None
         tracked_run = self._gateway_tracked_chat_runs_by_id.get(run_id)
@@ -11031,7 +11042,7 @@ class GatewayNodeMethodService:
         error = _string_or_none(mission.get("last_error"))
         if status == "failed" and error is not None and error.strip():
             payload["error"] = error.strip()
-        if tracked_run is not None:
+        if tracked_run is not None and consume_lifecycle:
             await self._announce_gateway_chat_run_terminal_completion(
                 session_key=tracked_run.session_key,
                 run_id=run_id,

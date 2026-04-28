@@ -13867,6 +13867,126 @@ async def test_sessions_spawn_honors_configured_max_children_per_agent(tmp_path)
 
 
 @pytest.mark.asyncio
+async def test_sessions_spawn_child_cap_pruning_does_not_consume_wait_lifecycle(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-sessions-spawn-prune-wait-lifecycle.db")
+    await database.initialize()
+    requester_session_key = "agent:main:main"
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "gateway": {
+                    "agents": {
+                        "defaults": {
+                            "subagents": {
+                                "maxSpawnDepth": 2,
+                                "maxChildrenPerAgent": 1,
+                            },
+                        },
+                    },
+                },
+            }
+        )
+    )
+    send_count = 0
+
+    async def fake_chat_send_service(**_kwargs: object) -> dict[str, object]:
+        nonlocal send_count
+        send_count += 1
+        return {"runId": f"run-prune-wait-lifecycle-{send_count}", "status": "ok"}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        hub=BroadcastHub(),
+        sessions_service=GatewaySessionsService(database),
+        config_service=config_service,
+        chat_send_service=fake_chat_send_service,
+    )
+
+    first = await service.call(
+        "sessions.spawn",
+        {"task": "First child.", "requesterSessionKey": requester_session_key},
+        now_ms=500,
+    )
+    child_session_key = str(first["childSessionKey"])
+    metadata_row = await database.get_gateway_session_metadata(child_session_key)
+    assert metadata_row is not None
+    parent_session_key = str(metadata_row["metadata"]["parentSessionKey"])
+    mission_id = await database.create_mission(
+        name="Spawn Child Cap Prune Wait Lifecycle",
+        objective="Finish before the next child-cap check.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread-spawn-prune-wait-lifecycle",
+        session_key=child_session_key,
+        cwd=str(tmp_path),
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=False,
+        run_verification=False,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+    )
+    await database.update_mission(
+        mission_id,
+        status="completed",
+        in_progress=0,
+        phase="completed",
+        last_checkpoint="First child finished before the next spawn.",
+    )
+
+    second = await service.call(
+        "sessions.spawn",
+        {"task": "Second child.", "requesterSessionKey": requester_session_key},
+        now_ms=501,
+    )
+    parent_messages_before_wait = await database.list_control_chat_messages(
+        session_key=parent_session_key,
+    )
+    wait_payload = await service.call(
+        "agent.wait",
+        {"runId": "run-prune-wait-lifecycle-1", "timeoutMs": 0},
+    )
+    parent_messages_after_wait = await database.list_control_chat_messages(
+        session_key=parent_session_key,
+    )
+
+    assert first["status"] == "accepted"
+    assert second["status"] == "accepted"
+    assert parent_messages_before_wait == []
+    assert wait_payload["status"] == "ok"
+    assert [message["content"] for message in parent_messages_after_wait] == [
+        f"Subagent {child_session_key} completed: "
+        "First child finished before the next spawn.",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_sessions_spawn_persists_depth_role_and_control_scope(tmp_path) -> None:
     database = Database(tmp_path / "gateway-sessions-spawn-role.db")
     await database.initialize()

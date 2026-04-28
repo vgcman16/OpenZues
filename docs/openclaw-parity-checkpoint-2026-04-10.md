@@ -23571,3 +23571,41 @@ Next best slice:
     tracking for different run ids.
   - remaining spawn lifecycle work is push-native announcement delivery,
     thread-binding hooks, ACP harness execution, and sandboxed target runtimes.
+
+### Recovery addendum 2026-04-28 sessions_spawn child-cap wait-lifecycle parity America/Chicago
+
+- Queue-head seam before implementation:
+  - `sessions.spawn` enforces `maxChildrenPerAgent` by pruning tracked child
+    runs that have already reached a terminal mission state.
+  - that pruning reused the same terminal snapshot consumer as `agent.wait`,
+    so merely attempting a follow-up spawn emitted the parent completion
+    message and forgot the first child run before callers could wait on it.
+- Landed the bounded child-cap observation slice:
+  - terminal snapshot reads now support a non-consuming observation mode.
+  - active-child-cap counting uses that mode to skip terminal children without
+    announcing, cleaning up, or forgetting their tracked run.
+  - `agent.wait` keeps the consuming default and remains the bounded local owner
+    of completion announcements and cleanup.
+- Product effect:
+  - a parent can spawn the next child after an older child completes without
+    receiving a completion message as a side effect of the cap check.
+  - the later `agent.wait` call still returns the first child's terminal
+    snapshot and consumes its lifecycle metadata.
+- Verified this continuation with:
+  - red proof:
+    `test_sessions_spawn_child_cap_pruning_does_not_consume_wait_lifecycle`
+    first failed because the second spawn wrote the parent completion message
+    before `agent.wait` ran.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_spawn_child_cap_pruning_does_not_consume_wait_lifecycle"`:
+    `1 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "agent_wait or sessions_spawn_creates_openclaw_style_subagent_session or sessions_spawn_persists_completion_expectation_override or sessions_spawn_defaults_omitted_run_timeout_to_zero or sessions_spawn_child_cap_pruning_does_not_consume_wait_lifecycle"`:
+    `15 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`:
+    clean
+  - `mypy src\openzues\services\gateway_node_methods.py`:
+    clean
+- Queue effect from this run:
+  - bounded local spawn cap pruning no longer consumes wait lifecycle side
+    effects.
+  - remaining spawn lifecycle work is push-native announcement delivery,
+    thread-binding hooks, ACP harness execution, and sandboxed target runtimes.

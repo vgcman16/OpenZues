@@ -716,6 +716,11 @@ These are complete within the bounded OpenZues-local parity contract verified in
 - historical exact `agent.wait` lookups now preserve a different current run
   already tracked for the same session.
 - Verified the exact-run tracker isolation seam with `python -m pytest tests\test_gateway_node_methods.py -q -k "agent_wait_exact_run_id_does_not_evict_different_active_session_run"`, adjacent `python -m pytest tests\test_gateway_node_methods.py -q -k "agent_wait or sessions_spawn_creates_openclaw_style_subagent_session or sessions_spawn_persists_completion_expectation_override or sessions_spawn_defaults_omitted_run_timeout_to_zero"`, `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`, and `mypy src\openzues\services\gateway_node_methods.py`.
+- `sessions.spawn` active-child-cap pruning now observes terminal tracked
+  children without consuming the `agent.wait` lifecycle. Parent completion
+  announcements and cleanup remain attached to the later wait call instead of
+  being triggered by max-child counting.
+- Verified the child-cap pruning wait-lifecycle seam with `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_spawn_child_cap_pruning_does_not_consume_wait_lifecycle"`, adjacent `python -m pytest tests\test_gateway_node_methods.py -q -k "agent_wait or sessions_spawn_creates_openclaw_style_subagent_session or sessions_spawn_persists_completion_expectation_override or sessions_spawn_defaults_omitted_run_timeout_to_zero or sessions_spawn_child_cap_pruning_does_not_consume_wait_lifecycle"`, `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`, and `mypy src\openzues\services\gateway_node_methods.py`.
 - Next repo-level parity work should continue outside the browser command family, with remaining channel/session transcript/runtime gaps (`chat.*`, `sessions.*`) now the strongest nearby seam.
 
 ## References

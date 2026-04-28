@@ -81,6 +81,12 @@ Current queue-head adjustment: historical exact `agent.wait` calls no longer
 evict a different current run tracked for the same session; exact-run recovery
 only takes session tracker ownership when no other run is active there.
 
+Current queue-head adjustment: `sessions.spawn` active-child-cap pruning now
+observes terminal tracked child runs without consuming the `agent.wait`
+lifecycle path. Finished children no longer emit parent completion messages or
+run cleanup merely because a requester attempts another spawn; the later
+`agent.wait` call still consumes the terminal snapshot and lifecycle metadata.
+
 Current queue-head adjustment: OpenZues now advertises an explicit
 `sessions_history` tool posture and exposes `sessions.history` as an
 agent-tool-style gateway read: it resolves session aliases, hides tool rows by
