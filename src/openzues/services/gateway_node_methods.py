@@ -8044,7 +8044,7 @@ class GatewayNodeMethodService:
             )
             return await self._wait_for_gateway_chat_run(
                 run_id=run_id,
-                timeout_ms=timeout_ms or 30_000,
+                timeout_ms=timeout_ms if timeout_ms is not None else 30_000,
             )
 
         if resolved_method == "agents.create":

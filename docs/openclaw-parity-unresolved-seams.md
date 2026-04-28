@@ -63,6 +63,10 @@ fallback missions whose end timestamp is older than the tracked run start time,
 preventing stale completed mission state in a reused session from falsely
 completing a newer tracked run.
 
+Current queue-head adjustment: explicit `agent.wait timeoutMs=0` now preserves
+OpenClaw-style no-wait polling semantics instead of widening to the local
+30-second default; omitted `timeoutMs` still uses the default wait.
+
 Current queue-head adjustment: OpenZues now advertises an explicit
 `sessions_history` tool posture and exposes `sessions.history` as an
 agent-tool-style gateway read: it resolves session aliases, hides tool rows by

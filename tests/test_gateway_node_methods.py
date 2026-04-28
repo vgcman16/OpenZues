@@ -15737,6 +15737,31 @@ async def test_agent_wait_waits_for_tracked_gateway_run_completion() -> None:
 
 
 @pytest.mark.asyncio
+async def test_agent_wait_zero_timeout_returns_without_sleeping(tmp_path) -> None:
+    database = Database(tmp_path / "gateway-agent-wait-zero-timeout.db")
+    await database.initialize()
+
+    async def fail_on_sleep(_seconds: float) -> None:
+        raise AssertionError("timeoutMs=0 should not sleep")
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sleep=fail_on_sleep,
+    )
+
+    payload = await service.call(
+        "agent.wait",
+        {"runId": "run-agent-wait-zero-timeout-1", "timeoutMs": 0},
+    )
+
+    assert payload == {
+        "runId": "run-agent-wait-zero-timeout-1",
+        "status": "timeout",
+    }
+
+
+@pytest.mark.asyncio
 async def test_agent_wait_ignores_stale_terminal_session_mission_for_tracked_run(
     tmp_path,
 ) -> None:

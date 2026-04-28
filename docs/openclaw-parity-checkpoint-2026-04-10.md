@@ -23428,3 +23428,37 @@ Next best slice:
     guard for reused sessions.
   - remaining spawn lifecycle work is push-native announcement delivery,
     thread-binding hooks, ACP harness execution, and sandboxed target runtimes.
+
+### Recovery addendum 2026-04-28 agent_wait zero-timeout parity America/Chicago
+
+- Queue-head seam before implementation:
+  - `agent.wait timeoutMs=0` should behave as a no-wait poll and return
+    `timeout` immediately when the run has no terminal snapshot.
+  - OpenZues parsed `0` correctly, but widened it back to the default 30-second
+    wait because the dispatch path used `timeout_ms or 30_000`.
+- Landed the bounded timeout slice:
+  - explicit `timeoutMs=0` is now preserved when calling the gateway chat wait
+    loop.
+  - omitted `timeoutMs` still receives the existing 30-second default.
+- Product effect:
+  - local poll-style `agent.wait` calls no longer sleep before returning
+    timeout, and adjacent lifecycle tests stay fast when they intentionally use
+    `timeoutMs=0`.
+- Verified this continuation with:
+  - red proof:
+    `test_agent_wait_zero_timeout_returns_without_sleeping` first failed
+    because the injected sleep hook was called with `0.05` seconds.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "agent_wait_zero_timeout_returns_without_sleeping"`:
+    `1 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "agent_wait_ignores_stale_terminal_session_mission_for_tracked_run"`:
+    `1 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "agent_wait or sessions_spawn_creates_openclaw_style_subagent_session or sessions_spawn_persists_completion_expectation_override or sessions_spawn_defaults_omitted_run_timeout_to_zero"`:
+    `11 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`:
+    clean
+  - `mypy src\openzues\services\gateway_node_methods.py`:
+    clean
+- Queue effect from this run:
+  - bounded local `agent.wait` now preserves explicit no-wait timeout semantics.
+  - remaining spawn lifecycle work is push-native announcement delivery,
+    thread-binding hooks, ACP harness execution, and sandboxed target runtimes.
