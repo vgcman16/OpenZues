@@ -102,6 +102,11 @@ terminal `swarm.run_id` mission rows before falling back to the active-aware
 durable run lookup. Duplicate stale active rows for the same run id can no
 longer hide completed or failed exact-run terminal state.
 
+Current queue-head adjustment: tracked `agent.wait` fallback now drops stale
+terminal candidates before continuing to the next lookup source. An old exact
+terminal row can no longer stop the wait from finding a fresher terminal
+session or child mission for the tracked run.
+
 Current queue-head adjustment: OpenZues now advertises an explicit
 `sessions_history` tool posture and exposes `sessions.history` as an
 agent-tool-style gateway read: it resolves session aliases, hides tool rows by

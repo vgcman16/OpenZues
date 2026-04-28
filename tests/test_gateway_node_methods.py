@@ -16086,6 +16086,103 @@ async def test_agent_wait_prefers_terminal_exact_run_id_over_stale_active(
 
 
 @pytest.mark.asyncio
+async def test_agent_wait_ignores_stale_exact_terminal_before_session_fallback(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-agent-wait-stale-exact-fallback.db")
+    await database.initialize()
+    session_key = "openzues:thread:agent-wait-stale-exact-fallback"
+    stale_exact_id = await database.create_mission(
+        name="Gateway Agent Wait Stale Exact Terminal",
+        objective="This stale exact terminal should not block session fallback.",
+        status="completed",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread-agent-wait-stale-exact",
+        session_key=session_key,
+        cwd=str(tmp_path),
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=False,
+        run_verification=False,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        swarm={"run_id": "run-agent-wait-stale-exact-fallback-1"},
+    )
+    terminal_session_id = await database.create_mission(
+        name="Gateway Agent Wait New Session Terminal",
+        objective="This fresh session terminal should complete the wait.",
+        status="completed",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread-agent-wait-fresh-session-terminal",
+        session_key=session_key,
+        cwd=str(tmp_path),
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=False,
+        run_verification=False,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+    )
+    with sqlite3.connect(database.path) as conn:
+        conn.execute(
+            "UPDATE missions SET created_at = ?, updated_at = ? WHERE id = ?",
+            (
+                "2026-04-28T12:00:00+00:00",
+                "2026-04-28T12:00:00+00:00",
+                stale_exact_id,
+            ),
+        )
+        conn.execute(
+            "UPDATE missions SET created_at = ?, updated_at = ? WHERE id = ?",
+            (
+                "2026-04-28T12:00:10+00:00",
+                "2026-04-28T12:00:10+00:00",
+                terminal_session_id,
+            ),
+        )
+        conn.commit()
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+    )
+    service._remember_gateway_chat_run(
+        session_key,
+        {"runId": "run-agent-wait-stale-exact-fallback-1", "status": "ok"},
+        started_at_ms=int(datetime(2026, 4, 28, 12, 0, 5, tzinfo=UTC).timestamp() * 1000),
+    )
+
+    payload = await service.call(
+        "agent.wait",
+        {"runId": "run-agent-wait-stale-exact-fallback-1", "timeoutMs": 0},
+    )
+
+    assert payload["runId"] == "run-agent-wait-stale-exact-fallback-1"
+    assert payload["status"] == "ok"
+    assert payload["startedAt"] == int(
+        datetime(2026, 4, 28, 12, 0, 5, tzinfo=UTC).timestamp() * 1000
+    )
+    assert payload["endedAt"] == int(
+        datetime(2026, 4, 28, 12, 0, 10, tzinfo=UTC).timestamp() * 1000
+    )
+
+
+@pytest.mark.asyncio
 async def test_agent_wait_prefers_terminal_session_mission_over_stale_active(
     tmp_path,
 ) -> None:

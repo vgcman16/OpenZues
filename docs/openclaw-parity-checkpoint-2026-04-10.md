@@ -23723,3 +23723,39 @@ Next best slice:
     active rows when terminal exact-run state exists.
   - remaining spawn lifecycle work is push-native announcement delivery,
     thread-binding hooks, ACP harness execution, and sandboxed target runtimes.
+
+### Recovery addendum 2026-04-28 agent_wait stale terminal fallback-chain parity America/Chicago
+
+- Queue-head seam before implementation:
+  - tracked `agent.wait` now checks terminal exact-run, direct session, and
+    thread-child terminal sources in that order.
+  - freshness validation happened only after a candidate was selected.
+  - if an exact terminal candidate was stale relative to the tracked run start,
+    the wait returned `timeout` immediately instead of continuing to a fresher
+    terminal session or child candidate.
+- Landed the bounded fallback-chain freshness slice:
+  - terminal snapshot resolution now discards stale terminal candidates as it
+    walks the fallback chain.
+  - active exact-run candidates remain authoritative; only completed or failed
+    candidates older than the tracked run start are skipped.
+- Product effect:
+  - old terminal exact rows no longer prevent tracked waits from finding a
+    fresher terminal session or child mission for the same run.
+- Verified this continuation with:
+  - red proof:
+    `test_agent_wait_ignores_stale_exact_terminal_before_session_fallback`
+    first failed because the wait returned `timeout` while a fresh terminal
+    session mission existed behind a stale exact terminal row.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "agent_wait_ignores_stale_exact_terminal_before_session_fallback"`:
+    `1 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "agent_wait or sessions_spawn_child_cap_pruning_does_not_consume_wait_lifecycle or sessions_spawn_creates_openclaw_style_subagent_session or sessions_spawn_persists_completion_expectation_override or sessions_spawn_defaults_omitted_run_timeout_to_zero"`:
+    `19 passed`
+  - `ruff check src\openzues\database.py src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`:
+    clean
+  - `mypy src\openzues\database.py src\openzues\services\gateway_node_methods.py`:
+    clean
+- Queue effect from this run:
+  - bounded local `agent.wait` freshness checks now allow later fallback sources
+    to satisfy the wait when an earlier terminal candidate is stale.
+  - remaining spawn lifecycle work is push-native announcement delivery,
+    thread-binding hooks, ACP harness execution, and sandboxed target runtimes.

@@ -10978,6 +10978,24 @@ class GatewayNodeMethodService:
         if self._database is None:
             return None
         tracked_run = self._gateway_tracked_chat_runs_by_id.get(run_id)
+
+        def fresh_terminal_candidate(
+            candidate: dict[str, Any] | None,
+        ) -> dict[str, Any] | None:
+            if candidate is None or tracked_run is None:
+                return candidate
+            candidate_status = str(candidate.get("status") or "").strip().lower()
+            if candidate_status not in {"completed", "failed"}:
+                return candidate
+            candidate_ended_at_ms = (
+                _iso8601_to_timestamp_ms(candidate.get("updated_at"))
+                or _iso8601_to_timestamp_ms(candidate.get("created_at"))
+                or tracked_run.started_at_ms
+            )
+            if candidate_ended_at_ms < tracked_run.started_at_ms:
+                return None
+            return candidate
+
         mission = await self._database.get_latest_terminal_mission_by_run_id(
             run_id,
             require_session_key=True,
@@ -11004,11 +11022,13 @@ class GatewayNodeMethodService:
                     )
                     tracked_run = self._gateway_tracked_chat_runs_by_id.get(run_id)
         if tracked_run is not None:
+            mission = fresh_terminal_candidate(mission)
             if mission is None:
                 mission = await self._database.get_latest_terminal_mission_by_session_key(
                     tracked_run.session_key,
                     require_thread=True,
                 )
+                mission = fresh_terminal_candidate(mission)
             if mission is None:
                 mission = (
                     await self._database
@@ -11017,6 +11037,7 @@ class GatewayNodeMethodService:
                         require_thread=True,
                     )
                 )
+                mission = fresh_terminal_candidate(mission)
         if mission is None:
             return None
         status = str(mission.get("status") or "").strip().lower()
