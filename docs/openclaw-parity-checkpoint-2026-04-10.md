@@ -23647,3 +23647,42 @@ Next best slice:
     when it is specifically looking for terminal state.
   - remaining spawn lifecycle work is push-native announcement delivery,
     thread-binding hooks, ACP harness execution, and sandboxed target runtimes.
+
+### Recovery addendum 2026-04-28 agent_wait terminal thread-child fallback parity America/Chicago
+
+- Queue-head seam before implementation:
+  - after direct session fallback, tracked `agent.wait` also checks for the
+    latest thread-child mission under the tracked session key.
+  - that child fallback still used the status-card child lookup, which sorts
+    active child missions before completed or failed child missions.
+  - a stale active thread child could therefore hide a completed child mission
+    and make a no-wait poll return `timeout`.
+- Landed the bounded terminal-child lookup slice:
+  - `Database.get_latest_terminal_thread_child_mission_by_parent_session_key`
+    now returns the freshest completed or failed thread child for a parent
+    session alias set.
+  - `agent.wait` uses that terminal-only child lookup when the direct session
+    terminal fallback has no match.
+- Product effect:
+  - tracked waits now surface terminal thread-child state even when stale
+    active child rows are still present under the same parent session.
+- Verified this continuation with:
+  - red proof:
+    `test_agent_wait_prefers_terminal_thread_child_mission_over_stale_active`
+    first failed because the wait returned `timeout` while a completed thread
+    child existed behind a stale active child row.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "agent_wait_prefers_terminal_thread_child_mission_over_stale_active"`:
+    `1 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "agent_wait_prefers_terminal_thread_child_mission_over_stale_active or agent_wait_prefers_terminal_session_mission_over_stale_active"`:
+    `2 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "agent_wait or sessions_spawn_child_cap_pruning_does_not_consume_wait_lifecycle or sessions_spawn_creates_openclaw_style_subagent_session or sessions_spawn_persists_completion_expectation_override or sessions_spawn_defaults_omitted_run_timeout_to_zero"`:
+    `17 passed`
+  - `ruff check src\openzues\database.py src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`:
+    clean
+  - `mypy src\openzues\database.py src\openzues\services\gateway_node_methods.py`:
+    clean
+- Queue effect from this run:
+  - bounded local `agent.wait` thread-child fallback now ignores stale active
+    rows when it is specifically looking for terminal child state.
+  - remaining spawn lifecycle work is push-native announcement delivery,
+    thread-binding hooks, ACP harness execution, and sandboxed target runtimes.

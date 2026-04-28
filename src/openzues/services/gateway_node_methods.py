@@ -11006,7 +11006,8 @@ class GatewayNodeMethodService:
                 )
             if mission is None:
                 mission = (
-                    await self._database.get_latest_thread_child_mission_by_parent_session_key(
+                    await self._database
+                    .get_latest_terminal_thread_child_mission_by_parent_session_key(
                         tracked_run.session_key,
                         require_thread=True,
                     )

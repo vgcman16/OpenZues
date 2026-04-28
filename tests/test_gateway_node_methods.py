@@ -16084,6 +16084,81 @@ async def test_agent_wait_prefers_terminal_session_mission_over_stale_active(
 
 
 @pytest.mark.asyncio
+async def test_agent_wait_prefers_terminal_thread_child_mission_over_stale_active(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-agent-wait-thread-child-terminal.db")
+    await database.initialize()
+    parent_session_key = "openzues:agent-wait-thread-child-terminal"
+    await database.create_mission(
+        name="Gateway Agent Wait Stale Active Thread Child",
+        objective="This active child should not hide terminal child state.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread-agent-wait-thread-child-active",
+        session_key=f"{parent_session_key}:thread:active-child",
+        cwd=str(tmp_path),
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=False,
+        run_verification=False,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+    )
+    await database.create_mission(
+        name="Gateway Agent Wait Terminal Thread Child",
+        objective="This terminal child should complete the wait.",
+        status="completed",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread-agent-wait-thread-child-completed",
+        session_key=f"{parent_session_key}:thread:completed-child",
+        cwd=str(tmp_path),
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=False,
+        run_verification=False,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+    )
+    service._remember_gateway_chat_run(
+        parent_session_key,
+        {"runId": "run-agent-wait-thread-child-terminal-1", "status": "ok"},
+        started_at_ms=1,
+    )
+
+    payload = await service.call(
+        "agent.wait",
+        {"runId": "run-agent-wait-thread-child-terminal-1", "timeoutMs": 0},
+    )
+
+    assert payload["runId"] == "run-agent-wait-thread-child-terminal-1"
+    assert payload["status"] == "ok"
+    assert payload["startedAt"] == 1
+    assert isinstance(payload["endedAt"], int)
+    assert payload["endedAt"] >= payload["startedAt"]
+
+
+@pytest.mark.asyncio
 async def test_agent_wait_forgets_recovered_exact_run_id_after_terminal_snapshot(
     tmp_path,
 ) -> None:

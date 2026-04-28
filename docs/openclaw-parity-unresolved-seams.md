@@ -92,6 +92,11 @@ for the latest terminal mission in that session, rather than reusing the
 status-card lookup that prefers active rows. A stale active mission can no
 longer hide a completed or failed mission for the tracked run.
 
+Current queue-head adjustment: tracked `agent.wait` thread-child fallback now
+uses the same terminal-only posture for child missions under the tracked parent
+session. Stale active thread-child rows can no longer mask a completed or
+failed child mission when the tracked run is waiting for terminal state.
+
 Current queue-head adjustment: OpenZues now advertises an explicit
 `sessions_history` tool posture and exposes `sessions.history` as an
 agent-tool-style gateway read: it resolves session aliases, hides tool rows by
