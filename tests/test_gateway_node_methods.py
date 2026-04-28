@@ -15804,6 +15804,153 @@ async def test_agent_wait_applies_spawn_cleanup_delete_on_terminal_child_run(
 
 
 @pytest.mark.asyncio
+async def test_agent_wait_announces_spawn_completion_to_parent_session(tmp_path) -> None:
+    database = Database(tmp_path / "gateway-agent-wait-spawn-announce.db")
+    await database.initialize()
+
+    async def fake_chat_send_service(**_kwargs: object) -> dict[str, object]:
+        return {"runId": "run-spawn-completion-announce-1", "status": "ok"}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        hub=BroadcastHub(),
+        sessions_service=GatewaySessionsService(database),
+        chat_send_service=fake_chat_send_service,
+    )
+
+    spawn_payload = await service.call(
+        "sessions.spawn",
+        {"task": "Complete and announce this child run."},
+        now_ms=444,
+    )
+    child_session_key = str(spawn_payload["childSessionKey"])
+    metadata_row = await database.get_gateway_session_metadata(child_session_key)
+    assert metadata_row is not None
+    parent_session_key = str(metadata_row["metadata"]["parentSessionKey"])
+    mission_id = await database.create_mission(
+        name="Spawn Completion Announcement Child",
+        objective="Finish the spawned child and announce to the parent.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread-spawn-completion-announce",
+        session_key=child_session_key,
+        cwd=str(tmp_path),
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=False,
+        run_verification=False,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+    )
+    await database.update_mission(
+        mission_id,
+        status="completed",
+        in_progress=0,
+        phase="completed",
+        last_checkpoint="Child produced the requested result.",
+    )
+
+    wait_payload = await service.call(
+        "agent.wait",
+        {"runId": "run-spawn-completion-announce-1", "timeoutMs": 0},
+    )
+
+    parent_messages = await database.list_control_chat_messages(
+        session_key=parent_session_key,
+    )
+    assert wait_payload["status"] == "ok"
+    assert len(parent_messages) == 1
+    assert parent_messages[0]["role"] == "user"
+    assert parent_messages[0]["content"] == (
+        f"Subagent {child_session_key} completed: "
+        "Child produced the requested result."
+    )
+    assert parent_messages[0]["session_key"] == parent_session_key
+
+
+@pytest.mark.asyncio
+async def test_agent_wait_skips_spawn_completion_announcement_when_not_expected(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-agent-wait-spawn-no-announce.db")
+    await database.initialize()
+
+    async def fake_chat_send_service(**_kwargs: object) -> dict[str, object]:
+        return {"runId": "run-spawn-no-completion-announce-1", "status": "ok"}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        hub=BroadcastHub(),
+        sessions_service=GatewaySessionsService(database),
+        chat_send_service=fake_chat_send_service,
+    )
+
+    spawn_payload = await service.call(
+        "sessions.spawn",
+        {
+            "task": "Complete without a parent announcement.",
+            "expectsCompletionMessage": False,
+        },
+        now_ms=445,
+    )
+    child_session_key = str(spawn_payload["childSessionKey"])
+    metadata_row = await database.get_gateway_session_metadata(child_session_key)
+    assert metadata_row is not None
+    parent_session_key = str(metadata_row["metadata"]["parentSessionKey"])
+    mission_id = await database.create_mission(
+        name="Spawn Completion Announcement Suppressed Child",
+        objective="Finish the spawned child without announcing to the parent.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread-spawn-no-completion-announce",
+        session_key=child_session_key,
+        cwd=str(tmp_path),
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=False,
+        run_verification=False,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+    )
+    await database.update_mission(
+        mission_id,
+        status="completed",
+        in_progress=0,
+        phase="completed",
+        last_checkpoint="Child intentionally stays quiet.",
+    )
+
+    wait_payload = await service.call(
+        "agent.wait",
+        {"runId": "run-spawn-no-completion-announce-1", "timeoutMs": 0},
+    )
+
+    parent_messages = await database.list_control_chat_messages(
+        session_key=parent_session_key,
+    )
+    assert wait_payload["status"] == "ok"
+    assert parent_messages == []
+
+
+@pytest.mark.asyncio
 async def test_agent_wait_returns_failed_terminal_snapshot_for_tracked_run() -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-agent-wait-error-service"
     shutil.rmtree(tmp_path, ignore_errors=True)

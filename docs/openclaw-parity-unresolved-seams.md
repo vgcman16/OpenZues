@@ -1370,6 +1370,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   terminal tracked child runs, deleting the ephemeral child transcript and
   metadata after returning the terminal snapshot.
 - Verified the terminal spawn-cleanup seam with `python -m pytest tests\test_gateway_node_methods.py -q -k "agent_wait_applies_spawn_cleanup_delete_on_terminal_child_run"`, adjacent `python -m pytest tests\test_gateway_node_methods.py -q -k "agent_wait or sessions_spawn_creates_openclaw_style_subagent_session or sessions_spawn_defaults_omitted_run_timeout_to_zero or sessions_spawn_persists_completion_expectation_override"`, `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`, and `mypy src\openzues\services\gateway_node_methods.py`.
+- `agent.wait` now also emits a parent-visible completion message for terminal
+  spawned child runs by consuming `parentSessionKey` and
+  `expectsCompletionMessage` metadata.
+- Verified the wait-consumed completion announcement seam with `python -m pytest tests\test_gateway_node_methods.py -q -k "agent_wait_announces_spawn_completion_to_parent_session or agent_wait_skips_spawn_completion_announcement_when_not_expected"`, adjacent `python -m pytest tests\test_gateway_node_methods.py -q -k "agent_wait or sessions_spawn_creates_openclaw_style_subagent_session or sessions_spawn_persists_completion_expectation_override or sessions_spawn_defaults_omitted_run_timeout_to_zero"`, `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`, and `mypy src\openzues\services\gateway_node_methods.py`.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially ACP spawn harness parity, richer `tools.invoke` executor parity
   (real plugin HTTP ordering and any additional intentional high-risk

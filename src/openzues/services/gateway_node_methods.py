@@ -11027,12 +11027,61 @@ class GatewayNodeMethodService:
         if status == "failed" and error is not None and error.strip():
             payload["error"] = error.strip()
         if tracked_run is not None:
+            await self._announce_gateway_chat_run_terminal_completion(
+                session_key=tracked_run.session_key,
+                mission=mission,
+                status=status,
+                now_ms=terminal_ended_at_ms,
+            )
             await self._apply_gateway_chat_run_terminal_cleanup(
                 session_key=tracked_run.session_key,
                 now_ms=terminal_ended_at_ms,
             )
             self._forget_gateway_chat_run(tracked_run.session_key)
         return payload
+
+    async def _announce_gateway_chat_run_terminal_completion(
+        self,
+        *,
+        session_key: str,
+        mission: dict[str, Any],
+        status: str,
+        now_ms: int,
+    ) -> None:
+        if self._database is None:
+            return
+        metadata_row = await self._database.get_gateway_session_metadata(session_key)
+        metadata = metadata_row.get("metadata") if isinstance(metadata_row, dict) else None
+        if not isinstance(metadata, dict):
+            return
+        if metadata.get("expectsCompletionMessage") is False:
+            return
+        parent_session_key = _string_or_none(metadata.get("parentSessionKey")) or _string_or_none(
+            metadata.get("spawnedBy")
+        )
+        if parent_session_key is None:
+            return
+        summary = (
+            _string_or_none(mission.get("last_checkpoint"))
+            if status == "completed"
+            else _string_or_none(mission.get("last_error"))
+        )
+        state_text = "completed" if status == "completed" else "failed"
+        message = f"Subagent {session_key} {state_text}."
+        if summary is not None and summary.strip():
+            message = f"Subagent {session_key} {state_text}: {summary.strip()}"
+        message_id = await self._database.append_control_chat_message(
+            role="user",
+            content=message,
+            target_label=None,
+            session_key=parent_session_key,
+        )
+        message_row = await self._database.get_control_chat_message(message_id)
+        if message_row is not None:
+            await self._publish_session_message_events(
+                message_row=message_row,
+                now_ms=now_ms,
+            )
 
     async def _apply_gateway_chat_run_terminal_cleanup(
         self,

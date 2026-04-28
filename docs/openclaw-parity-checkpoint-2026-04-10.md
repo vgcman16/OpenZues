@@ -23317,3 +23317,40 @@ Next best slice:
   - the first local lifecycle consumer now uses persisted spawn cleanup policy.
   - remaining spawn lifecycle work is completion-announcement orchestration,
     thread-binding hooks, ACP harness execution, and sandboxed target runtimes.
+
+### Recovery addendum 2026-04-28 sessions_spawn completion announcement parity America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw spawned children are expected to report completion back to the
+    requester as parent-visible user messages unless the spawn explicitly set
+    `expectsCompletionMessage=false`.
+  - OpenZues stored `parentSessionKey` and `expectsCompletionMessage`, but
+    terminal `agent.wait` snapshots did not write any parent completion message.
+- Landed the bounded wait-consumed announcement slice:
+  - when `agent.wait` observes a tracked child run reaching terminal state,
+    OpenZues now appends a user message to the stored parent session.
+  - completed children include the latest child checkpoint text when present.
+  - `expectsCompletionMessage=false` suppresses the parent announcement while
+    still allowing terminal wait/cleanup behavior to finish.
+- Product effect:
+  - parent sessions get a durable local completion event for default run-mode
+    subagent completions, closing the first consumer of the previously persisted
+    completion-expectation metadata.
+- Verified this continuation with:
+  - red proofs:
+    `test_agent_wait_announces_spawn_completion_to_parent_session` first failed
+    with zero parent messages, and
+    `test_agent_wait_skips_spawn_completion_announcement_when_not_expected`
+    first failed by writing an unwanted parent message.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "agent_wait_announces_spawn_completion_to_parent_session or agent_wait_skips_spawn_completion_announcement_when_not_expected"`:
+    `2 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "agent_wait or sessions_spawn_creates_openclaw_style_subagent_session or sessions_spawn_persists_completion_expectation_override or sessions_spawn_defaults_omitted_run_timeout_to_zero"`:
+    `8 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`:
+    clean
+  - `mypy src\openzues\services\gateway_node_methods.py`:
+    clean
+- Queue effect from this run:
+  - persisted completion-expectation metadata now has a bounded local consumer.
+  - remaining spawn lifecycle work is push-native announcement delivery,
+    thread-binding hooks, ACP harness execution, and sandboxed target runtimes.
