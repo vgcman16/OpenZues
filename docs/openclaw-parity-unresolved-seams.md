@@ -67,6 +67,11 @@ Current queue-head adjustment: explicit `agent.wait timeoutMs=0` now preserves
 OpenClaw-style no-wait polling semantics instead of widening to the local
 30-second default; omitted `timeoutMs` still uses the default wait.
 
+Current queue-head adjustment: `agent.wait` now prefers exact mission
+`swarm.run_id` matches before falling back to the latest mission in the tracked
+session, so unrelated active session work cannot hide a terminal mission for
+the requested run id.
+
 Current queue-head adjustment: OpenZues now advertises an explicit
 `sessions_history` tool posture and exposes `sessions.history` as an
 agent-tool-style gateway read: it resolves session aliases, hides tool rows by

@@ -10967,12 +10967,28 @@ class GatewayNodeMethodService:
         if self._database is None:
             return None
         tracked_run = self._gateway_tracked_chat_runs_by_id.get(run_id)
-        mission: dict[str, Any] | None = None
+        mission = await self._database.get_latest_mission_by_run_id(
+            run_id,
+            require_session_key=True,
+        )
+        if mission is not None and tracked_run is None:
+            mission_session_key = _string_or_none(mission.get("session_key"))
+            if mission_session_key is not None:
+                tracked_run = GatewayTrackedChatRun(
+                    run_id=run_id,
+                    session_key=_canonical_session_key(mission_session_key),
+                    started_at_ms=(
+                        _iso8601_to_timestamp_ms(mission.get("created_at"))
+                        or _timestamp_ms(None)
+                    ),
+                )
+                self._gateway_tracked_chat_runs_by_id[run_id] = tracked_run
         if tracked_run is not None:
-            mission = await self._database.get_latest_mission_by_session_key(
-                tracked_run.session_key,
-                require_thread=True,
-            )
+            if mission is None:
+                mission = await self._database.get_latest_mission_by_session_key(
+                    tracked_run.session_key,
+                    require_thread=True,
+                )
             if mission is None:
                 mission = (
                     await self._database.get_latest_thread_child_mission_by_parent_session_key(
@@ -10980,23 +10996,6 @@ class GatewayNodeMethodService:
                         require_thread=True,
                     )
                 )
-        if mission is None:
-            mission = await self._database.get_latest_mission_by_run_id(
-                run_id,
-                require_session_key=True,
-            )
-            if mission is not None and tracked_run is None:
-                mission_session_key = _string_or_none(mission.get("session_key"))
-                if mission_session_key is not None:
-                    tracked_run = GatewayTrackedChatRun(
-                        run_id=run_id,
-                        session_key=_canonical_session_key(mission_session_key),
-                        started_at_ms=(
-                            _iso8601_to_timestamp_ms(mission.get("created_at"))
-                            or _timestamp_ms(None)
-                        ),
-                    )
-                    self._gateway_tracked_chat_runs_by_id[run_id] = tracked_run
         if mission is None:
             return None
         status = str(mission.get("status") or "").strip().lower()

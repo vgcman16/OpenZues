@@ -23462,3 +23462,39 @@ Next best slice:
   - bounded local `agent.wait` now preserves explicit no-wait timeout semantics.
   - remaining spawn lifecycle work is push-native announcement delivery,
     thread-binding hooks, ACP harness execution, and sandboxed target runtimes.
+
+### Recovery addendum 2026-04-28 agent_wait exact run-id precedence parity America/Chicago
+
+- Queue-head seam before implementation:
+  - `agent.wait` first used the latest mission for the tracked session and only
+    fell back to exact `swarm.run_id` lookup when no session mission existed.
+  - an unrelated active mission in the same session could therefore hide a
+    completed mission that explicitly carried the requested run id.
+- Landed the bounded run-id precedence slice:
+  - terminal snapshot lookup now checks exact `swarm.run_id` mission metadata
+    before the session-level fallback.
+  - the session fallback remains available for local gateway runs that do not
+    persist run-id metadata.
+- Product effect:
+  - when mission rows carry run ids, `agent.wait` resolves the requested run
+    directly instead of being blocked by neighboring session activity.
+- Verified this continuation with:
+  - red proof:
+    `test_agent_wait_prefers_exact_run_id_over_active_session_fallback` first
+    failed because the wait returned `timeout` while an exact completed run-id
+    mission existed.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "agent_wait_prefers_exact_run_id_over_active_session_fallback"`:
+    `1 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "agent_wait_waits_for_tracked_gateway_run_completion or agent_wait_returns_failed_terminal_snapshot_for_tracked_run or agent_wait_ignores_stale_terminal_session_mission_for_tracked_run"`:
+    `3 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "agent_wait or sessions_spawn_creates_openclaw_style_subagent_session or sessions_spawn_persists_completion_expectation_override or sessions_spawn_defaults_omitted_run_timeout_to_zero"`:
+    `12 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`:
+    clean
+  - `mypy src\openzues\services\gateway_node_methods.py`:
+    clean
+- Queue effect from this run:
+  - bounded local `agent.wait` now prefers durable exact run-id metadata when
+    it exists.
+  - remaining spawn lifecycle work is push-native announcement delivery,
+    thread-binding hooks, ACP harness execution, and sandboxed target runtimes.
