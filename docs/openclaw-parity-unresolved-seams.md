@@ -87,6 +87,11 @@ lifecycle path. Finished children no longer emit parent completion messages or
 run cleanup merely because a requester attempts another spawn; the later
 `agent.wait` call still consumes the terminal snapshot and lifecycle metadata.
 
+Current queue-head adjustment: tracked `agent.wait` session fallback now asks
+for the latest terminal mission in that session, rather than reusing the
+status-card lookup that prefers active rows. A stale active mission can no
+longer hide a completed or failed mission for the tracked run.
+
 Current queue-head adjustment: OpenZues now advertises an explicit
 `sessions_history` tool posture and exposes `sessions.history` as an
 agent-tool-style gateway read: it resolves session aliases, hides tool rows by

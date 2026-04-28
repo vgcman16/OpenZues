@@ -721,6 +721,11 @@ These are complete within the bounded OpenZues-local parity contract verified in
   announcements and cleanup remain attached to the later wait call instead of
   being triggered by max-child counting.
 - Verified the child-cap pruning wait-lifecycle seam with `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_spawn_child_cap_pruning_does_not_consume_wait_lifecycle"`, adjacent `python -m pytest tests\test_gateway_node_methods.py -q -k "agent_wait or sessions_spawn_creates_openclaw_style_subagent_session or sessions_spawn_persists_completion_expectation_override or sessions_spawn_defaults_omitted_run_timeout_to_zero or sessions_spawn_child_cap_pruning_does_not_consume_wait_lifecycle"`, `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`, and `mypy src\openzues\services\gateway_node_methods.py`.
+- tracked `agent.wait` session fallback now resolves the latest terminal
+  mission for the session instead of reusing the status-oriented lookup that
+  prefers active rows. Stale active mission rows no longer mask completed or
+  failed terminal state for a tracked run.
+- Verified the terminal-over-active wait fallback seam with `python -m pytest tests\test_gateway_node_methods.py -q -k "agent_wait_prefers_terminal_session_mission_over_stale_active"`, adjacent `python -m pytest tests\test_gateway_node_methods.py -q -k "agent_wait or sessions_spawn_child_cap_pruning_does_not_consume_wait_lifecycle or sessions_spawn_creates_openclaw_style_subagent_session or sessions_spawn_persists_completion_expectation_override or sessions_spawn_defaults_omitted_run_timeout_to_zero"`, `ruff check src\openzues\database.py src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`, and `mypy src\openzues\database.py src\openzues\services\gateway_node_methods.py`.
 - Next repo-level parity work should continue outside the browser command family, with remaining channel/session transcript/runtime gaps (`chat.*`, `sessions.*`) now the strongest nearby seam.
 
 ## References

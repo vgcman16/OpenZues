@@ -11000,7 +11000,7 @@ class GatewayNodeMethodService:
                     tracked_run = self._gateway_tracked_chat_runs_by_id.get(run_id)
         if tracked_run is not None:
             if mission is None:
-                mission = await self._database.get_latest_mission_by_session_key(
+                mission = await self._database.get_latest_terminal_mission_by_session_key(
                     tracked_run.session_key,
                     require_thread=True,
                 )

@@ -2897,6 +2897,49 @@ class Database:
             )
             return item
 
+    async def get_latest_terminal_mission_by_session_key(
+        self,
+        session_key: str,
+        *,
+        instance_id: int | None = None,
+        require_thread: bool = False,
+    ) -> dict[str, Any] | None:
+        aliases = session_key_lookup_aliases(session_key)
+        if not aliases:
+            return None
+        placeholders = ", ".join("?" for _ in aliases)
+        query = [
+            f"SELECT * FROM missions WHERE LOWER(TRIM(session_key)) IN ({placeholders})",
+            "AND status IN ('completed', 'failed')",
+        ]
+        params: list[Any] = list(aliases)
+        if instance_id is not None:
+            query.append("AND instance_id = ?")
+            params.append(instance_id)
+        if require_thread:
+            query.append("AND thread_id IS NOT NULL AND TRIM(thread_id) <> ''")
+        query.extend(
+            [
+                "ORDER BY",
+                "updated_at DESC,",
+                "id DESC",
+                "LIMIT 1",
+            ]
+        )
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute("\n".join(query), params)
+            row = await cursor.fetchone()
+            if row is None:
+                return None
+            item = dict(row)
+            item["swarm"] = self._decode_json_object(item.pop("swarm_state_json", None))
+            item["toolsets"] = self._decode_json_list(item.pop("toolsets_json", "[]"))
+            item["conversation_target"] = self._decode_json_object(
+                item.pop("conversation_target_json", None)
+            )
+            return item
+
     async def get_latest_thread_child_mission_by_parent_session_key(
         self,
         parent_session_key: str,

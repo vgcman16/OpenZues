@@ -23609,3 +23609,41 @@ Next best slice:
     effects.
   - remaining spawn lifecycle work is push-native announcement delivery,
     thread-binding hooks, ACP harness execution, and sandboxed target runtimes.
+
+### Recovery addendum 2026-04-28 agent_wait terminal-over-active session fallback parity America/Chicago
+
+- Queue-head seam before implementation:
+  - tracked `agent.wait` falls back from exact run-id lookup to session mission
+    state for locally launched runs that do not persist `swarm.run_id`.
+  - that fallback reused the status-card `get_latest_mission_by_session_key`
+    lookup, which intentionally sorts active missions before completed or
+    failed missions.
+  - a stale active row in the same session could therefore hide a newer
+    completed mission and make `agent.wait timeoutMs=0` return `timeout`.
+- Landed the bounded terminal-session lookup slice:
+  - `Database.get_latest_terminal_mission_by_session_key` now returns the
+    freshest completed or failed mission for a session alias set without
+    active-first ordering.
+  - `agent.wait` uses that terminal-only lookup for tracked session fallback,
+    leaving the status-oriented lookup untouched for other readers.
+- Product effect:
+  - tracked waits now surface terminal session state even when older active
+    mission rows are still present for the same session.
+- Verified this continuation with:
+  - red proof:
+    `test_agent_wait_prefers_terminal_session_mission_over_stale_active`
+    first failed because the wait returned `timeout` while a completed mission
+    existed behind a stale active row.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "agent_wait_prefers_terminal_session_mission_over_stale_active"`:
+    `1 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "agent_wait or sessions_spawn_child_cap_pruning_does_not_consume_wait_lifecycle or sessions_spawn_creates_openclaw_style_subagent_session or sessions_spawn_persists_completion_expectation_override or sessions_spawn_defaults_omitted_run_timeout_to_zero"`:
+    `16 passed`
+  - `ruff check src\openzues\database.py src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`:
+    clean
+  - `mypy src\openzues\database.py src\openzues\services\gateway_node_methods.py`:
+    clean
+- Queue effect from this run:
+  - bounded local `agent.wait` session fallback now ignores stale active rows
+    when it is specifically looking for terminal state.
+  - remaining spawn lifecycle work is push-native announcement delivery,
+    thread-binding hooks, ACP harness execution, and sandboxed target runtimes.
