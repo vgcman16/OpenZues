@@ -11029,6 +11029,7 @@ class GatewayNodeMethodService:
         if tracked_run is not None:
             await self._announce_gateway_chat_run_terminal_completion(
                 session_key=tracked_run.session_key,
+                run_id=run_id,
                 mission=mission,
                 status=status,
                 now_ms=terminal_ended_at_ms,
@@ -11044,6 +11045,7 @@ class GatewayNodeMethodService:
         self,
         *,
         session_key: str,
+        run_id: str,
         mission: dict[str, Any],
         status: str,
         now_ms: int,
@@ -11055,6 +11057,8 @@ class GatewayNodeMethodService:
         if not isinstance(metadata, dict):
             return
         if metadata.get("expectsCompletionMessage") is False:
+            return
+        if _string_or_none(metadata.get("completionAnnouncedRunId")) == run_id:
             return
         parent_session_key = _string_or_none(metadata.get("parentSessionKey")) or _string_or_none(
             metadata.get("spawnedBy")
@@ -11075,6 +11079,13 @@ class GatewayNodeMethodService:
             content=message,
             target_label=None,
             session_key=parent_session_key,
+        )
+        next_metadata = dict(metadata)
+        next_metadata["completionAnnouncedRunId"] = run_id
+        next_metadata["completionAnnouncedAtMs"] = now_ms
+        await self._database.upsert_gateway_session_metadata(
+            session_key=session_key,
+            metadata=next_metadata,
         )
         message_row = await self._database.get_control_chat_message(message_id)
         if message_row is not None:

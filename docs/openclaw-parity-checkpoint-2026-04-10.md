@@ -23354,3 +23354,41 @@ Next best slice:
   - persisted completion-expectation metadata now has a bounded local consumer.
   - remaining spawn lifecycle work is push-native announcement delivery,
     thread-binding hooks, ACP harness execution, and sandboxed target runtimes.
+
+### Recovery addendum 2026-04-28 sessions_spawn completion announcement idempotency parity America/Chicago
+
+- Queue-head seam before implementation:
+  - the bounded local completion-announcement consumer appended the parent
+    message whenever `agent.wait` observed a tracked child run in terminal
+    state.
+  - a restarted/recovered service that tracked the same terminal child run
+    again could therefore duplicate the parent-visible completion message.
+- Landed the bounded idempotency slice:
+  - `agent.wait` now passes the terminal run id into the spawned-run
+    completion announcer.
+  - the child session metadata records `completionAnnouncedRunId` and
+    `completionAnnouncedAtMs` after the parent completion message is persisted.
+  - later observations of the same terminal run skip the parent message if the
+    durable marker already matches.
+- Product effect:
+  - parent sessions still get the local completion event, but retries,
+    restarts, and recovered tracking of the same terminal run do not create
+    duplicate completion messages.
+- Verified this continuation with:
+  - red proof:
+    `test_agent_wait_does_not_duplicate_spawn_completion_announcement` first
+    failed because the parent session received two identical completion
+    messages after the same run was tracked again.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "agent_wait_does_not_duplicate_spawn_completion_announcement"`:
+    `1 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "agent_wait or sessions_spawn_creates_openclaw_style_subagent_session or sessions_spawn_persists_completion_expectation_override or sessions_spawn_defaults_omitted_run_timeout_to_zero"`:
+    `9 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`:
+    clean
+  - `mypy src\openzues\services\gateway_node_methods.py`:
+    clean
+- Queue effect from this run:
+  - local wait-consumed completion announcements now have durable
+    once-per-run semantics.
+  - remaining spawn lifecycle work is push-native announcement delivery,
+    thread-binding hooks, ACP harness execution, and sandboxed target runtimes.

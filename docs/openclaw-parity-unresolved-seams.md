@@ -1,6 +1,6 @@
 # OpenClaw Parity Unresolved Seams
 
-Updated: 2026-04-26
+Updated: 2026-04-28
 
 Current percentage rollup:
 
@@ -49,6 +49,14 @@ completion announcements and cleanup.
 Current queue-head adjustment: omitted `sessions.spawn` run timeout now
 resolves to OpenClaw's explicit no-timeout sentinel (`0`) and persists that
 resolved value on child metadata.
+
+Current queue-head adjustment: terminal `agent.wait` now consumes local
+spawned-session lifecycle metadata for `cleanup: "delete"` and default
+completion announcements. It deletes ephemeral child transcript/metadata when
+requested, appends a parent-visible completion message unless
+`expectsCompletionMessage=false`, and records `completionAnnouncedRunId` /
+`completionAnnouncedAtMs` so recovered observations of the same terminal run do
+not duplicate the parent message.
 
 Current queue-head adjustment: OpenZues now advertises an explicit
 `sessions_history` tool posture and exposes `sessions.history` as an
