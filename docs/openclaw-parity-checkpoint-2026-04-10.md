@@ -23392,3 +23392,39 @@ Next best slice:
     once-per-run semantics.
   - remaining spawn lifecycle work is push-native announcement delivery,
     thread-binding hooks, ACP harness execution, and sandboxed target runtimes.
+
+### Recovery addendum 2026-04-28 agent_wait tracked-run freshness parity America/Chicago
+
+- Queue-head seam before implementation:
+  - `agent.wait` falls back to the latest mission for a tracked session when no
+    mission row carries the requested run id, which preserves local runs that do
+    not persist `swarm.run_id`.
+  - that fallback could also treat an older terminal mission in the same
+    session as the current tracked run if the new run was registered after the
+    old mission already ended.
+- Landed the bounded freshness slice:
+  - terminal session-fallback missions are ignored when their `updated_at` /
+    `created_at` timestamp is older than the tracked run start time.
+  - current local runs without explicit run-id metadata still complete once
+    their mission updates after the tracked run starts.
+- Product effect:
+  - `agent.wait` no longer returns a false terminal snapshot for a newly tracked
+    run just because the same session has stale completed mission state.
+- Verified this continuation with:
+  - red proof:
+    `test_agent_wait_ignores_stale_terminal_session_mission_for_tracked_run`
+    first failed because `agent.wait` returned `ok` from the old terminal
+    mission instead of timing out.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "agent_wait_ignores_stale_terminal_session_mission_for_tracked_run"`:
+    `1 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "agent_wait or sessions_spawn_creates_openclaw_style_subagent_session or sessions_spawn_persists_completion_expectation_override or sessions_spawn_defaults_omitted_run_timeout_to_zero"`:
+    `10 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`:
+    clean
+  - `mypy src\openzues\services\gateway_node_methods.py`:
+    clean
+- Queue effect from this run:
+  - bounded local `agent.wait` lifecycle consumption now has a basic freshness
+    guard for reused sessions.
+  - remaining spawn lifecycle work is push-native announcement delivery,
+    thread-binding hooks, ACP harness execution, and sandboxed target runtimes.

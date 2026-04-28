@@ -58,6 +58,11 @@ requested, appends a parent-visible completion message unless
 `completionAnnouncedAtMs` so recovered observations of the same terminal run do
 not duplicate the parent message.
 
+Current queue-head adjustment: `agent.wait` now ignores terminal session
+fallback missions whose end timestamp is older than the tracked run start time,
+preventing stale completed mission state in a reused session from falsely
+completing a newer tracked run.
+
 Current queue-head adjustment: OpenZues now advertises an explicit
 `sessions_history` tool posture and exposes `sessions.history` as an
 agent-tool-style gateway read: it resolves session aliases, hides tool rows by

@@ -11016,6 +11016,8 @@ class GatewayNodeMethodService:
             or _iso8601_to_timestamp_ms(mission.get("created_at"))
             or started_at_ms
         )
+        if tracked_run is not None and ended_at_ms < tracked_run.started_at_ms:
+            return None
         terminal_ended_at_ms = max(started_at_ms, ended_at_ms)
         payload: dict[str, object] = {
             "runId": run_id,

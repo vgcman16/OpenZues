@@ -15737,6 +15737,57 @@ async def test_agent_wait_waits_for_tracked_gateway_run_completion() -> None:
 
 
 @pytest.mark.asyncio
+async def test_agent_wait_ignores_stale_terminal_session_mission_for_tracked_run(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-agent-wait-stale-terminal.db")
+    await database.initialize()
+    session_key = "openzues:thread:agent-wait-stale-terminal"
+    await database.create_mission(
+        name="Gateway Agent Wait Old Terminal Mission",
+        objective="Do not complete future tracked runs from old terminal state.",
+        status="completed",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread-agent-wait-stale-terminal",
+        session_key=session_key,
+        cwd=str(tmp_path),
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=False,
+        run_verification=False,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+    )
+    service._remember_gateway_chat_run(
+        session_key,
+        {"runId": "run-agent-wait-stale-terminal-1", "status": "ok"},
+        started_at_ms=int(datetime(2100, 1, 1, tzinfo=UTC).timestamp() * 1000),
+    )
+
+    payload = await service.call(
+        "agent.wait",
+        {"runId": "run-agent-wait-stale-terminal-1", "timeoutMs": 0},
+    )
+
+    assert payload == {
+        "runId": "run-agent-wait-stale-terminal-1",
+        "status": "timeout",
+    }
+
+
+@pytest.mark.asyncio
 async def test_agent_wait_applies_spawn_cleanup_delete_on_terminal_child_run(
     tmp_path,
 ) -> None:
