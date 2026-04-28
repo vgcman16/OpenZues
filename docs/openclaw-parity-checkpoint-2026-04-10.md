@@ -23498,3 +23498,40 @@ Next best slice:
     it exists.
   - remaining spawn lifecycle work is push-native announcement delivery,
     thread-binding hooks, ACP harness execution, and sandboxed target runtimes.
+
+### Recovery addendum 2026-04-28 agent_wait recovered exact-run cleanup parity America/Chicago
+
+- Queue-head seam before implementation:
+  - after restart, `agent.wait` can recover a tracked run from durable
+    `swarm.run_id` mission metadata even when the in-memory tracker is empty.
+  - that recovery path populated only the run-id map, not the session alias map,
+    so the terminal `_forget_gateway_chat_run` cleanup left the synthesized run
+    id behind.
+- Landed the bounded recovered-tracker slice:
+  - recovered exact run-id tracking now uses the same `_remember_gateway_chat_run`
+    helper as live sends.
+  - the synthesized tracker records session aliases and is removed by the
+    existing terminal forget path.
+- Product effect:
+  - recovered terminal waits no longer leak in-memory run tracking after the
+    terminal snapshot is consumed.
+- Verified this continuation with:
+  - red proof:
+    `test_agent_wait_forgets_recovered_exact_run_id_after_terminal_snapshot`
+    first failed because the recovered run id remained in
+    `_gateway_tracked_chat_runs_by_id` after `agent.wait`.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "agent_wait_forgets_recovered_exact_run_id_after_terminal_snapshot"`:
+    `1 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "agent_wait_prefers_exact_run_id_over_active_session_fallback"`:
+    `1 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "agent_wait or sessions_spawn_creates_openclaw_style_subagent_session or sessions_spawn_persists_completion_expectation_override or sessions_spawn_defaults_omitted_run_timeout_to_zero"`:
+    `13 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`:
+    clean
+  - `mypy src\openzues\services\gateway_node_methods.py`:
+    clean
+- Queue effect from this run:
+  - bounded local `agent.wait` recovery now cleans up synthesized tracking just
+    like live tracked sends.
+  - remaining spawn lifecycle work is push-native announcement delivery,
+    thread-binding hooks, ACP harness execution, and sandboxed target runtimes.

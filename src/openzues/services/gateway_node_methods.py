@@ -10974,15 +10974,15 @@ class GatewayNodeMethodService:
         if mission is not None and tracked_run is None:
             mission_session_key = _string_or_none(mission.get("session_key"))
             if mission_session_key is not None:
-                tracked_run = GatewayTrackedChatRun(
-                    run_id=run_id,
-                    session_key=_canonical_session_key(mission_session_key),
+                self._remember_gateway_chat_run(
+                    mission_session_key,
+                    {"runId": run_id},
                     started_at_ms=(
                         _iso8601_to_timestamp_ms(mission.get("created_at"))
                         or _timestamp_ms(None)
                     ),
                 )
-                self._gateway_tracked_chat_runs_by_id[run_id] = tracked_run
+                tracked_run = self._gateway_tracked_chat_runs_by_id.get(run_id)
         if tracked_run is not None:
             if mission is None:
                 mission = await self._database.get_latest_mission_by_session_key(

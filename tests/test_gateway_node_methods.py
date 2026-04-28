@@ -15889,6 +15889,55 @@ async def test_agent_wait_prefers_exact_run_id_over_active_session_fallback(
 
 
 @pytest.mark.asyncio
+async def test_agent_wait_forgets_recovered_exact_run_id_after_terminal_snapshot(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-agent-wait-recovered-exact-run-id.db")
+    await database.initialize()
+    session_key = "openzues:thread:agent-wait-recovered-exact-run-id"
+    await database.create_mission(
+        name="Gateway Agent Wait Recovered Exact Run",
+        objective="Recovered exact run ids should not leak in-memory tracking.",
+        status="completed",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread-agent-wait-recovered-exact-run-id",
+        session_key=session_key,
+        cwd=str(tmp_path),
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=False,
+        run_verification=False,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        swarm={"run_id": "run-agent-wait-recovered-exact-run-id-1"},
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+    )
+
+    payload = await service.call(
+        "agent.wait",
+        {"runId": "run-agent-wait-recovered-exact-run-id-1", "timeoutMs": 0},
+    )
+
+    assert payload["runId"] == "run-agent-wait-recovered-exact-run-id-1"
+    assert payload["status"] == "ok"
+    assert "run-agent-wait-recovered-exact-run-id-1" not in (
+        service._gateway_tracked_chat_runs_by_id
+    )
+    assert service._tracked_gateway_chat_run_id(session_key) is None
+
+
+@pytest.mark.asyncio
 async def test_agent_wait_applies_spawn_cleanup_delete_on_terminal_child_run(
     tmp_path,
 ) -> None:

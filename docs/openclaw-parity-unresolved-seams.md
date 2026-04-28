@@ -72,6 +72,11 @@ Current queue-head adjustment: `agent.wait` now prefers exact mission
 session, so unrelated active session work cannot hide a terminal mission for
 the requested run id.
 
+Current queue-head adjustment: `agent.wait` now rebuilds recovered exact-run
+tracking through the normal session alias map, so terminal waits discovered
+from durable `swarm.run_id` metadata are forgotten after the snapshot is
+consumed instead of leaking synthesized run ids in memory.
+
 Current queue-head adjustment: OpenZues now advertises an explicit
 `sessions_history` tool posture and exposes `sessions.history` as an
 agent-tool-style gateway read: it resolves session aliases, hides tool rows by
