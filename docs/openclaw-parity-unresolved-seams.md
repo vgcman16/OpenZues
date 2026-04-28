@@ -77,6 +77,10 @@ tracking through the normal session alias map, so terminal waits discovered
 from durable `swarm.run_id` metadata are forgotten after the snapshot is
 consumed instead of leaking synthesized run ids in memory.
 
+Current queue-head adjustment: historical exact `agent.wait` calls no longer
+evict a different current run tracked for the same session; exact-run recovery
+only takes session tracker ownership when no other run is active there.
+
 Current queue-head adjustment: OpenZues now advertises an explicit
 `sessions_history` tool posture and exposes `sessions.history` as an
 agent-tool-style gateway read: it resolves session aliases, hides tool rows by

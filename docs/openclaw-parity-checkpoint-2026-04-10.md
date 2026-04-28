@@ -23535,3 +23535,39 @@ Next best slice:
     like live tracked sends.
   - remaining spawn lifecycle work is push-native announcement delivery,
     thread-binding hooks, ACP harness execution, and sandboxed target runtimes.
+
+### Recovery addendum 2026-04-28 agent_wait exact-run tracker isolation parity America/Chicago
+
+- Queue-head seam before implementation:
+  - recovered exact run-id lookup reused the normal alias-backed tracker, which
+    is correct when no other run is tracked for the session.
+  - when a different current run was already tracked for that session, waiting
+    on a historical exact run id replaced and then forgot the current run.
+- Landed the bounded tracker-isolation slice:
+  - recovered exact run-id tracking now only takes session tracker ownership
+    when the session has no different tracked run.
+  - historical exact-run waits still return their terminal snapshot, but do not
+    mutate a different current session run.
+- Product effect:
+  - operators can inspect or wait a historical exact run id without losing the
+    active run currently associated with that session.
+- Verified this continuation with:
+  - red proof:
+    `test_agent_wait_exact_run_id_does_not_evict_different_active_session_run`
+    first failed because the current session run was removed after waiting on a
+    historical exact run id.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "agent_wait_exact_run_id_does_not_evict_different_active_session_run"`:
+    `1 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "agent_wait_forgets_recovered_exact_run_id_after_terminal_snapshot"`:
+    `1 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "agent_wait or sessions_spawn_creates_openclaw_style_subagent_session or sessions_spawn_persists_completion_expectation_override or sessions_spawn_defaults_omitted_run_timeout_to_zero"`:
+    `14 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`:
+    clean
+  - `mypy src\openzues\services\gateway_node_methods.py`:
+    clean
+- Queue effect from this run:
+  - bounded local `agent.wait` exact-run recovery now preserves active session
+    tracking for different run ids.
+  - remaining spawn lifecycle work is push-native announcement delivery,
+    thread-binding hooks, ACP harness execution, and sandboxed target runtimes.

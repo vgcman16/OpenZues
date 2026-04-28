@@ -15938,6 +15938,60 @@ async def test_agent_wait_forgets_recovered_exact_run_id_after_terminal_snapshot
 
 
 @pytest.mark.asyncio
+async def test_agent_wait_exact_run_id_does_not_evict_different_active_session_run(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-agent-wait-exact-run-preserve-current.db")
+    await database.initialize()
+    session_key = "openzues:thread:agent-wait-exact-run-preserve-current"
+    await database.create_mission(
+        name="Gateway Agent Wait Historical Exact Run",
+        objective="Historical exact waits should not replace the current session run.",
+        status="completed",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread-agent-wait-exact-run-preserve-current-old",
+        session_key=session_key,
+        cwd=str(tmp_path),
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=False,
+        run_verification=False,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        swarm={"run_id": "run-agent-wait-historical-exact-run-1"},
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+    )
+    service._remember_gateway_chat_run(
+        session_key,
+        {"runId": "run-agent-wait-current-session-run-1", "status": "ok"},
+        started_at_ms=444,
+    )
+
+    payload = await service.call(
+        "agent.wait",
+        {"runId": "run-agent-wait-historical-exact-run-1", "timeoutMs": 0},
+    )
+
+    assert payload["runId"] == "run-agent-wait-historical-exact-run-1"
+    assert payload["status"] == "ok"
+    assert service._tracked_gateway_chat_run_id(session_key) == (
+        "run-agent-wait-current-session-run-1"
+    )
+    assert "run-agent-wait-current-session-run-1" in service._gateway_tracked_chat_runs_by_id
+
+
+@pytest.mark.asyncio
 async def test_agent_wait_applies_spawn_cleanup_delete_on_terminal_child_run(
     tmp_path,
 ) -> None:
