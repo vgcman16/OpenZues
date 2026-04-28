@@ -11016,18 +11016,50 @@ class GatewayNodeMethodService:
             or _iso8601_to_timestamp_ms(mission.get("created_at"))
             or started_at_ms
         )
+        terminal_ended_at_ms = max(started_at_ms, ended_at_ms)
         payload: dict[str, object] = {
             "runId": run_id,
             "status": "ok" if status == "completed" else "error",
             "startedAt": started_at_ms,
-            "endedAt": max(started_at_ms, ended_at_ms),
+            "endedAt": terminal_ended_at_ms,
         }
         error = _string_or_none(mission.get("last_error"))
         if status == "failed" and error is not None and error.strip():
             payload["error"] = error.strip()
         if tracked_run is not None:
+            await self._apply_gateway_chat_run_terminal_cleanup(
+                session_key=tracked_run.session_key,
+                now_ms=terminal_ended_at_ms,
+            )
             self._forget_gateway_chat_run(tracked_run.session_key)
         return payload
+
+    async def _apply_gateway_chat_run_terminal_cleanup(
+        self,
+        *,
+        session_key: str,
+        now_ms: int,
+    ) -> None:
+        if self._database is None:
+            return
+        metadata_row = await self._database.get_gateway_session_metadata(session_key)
+        metadata = metadata_row.get("metadata") if isinstance(metadata_row, dict) else None
+        if not isinstance(metadata, dict):
+            return
+        cleanup = str(metadata.get("cleanup") or "").strip().lower()
+        spawn_mode = str(metadata.get("spawnMode") or "").strip().lower()
+        spawned_by = _string_or_none(metadata.get("spawnedBy")) or _string_or_none(
+            metadata.get("parentSessionKey")
+        )
+        if cleanup != "delete" or spawn_mode == "session" or spawned_by is None:
+            return
+        await self._database.delete_control_chat_messages(session_key=session_key)
+        await self._database.delete_gateway_session_metadata(session_key)
+        await self._publish_sessions_changed_event(
+            session_key=session_key,
+            reason="delete",
+            now_ms=now_ms,
+        )
 
     def _forget_gateway_chat_run(self, session_key: str) -> None:
         canonical_session_key = _canonical_session_key(session_key)

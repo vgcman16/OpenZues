@@ -23282,3 +23282,38 @@ Next best slice:
   - timeout defaulting is now aligned for the bounded local subagent path.
   - remaining spawn work is deeper lifecycle runtime behavior, not timeout
     normalization.
+
+### Recovery addendum 2026-04-28 sessions_spawn terminal cleanup parity America/Chicago
+
+- Queue-head seam before implementation:
+  - OpenClaw's spawned-run lifecycle consumes stored `cleanup` policy when the
+    child run reaches terminal state.
+  - OpenZues persisted `cleanup: "delete"` in spawned-session metadata, but
+    `agent.wait` only forgot the in-memory run id after completion and left the
+    child session record/transcript behind.
+- Landed the bounded terminal-cleanup slice:
+  - `agent.wait` now applies spawned-session `cleanup: "delete"` policy when a
+    tracked child run reaches terminal mission state.
+  - The local cleanup deletes the child transcript rows, removes the child
+    gateway session metadata, publishes a `sessions.changed` delete event, and
+    then drops the in-memory tracked run.
+- Product effect:
+  - temporary run-mode subagent sessions no longer linger after the parent
+    consumes completion through `agent.wait` when the spawn policy requested
+    deletion.
+- Verified this continuation with:
+  - red proof:
+    `test_agent_wait_applies_spawn_cleanup_delete_on_terminal_child_run` first
+    failed because the child metadata remained after `agent.wait`.
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "agent_wait_applies_spawn_cleanup_delete_on_terminal_child_run"`:
+    `1 passed`
+  - `python -m pytest tests\test_gateway_node_methods.py -q -k "agent_wait or sessions_spawn_creates_openclaw_style_subagent_session or sessions_spawn_defaults_omitted_run_timeout_to_zero or sessions_spawn_persists_completion_expectation_override"`:
+    `6 passed`
+  - `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`:
+    clean
+  - `mypy src\openzues\services\gateway_node_methods.py`:
+    clean
+- Queue effect from this run:
+  - the first local lifecycle consumer now uses persisted spawn cleanup policy.
+  - remaining spawn lifecycle work is completion-announcement orchestration,
+    thread-binding hooks, ACP harness execution, and sandboxed target runtimes.

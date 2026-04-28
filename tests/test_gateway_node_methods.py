@@ -15737,6 +15737,73 @@ async def test_agent_wait_waits_for_tracked_gateway_run_completion() -> None:
 
 
 @pytest.mark.asyncio
+async def test_agent_wait_applies_spawn_cleanup_delete_on_terminal_child_run(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-agent-wait-spawn-cleanup.db")
+    await database.initialize()
+
+    async def fake_chat_send_service(**_kwargs: object) -> dict[str, object]:
+        return {"runId": "run-spawn-cleanup-delete-1", "status": "ok"}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        hub=BroadcastHub(),
+        sessions_service=GatewaySessionsService(database),
+        chat_send_service=fake_chat_send_service,
+    )
+
+    spawn_payload = await service.call(
+        "sessions.spawn",
+        {
+            "task": "Complete and clean up this child run.",
+            "cleanup": "delete",
+        },
+        now_ms=333,
+    )
+    child_session_key = str(spawn_payload["childSessionKey"])
+    await database.append_control_chat_message(
+        role="assistant",
+        content="Child run completed.",
+        target_label=None,
+        session_key=child_session_key,
+    )
+    await database.create_mission(
+        name="Spawn Cleanup Child",
+        objective="Finish the spawned child and delete the ephemeral session.",
+        status="completed",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread-spawn-cleanup-delete",
+        session_key=child_session_key,
+        cwd=str(tmp_path),
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=False,
+        run_verification=False,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+    )
+
+    wait_payload = await service.call(
+        "agent.wait",
+        {"runId": "run-spawn-cleanup-delete-1", "timeoutMs": 0},
+    )
+
+    assert wait_payload["status"] == "ok"
+    assert await database.get_gateway_session_metadata(child_session_key) is None
+    assert await database.count_control_chat_messages(session_key=child_session_key) == 0
+
+
+@pytest.mark.asyncio
 async def test_agent_wait_returns_failed_terminal_snapshot_for_tracked_run() -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-agent-wait-error-service"
     shutil.rmtree(tmp_path, ignore_errors=True)
