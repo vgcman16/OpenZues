@@ -10300,6 +10300,7 @@ _OPENCLAW_TASK_STATUS_VALUES = (
     "cancelled",
     "lost",
 )
+_OPENCLAW_TASK_RUNTIME_VALUES = ("subagent", "acp", "cli", "cron")
 _OPENCLAW_TASK_AUDIT_CODES = (
     "stale_queued",
     "stale_running",
@@ -10598,6 +10599,35 @@ def _task_failure_count(tasks: list[dict[str, object]]) -> int:
     )
 
 
+def _summarize_openclaw_tasks(tasks: list[dict[str, object]]) -> dict[str, object]:
+    by_status = dict.fromkeys(_OPENCLAW_TASK_STATUS_VALUES, 0)
+    by_runtime = dict.fromkeys(_OPENCLAW_TASK_RUNTIME_VALUES, 0)
+    active = 0
+    terminal = 0
+    failures = 0
+    for task in tasks:
+        status = _optional_cli_string(task.get("status")) or ""
+        runtime = _optional_cli_string(task.get("runtime")) or ""
+        if status in by_status:
+            by_status[status] += 1
+        if runtime in by_runtime:
+            by_runtime[runtime] += 1
+        if status in {"queued", "running"}:
+            active += 1
+        else:
+            terminal += 1
+        if status in {"failed", "timed_out", "lost"}:
+            failures += 1
+    return {
+        "total": len(tasks),
+        "active": active,
+        "terminal": terminal,
+        "failures": failures,
+        "byStatus": by_status,
+        "byRuntime": by_runtime,
+    }
+
+
 def _tasks_cli_positive_int(value: str | None, *, option: str) -> int | None:
     normalized = _optional_cli_string(value)
     if normalized is None:
@@ -10778,6 +10808,10 @@ def _empty_task_flow_audit_summary() -> dict[str, object]:
     }
 
 
+def _empty_task_flow_maintenance_summary() -> dict[str, int]:
+    return {"reconciled": 0, "pruned": 0}
+
+
 def _summarize_task_audit_findings(findings: list[dict[str, object]]) -> dict[str, object]:
     summary = _empty_task_audit_summary()
     by_code = cast("dict[str, int]", summary["byCode"])
@@ -10845,6 +10879,91 @@ async def _build_tasks_audit_payload(
         },
         "findings": displayed,
     }
+
+
+def _task_maintenance_summary(findings: list[dict[str, object]]) -> dict[str, int]:
+    return {
+        "reconciled": sum(1 for finding in findings if finding.get("code") == "lost"),
+        "recovered": 0,
+        "cleanupStamped": sum(
+            1 for finding in findings if finding.get("code") == "missing_cleanup"
+        ),
+        "pruned": 0,
+    }
+
+
+async def _build_tasks_maintenance_payload(
+    services: CliServices,
+    *,
+    apply: bool,
+) -> dict[str, object]:
+    tasks = await _list_openclaw_background_tasks(services)
+    findings = _list_task_audit_findings(tasks)
+    task_audit_summary = _summarize_task_audit_findings(findings)
+    flow_audit_summary = _empty_task_flow_audit_summary()
+    audit_before = {**task_audit_summary, "taskFlows": flow_audit_summary}
+    audit_after = dict(audit_before)
+    return {
+        "mode": "apply" if apply else "preview",
+        "maintenance": {
+            "tasks": _task_maintenance_summary(findings),
+            "taskFlows": _empty_task_flow_maintenance_summary(),
+        },
+        "tasks": _summarize_openclaw_tasks(tasks),
+        "auditBefore": audit_before,
+        "auditAfter": audit_after,
+    }
+
+
+def _emit_tasks_maintenance(payload: dict[str, object], *, json_output: bool) -> None:
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2))
+        return
+    mode = _optional_cli_string(payload.get("mode")) or "preview"
+    maintenance = payload.get("maintenance")
+    raw_tasks_maintenance = maintenance.get("tasks") if isinstance(maintenance, dict) else None
+    tasks_maintenance = (
+        cast("dict[str, object]", raw_tasks_maintenance)
+        if isinstance(raw_tasks_maintenance, dict)
+        else {}
+    )
+    raw_flow_maintenance = (
+        maintenance.get("taskFlows") if isinstance(maintenance, dict) else None
+    )
+    flow_maintenance = (
+        cast("dict[str, object]", raw_flow_maintenance)
+        if isinstance(raw_flow_maintenance, dict)
+        else {}
+    )
+    typer.echo(
+        f"Tasks maintenance ({'applied' if mode == 'apply' else 'preview'}): "
+        f"tasks {tasks_maintenance.get('reconciled', 0)} reconcile | "
+        f"{tasks_maintenance.get('recovered', 0)} recovered | "
+        f"{tasks_maintenance.get('cleanupStamped', 0)} cleanup stamp | "
+        f"{tasks_maintenance.get('pruned', 0)} prune; "
+        f"task-flows {flow_maintenance.get('reconciled', 0)} reconcile | "
+        f"{flow_maintenance.get('pruned', 0)} prune"
+    )
+    audit_after = payload.get("auditAfter")
+    errors = audit_after.get("errors") if isinstance(audit_after, dict) else 0
+    warnings = audit_after.get("warnings") if isinstance(audit_after, dict) else 0
+    task_summary = payload.get("tasks")
+    queued = 0
+    running = 0
+    if isinstance(task_summary, dict):
+        by_status = task_summary.get("byStatus")
+        if isinstance(by_status, dict):
+            queued = int(by_status.get("queued") or 0)
+            running = int(by_status.get("running") or 0)
+    typer.echo(
+        f"Tasks health{' after apply' if mode == 'apply' else ''}: "
+        f"{queued} queued | {running} running | {errors} audit errors | "
+        f"{warnings} audit warnings"
+    )
+    if mode != "apply":
+        typer.echo(
+            "Dry run only. Re-run with `openzues tasks maintenance --apply` to write changes."
+        )
 
 
 def _emit_tasks_audit(payload: dict[str, object], *, json_output: bool) -> None:
@@ -11341,6 +11460,22 @@ def tasks_audit_command(
 
     payload = _run(_run_with_services(_action))
     _emit_tasks_audit(payload, json_output=json_output)
+
+
+@tasks_app.command("maintenance")
+def tasks_maintenance_command(
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON."),
+    apply_changes: bool = typer.Option(
+        False,
+        "--apply",
+        help="Apply native task maintenance where supported.",
+    ),
+) -> None:
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_tasks_maintenance_payload(services, apply=apply_changes)
+
+    payload = _run(_run_with_services(_action))
+    _emit_tasks_maintenance(payload, json_output=json_output)
 
 
 @tasks_app.command("show")

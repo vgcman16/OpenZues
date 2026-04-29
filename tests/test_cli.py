@@ -3967,6 +3967,70 @@ def test_tasks_audit_json_filters_native_stale_running_tasks(monkeypatch) -> Non
     assert finding["task"]["taskId"] == "mission:17"
 
 
+def test_tasks_maintenance_json_previews_native_cleanup_accounting(monkeypatch) -> None:
+    created_at = datetime(2026, 4, 29, 14, 30, tzinfo=UTC)
+    updated_at = datetime(2026, 4, 29, 14, 45, tzinfo=UTC)
+
+    class FakeMissionService:
+        async def list_views(self) -> list[SimpleNamespace]:
+            return [
+                SimpleNamespace(
+                    id=17,
+                    name="Gateway hardener",
+                    objective="Stabilize the next parity slice.",
+                    status="completed",
+                    in_progress=False,
+                    task_blueprint_id=5,
+                    session_key="agent:worker:main",
+                    thread_id="thread-17",
+                    last_turn_id="turn-17",
+                    instance_id=2,
+                    model="gpt-5.4",
+                    last_error=None,
+                    last_checkpoint="Verified and committed.",
+                    last_activity_at=None,
+                    created_at=created_at,
+                    updated_at=updated_at,
+                )
+            ]
+
+    class FakeOpsMesh:
+        async def list_task_blueprint_views(self) -> list[SimpleNamespace]:
+            return []
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                mission_service=FakeMissionService(),
+                ops_mesh=FakeOpsMesh(),
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["tasks", "maintenance", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["mode"] == "preview"
+    assert payload["maintenance"] == {
+        "tasks": {
+            "reconciled": 0,
+            "recovered": 0,
+            "cleanupStamped": 1,
+            "pruned": 0,
+        },
+        "taskFlows": {"reconciled": 0, "pruned": 0},
+    }
+    assert payload["tasks"]["total"] == 1
+    assert payload["tasks"]["terminal"] == 1
+    assert payload["tasks"]["byStatus"]["succeeded"] == 1
+    assert payload["tasks"]["byRuntime"]["subagent"] == 1
+    assert payload["auditBefore"] == payload["auditAfter"]
+    assert payload["auditBefore"]["warnings"] == 1
+    assert payload["auditBefore"]["taskFlows"]["total"] == 0
+
+
 def test_sessions_spawn_json_calls_gateway_method_owner(monkeypatch) -> None:
     calls: list[tuple[str, dict[str, object]]] = []
 
