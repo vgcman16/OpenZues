@@ -2109,6 +2109,27 @@ def _emit_plugins_uninstall(payload: dict[str, object], *, json_output: bool) ->
     typer.echo("Restart the gateway to apply changes.")
 
 
+def _emit_plugins_update(payload: dict[str, object], *, json_output: bool) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+    outcomes = payload.get("outcomes")
+    outcome_rows = outcomes if isinstance(outcomes, list) else []
+    if not outcome_rows:
+        typer.echo("No tracked plugins to update.")
+        return
+    for outcome in outcome_rows:
+        if not isinstance(outcome, dict):
+            continue
+        message = str(outcome.get("message") or "").strip()
+        if message:
+            typer.echo(message)
+    if payload.get("dryRun") is True:
+        typer.echo("Dry run, no changes made.")
+    elif payload.get("changed") is True:
+        typer.echo("Restart the gateway to load plugins.")
+
+
 def _emit_plugins_marketplace_list(
     payload: dict[str, object],
     *,
@@ -3043,6 +3064,133 @@ async def _build_plugins_uninstall_payload(
     }
 
 
+async def _build_plugins_update_payload(
+    services: CliServices,
+    *,
+    plugin_id: str | None,
+    all_plugins: bool,
+    dry_run: bool,
+) -> dict[str, object]:
+    requested_id = _optional_cli_string(plugin_id)
+    if all_plugins and requested_id is not None:
+        raise ValueError("Pass either a plugin id or --all, not both.")
+    snapshot = services.gateway_config.build_snapshot()
+    plugins = snapshot.get("plugins")
+    plugins_config = plugins if isinstance(plugins, dict) else {}
+    installs = plugins_config.get("installs")
+    install_records = installs if isinstance(installs, dict) else {}
+    if all_plugins:
+        targets = [str(plugin_id) for plugin_id in install_records]
+    elif requested_id is not None:
+        targets = [requested_id]
+    else:
+        raise ValueError("Provide a plugin id, or use --all.")
+    outcomes: list[dict[str, object]] = []
+    changed = False
+    for target in targets:
+        record = install_records.get(target)
+        if not isinstance(record, dict):
+            outcomes.append(
+                {
+                    "pluginId": target,
+                    "status": "skipped",
+                    "message": f'No install record for "{target}".',
+                }
+            )
+            continue
+        source = _optional_cli_string(record.get("source"))
+        if source != "marketplace":
+            outcomes.append(
+                {
+                    "pluginId": target,
+                    "status": "skipped",
+                    "message": f'Skipping "{target}" (source: {source or "unknown"}).',
+                }
+            )
+            continue
+        marketplace_source = _optional_cli_string(record.get("marketplaceSource"))
+        marketplace_plugin = _optional_cli_string(record.get("marketplacePlugin"))
+        if marketplace_source is None or marketplace_plugin is None:
+            outcomes.append(
+                {
+                    "pluginId": target,
+                    "status": "skipped",
+                    "message": f'Skipping "{target}" (missing marketplace source metadata).',
+                }
+            )
+            continue
+        try:
+            update = _resolve_local_marketplace_update(
+                plugin_id=target,
+                marketplace_source=marketplace_source,
+                marketplace_plugin=marketplace_plugin,
+                current_record=record,
+            )
+        except ValueError as exc:
+            outcomes.append(
+                {
+                    "pluginId": target,
+                    "status": "error",
+                    "message": f"Failed to update {target}: {exc}",
+                }
+            )
+            continue
+        current_version = update["currentVersion"]
+        next_version = update["nextVersion"]
+        current_label = current_version or "unknown"
+        next_label = next_version or "unknown"
+        same_version = (
+            current_version is not None
+            and next_version is not None
+            and current_version == next_version
+        )
+        if dry_run:
+            status = "unchanged" if same_version else "updated"
+            message = (
+                f"{target} is up to date ({current_label})."
+                if same_version
+                else f"Would update {target}: {current_label} -> {next_label}."
+            )
+        else:
+            if not same_version:
+                marketplace_name = cast(str | None, update["marketplaceName"])
+                version = cast(str | None, next_version)
+                result = services.gateway_config.record_marketplace_plugin_install(
+                    plugin_id=target,
+                    install_path=str(update["installPath"]),
+                    marketplace_source=str(update["manifestPath"]),
+                    marketplace_plugin=marketplace_plugin,
+                    marketplace_name=marketplace_name,
+                    version=version,
+                    force=True,
+                )
+                changed = changed or result.get("ok") is True
+            status = "unchanged" if same_version else "updated"
+            message = (
+                f"{target} already at {current_label}."
+                if same_version
+                else f"Updated {target}: {current_label} -> {next_label}."
+            )
+        outcome: dict[str, object] = {
+            "pluginId": target,
+            "status": status,
+            "message": message,
+        }
+        if current_version is not None:
+            outcome["currentVersion"] = current_version
+        if next_version is not None:
+            outcome["nextVersion"] = next_version
+        outcomes.append(outcome)
+    return {
+        "ok": True,
+        "action": "update",
+        "dryRun": dry_run,
+        "changed": changed,
+        "outcomes": outcomes,
+        "restart": "gateway" if changed else None,
+    }
+
+
 def _resolve_plugins_marketplace_manifest_path(source: str) -> Path:
     normalized_source = _optional_cli_string(source)
     if normalized_source is None:
@@ -3104,6 +3252,45 @@ def _resolve_marketplace_plugin_install_path(
             f'plugin "{plugin_name}" source not found in marketplace root: {source_path_value}'
         )
     return resolved
+
+
+def _resolve_local_marketplace_update(
+    *,
+    plugin_id: str,
+    marketplace_source: str,
+    marketplace_plugin: str,
+    current_record: dict[str, object],
+) -> dict[str, object]:
+    manifest_path = _resolve_plugins_marketplace_manifest_path(marketplace_source)
+    marketplace_payload = _build_plugins_marketplace_list_payload(str(manifest_path))
+    plugins = marketplace_payload.get("plugins")
+    plugin_rows = plugins if isinstance(plugins, list) else []
+    match = next(
+        (
+            plugin
+            for plugin in plugin_rows
+            if isinstance(plugin, dict)
+            and str(plugin.get("name") or "").strip() == marketplace_plugin
+        ),
+        None,
+    )
+    if match is None:
+        raise ValueError(
+            f'plugin "{marketplace_plugin}" was not found in marketplace {manifest_path}'
+        )
+    install_path = _resolve_marketplace_plugin_install_path(
+        manifest_path=manifest_path,
+        source=match.get("source"),
+        plugin_name=marketplace_plugin,
+    )
+    return {
+        "pluginId": plugin_id,
+        "manifestPath": manifest_path,
+        "installPath": install_path,
+        "marketplaceName": _optional_cli_string(marketplace_payload.get("name")),
+        "currentVersion": _optional_cli_string(current_record.get("version")),
+        "nextVersion": _optional_cli_string(match.get("version")),
+    }
 
 
 async def _build_models_list_payload(
@@ -6401,6 +6588,43 @@ def plugins_uninstall_command(
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
     _emit_plugins_uninstall(payload, json_output=json_output)
+
+
+@plugins_app.command("update")
+def plugins_update_command(
+    plugin_id: str | None = typer.Argument(None, help="Plugin id."),
+    all_plugins: bool = typer.Option(False, "--all", help="Update all tracked plugins."),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Show what would change without writing config.",
+    ),
+    dangerously_force_unsafe_install: bool = typer.Option(
+        False,
+        "--dangerously-force-unsafe-install",
+        help="Accepted for OpenClaw CLI compatibility; native updates are metadata-only.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit update result as JSON."),
+) -> None:
+    del dangerously_force_unsafe_install
+
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_plugins_update_payload(
+            services,
+            plugin_id=plugin_id,
+            all_plugins=all_plugins,
+            dry_run=dry_run,
+        )
+
+    try:
+        payload = _run(_run_with_services(_action))
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    except RuntimeError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    _emit_plugins_update(payload, json_output=json_output)
 
 
 @plugins_app.command("enable")
