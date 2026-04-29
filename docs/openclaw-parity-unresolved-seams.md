@@ -202,8 +202,12 @@ The CLI now also exposes `models list` as a thin OpenClaw-shaped JSON/human
 wrapper over the production `models.list` gateway method owner, including
 provider/local filters without duplicating the model catalog runtime, and
 `models status` projects the same catalog into OpenClaw-style
-default/resolved/allowed/auth status fields while keeping live auth probes
-unavailable until the native model auth health runtime exists. Top-level `health`
+default/resolved/allowed/auth status fields. `models aliases list` now reads
+OpenClaw-shaped `agents.defaults.models[*].alias` config from the native
+OpenZues config projection, falls back to model-catalog alias metadata when
+available, and supports the upstream JSON/plain/human output shapes. Live auth
+probes remain unavailable until the native model auth health runtime exists.
+Top-level `health`
 now queries the live gateway `/api/health` and `/readyz` owners, emits
 OpenClaw-shaped JSON/human readiness fields, and propagates the configured
 connection timeout. `channels status --probe --timeout <ms> --json` now

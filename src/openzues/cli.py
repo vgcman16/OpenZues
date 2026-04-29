@@ -391,6 +391,7 @@ capability_embedding_app = typer.Typer(help="Inspect embedding provider metadata
 plugins_app = typer.Typer(help="Inspect plugin and runtime inventory.")
 plugins_marketplace_app = typer.Typer(help="Inspect Claude-compatible plugin marketplaces.")
 models_app = typer.Typer(help="Inspect model catalog and runtime posture.")
+models_aliases_app = typer.Typer(help="Inspect configured model aliases.")
 hermes_profile_app = typer.Typer(
     help="Inspect or update the saved Hermes runtime profile.",
     invoke_without_command=True,
@@ -428,6 +429,7 @@ app.add_typer(capability_app, name="capability")
 app.add_typer(capability_app, name="infer")
 app.add_typer(plugins_app, name="plugins")
 app.add_typer(models_app, name="models")
+models_app.add_typer(models_aliases_app, name="aliases")
 plugins_app.add_typer(plugins_marketplace_app, name="marketplace")
 hermes_app.add_typer(hermes_profile_app, name="profile")
 app.add_typer(update_app, name="update")
@@ -3202,6 +3204,29 @@ def _emit_models_list(
         typer.echo(f"- {prefix}{model_id}: {label}{default}")
 
 
+def _emit_models_aliases(
+    payload: dict[str, object],
+    *,
+    json_output: bool,
+    plain: bool,
+) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+    raw_aliases = payload.get("aliases")
+    aliases = raw_aliases if isinstance(raw_aliases, dict) else {}
+    if plain:
+        for alias, target in aliases.items():
+            typer.echo(f"{alias} {target}")
+        return
+    typer.echo(f"Aliases ({len(aliases)}):")
+    if not aliases:
+        typer.echo("- none")
+        return
+    for alias, target in aliases.items():
+        typer.echo(f"- {alias} -> {target}")
+
+
 def _emit_models_status(
     payload: dict[str, object],
     *,
@@ -5458,6 +5483,63 @@ def _resolve_local_marketplace_update(
     }
 
 
+def _model_aliases_from_config_snapshot(snapshot: dict[str, object]) -> dict[str, str]:
+    aliases: dict[str, str] = {}
+    roots: list[dict[str, object]] = []
+    top_level_agents = snapshot.get("agents")
+    if isinstance(top_level_agents, dict):
+        roots.append(cast("dict[str, object]", top_level_agents))
+    gateway_config = snapshot.get("gateway")
+    gateway_agents = gateway_config.get("agents") if isinstance(gateway_config, dict) else None
+    if isinstance(gateway_agents, dict):
+        roots.append(cast("dict[str, object]", gateway_agents))
+    for agents_config in roots:
+        defaults = agents_config.get("defaults")
+        if not isinstance(defaults, dict):
+            continue
+        models_config = defaults.get("models")
+        if not isinstance(models_config, dict):
+            continue
+        for model_key, raw_entry in models_config.items():
+            if not isinstance(raw_entry, dict):
+                continue
+            alias = _optional_cli_string(raw_entry.get("alias"))
+            target = _optional_cli_string(model_key)
+            if alias is not None and target is not None:
+                aliases[alias] = target
+    return aliases
+
+
+def _model_aliases_from_services_config(services: CliServices) -> dict[str, str]:
+    gateway_config = getattr(services, "gateway_config", None)
+    if not isinstance(gateway_config, GatewayConfigService):
+        return {}
+    return _model_aliases_from_config_snapshot(gateway_config.build_snapshot())
+
+
+async def _build_models_aliases_payload(services: CliServices) -> dict[str, object]:
+    aliases = _model_aliases_from_services_config(services)
+    try:
+        catalog = await _build_models_list_payload(
+            services,
+            provider=None,
+            local_only=False,
+        )
+    except (RuntimeError, ValueError):
+        catalog = {"models": []}
+    raw_models = catalog.get("models")
+    model_rows = [item for item in raw_models if isinstance(item, dict)] if isinstance(
+        raw_models,
+        list,
+    ) else []
+    for model in model_rows:
+        alias = _optional_cli_string(model.get("alias"))
+        target = _model_reference(model)
+        if alias is not None and target is not None:
+            aliases.setdefault(alias, target)
+    return {"aliases": aliases}
+
+
 async def _build_models_list_payload(
     services: CliServices,
     *,
@@ -5555,7 +5637,7 @@ async def _build_models_status_payload(
         "fallbacks": [],
         "imageModel": None,
         "imageFallbacks": [],
-        "aliases": {},
+        "aliases": _model_aliases_from_services_config(services),
         "allowed": allowed,
         "auth": auth_payload,
     }
@@ -8714,6 +8796,26 @@ def models_list_command(
 
     payload = _run(_run_with_services(_action))
     _emit_models_list(payload, json_output=json_output, plain=plain)
+
+
+@models_aliases_app.command("list")
+def models_aliases_list_command(
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit model aliases as JSON.",
+    ),
+    plain: bool = typer.Option(
+        False,
+        "--plain",
+        help="Emit one alias and target per line.",
+    ),
+) -> None:
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_models_aliases_payload(services)
+
+    payload = _run(_run_with_services(_action))
+    _emit_models_aliases(payload, json_output=json_output, plain=plain)
 
 
 @models_app.command("status")
