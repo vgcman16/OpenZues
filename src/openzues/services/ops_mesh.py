@@ -922,6 +922,26 @@ def _parse_discord_channel_resolve_input(raw: str) -> dict[str, object]:
     return {"guild": trimmed, "guildOnly": True}
 
 
+def _parse_discord_user_resolve_input(raw: str) -> dict[str, str]:
+    trimmed = raw.strip()
+    if not trimmed:
+        return {}
+    mention = re.match(r"^<@!?(\d+)>$", trimmed)
+    if mention:
+        return {"userId": str(mention.group(1))}
+    prefixed = re.match(r"^(?:user:|discord:)?(\d+)$", trimmed, re.IGNORECASE)
+    if prefixed:
+        return {"userId": str(prefixed.group(1))}
+    split = trimmed.split("/") if "/" in trimmed else trimmed.split("#")
+    if len(split) >= 2:
+        guild = str(split[0] or "").strip()
+        user_name = "#".join(split[1:]).strip()
+        if guild.isdigit():
+            return {"guildId": guild, "userName": user_name}
+        return {"guildName": guild, "userName": user_name}
+    return {"userName": trimmed.removeprefix("@")}
+
+
 def _normalize_discord_slug(value: str) -> str:
     normalized = str(value or "").strip().lower()
     normalized = normalized.removeprefix("#")
@@ -971,6 +991,43 @@ def _prefer_active_discord_channel(
         return (0 if archived else 2) + (0 if is_thread else 1)
 
     return sorted(channels, key=score, reverse=True)[0]
+
+
+def _score_discord_member(member: dict[str, object], query: str) -> int:
+    normalized_query = str(query or "").strip().lower()
+    if not normalized_query:
+        return 0
+    user = member.get("user")
+    if not isinstance(user, dict):
+        return 0
+    candidates = [
+        str(user.get("username") or "").strip().lower(),
+        str(user.get("global_name") or "").strip().lower(),
+        str(member.get("nick") or "").strip().lower(),
+    ]
+    candidates = [candidate for candidate in candidates if candidate]
+    score = 0
+    if any(candidate == normalized_query for candidate in candidates):
+        score += 3
+    if any(normalized_query in candidate for candidate in candidates):
+        score += 1
+    if not bool(user.get("bot")):
+        score += 1
+    return score
+
+
+def _discord_member_display_name(member: dict[str, object]) -> str:
+    user = member.get("user")
+    user_payload = user if isinstance(user, dict) else {}
+    for value in (
+        member.get("nick"),
+        user_payload.get("global_name"),
+        user_payload.get("username"),
+    ):
+        normalized = str(value or "").strip()
+        if normalized:
+            return normalized
+    return ""
 
 
 def _discord_privileged_intents_from_flags(flags: int) -> dict[str, str]:
@@ -5734,11 +5791,11 @@ class OpsMeshService:
         kind: str,
         inputs: list[str],
     ) -> list[dict[str, object]]:
-        if kind not in {"auto", "channel", "group"}:
+        if kind not in {"auto", "channel", "group", "user"}:
             return [
                 _unresolved_channel_target(
                     input_value,
-                    "Discord route-backed resolver currently supports channel targets.",
+                    "native provider resolver unavailable",
                 )
                 for input_value in inputs
             ]
@@ -5761,11 +5818,41 @@ class OpsMeshService:
                 _unresolved_channel_target(input_value, "missing Discord token")
                 for input_value in inputs
             ]
+        if kind == "user":
+            return await asyncio.to_thread(
+                self._resolve_discord_user_targets,
+                secret_token,
+                inputs,
+            )
         return await asyncio.to_thread(
             self._resolve_discord_group_targets,
             secret_token,
             inputs,
         )
+
+    def _list_discord_guilds(self, authorization: str) -> list[dict[str, object]]:
+        guilds_result = self._get_json_provider_url(
+            _discord_api_endpoint("users/@me/guilds"),
+            secret_header_name="Authorization",
+            secret_token=authorization,
+        )
+        guilds: list[dict[str, object]] = []
+        if not isinstance(guilds_result, list):
+            return guilds
+        for guild in guilds_result:
+            if not isinstance(guild, dict):
+                continue
+            guild_id = str(guild.get("id") or "").strip()
+            guild_name = str(guild.get("name") or "").strip()
+            if guild_id:
+                guilds.append(
+                    {
+                        "id": guild_id,
+                        "name": guild_name,
+                        "slug": _normalize_discord_slug(guild_name),
+                    }
+                )
+        return guilds
 
     def _resolve_discord_group_targets(
         self,
@@ -5773,26 +5860,7 @@ class OpsMeshService:
         inputs: list[str],
     ) -> list[dict[str, object]]:
         authorization = _discord_bot_authorization(secret_token)
-        guilds_result = self._get_json_provider_url(
-            _discord_api_endpoint("users/@me/guilds"),
-            secret_header_name="Authorization",
-            secret_token=authorization,
-        )
-        guilds: list[dict[str, object]] = []
-        if isinstance(guilds_result, list):
-            for guild in guilds_result:
-                if not isinstance(guild, dict):
-                    continue
-                guild_id = str(guild.get("id") or "").strip()
-                guild_name = str(guild.get("name") or "").strip()
-                if guild_id:
-                    guilds.append(
-                        {
-                            "id": guild_id,
-                            "name": guild_name,
-                            "slug": _normalize_discord_slug(guild_name),
-                        }
-                    )
+        guilds = self._list_discord_guilds(authorization)
 
         results: list[dict[str, object]] = []
         for input_value in inputs:
@@ -5940,6 +6008,89 @@ class OpsMeshService:
             }
             if channel_name:
                 payload["name"] = channel_name
+            results.append(payload)
+        return results
+
+    def _resolve_discord_user_targets(
+        self,
+        secret_token: str,
+        inputs: list[str],
+    ) -> list[dict[str, object]]:
+        authorization = _discord_bot_authorization(secret_token)
+        guilds: list[dict[str, object]] | None = None
+        results: list[dict[str, object]] = []
+        for input_value in inputs:
+            parsed = _parse_discord_user_resolve_input(input_value)
+            user_id = str(parsed.get("userId") or "").strip()
+            if user_id:
+                results.append(
+                    {
+                        "input": input_value,
+                        "resolved": True,
+                        "id": user_id,
+                    }
+                )
+                continue
+            query = str(parsed.get("userName") or "").strip()
+            if not query:
+                results.append({"input": input_value, "resolved": False})
+                continue
+            if guilds is None:
+                guilds = self._list_discord_guilds(authorization)
+            guild_list = guilds
+            parsed_guild_id = str(parsed.get("guildId") or "").strip()
+            parsed_guild_name = str(parsed.get("guildName") or "").strip()
+            if parsed_guild_id or parsed_guild_name:
+                guild = _discord_guild_match(
+                    guilds,
+                    guild_id=parsed_guild_id,
+                    guild_name=parsed_guild_name,
+                )
+                guild_list = [guild] if guild is not None else []
+
+            best_member: dict[str, object] | None = None
+            best_score = -1
+            match_count = 0
+            for guild in guild_list:
+                guild_id = str(guild.get("id") or "").strip()
+                if not guild_id:
+                    continue
+                members_result = self._get_json_provider_url(
+                    _discord_api_endpoint(
+                        f"guilds/{guild_id}/members/search?"
+                        f"{urlencode({'query': query, 'limit': '25'})}"
+                    ),
+                    secret_header_name="Authorization",
+                    secret_token=authorization,
+                )
+                if not isinstance(members_result, list):
+                    continue
+                for member in members_result:
+                    if not isinstance(member, dict):
+                        continue
+                    score = _score_discord_member(member, query)
+                    if score == 0:
+                        continue
+                    match_count += 1
+                    if score > best_score:
+                        best_member = member
+                        best_score = score
+            if best_member is None:
+                results.append({"input": input_value, "resolved": False})
+                continue
+            user = best_member.get("user")
+            user_payload = user if isinstance(user, dict) else {}
+            resolved_user_id = str(user_payload.get("id") or "").strip()
+            payload: dict[str, object] = {
+                "input": input_value,
+                "resolved": True,
+                "id": resolved_user_id,
+            }
+            name = _discord_member_display_name(best_member)
+            if name:
+                payload["name"] = name
+            if match_count > 1:
+                payload["note"] = "multiple matches; chose best"
             results.append(payload)
         return results
 
