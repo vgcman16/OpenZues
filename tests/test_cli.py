@@ -3653,6 +3653,43 @@ def test_capability_tts_providers_rejects_local_and_gateway_together() -> None:
     assert "Pass only one of --local or --gateway." in result.stderr
 
 
+def test_infer_tts_status_json_tags_gateway_transport(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {
+                "enabled": True,
+                "auto": "on",
+                "provider": "microsoft",
+                "fallbackProvider": None,
+                "fallbackProviders": [],
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["infer", "tts", "status", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout) == {
+        "transport": "gateway",
+        "enabled": True,
+        "auto": "on",
+        "provider": "microsoft",
+        "fallbackProvider": None,
+        "fallbackProviders": [],
+    }
+    assert calls == [("tts.status", {})]
+
+
 def test_control_plane_base_url_prefers_lease_metadata(tmp_path, monkeypatch) -> None:
     data_dir = tmp_path / "data"
     data_dir.mkdir(parents=True, exist_ok=True)

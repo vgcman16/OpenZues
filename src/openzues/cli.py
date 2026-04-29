@@ -2853,6 +2853,13 @@ async def _build_capability_tts_providers_payload(
     return {"providers": providers, "active": active}
 
 
+async def _build_capability_tts_status_payload(
+    services: CliServices,
+) -> dict[str, object]:
+    payload = await _call_gateway_node_method(services, "tts.status", {})
+    return {"transport": "gateway", **payload}
+
+
 def _capability_list_payload() -> list[dict[str, object]]:
     return [
         {
@@ -7729,6 +7736,20 @@ def capability_tts_providers_command(
 
     async def _action(services: CliServices) -> dict[str, object]:
         return await _build_capability_tts_providers_payload(services)
+
+    payload = _run(_run_with_services(_action))
+    _emit_capability_provider_summary(payload, json_output=json_output)
+
+
+@capability_tts_app.command("status")
+def capability_tts_status_command(
+    gateway: bool = typer.Option(False, "--gateway", help="Force gateway execution."),
+    json_output: bool = typer.Option(False, "--json", help="Output JSON."),
+) -> None:
+    _ = gateway
+
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_capability_tts_status_payload(services)
 
     payload = _run(_run_with_services(_action))
     _emit_capability_provider_summary(payload, json_output=json_output)
