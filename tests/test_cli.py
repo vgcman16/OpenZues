@@ -6155,6 +6155,61 @@ def test_models_auth_setup_token_calls_model_auth_runtime(monkeypatch) -> None:
     assert calls == [{"provider": "moonshot", "yes": True}]
 
 
+def test_models_auth_paste_token_calls_model_auth_runtime(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeModelAuth:
+        async def paste_token(
+            self,
+            *,
+            provider: str,
+            profile_id: str | None,
+            expires_in: str | None,
+        ) -> dict[str, object]:
+            calls.append(
+                {
+                    "provider": provider,
+                    "profile_id": profile_id,
+                    "expires_in": expires_in,
+                }
+            )
+            return {
+                "provider": provider,
+                "status": "interactive",
+                "message": f"Paste-token ready for {profile_id}.",
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(model_auth=FakeModelAuth()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "models",
+            "auth",
+            "paste-token",
+            "--provider",
+            "anthropic",
+            "--profile-id",
+            "anthropic:work",
+            "--expires-in",
+            "30d",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert "Paste-token ready for anthropic:work." in result.stdout
+    assert calls == [
+        {
+            "provider": "anthropic",
+            "profile_id": "anthropic:work",
+            "expires_in": "30d",
+        }
+    ]
+
+
 def test_models_status_json_projects_default_catalog_state(monkeypatch) -> None:
     calls: list[tuple[str, dict[str, object]]] = []
 

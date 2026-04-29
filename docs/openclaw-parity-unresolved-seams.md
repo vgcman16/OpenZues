@@ -247,8 +247,9 @@ auth login-github-copilot` now maps to the native model-auth runtime with
 `provider="github-copilot"`, `method="device"`, and `--yes`. `models auth
 setup-token` now forwards `--provider` and `--yes` through the native fakeable
 model-auth runtime while preserving the same unavailable boundary when no
-setup-token owner is wired. The remaining provider-auth CLI heads are `models
-auth add` and `models auth paste-token`.
+setup-token owner is wired. `models auth paste-token` now forwards `--provider`,
+`--profile-id`, and `--expires-in` through the same runtime boundary. The
+remaining provider-auth CLI head is `models auth add`.
 Live auth
 probes remain unavailable until the native model auth health runtime exists.
 Top-level `health`

@@ -3470,6 +3470,29 @@ async def _build_models_auth_setup_token_payload(
     return payload
 
 
+async def _build_models_auth_paste_token_payload(
+    services: CliServices,
+    *,
+    provider: str,
+    profile_id: str | None,
+    expires_in: str | None,
+) -> dict[str, object]:
+    runtime = _model_auth_runtime(services)
+    paste_token = getattr(runtime, "paste_token", None)
+    if not callable(paste_token):
+        paste_token = getattr(runtime, "pasteToken", None)
+    if not callable(paste_token):
+        raise ValueError("model auth paste-token is unavailable until model auth runtime is wired.")
+    result = await paste_token(
+        provider=provider,
+        profile_id=profile_id,
+        expires_in=expires_in,
+    )
+    payload = dict(result) if isinstance(result, dict) else {}
+    payload.setdefault("provider", provider)
+    return payload
+
+
 async def _build_capability_model_auth_logout_payload(
     services: CliServices,
     *,
@@ -9169,6 +9192,41 @@ def models_auth_setup_token_command(
                     services,
                     provider=provider,
                     yes=yes,
+                )
+            )
+        )
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    _emit_capability_model_auth_login(payload)
+
+
+@models_auth_app.command("paste-token")
+def models_auth_paste_token_command(
+    provider: str = typer.Option(
+        ...,
+        "--provider",
+        help="Provider id.",
+    ),
+    profile_id: str | None = typer.Option(
+        None,
+        "--profile-id",
+        help="Auth profile id.",
+    ),
+    expires_in: str | None = typer.Option(
+        None,
+        "--expires-in",
+        help="Optional expiry duration.",
+    ),
+) -> None:
+    try:
+        payload = _run(
+            _run_with_services(
+                lambda services: _build_models_auth_paste_token_payload(
+                    services,
+                    provider=provider,
+                    profile_id=profile_id,
+                    expires_in=expires_in,
                 )
             )
         )
