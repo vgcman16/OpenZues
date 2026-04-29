@@ -108,6 +108,10 @@ hermes_app = typer.Typer(help="Inspect and tune Hermes runtime posture.")
 routes_app = typer.Typer(help="Inspect and test notification routes.")
 agents_app = typer.Typer(help="Inspect configured agent inventory.")
 channels_app = typer.Typer(help="Inspect notification route channels.")
+acp_app = typer.Typer(
+    help="Run an ACP bridge backed by the Gateway.",
+    invoke_without_command=True,
+)
 sandbox_app = typer.Typer(help="Inspect sandbox runtime inventory.")
 sessions_app = typer.Typer(help="Spawn and wait on gateway sessions.")
 plugins_app = typer.Typer(help="Inspect plugin and runtime inventory.")
@@ -132,6 +136,7 @@ app.add_typer(hermes_app, name="hermes")
 app.add_typer(routes_app, name="routes")
 app.add_typer(agents_app, name="agents")
 app.add_typer(channels_app, name="channels")
+app.add_typer(acp_app, name="acp")
 app.add_typer(sandbox_app, name="sandbox")
 app.add_typer(sessions_app, name="sessions")
 app.add_typer(plugins_app, name="plugins")
@@ -1947,6 +1952,34 @@ def _emit_plugins_marketplace_list(
         suffix = f" v{version}" if version is not None else ""
         detail = f" - {description}" if description is not None else ""
         typer.echo(f"{name}{suffix}{detail}")
+
+
+def _emit_acp_bridge_unavailable(
+    *,
+    kind: str,
+    context: dict[str, object],
+) -> None:
+    typer.echo(
+        f"ACP {kind} bridge is not available in the native OpenZues CLI yet.",
+        err=True,
+    )
+    typer.echo(
+        "Use `openzues sessions spawn --runtime acp` for Gateway-tracked ACP child runs.",
+        err=True,
+    )
+    for key, value in context.items():
+        if value in (None, "", False):
+            continue
+        typer.echo(f"{key}: {value}", err=True)
+
+
+def _validate_acp_provenance(value: str | None) -> str | None:
+    normalized = _optional_cli_string(value)
+    if normalized is None:
+        return None
+    if normalized not in {"off", "meta", "meta+receipt"}:
+        raise ValueError("Invalid --provenance value. Use off, meta, or meta+receipt.")
+    return normalized
 
 
 def _emit_models_list(
@@ -5423,6 +5456,113 @@ def plugins_marketplace_list_command(
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
     _emit_plugins_marketplace_list(payload, json_output=json_output)
+
+
+@acp_app.callback()
+def acp_bridge_command(
+    ctx: typer.Context,
+    url: str | None = typer.Option(
+        None,
+        "--url",
+        help="Gateway WebSocket URL.",
+    ),
+    token: str | None = typer.Option(None, "--token", help="Gateway token."),
+    token_file: str | None = typer.Option(
+        None,
+        "--token-file",
+        help="Read gateway token from file.",
+    ),
+    password: str | None = typer.Option(None, "--password", help="Gateway password."),
+    password_file: str | None = typer.Option(
+        None,
+        "--password-file",
+        help="Read gateway password from file.",
+    ),
+    session: str | None = typer.Option(None, "--session", help="Default session key."),
+    session_label: str | None = typer.Option(
+        None,
+        "--session-label",
+        help="Default session label to resolve.",
+    ),
+    require_existing: bool = typer.Option(
+        False,
+        "--require-existing",
+        help="Fail if the session key/label does not exist.",
+    ),
+    reset_session: bool = typer.Option(
+        False,
+        "--reset-session",
+        help="Reset the session key before first use.",
+    ),
+    no_prefix_cwd: bool = typer.Option(
+        False,
+        "--no-prefix-cwd",
+        help="Do not prefix prompts with the working directory.",
+    ),
+    provenance: str | None = typer.Option(
+        None,
+        "--provenance",
+        help="ACP provenance mode: off, meta, or meta+receipt.",
+    ),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose logging."),
+) -> None:
+    if ctx.invoked_subcommand is not None:
+        return
+    try:
+        provenance_mode = _validate_acp_provenance(provenance)
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    _emit_acp_bridge_unavailable(
+        kind="Gateway",
+        context={
+            "url": url,
+            "session": session,
+            "sessionLabel": session_label,
+            "requireExisting": require_existing,
+            "resetSession": reset_session,
+            "prefixCwd": not no_prefix_cwd,
+            "provenance": provenance_mode,
+            "verbose": verbose,
+            "tokenFile": token_file,
+            "passwordFile": password_file,
+            "token": "provided" if token else None,
+            "password": "provided" if password else None,
+        },
+    )
+    raise typer.Exit(code=1)
+
+
+@acp_app.command("client")
+def acp_client_command(
+    cwd: str | None = typer.Option(None, "--cwd", help="Working directory."),
+    server: str | None = typer.Option(
+        None,
+        "--server",
+        help="ACP server command.",
+    ),
+    server_args: Annotated[
+        list[str] | None,
+        typer.Option("--server-args", help="Extra arguments for the ACP server."),
+    ] = None,
+    server_verbose: bool = typer.Option(
+        False,
+        "--server-verbose",
+        help="Enable verbose logging on the ACP server.",
+    ),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose client logging."),
+) -> None:
+    _emit_acp_bridge_unavailable(
+        kind="client",
+        context={
+            "cwd": cwd,
+            "server": server,
+            "serverArgs": " ".join(server_args or []),
+            "serverVerbose": server_verbose,
+            "verbose": verbose,
+        },
+    )
+    raise typer.Exit(code=1)
 
 
 @sandbox_app.command("list")

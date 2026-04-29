@@ -504,6 +504,44 @@ def test_sandbox_list_human_output_warns_on_config_mismatch(monkeypatch) -> None
     assert "sandbox recreate --all" in result.stdout
 
 
+def test_acp_bridge_command_reports_native_runtime_unavailable() -> None:
+    result = runner.invoke(
+        app,
+        [
+            "acp",
+            "--url",
+            "ws://gateway.invalid/openzues",
+            "--session",
+            "agent:main:main",
+            "--provenance",
+            "meta",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "ACP Gateway bridge is not available" in result.stderr
+    assert "sessions spawn --runtime acp" in result.stderr
+
+
+def test_acp_client_command_reports_native_runtime_unavailable() -> None:
+    result = runner.invoke(
+        app,
+        [
+            "acp",
+            "client",
+            "--cwd",
+            r"C:\work\OpenZues",
+            "--server",
+            "openzues",
+            "--verbose",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "ACP client bridge is not available" in result.stderr
+    assert r"C:\work\OpenZues" in result.stderr
+
+
 def test_sandbox_recreate_session_force_json_forgets_saved_sandbox_metadata(monkeypatch) -> None:
     deleted: list[str] = []
 

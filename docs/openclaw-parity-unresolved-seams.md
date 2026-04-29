@@ -87,7 +87,11 @@ plugin/runtime inspection, doctor readiness checks, non-metadata external
 sandbox container cleanup, and broader TUI ergonomics. The existing
 `sandbox list` human output now also mirrors OpenClaw's total/running summary
 line and config-mismatch recreate hint after listing native saved sandbox
-runtimes.
+runtimes. The top-level `acp` and `acp client` command surfaces now accept the
+upstream option shape and return precise native-unavailable bridge errors that
+point users to the supported `sessions spawn --runtime acp` path; remaining
+ACP CLI parity is the real bridge server/client runtime and stricter
+secret-file/collision handling.
 The CLI now also exposes `models list` as a thin OpenClaw-shaped JSON/human
 wrapper over the production `models.list` gateway method owner, including
 provider/local filters without duplicating the model catalog runtime, and
