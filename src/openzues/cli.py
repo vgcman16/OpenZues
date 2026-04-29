@@ -5178,6 +5178,38 @@ def _channel_resolve_kind_matches(target_kind: str | None, requested_kind: str) 
     return normalized_target_kind == requested_kind
 
 
+def _detect_channel_resolve_auto_kind(entry: str, channel: str | None) -> str:
+    trimmed = entry.strip()
+    if not trimmed:
+        return "group"
+    if trimmed.startswith("@"):
+        return "user"
+    if re.match(r"^<@!?", trimmed):
+        return "user"
+    if re.match(r"^[^\s@]+@[^\s@]+\.[^\s@]+$", trimmed):
+        return "user"
+    if re.match(r"^user:", trimmed, re.IGNORECASE):
+        return "user"
+
+    normalized_channel = (_optional_cli_string(channel) or "").lower()
+    lowered = trimmed.lower()
+    if normalized_channel and lowered.startswith(f"{normalized_channel}:"):
+        remainder = lowered[len(normalized_channel) + 1 :]
+        if remainder.startswith(
+            (
+                "group:",
+                "channel:",
+                "room:",
+                "conversation:",
+                "spaces/",
+                "channels/",
+            )
+        ):
+            return "group"
+        return "user"
+    return "group"
+
+
 def _channel_resolve_route_targets(
     snapshot: dict[str, object],
     *,
@@ -5300,23 +5332,32 @@ async def _build_channel_resolve_results(
     live_results: dict[str, dict[str, object]] = {}
     resolver = getattr(services.gateway_channels, "resolve_targets", None)
     if unresolved_entries and callable(resolver):
-        resolved_live = await resolver(
-            channel=_optional_cli_string(channel),
-            account_id=_optional_cli_string(account),
-            kind=normalized_kind,
-            inputs=unresolved_entries,
-        )
-        if isinstance(resolved_live, list):
-            for item in resolved_live:
-                if not isinstance(item, dict):
-                    continue
-                input_value = _optional_cli_string(item.get("input"))
-                if input_value is None:
-                    continue
-                live_results[input_value] = _normalize_channel_resolve_result(
-                    input_value,
-                    cast(dict[str, object], item),
-                )
+        grouped_entries: dict[str, list[str]] = {}
+        for entry in unresolved_entries:
+            resolver_kind = (
+                _detect_channel_resolve_auto_kind(entry, channel)
+                if normalized_kind == "auto"
+                else normalized_kind
+            )
+            grouped_entries.setdefault(resolver_kind, []).append(entry)
+        for resolver_kind, resolver_inputs in grouped_entries.items():
+            resolved_live = await resolver(
+                channel=_optional_cli_string(channel),
+                account_id=_optional_cli_string(account),
+                kind=resolver_kind,
+                inputs=resolver_inputs,
+            )
+            if isinstance(resolved_live, list):
+                for item in resolved_live:
+                    if not isinstance(item, dict):
+                        continue
+                    input_value = _optional_cli_string(item.get("input"))
+                    if input_value is None:
+                        continue
+                    live_results[input_value] = _normalize_channel_resolve_result(
+                        input_value,
+                        cast(dict[str, object], item),
+                    )
     results: list[dict[str, object]] = []
     for entry in normalized_entries:
         results.append(

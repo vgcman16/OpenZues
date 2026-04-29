@@ -155,6 +155,9 @@ channel/group resolution calls Slack `conversations.list` through the stored
 route token and matches channel ids, mentions, and names. Slack user resolution
 now also calls Slack `users.list` through the same native route token and
 matches user ids, mentions, names, display/real names, and email addresses.
+`channels resolve` now mirrors OpenClaw's auto-kind batching for live resolver
+entries so user-looking inputs are sent to user resolution and group-looking
+inputs are sent to group/channel resolution while preserving output order.
 
 Current queue-head adjustment: `tools.invoke` plugin execution now routes
 through a fakeable `GatewayPluginRuntimeService`, preserving core mappings
@@ -1553,6 +1556,11 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   with the saved route token to resolve user ids, mentions, names, display/real
   names, and email addresses before falling back to unresolved results.
 - Verified the Slack user resolver seam with `python -m pytest tests\test_cli.py -q -k "route_backed_slack_user_resolver"`, adjacent `python -m pytest tests\test_cli.py -q -k "channels_resolve_json or route_backed_slack_channel_resolver or route_backed_slack_user_resolver or channels_status_json or route_backed_slack_probe"`, `ruff check src\openzues\services\ops_mesh.py tests\test_cli.py`, and `mypy src\openzues\services\ops_mesh.py`.
+- `channels resolve` now mirrors OpenClaw's auto-kind batching for live
+  resolver entries, splitting user-looking inputs to the user resolver and
+  group-looking inputs to the group/channel resolver while preserving command
+  output order.
+- Verified the auto-kind resolver seam with `python -m pytest tests\test_cli.py -q -k "auto_groups_route_backed_slack_targets"`, adjacent `python -m pytest tests\test_cli.py -q -k "channels_resolve_json or auto_groups_route_backed_slack_targets or route_backed_slack_channel_resolver or route_backed_slack_user_resolver or channels_status_json or route_backed_slack_probe"`, `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
 - `chat.history` and `sessions.history` now mirror OpenClaw's numeric history
   limit parsing: finite JSON numbers are floored and bounded instead of
   requiring integer-only input.
