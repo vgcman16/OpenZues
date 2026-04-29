@@ -375,6 +375,7 @@ acp_app = typer.Typer(
 sandbox_app = typer.Typer(help="Inspect sandbox runtime inventory.")
 sessions_app = typer.Typer(help="List, spawn, and wait on gateway sessions.")
 tasks_app = typer.Typer(help="Inspect durable background tasks.")
+tasks_flow_app = typer.Typer(help="Inspect durable TaskFlow state.")
 cron_app = typer.Typer(help="Inspect and run Gateway cron jobs.")
 capability_app = typer.Typer(
     help="Run provider-backed inference commands through a stable CLI surface."
@@ -413,6 +414,7 @@ app.add_typer(acp_app, name="acp")
 app.add_typer(sandbox_app, name="sandbox")
 app.add_typer(sessions_app, name="sessions")
 app.add_typer(tasks_app, name="tasks")
+tasks_app.add_typer(tasks_flow_app, name="flow")
 app.add_typer(cron_app, name="cron")
 capability_app.add_typer(capability_model_app, name="model")
 capability_model_app.add_typer(capability_model_auth_app, name="auth")
@@ -10424,6 +10426,9 @@ def _openclaw_task_record_from_mission(mission: object) -> dict[str, object] | N
         "notifyPolicy": "done_only",
         "createdAt": created_ms,
     }
+    task_blueprint_id = _record_value(mission, "task_blueprint_id")
+    if isinstance(task_blueprint_id, int):
+        task["parentFlowId"] = f"task-blueprint:{task_blueprint_id}"
     _openclaw_task_add_optional(task, "childSessionKey", session_key)
     _openclaw_task_add_optional(task, "runId", run_id)
     if status in {"running", "succeeded", "failed"}:
@@ -10449,6 +10454,24 @@ def _openclaw_task_record_from_mission(mission: object) -> dict[str, object] | N
     elif status == "failed":
         task["terminalOutcome"] = "blocked"
     return task
+
+
+async def _native_mission_records(services: CliServices) -> list[object]:
+    list_missions = getattr(getattr(services, "mission_service", None), "list_views", None)
+    if not callable(list_missions):
+        return []
+    return list(await list_missions())
+
+
+async def _native_task_blueprint_records(services: CliServices) -> list[object]:
+    list_task_blueprints = getattr(
+        getattr(services, "ops_mesh", None),
+        "list_task_blueprint_views",
+        None,
+    )
+    if not callable(list_task_blueprints):
+        return []
+    return list(await list_task_blueprints())
 
 
 def _openclaw_task_record_from_blueprint(blueprint: object) -> dict[str, object] | None:
@@ -10502,22 +10525,14 @@ def _openclaw_task_record_from_blueprint(blueprint: object) -> dict[str, object]
 
 async def _list_openclaw_background_tasks(services: CliServices) -> list[dict[str, object]]:
     records: list[dict[str, object]] = []
-    list_missions = getattr(getattr(services, "mission_service", None), "list_views", None)
-    if callable(list_missions):
-        for mission in await list_missions():
-            record = _openclaw_task_record_from_mission(mission)
-            if record is not None:
-                records.append(record)
-    list_task_blueprints = getattr(
-        getattr(services, "ops_mesh", None),
-        "list_task_blueprint_views",
-        None,
-    )
-    if callable(list_task_blueprints):
-        for blueprint in await list_task_blueprints():
-            record = _openclaw_task_record_from_blueprint(blueprint)
-            if record is not None:
-                records.append(record)
+    for mission in await _native_mission_records(services):
+        record = _openclaw_task_record_from_mission(mission)
+        if record is not None:
+            records.append(record)
+    for blueprint in await _native_task_blueprint_records(services):
+        record = _openclaw_task_record_from_blueprint(blueprint)
+        if record is not None:
+            records.append(record)
     return records
 
 
@@ -10963,6 +10978,247 @@ def _emit_tasks_maintenance(payload: dict[str, object], *, json_output: bool) ->
     if mode != "apply":
         typer.echo(
             "Dry run only. Re-run with `openzues tasks maintenance --apply` to write changes."
+        )
+
+
+def _openclaw_flow_status_from_blueprint(
+    blueprint: object,
+    linked_tasks: list[dict[str, object]],
+) -> str:
+    if not bool(_record_value(blueprint, "enabled", True)):
+        return "cancelled"
+    blueprint_status = str(_record_value(blueprint, "last_status", "") or "").strip().lower()
+    if blueprint_status == "blocked":
+        return "blocked"
+    if blueprint_status == "failed":
+        return "failed"
+    if blueprint_status == "completed" and not linked_tasks:
+        return "succeeded"
+    linked_statuses = {_optional_cli_string(task.get("status")) for task in linked_tasks}
+    if "running" in linked_statuses:
+        return "running"
+    if "queued" in linked_statuses:
+        return "queued"
+    if linked_statuses & {"failed", "timed_out"}:
+        return "failed"
+    if "lost" in linked_statuses:
+        return "lost"
+    if linked_tasks and linked_statuses <= {"succeeded"}:
+        return "succeeded"
+    if blueprint_status in {"active", "running"}:
+        return "running"
+    return "queued"
+
+
+def _openclaw_flow_goal(blueprint: object) -> str:
+    return (
+        _optional_cli_string(_record_value(blueprint, "objective_template"))
+        or _optional_cli_string(_record_value(blueprint, "summary"))
+        or _optional_cli_string(_record_value(blueprint, "name"))
+        or "OpenZues task blueprint"
+    )
+
+
+def _openclaw_flow_current_step(
+    blueprint: object,
+    linked_tasks: list[dict[str, object]],
+) -> str | None:
+    running_task = next(
+        (
+            task
+            for task in linked_tasks
+            if task.get("status") in {"running", "queued", "failed", "lost"}
+        ),
+        None,
+    )
+    if running_task is not None:
+        label = (
+            _optional_cli_string(running_task.get("label"))
+            or _optional_cli_string(running_task.get("task"))
+            or _optional_cli_string(running_task.get("taskId"))
+        )
+        status = _optional_cli_string(running_task.get("status"))
+        if label is not None and status is not None:
+            return f"{status}: {label}"
+    if _record_value(blueprint, "last_launched_at") is not None:
+        return "launched"
+    return "scheduled"
+
+
+def _openclaw_task_flow_record_from_blueprint(
+    blueprint: object,
+    linked_tasks: list[dict[str, object]],
+) -> dict[str, object] | None:
+    blueprint_id = _record_value(blueprint, "id")
+    if not isinstance(blueprint_id, int):
+        return None
+    flow_id = f"task-blueprint:{blueprint_id}"
+    created_ms = _task_timestamp_ms(_record_value(blueprint, "created_at")) or 0
+    updated_ms = _task_timestamp_ms(_record_value(blueprint, "updated_at")) or created_ms
+    status = _openclaw_flow_status_from_blueprint(blueprint, linked_tasks)
+    flow: dict[str, object] = {
+        "flowId": flow_id,
+        "syncMode": "task_mirrored",
+        "ownerKey": flow_id,
+        "controllerId": "openzues.task_blueprint",
+        "revision": 1,
+        "status": status,
+        "notifyPolicy": "done_only",
+        "goal": _openclaw_flow_goal(blueprint),
+        "createdAt": created_ms,
+        "updatedAt": updated_ms,
+    }
+    current_step = _openclaw_flow_current_step(blueprint, linked_tasks)
+    if current_step is not None:
+        flow["currentStep"] = current_step
+    if status in {"succeeded", "failed", "cancelled", "lost"}:
+        flow["endedAt"] = updated_ms
+    return {
+        **flow,
+        "tasks": linked_tasks,
+        "taskSummary": _summarize_openclaw_tasks(linked_tasks),
+    }
+
+
+async def _list_openclaw_task_flows(services: CliServices) -> list[dict[str, object]]:
+    tasks = await _list_openclaw_background_tasks(services)
+    flows: list[dict[str, object]] = []
+    for blueprint in await _native_task_blueprint_records(services):
+        blueprint_id = _record_value(blueprint, "id")
+        if not isinstance(blueprint_id, int):
+            continue
+        flow_id = f"task-blueprint:{blueprint_id}"
+        linked_tasks = [task for task in tasks if task.get("parentFlowId") == flow_id]
+        flow = _openclaw_task_flow_record_from_blueprint(blueprint, linked_tasks)
+        if flow is not None:
+            flows.append(flow)
+    return flows
+
+
+async def _build_task_flows_list_payload(
+    services: CliServices,
+    *,
+    status_filter: str | None,
+) -> dict[str, object]:
+    normalized_status = _optional_cli_string(status_filter)
+    flows = [
+        flow
+        for flow in await _list_openclaw_task_flows(services)
+        if normalized_status is None or flow.get("status") == normalized_status
+    ]
+    return {
+        "count": len(flows),
+        "status": normalized_status,
+        "flows": flows,
+    }
+
+
+async def _resolve_openclaw_task_flow(
+    services: CliServices,
+    lookup: str,
+) -> dict[str, object] | None:
+    token = lookup.strip()
+    for flow in await _list_openclaw_task_flows(services):
+        if token in {
+            _optional_cli_string(flow.get("flowId")),
+            _optional_cli_string(flow.get("ownerKey")),
+        }:
+            return flow
+    return None
+
+
+def _emit_task_flows_list(payload: dict[str, object], *, json_output: bool) -> None:
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2))
+        return
+    raw_flows = payload.get("flows")
+    flows = (
+        [cast("dict[str, object]", item) for item in raw_flows if isinstance(item, dict)]
+        if isinstance(raw_flows, list)
+        else []
+    )
+    active = sum(1 for flow in flows if flow.get("status") in {"queued", "running"})
+    blocked = sum(1 for flow in flows if flow.get("status") == "blocked")
+    cancel_requested = sum(1 for flow in flows if flow.get("cancelRequestedAt") is not None)
+    typer.echo(f"TaskFlows: {len(flows)}")
+    typer.echo(
+        "TaskFlow pressure: "
+        f"{active} active | {blocked} blocked | "
+        f"{cancel_requested} cancel-requested | {len(flows)} total"
+    )
+    status = _optional_cli_string(payload.get("status"))
+    if status is not None:
+        typer.echo(f"Status filter: {status}")
+    if not flows:
+        typer.echo("No TaskFlows found.")
+        return
+    typer.echo(
+        " ".join(
+            [
+                "TaskFlow".ljust(16),
+                "Mode".ljust(14),
+                "Status".ljust(10),
+                "Rev".ljust(6),
+                "Controller".ljust(24),
+                "Tasks".ljust(14),
+                "Goal",
+            ]
+        )
+    )
+    for flow in flows:
+        task_summary = flow.get("taskSummary")
+        active_count = 0
+        total_count = 0
+        if isinstance(task_summary, dict):
+            active_count = int(task_summary.get("active") or 0)
+            total_count = int(task_summary.get("total") or 0)
+        typer.echo(
+            " ".join(
+                [
+                    str(flow.get("flowId") or "n/a")[:16].ljust(16),
+                    str(flow.get("syncMode") or "n/a")[:14].ljust(14),
+                    str(flow.get("status") or "n/a")[:10].ljust(10),
+                    str(flow.get("revision") or "0")[:6].ljust(6),
+                    str(flow.get("controllerId") or "n/a")[:24].ljust(24),
+                    f"{active_count} active/{total_count} total".ljust(14),
+                    str(flow.get("goal") or ""),
+                ]
+            ).rstrip()
+        )
+
+
+def _emit_task_flow_show(flow: dict[str, object], *, json_output: bool) -> None:
+    if json_output:
+        typer.echo(json.dumps(flow, indent=2))
+        return
+    typer.echo("TaskFlow:")
+    typer.echo(f"flowId: {flow.get('flowId', 'n/a')}")
+    typer.echo(f"status: {flow.get('status', 'n/a')}")
+    typer.echo(f"goal: {flow.get('goal', 'n/a')}")
+    typer.echo(f"currentStep: {flow.get('currentStep', 'n/a')}")
+    typer.echo(f"owner: {flow.get('ownerKey', 'n/a')}")
+    task_summary = flow.get("taskSummary")
+    if isinstance(task_summary, dict):
+        typer.echo(
+            "tasks: "
+            f"{task_summary.get('total', 0)} total | "
+            f"{task_summary.get('active', 0)} active | "
+            f"{task_summary.get('failures', 0)} issues"
+        )
+    raw_tasks = flow.get("tasks")
+    tasks = (
+        [cast("dict[str, object]", item) for item in raw_tasks if isinstance(item, dict)]
+        if isinstance(raw_tasks, list)
+        else []
+    )
+    if not tasks:
+        typer.echo("Linked tasks: none")
+        return
+    typer.echo("Linked tasks:")
+    for task in tasks:
+        typer.echo(
+            f"- {task.get('taskId', 'n/a')} {task.get('status', 'n/a')} "
+            f"{task.get('runId', 'n/a')} {task.get('label', task.get('task', ''))}"
         )
 
 
@@ -11476,6 +11732,33 @@ def tasks_maintenance_command(
 
     payload = _run(_run_with_services(_action))
     _emit_tasks_maintenance(payload, json_output=json_output)
+
+
+@tasks_flow_app.command("list")
+def tasks_flow_list_command(
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON."),
+    status_filter: str | None = typer.Option(None, "--status", help="Filter by status."),
+) -> None:
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_task_flows_list_payload(services, status_filter=status_filter)
+
+    payload = _run(_run_with_services(_action))
+    _emit_task_flows_list(payload, json_output=json_output)
+
+
+@tasks_flow_app.command("show")
+def tasks_flow_show_command(
+    lookup: str = typer.Argument(..., help="Flow id or owner key."),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON."),
+) -> None:
+    async def _action(services: CliServices) -> dict[str, object] | None:
+        return await _resolve_openclaw_task_flow(services, lookup)
+
+    flow = _run(_run_with_services(_action))
+    if flow is None:
+        typer.echo(f"TaskFlow not found: {lookup}", err=True)
+        raise typer.Exit(code=1)
+    _emit_task_flow_show(flow, json_output=json_output)
 
 
 @tasks_app.command("show")

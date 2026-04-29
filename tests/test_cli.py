@@ -3823,6 +3823,7 @@ def test_tasks_list_json_filters_native_background_tasks(monkeypatch) -> None:
         "requesterSessionKey": "agent:worker:main",
         "ownerKey": "mission:17",
         "scopeKind": "session",
+        "parentFlowId": "task-blueprint:5",
         "childSessionKey": "agent:worker:main",
         "agentId": "openzues",
         "runId": "thread-17",
@@ -4029,6 +4030,126 @@ def test_tasks_maintenance_json_previews_native_cleanup_accounting(monkeypatch) 
     assert payload["auditBefore"] == payload["auditAfter"]
     assert payload["auditBefore"]["warnings"] == 1
     assert payload["auditBefore"]["taskFlows"]["total"] == 0
+
+
+def test_tasks_flow_list_json_projects_task_blueprint_flows(monkeypatch) -> None:
+    created_at = datetime(2026, 4, 29, 14, 30, tzinfo=UTC)
+    updated_at = datetime(2026, 4, 29, 14, 45, tzinfo=UTC)
+
+    class FakeMissionService:
+        async def list_views(self) -> list[SimpleNamespace]:
+            return [
+                SimpleNamespace(
+                    id=17,
+                    name="Gateway hardener",
+                    objective="Stabilize the next parity slice.",
+                    status="active",
+                    in_progress=True,
+                    task_blueprint_id=7,
+                    session_key="agent:worker:main",
+                    thread_id="thread-17",
+                    last_turn_id="turn-17",
+                    instance_id=2,
+                    model="gpt-5.4",
+                    last_error=None,
+                    last_checkpoint=None,
+                    last_activity_at=None,
+                    created_at=created_at,
+                    updated_at=updated_at,
+                )
+            ]
+
+    class FakeOpsMesh:
+        async def list_task_blueprint_views(self) -> list[SimpleNamespace]:
+            return [
+                SimpleNamespace(
+                    id=7,
+                    name="Nightly digest",
+                    objective_template="Send the recurring workspace digest.",
+                    summary="Recurring digest",
+                    schedule_kind="cron",
+                    cadence_minutes=None,
+                    enabled=True,
+                    last_status="active",
+                    last_result_summary=None,
+                    last_launched_at=created_at,
+                    created_at=created_at,
+                    updated_at=updated_at,
+                )
+            ]
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                mission_service=FakeMissionService(),
+                ops_mesh=FakeOpsMesh(),
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["tasks", "flow", "list", "--json", "--status", "running"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["count"] == 1
+    assert payload["status"] == "running"
+    flow = payload["flows"][0]
+    assert flow["flowId"] == "task-blueprint:7"
+    assert flow["syncMode"] == "task_mirrored"
+    assert flow["status"] == "running"
+    assert flow["goal"] == "Send the recurring workspace digest."
+    assert flow["tasks"][0]["taskId"] == "mission:17"
+    assert flow["tasks"][0]["parentFlowId"] == "task-blueprint:7"
+    assert flow["taskSummary"]["total"] == 1
+    assert flow["taskSummary"]["active"] == 1
+
+
+def test_tasks_flow_show_json_resolves_task_blueprint_flow(monkeypatch) -> None:
+    created_at = datetime(2026, 4, 29, 14, 30, tzinfo=UTC)
+    updated_at = datetime(2026, 4, 29, 14, 45, tzinfo=UTC)
+
+    class FakeMissionService:
+        async def list_views(self) -> list[SimpleNamespace]:
+            return []
+
+    class FakeOpsMesh:
+        async def list_task_blueprint_views(self) -> list[SimpleNamespace]:
+            return [
+                SimpleNamespace(
+                    id=7,
+                    name="Nightly digest",
+                    objective_template="Send the recurring workspace digest.",
+                    summary="Recurring digest",
+                    schedule_kind="cron",
+                    cadence_minutes=None,
+                    enabled=True,
+                    last_status=None,
+                    last_result_summary=None,
+                    last_launched_at=None,
+                    created_at=created_at,
+                    updated_at=updated_at,
+                )
+            ]
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                mission_service=FakeMissionService(),
+                ops_mesh=FakeOpsMesh(),
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["tasks", "flow", "show", "task-blueprint:7", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["flowId"] == "task-blueprint:7"
+    assert payload["status"] == "queued"
+    assert payload["tasks"] == []
+    assert payload["taskSummary"]["total"] == 0
 
 
 def test_sessions_spawn_json_calls_gateway_method_owner(monkeypatch) -> None:

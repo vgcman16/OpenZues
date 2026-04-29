@@ -152,10 +152,12 @@ lost, delivery-failed, missing-cleanup, and timestamp-consistency checks to
 those native records with the upstream JSON filter/summary envelope and an
 explicit empty TaskFlow audit summary. `tasks maintenance` now returns the
 upstream preview/apply envelope with native task summary, audit-before/after,
-cleanup-stamp accounting, and explicit zero TaskFlow maintenance while OpenZues
-has no first-class flow registry. Remaining tasks CLI/runtime parity is
-`tasks notify`, `tasks cancel`, and `tasks flow list/show/cancel`, plus a
-richer native TaskFlow registry if OpenZues grows a first-class flow owner.
+cleanup-stamp accounting, and explicit zero TaskFlow maintenance. `tasks flow
+list/show` now projects saved task blueprints as `task_mirrored` TaskFlows,
+links mission task records through `parentFlowId`, and returns upstream-shaped
+linked tasks plus task summaries. Remaining tasks CLI/runtime parity is
+`tasks notify`, `tasks cancel`, and `tasks flow cancel`, plus a richer native
+TaskFlow mutation registry if OpenZues grows a first-class flow owner.
 Top-level
 `status --json` now accepts OpenClaw's `--all`, `--usage`, `--deep`, and
 `--timeout` / `--timeout-ms` breadth flags, forwards the timeout into the
