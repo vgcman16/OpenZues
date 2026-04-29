@@ -2,10 +2,10 @@
 
 ## Snapshot
 
-- Updated: 2026-04-28.
-- Estimated repo-wide parity: ~43% overall, with a reasonable band of ~38-48%.
-- Estimated active gateway/session/tool-contract family parity: ~94% for the bounded local OpenZues path.
-- Estimated chat/session contract subfamily parity: ~96% after the latest `chat.send`, `chat.inject`, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.delete`, and `tools.invoke` slices.
+- Updated: 2026-04-29.
+- Estimated repo-wide parity: ~44% overall, with a reasonable band of ~39-49%.
+- Estimated active gateway/session/tool-contract family parity: ~96% for the bounded local OpenZues path.
+- Estimated chat/session contract subfamily parity: ~97% after the latest `chat.send`, `chat.inject`, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.delete`, `sessions.spawn`, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
 - This is a planning rollup, not a generated metric or a claim of feature-complete parity.
 
@@ -25,28 +25,29 @@ These are complete within the bounded OpenZues-local parity contract verified in
 - Chat transcript contracts are locked for the current SQLite-backed store: `chat.history` projection, usage/cost metadata, text caps, oversized payload placeholders, untrusted suffix stripping, skip-only hiding, directive cleanup, `chat.send` schema/provenance/timeout/session-key guards, `chat.inject` schema guards, and `chat.abort` run-id validation.
 - Session tool contracts are locked across the bounded local path for `sessions_history`, `session_status`, `sessions_list`, `sessions_send`, `sessions_yield`, `sessions.create`, `sessions.patch`, `sessions.delete`, `sessions.preview`, and direct session-history REST/SSE behavior.
 - Custom-agent control-plane ownership is landed for persisted agent create/update/delete, identity lookup, workspace file ownership, session creation/filtering, alias resolution, and deleted-agent send/steer guards.
-- `tools.invoke` core bridge is landed for allow/deny policy, owner-only controls, before-call hooks, plugin executor envelopes, safe core mappings, and OpenClaw-style projection/visibility for neighboring session tools.
+- `tools.invoke` core bridge is landed for allow/deny policy, owner-only controls, before-call hooks, plugin runtime service envelopes, safe core mappings, plugin error projection, and OpenClaw-style projection/visibility for neighboring session tools.
+- Native runtime seams are now landed for ACP spawn dispatch/tracking, sandbox-required child-turn dispatch when a sandbox runtime is registered, thread-bound spawn binding when a channel binder is registered, shared provider-native send metadata, and Telegram native document/reply/silent/thread payloads.
 
 ## Feature Families
 
 | Family | Status | Estimate | Current Read |
 | --- | --- | --- | --- |
 | Gateway + gateway methods | Near-complete bounded local path | ~99% | Gateway method registry, config lookups/mutation, model/session inventory, node invoke guards, native browser command productization, plugin/exec approval lifecycles, exec approval policy config, device-pair lifecycle, device token rotate/revoke, agent registry mutation, memory-doctor mutation, OpenClaw bootstrap/memory agent files, and strict chat/session validation are heavily covered. |
-| Gateway session/tool contracts | Active | ~94% | `sessions_history`, `session_status`, `sessions_list`, `sessions_send`, `sessions_spawn`, `sessions_yield`, `sessions.create`, `sessions.patch`, `sessions.delete`, `tools.invoke` projections, visibility policy, configured and omitted subagent timeout defaults, completion-expectation metadata, lightweight bootstrap context, child task envelopes, lifecycle policy metadata, terminal cleanup consumption, wait-consumed completion announcements, completion-announcement idempotency, tracked-run freshness guards, `agent.wait` zero-timeout polling, exact run-id wait precedence, recovered-run tracking cleanup, exact-run tracker isolation, and chat/session transcript contracts are now the live queue head; ACP harness spawning and deeper native executor/provider hooks remain. |
+| Gateway session/tool contracts | Active | ~96% | `sessions_history`, `session_status`, `sessions_list`, `sessions_send`, `sessions_spawn`, `sessions_yield`, `sessions.create`, `sessions.patch`, `sessions.delete`, `tools.invoke` projections, visibility policy, ACP spawn dispatch/tracking, fakeable sandbox/thread adapters, configured and omitted subagent timeout defaults, completion-expectation metadata, lightweight bootstrap context, child task envelopes, lifecycle policy metadata, terminal cleanup consumption, wait-consumed completion announcements, completion-announcement idempotency, tracked-run freshness guards, `agent.wait` zero-timeout polling, exact run-id wait precedence, recovered-run tracking cleanup, exact-run tracker isolation, and chat/session transcript contracts are now the live queue head; production sandbox setup, channel thread binders, and broader native executor/provider hooks remain. |
 | Chat + transcript contracts | Strong partial | ~96% | `chat.history`, direct session history REST/SSE, `chat.send`, `chat.inject`, `chat.abort`, live `session.message`, `sessions.changed`, transcript metadata, usage/cost, text caps, and sanitizer parity are verified against OpenClaw-shaped behavior where they map to SQLite-backed storage. |
 | Cron wake/delivery | Strong partial | ~96% | Direct send/poll, provider route callbacks, native route setup, replay/test dispatch, provider error/result metadata, OpenClaw-style cron-expression schedules, due-run behavior, and session-key wake routing are verified. |
 | Onboarding + setup | Partial | ~70% | QuickStart, gateway bootstrap, saved-lane handling, degraded bootstrap boundaries, remote saved-lane wizard progression, and broken-default repair posture are real, with broader OpenClaw setup breadth still open. |
 | CLI + operator control plane | Partial | ~66% | Status, continue, queue, recover/harden, gateway doctor, delivery replay, route creation, and operator monitor surfaces exist; broader runtime CLI/TUI breadth remains. |
 | Routing + session identity | Strong partial | ~84% | Session keys, routed targeting, custom-agent session creation/filtering/identity/workspace files, snapshot filtering, compaction inventory, spawned-session visibility, parent/child aliases, and direct session-history replay are real; provider-owned routing remains open. |
 | Skills + Ops Mesh | Partial | ~72% | Skill pins, skillbooks, inbox/snapshots/inventory, Hermes-inspired toolsets, recall/learning surfaces, and lane-aware supervision are useful but not complete OpenClaw/Hermes parity. |
-| Channels + direct announce delivery | Strong partial | ~91% | Shared outbound runtime ownership spans direct send/poll, explicit announce, saved replays, native adapters, Slack/Telegram/Discord/WhatsApp routes, admin-scoped chat origin/system provenance, A2A announce/reply loops, and idle `sessions.steer` runtime sends; provider-native outbound parity is still open. |
+| Channels + direct announce delivery | Strong partial | ~93% | Shared outbound runtime ownership spans direct send/poll, explicit announce, saved replays, native adapters, Slack/Telegram/Discord/WhatsApp routes, provider result metadata, OpenClaw-style send reply/thread/silent/document fields, Telegram native document/reply/silent/thread payloads, admin-scoped chat origin/system provenance, A2A announce/reply loops, and idle `sessions.steer` runtime sends; broader per-provider option coverage and CLI send breadth remain open. |
 | Browser/canvas/nodes/voice | Locked bounded family | ~99% | Canvas documents/A2UI/live-reload/capability routing, node event wakes, APNS wake paths, managed attachments, native browser runtimes, guarded artifacts, action grammar, scoped settings, batch execution, dashboard lifecycle, AI chat command routing, iOS provider command bridges, clipboard controls, storage/cookie mutation, HAR capture, confirmation handling, auth profile login/delete, and password-safe auth save are now landed. |
 | Packaging + companion apps | Minimal | ~5% | Still largely outside the current shipped OpenZues surface. |
 
 ## Remaining Not-Fully-Complete Areas
 
-- ACP-backed `sessions.spawn` harness execution, sandboxed target runtimes, persistent thread-binding hooks, and push-native completion-announcement orchestration beyond the bounded local wait/cleanup/idempotency implementation.
-- Provider-native outbound runtime behind the shared direct/poll/announce owner for real `channel` / `to` / `accountId` delivery, beyond the verified session-backed/local adapters.
+- Production wiring for sandboxed target runtimes, channel-registered persistent thread binders, and push-native completion delivery beyond the bounded local wait/cleanup/idempotency implementation.
+- Broader provider-native outbound runtime breadth for all provider-specific reply/silent/document/media options and CLI send/poll surfaces.
 - Broader OpenClaw companion apps, packaging/distribution, full CLI/TUI ergonomics, and non-Windows host parity.
 - OpenClaw file-store-only edge cases that do not cleanly map to OpenZues' current SQLite-backed transcript source of truth.
 
@@ -70,6 +71,11 @@ These are complete within the bounded OpenZues-local parity contract verified in
 
 ## Latest Verification
 
+- `python -m pytest tests\test_gateway_acp_spawn.py -q`: 2 passed after adding the native ACP spawn service.
+- `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_spawn or agent_wait or send_uses_channel_message_runtime or send_preserves_provider_native or tools_invoke"`: 98 passed after ACP, sandbox, thread-binder, provider-send, and plugin-runtime slices.
+- `python -m pytest tests\test_ops_mesh.py -q -k "send_direct_channel_message"`: 15 passed after preserving provider-native send options and Telegram document/reply/silent/thread payloads.
+- `ruff check src\openzues\services\gateway_acp_spawn.py src\openzues\services\gateway_node_methods.py src\openzues\services\gateway_outbound_runtime.py src\openzues\services\gateway_plugin_runtime.py src\openzues\services\ops_mesh.py src\openzues\app.py tests\test_gateway_acp_spawn.py tests\test_gateway_node_methods.py tests\test_ops_mesh.py`: clean.
+- `mypy src\openzues\services\gateway_acp_spawn.py src\openzues\services\gateway_node_methods.py src\openzues\services\gateway_outbound_runtime.py src\openzues\services\gateway_plugin_runtime.py src\openzues\services\ops_mesh.py src\openzues\app.py`: clean.
 - `pytest tests/test_gateway_node_methods.py -q -k cron`: 48 passed after adding cron-expression schedule create/update/due-run coverage.
 - `pytest tests/test_gateway_nodes_api.py -q -k cron`: 35 passed after adding HTTP method cron-expression round-trip coverage.
 - `pytest tests/test_ops_mesh.py -q -k "cron or scheduled or due"`: 23 passed after wiring cron-expression due detection into Ops Mesh.

@@ -26,6 +26,7 @@ from openzues.schemas import (
     IntegrationView,
     NotificationRouteView,
 )
+from openzues.services.gateway_acp_spawn import GatewayAcpSpawnService
 from openzues.services.gateway_agent_files import GatewayAgentFilesService
 from openzues.services.gateway_agents import GatewayAgentsService
 from openzues.services.gateway_browser_runtime import (
@@ -66,6 +67,10 @@ from openzues.services.gateway_node_pending_work import (
     NodePendingWorkType,
 )
 from openzues.services.gateway_node_registry import GatewayNodeRegistry, KnownNode
+from openzues.services.gateway_plugin_runtime import (
+    GatewayPluginExecutor,
+    GatewayPluginRuntimeService,
+)
 from openzues.services.gateway_session_compaction import (
     GatewaySessionCompactionService,
     GatewaySessionCompactionUnavailableError,
@@ -1114,7 +1119,15 @@ class GatewayNodeMethodService:
         send_apns_wake_service: Callable[..., Awaitable[dict[str, object]]] | None = None,
         chat_send_service: Callable[..., Awaitable[dict[str, object]]] | None = None,
         chat_attachment_send_service: Callable[..., Awaitable[dict[str, object]]] | None = None,
+        sandbox_chat_send_service: Callable[..., Awaitable[dict[str, object]]] | None = None,
         chat_abort_service: Callable[..., Awaitable[dict[str, object]]] | None = None,
+        subagent_thread_binder: (
+            Callable[
+                [dict[str, object], dict[str, object], dict[str, object]],
+                Awaitable[dict[str, object]],
+            ]
+            | None
+        ) = None,
         sessions_yield_service: Callable[[str], Awaitable[None]] | None = None,
         sleep: Callable[[float], Awaitable[None]] | None = None,
         status_service: Callable[[], Awaitable[dict[str, object]]] | None = None,
@@ -1131,14 +1144,16 @@ class GatewayNodeMethodService:
         node_allow_commands: Iterable[str] = (),
         node_deny_commands: Iterable[str] = (),
         browser_runtime_service: GatewayBrowserRuntimeService | None = None,
+        acp_spawn_service: GatewayAcpSpawnService | None = None,
         exec_approvals_path: Path | None = None,
         tools_invoke_executors: (
-            dict[str, Callable[[str, dict[str, Any]], Awaitable[object]]] | None
+            dict[str, GatewayPluginExecutor] | None
         ) = None,
         tools_invoke_owner_only: Iterable[str] = (),
         tools_invoke_before_call: (
             Callable[[dict[str, Any]], Awaitable[dict[str, Any]]] | None
         ) = None,
+        plugin_runtime_service: GatewayPluginRuntimeService | None = None,
     ) -> None:
         self.registry = registry
         self._database = database
@@ -1207,7 +1222,9 @@ class GatewayNodeMethodService:
         self._send_apns_wake_service = send_apns_wake_service
         self._chat_send_service = chat_send_service
         self._chat_attachment_send_service = chat_attachment_send_service
+        self._sandbox_chat_send_service = sandbox_chat_send_service
         self._chat_abort_service = chat_abort_service
+        self._subagent_thread_binder = subagent_thread_binder
         self._sessions_yield_service = sessions_yield_service
         self._gateway_chat_run_ids_by_session_key: dict[str, str] = {}
         self._gateway_tracked_chat_runs_by_id: dict[str, GatewayTrackedChatRun] = {}
@@ -1232,6 +1249,7 @@ class GatewayNodeMethodService:
         self._node_allow_commands = tuple(node_allow_commands)
         self._node_deny_commands = tuple(node_deny_commands)
         self._browser_runtime_service = browser_runtime_service or GatewayBrowserRuntimeService()
+        self._acp_spawn_service = acp_spawn_service
         self._exec_approvals_path = exec_approvals_path
         self._tools_invoke_executors = dict(tools_invoke_executors or {})
         self._tools_invoke_owner_only = {
@@ -1240,6 +1258,10 @@ class GatewayNodeMethodService:
             if isinstance(tool_name, str) and tool_name.strip()
         }
         self._tools_invoke_before_call = tools_invoke_before_call
+        self._plugin_runtime_service = plugin_runtime_service or GatewayPluginRuntimeService(
+            executors=self._tools_invoke_executors,
+            owner_only=self._tools_invoke_owner_only,
+        )
 
     def _normalize_declared_commands_for_metadata(
         self,
@@ -1920,7 +1942,6 @@ class GatewayNodeMethodService:
             and not _tools_invoke_requester_is_owner(requester)
         ):
             _raise_tools_invoke_not_found(tool_key)
-        plugin_executor: Callable[[str, dict[str, Any]], Awaitable[object]] | None = None
         resolved_tool_method: str | None
         if tool_key == "cron":
             action = _require_enum_value(
@@ -1931,13 +1952,21 @@ class GatewayNodeMethodService:
             resolved_tool_method = f"cron.{action}"
         else:
             resolved_tool_method = _GATEWAY_TOOLS_INVOKE_METHOD_ALIASES.get(tool_key)
-        if resolved_tool_method is None:
-            plugin_executor = self._tools_invoke_executors.get(tool_key)
-            if plugin_executor is None or tool_key not in allow_tools:
-                _raise_tools_invoke_not_found(tool_key)
-
         raw_args = payload.get("args")
         tool_args = dict(raw_args) if isinstance(raw_args, dict) else {}
+        plugin_executor: GatewayPluginExecutor | None = None
+        if resolved_tool_method is None:
+            if tool_key not in allow_tools:
+                _raise_tools_invoke_not_found(tool_key)
+            plugin_resolution = self._plugin_runtime_service.resolve_executor(
+                tool_key,
+                requester,
+                tool_args,
+            )
+            if plugin_resolution is None:
+                _raise_tools_invoke_not_found(tool_key)
+            plugin_executor = plugin_resolution.executor
+
         session_key = _optional_normalized_string(payload.get("sessionKey"), label="sessionKey")
         if (
             session_key is not None
@@ -5243,6 +5272,11 @@ class GatewayNodeMethodService:
                     "mediaUrl",
                     "mediaUrls",
                     "gifPlayback",
+                    "messageThreadId",
+                    "replyToId",
+                    "replyToMessageId",
+                    "silent",
+                    "forceDocument",
                     "channel",
                     "accountId",
                     "agentId",
@@ -5290,9 +5324,39 @@ class GatewayNodeMethodService:
             _validate_gateway_outbound_target(resolved_channel, to)
             account_id = _optional_normalized_string(payload.get("accountId"), label="accountId")
             agent_id = _optional_normalized_string(payload.get("agentId"), label="agentId")
-            explicit_thread_id = _optional_normalized_string(
-                payload.get("threadId"),
-                label="threadId",
+            explicit_thread_id = (
+                _optional_normalized_string(
+                    payload.get("messageThreadId"),
+                    label="messageThreadId",
+                )
+                if "messageThreadId" in payload
+                else None
+            )
+            if explicit_thread_id is None:
+                explicit_thread_id = _optional_normalized_string(
+                    payload.get("threadId"),
+                    label="threadId",
+                )
+            reply_to_id = (
+                _optional_normalized_string(
+                    payload.get("replyToMessageId"),
+                    label="replyToMessageId",
+                )
+                if "replyToMessageId" in payload
+                else _optional_normalized_string(
+                    payload.get("replyToId"),
+                    label="replyToId",
+                )
+            )
+            silent = (
+                _optional_bool(payload.get("silent"), label="silent")
+                if "silent" in payload
+                else None
+            )
+            force_document = (
+                _optional_bool(payload.get("forceDocument"), label="forceDocument")
+                if "forceDocument" in payload
+                else None
             )
             source_session_key = _optional_normalized_string(
                 payload.get("sessionKey"),
@@ -5329,6 +5393,12 @@ class GatewayNodeMethodService:
                 send_payload["media_urls"] = normalized_media_urls
                 if gif_playback is not None:
                     send_payload["gif_playback"] = gif_playback
+            if reply_to_id is not None:
+                send_payload["reply_to_id"] = reply_to_id
+            if silent is not None:
+                send_payload["silent"] = silent
+            if force_document is not None:
+                send_payload["force_document"] = force_document
             return await self._send_channel_message_service(**send_payload)
 
         if resolved_method == "poll":
@@ -6843,30 +6913,247 @@ class GatewayNodeMethodService:
                         ),
                         **role_context,
                     }
-                return {
-                    "status": "error",
-                    "error": (
-                        "runtime=acp sessions_spawn is not available in OpenZues yet; "
-                        "use runtime=subagent."
-                    ),
-                    **role_context,
+                if self._acp_spawn_service is None:
+                    return {
+                        "status": "error",
+                        "error": (
+                            "runtime=acp sessions_spawn is not available in OpenZues yet; "
+                            "use runtime=subagent."
+                        ),
+                        **role_context,
+                    }
+                if self._database is None or self._sessions_service is None:
+                    raise GatewayNodeMethodError(
+                        code="UNAVAILABLE",
+                        message="sessions.spawn is unavailable until session inventory is wired",
+                        status_code=503,
+                    )
+                timestamp_ms = _timestamp_ms(now_ms)
+                requester_session_key = _optional_non_empty_string(
+                    payload.get("requesterSessionKey"),
+                    label="requesterSessionKey",
+                )
+                spawn_parent_session_key = (
+                    await self._resolve_existing_session_key(requester_session_key, now_ms=now_ms)
+                    if requester_session_key is not None
+                    else await self._sessions_service.main_session_key()
+                )
+                spawn_parent_payload = await self._sessions_service.build_session_payload_for_key(
+                    session_key=spawn_parent_session_key,
+                    now_ms=timestamp_ms,
+                )
+                spawn_parent_depth = await _sessions_spawn_requester_depth(
+                    self._database,
+                    session_key=spawn_parent_session_key,
+                    snapshot=spawn_parent_payload,
+                )
+                max_spawn_depth = _sessions_spawn_max_depth(self._config_service)
+                if spawn_parent_depth >= max_spawn_depth:
+                    return {
+                        "status": "forbidden",
+                        "error": (
+                            "sessions_spawn is not allowed at this depth "
+                            f"(current depth: {spawn_parent_depth}, "
+                            f"max: {max_spawn_depth})"
+                        ),
+                        **role_context,
+                    }
+                mode = _optional_enum_value(
+                    payload.get("mode"),
+                    label="mode",
+                    allowed_values={"run", "session"},
+                )
+                thread = bool(
+                    _optional_bool(payload.get("thread"), label="thread")
+                    if "thread" in payload
+                    else False
+                )
+                tracked_mode = cast(
+                    Literal["run", "session"],
+                    mode or ("session" if thread else "run"),
+                )
+                cleanup = _optional_enum_value(
+                    payload.get("cleanup"),
+                    label="cleanup",
+                    allowed_values={"delete", "keep"},
+                ) or "keep"
+                tracked_cleanup = "keep" if tracked_mode == "session" else cleanup
+                run_timeout_seconds_value = _optional_number(
+                    payload.get("runTimeoutSeconds"),
+                    label="runTimeoutSeconds",
+                )
+                if run_timeout_seconds_value is None:
+                    run_timeout_seconds_value = _optional_number(
+                        payload.get("timeoutSeconds"),
+                        label="timeoutSeconds",
+                    )
+                if (
+                    run_timeout_seconds_value is not None
+                    and run_timeout_seconds_value < 0
+                ):
+                    raise ValueError("runTimeoutSeconds must be at least 0")
+                run_timeout_seconds = (
+                    int(run_timeout_seconds_value)
+                    if run_timeout_seconds_value is not None
+                    else _sessions_spawn_default_run_timeout_seconds(self._config_service)
+                )
+                requester_origin = _requester_route_context(resolved_requester)
+                acp_result = await self._acp_spawn_service.spawn(
+                    {
+                        "task": task,
+                        "label": _optional_session_label(payload.get("label"), label="label"),
+                        "agentId": agent_id,
+                        "resumeSessionId": resume_session_id,
+                        "cwd": _optional_non_empty_string(payload.get("cwd"), label="cwd"),
+                        "mode": mode,
+                        "thread": thread,
+                        "sandbox": sandbox,
+                        "streamTo": stream_to,
+                        "runTimeoutSeconds": run_timeout_seconds,
+                    },
+                    {
+                        "requesterSessionKey": spawn_parent_session_key,
+                        "requesterChannel": (
+                            requester_origin.get("channel")
+                            if requester_origin is not None
+                            else None
+                        ),
+                        "requesterAccountId": (
+                            requester_origin.get("accountId")
+                            if requester_origin is not None
+                            else None
+                        ),
+                        "requesterTo": (
+                            requester_origin.get("to")
+                            if requester_origin is not None
+                            else None
+                        ),
+                        "requesterThreadId": (
+                            requester_origin.get("threadId")
+                            if requester_origin is not None
+                            else None
+                        ),
+                    },
+                )
+                if str(acp_result.get("status") or "").strip().lower() != "accepted":
+                    acp_error_response = dict(acp_result)
+                    acp_error_response.update(role_context)
+                    return acp_error_response
+                if stream_to == "parent":
+                    acp_stream_response = dict(acp_result)
+                    acp_stream_response.update(role_context)
+                    return acp_stream_response
+                child_session_key = _require_non_empty_string(
+                    acp_result.get("childSessionKey"),
+                    label="childSessionKey",
+                )
+                run_id = _require_non_empty_string(acp_result.get("runId"), label="runId")
+                returned_mode = _optional_enum_value(
+                    acp_result.get("mode"),
+                    label="mode",
+                    allowed_values={"run", "session"},
+                )
+                tracked_mode = cast(Literal["run", "session"], returned_mode or tracked_mode)
+                tracked_cleanup = "keep" if tracked_mode == "session" else tracked_cleanup
+                child_spawn_depth = spawn_parent_depth + 1
+                child_subagent_role = _sessions_spawn_subagent_role(
+                    depth=child_spawn_depth,
+                    max_spawn_depth=max_spawn_depth,
+                )
+                acp_metadata: dict[str, Any] = {
+                    "runtime": "acp",
+                    "spawnedBy": spawn_parent_session_key,
+                    "parentSessionKey": spawn_parent_session_key,
+                    "spawnDepth": child_spawn_depth,
+                    "subagentRole": child_subagent_role,
+                    "subagentControlScope": _sessions_spawn_control_scope(child_subagent_role),
+                    "spawnMode": tracked_mode,
+                    "cleanup": tracked_cleanup,
+                    "runTimeoutSeconds": run_timeout_seconds,
+                    "runtimeThreadId": _string_or_none(acp_result.get("runtimeThreadId")),
+                    "runtimeSessionId": _string_or_none(acp_result.get("runtimeSessionId")),
                 }
+                acp_metadata = {
+                    key: metadata_value
+                    for key, metadata_value in acp_metadata.items()
+                    if metadata_value is not None
+                }
+                if requester_origin is not None:
+                    acp_metadata["requesterOrigin"] = dict(requester_origin)
+                    acp_metadata["deliveryContext"] = dict(requester_origin)
+                    if "channel" in requester_origin:
+                        acp_metadata["lastChannel"] = requester_origin["channel"]
+                    if "to" in requester_origin:
+                        acp_metadata["lastTo"] = requester_origin["to"]
+                    if "accountId" in requester_origin:
+                        acp_metadata["lastAccountId"] = requester_origin["accountId"]
+                    if "threadId" in requester_origin:
+                        acp_metadata["lastThreadId"] = requester_origin["threadId"]
+                label = _optional_session_label(payload.get("label"), label="label")
+                if label is not None:
+                    acp_metadata["label"] = label
+                if agent_id is not None:
+                    acp_metadata["agentId"] = agent_id
+                await self._database.upsert_gateway_session_metadata(
+                    session_key=child_session_key,
+                    metadata=acp_metadata,
+                )
+                entry = await self._sessions_service.build_session_payload_for_key(
+                    session_key=child_session_key,
+                    now_ms=timestamp_ms,
+                )
+                self._remember_gateway_chat_run(
+                    child_session_key,
+                    {"runId": run_id},
+                    started_at_ms=timestamp_ms,
+                )
+                await self._publish_sessions_changed_event(
+                    session_key=child_session_key,
+                    reason="create",
+                    now_ms=now_ms,
+                )
+                await self._publish_sessions_changed_event(
+                    session_key=child_session_key,
+                    reason="send",
+                    now_ms=now_ms,
+                )
+                acp_response: dict[str, Any] = {
+                    "status": "accepted",
+                    "childSessionKey": child_session_key,
+                    "runId": run_id,
+                    "mode": tracked_mode,
+                    "cleanup": tracked_cleanup,
+                }
+                if entry is not None:
+                    acp_response["entry"] = entry
+                for key in ("runtimeThreadId", "runtimeSessionId", "note"):
+                    acp_result_value = acp_result.get(key)
+                    if acp_result_value is not None:
+                        acp_response[key] = acp_result_value
+                acp_response.update(role_context)
+                return acp_response
             if sandbox == "require":
-                return {
-                    "status": "forbidden",
-                    "error": (
-                        'sessions_spawn sandbox="require" needs a sandboxed target runtime. '
-                        'Pick a sandboxed agentId or use sandbox="inherit".'
-                    ),
-                    **role_context,
-                }
+                if self._sandbox_chat_send_service is None:
+                    return {
+                        "status": "forbidden",
+                        "error": (
+                            'sessions_spawn sandbox="require" needs a sandboxed target runtime. '
+                            'Pick a sandboxed agentId or use sandbox="inherit".'
+                        ),
+                        **role_context,
+                    }
             if self._database is None or self._sessions_service is None:
                 raise GatewayNodeMethodError(
                     code="UNAVAILABLE",
                     message="sessions.spawn is unavailable until session inventory is wired",
                     status_code=503,
                 )
-            if self._chat_send_service is None:
+            effective_chat_send_service = (
+                self._sandbox_chat_send_service
+                if sandbox == "require"
+                else self._chat_send_service
+            )
+            if effective_chat_send_service is None:
                 raise GatewayNodeMethodError(
                     code="UNAVAILABLE",
                     message="sessions.spawn is unavailable until control chat runtime is wired",
@@ -6965,7 +7252,7 @@ class GatewayNodeMethodService:
                 if "thread" in payload
                 else False
             )
-            if thread:
+            if thread and self._subagent_thread_binder is None:
                 return {
                     "status": "error",
                     "error": (
@@ -7035,6 +7322,9 @@ class GatewayNodeMethodService:
                 "spawnMode": tracked_mode,
                 "cleanup": tracked_cleanup,
             }
+            if sandbox == "require":
+                metadata["sandboxed"] = True
+                metadata["sandboxMode"] = "workspace-write"
             if run_timeout_seconds is not None:
                 metadata["runTimeoutSeconds"] = run_timeout_seconds
             requester_origin = _requester_route_context(resolved_requester)
@@ -7049,6 +7339,33 @@ class GatewayNodeMethodService:
                     metadata["lastAccountId"] = requester_origin["accountId"]
                 if "threadId" in requester_origin:
                     metadata["lastThreadId"] = requester_origin["threadId"]
+            if thread:
+                assert self._subagent_thread_binder is not None
+                raw_thread_binding = await self._subagent_thread_binder(
+                    {"sessionKey": spawn_parent_session_key, "agentId": requester_agent_id},
+                    {"sessionKey": canonical_key, "agentId": target_agent_id},
+                    dict(requester_origin or {}),
+                )
+                thread_binding: dict[str, str] = {}
+                for key in ("channel", "to", "accountId", "threadId"):
+                    thread_binding_value = _string_or_none(raw_thread_binding.get(key))
+                    if thread_binding_value is not None:
+                        thread_binding[key] = thread_binding_value
+                metadata["threadBinding"] = thread_binding
+                metadata["completionDelivery"] = {
+                    "mode": "thread",
+                    **thread_binding,
+                }
+                if thread_binding:
+                    metadata["deliveryContext"] = dict(thread_binding)
+                    if "channel" in thread_binding:
+                        metadata["lastChannel"] = thread_binding["channel"]
+                    if "to" in thread_binding:
+                        metadata["lastTo"] = thread_binding["to"]
+                    if "accountId" in thread_binding:
+                        metadata["lastAccountId"] = thread_binding["accountId"]
+                    if "threadId" in thread_binding:
+                        metadata["lastThreadId"] = thread_binding["threadId"]
             if label is not None:
                 metadata["label"] = label
             if model is not None:
@@ -7117,7 +7434,15 @@ class GatewayNodeMethodService:
                     depth=child_spawn_depth,
                     max_spawn_depth=max_spawn_depth,
                 )
-                send_result = await self._chat_send_service(
+                sandbox_kwargs = (
+                    {
+                        "sandbox": "require",
+                        "sandbox_mode": "workspace-write",
+                    }
+                    if sandbox == "require"
+                    else {}
+                )
+                send_result = await effective_chat_send_service(
                     session_key=canonical_key,
                     message=(
                         f"{child_task_message}\n\n{attachment_suffix}".rstrip()
@@ -7129,6 +7454,7 @@ class GatewayNodeMethodService:
                     deliver=None,
                     timeout_ms=timeout_ms,
                     **light_context_kwargs,
+                    **sandbox_kwargs,
                 )
             except Exception as exc:  # noqa: BLE001 - preserve actionable spawn error.
                 if attachment_dir is not None:
