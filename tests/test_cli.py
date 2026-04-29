@@ -1747,6 +1747,56 @@ def test_gateway_doctor_human_output_summarizes_sections(tmp_path, monkeypatch) 
     assert "diagnostics:" in result.stdout
 
 
+def test_health_json_surfaces_gateway_readiness_snapshot(monkeypatch) -> None:
+    calls: list[tuple[str, str, float]] = []
+
+    monkeypatch.setattr(
+        cli_module,
+        "_control_plane_base_url",
+        lambda _settings: "http://gateway.test",
+    )
+
+    def fake_watch_api_json(
+        base_url: str,
+        path: str,
+        *,
+        timeout_seconds: float,
+        **_kwargs: object,
+    ) -> dict[str, object]:
+        calls.append((base_url, path, timeout_seconds))
+        if path == "/api/health":
+            return {
+                "status": "ok",
+                "control_plane": "leader",
+                "owner_pid": 1234,
+                "lock_path": r"C:\OpenZues\control-plane.lock",
+                "runtime_update": {"status": "idle"},
+            }
+        if path == "/readyz":
+            return {"ready": True, "failing": [], "uptimeMs": 123}
+        raise AssertionError(path)
+
+    monkeypatch.setattr(cli_module, "_watch_api_json", fake_watch_api_json)
+
+    result = runner.invoke(app, ["health", "--json", "--timeout-ms", "2500"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload == {
+        "ok": True,
+        "status": "ok",
+        "controlPlane": "leader",
+        "ownerPid": 1234,
+        "lockPath": r"C:\OpenZues\control-plane.lock",
+        "runtimeUpdate": {"status": "idle"},
+        "readiness": {"ready": True, "failing": [], "uptimeMs": 123},
+    }
+    assert calls == [
+        ("http://gateway.test", "/api/health", 2.5),
+        ("http://gateway.test", "/readyz", 2.5),
+    ]
+
+
 def test_status_json_reuses_gateway_contract_and_surfaces_queue_plan(tmp_path, monkeypatch) -> None:
     data_dir = tmp_path / "data"
     _bootstrap_cli_workspace(tmp_path, monkeypatch)

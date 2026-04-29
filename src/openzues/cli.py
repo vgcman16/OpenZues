@@ -255,6 +255,54 @@ async def _try_live_status_payload(app_settings: Settings) -> dict[str, object] 
     return payload if isinstance(payload, dict) else None
 
 
+async def _build_live_health_payload(
+    app_settings: Settings,
+    *,
+    timeout_ms: int,
+) -> dict[str, object]:
+    base_url = _control_plane_base_url(app_settings)
+    timeout_seconds = timeout_ms / 1000
+    health = await asyncio.to_thread(
+        _watch_api_json,
+        base_url,
+        "/api/health",
+        timeout_seconds=timeout_seconds,
+    )
+    if not isinstance(health, dict):
+        raise RuntimeError("Gateway health response was not an object.")
+    try:
+        readiness = await asyncio.to_thread(
+            _watch_api_json,
+            base_url,
+            "/readyz",
+            timeout_seconds=timeout_seconds,
+        )
+    except RuntimeError as exc:
+        readiness = {
+            "ready": False,
+            "failing": ["control-plane"],
+            "error": str(exc),
+        }
+    if not isinstance(readiness, dict):
+        readiness = {"ready": False, "failing": ["control-plane"]}
+    status = _optional_cli_string(health.get("status")) or "unknown"
+    control_plane = _optional_cli_string(health.get("controlPlane"))
+    if control_plane is None:
+        control_plane = _optional_cli_string(health.get("control_plane"))
+    runtime_update = health.get("runtimeUpdate")
+    if not isinstance(runtime_update, dict):
+        runtime_update = health.get("runtime_update")
+    return {
+        "ok": status == "ok",
+        "status": status,
+        "controlPlane": control_plane,
+        "ownerPid": health.get("ownerPid", health.get("owner_pid")),
+        "lockPath": health.get("lockPath", health.get("lock_path")),
+        "runtimeUpdate": dict(runtime_update) if isinstance(runtime_update, dict) else {},
+        "readiness": dict(readiness),
+    }
+
+
 async def _try_live_gateway_capability_view(
     app_settings: Settings,
 ) -> GatewayCapabilityView | None:
@@ -559,6 +607,33 @@ def _emit_payload(payload: object, *, json_output: bool) -> None:
             typer.echo(f"api_key: {api_key}")
         return
     typer.echo(str(payload))
+
+
+def _emit_health(payload: dict[str, object], *, json_output: bool) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+    status = str(payload.get("status") or "unknown")
+    typer.echo(f"Gateway health: {status}")
+    control_plane = str(payload.get("controlPlane") or "").strip()
+    if control_plane:
+        typer.echo(f"control plane: {control_plane}")
+    readiness = payload.get("readiness")
+    if isinstance(readiness, dict):
+        ready = readiness.get("ready") is True
+        typer.echo(f"readiness: {'ready' if ready else 'not ready'}")
+        failing = readiness.get("failing")
+        if isinstance(failing, list) and failing:
+            typer.echo("failing: " + ", ".join(str(item) for item in failing))
+    runtime_update = payload.get("runtimeUpdate")
+    if isinstance(runtime_update, dict) and runtime_update:
+        update_status = str(
+            runtime_update.get("status")
+            or runtime_update.get("state")
+            or runtime_update.get("summary")
+            or "available"
+        )
+        typer.echo(f"runtime update: {update_status}")
 
 
 def _emit_agents_inventory(payload: dict[str, object], *, json_output: bool) -> None:
@@ -4088,6 +4163,40 @@ def learn(
 
     payload = _run(_run_with_services(_action)).model_dump(mode="json")
     _emit_cortex(payload, json_output=json_output)
+
+
+@app.command("health")
+def health_command(
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit the gateway health snapshot as JSON.",
+    ),
+    timeout_ms: int = typer.Option(
+        10_000,
+        "--timeout-ms",
+        "--timeout",
+        min=1,
+        help="Connection timeout in milliseconds.",
+    ),
+) -> None:
+    try:
+        payload = _run(
+            _build_live_health_payload(
+                _runtime_settings(),
+                timeout_ms=timeout_ms,
+            )
+        )
+    except RuntimeError as exc:
+        if json_output:
+            _emit_payload(
+                {"ok": False, "status": "unreachable", "error": str(exc)},
+                json_output=True,
+            )
+        else:
+            typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    _emit_health(payload, json_output=json_output)
 
 
 @app.command("status")

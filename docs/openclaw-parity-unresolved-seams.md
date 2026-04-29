@@ -79,7 +79,10 @@ inspection, plugin/runtime inspection, doctor readiness checks, non-metadata
 external sandbox container cleanup, and broader TUI ergonomics. The CLI now
 also exposes `models list` as a thin OpenClaw-shaped JSON/human wrapper over
 the production `models.list` gateway method owner, including provider/local
-filters without duplicating the model catalog runtime.
+filters without duplicating the model catalog runtime. Top-level `health`
+now queries the live gateway `/api/health` and `/readyz` owners, emits
+OpenClaw-shaped JSON/human readiness fields, and propagates the configured
+connection timeout.
 
 Current queue-head adjustment: `tools.invoke` plugin execution now routes
 through a fakeable `GatewayPluginRuntimeService`, preserving core mappings
