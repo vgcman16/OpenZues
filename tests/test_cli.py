@@ -386,6 +386,22 @@ def test_channels_status_json_includes_saved_notification_routes(tmp_path, monke
     assert payload["channelDefaultAccountId"]["slack"] == "workspace-bot"
 
 
+def test_channels_status_json_accepts_probe_timeout_options(tmp_path, monkeypatch) -> None:
+    _bootstrap_cli_workspace(tmp_path, monkeypatch, task_name="CLI Channels Probe")
+
+    result = runner.invoke(
+        app,
+        ["channels", "status", "--probe", "--timeout", "2500", "--json"],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["probe"] is True
+    assert payload["timeoutMs"] == 2500
+    assert payload["probeStatus"]["status"] == "unavailable"
+    assert payload["probeStatus"]["reason"] == "native_probe_runtime_unavailable"
+
+
 def test_sandbox_list_json_returns_openclaw_shaped_inventory(monkeypatch) -> None:
     class FakeDatabase:
         async def list_gateway_session_metadata_rows(self) -> list[dict[str, object]]:

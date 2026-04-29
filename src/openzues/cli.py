@@ -5279,15 +5279,37 @@ def agents_list(
 
 @channels_app.command("status")
 def channels_status(
+    probe: bool = typer.Option(
+        False,
+        "--probe",
+        help="Probe channel credentials when a provider probe runtime is available.",
+    ),
+    timeout_ms: int = typer.Option(
+        10000,
+        "--timeout",
+        min=1,
+        help="Probe timeout in milliseconds.",
+    ),
     json_output: bool = typer.Option(
         False,
         "--json",
         help="Emit the notification route channel inventory as JSON.",
     ),
 ) -> None:
-    payload = _run(
-        _run_with_services(lambda services: services.gateway_channels.build_snapshot())
-    )
+    async def _action(services: CliServices) -> dict[str, object]:
+        payload = await services.gateway_channels.build_snapshot()
+        payload["probe"] = probe
+        payload["timeoutMs"] = timeout_ms
+        if probe:
+            payload["probeStatus"] = {
+                "status": "unavailable",
+                "reason": "native_probe_runtime_unavailable",
+                "summary": "Native provider credential probes are not available yet.",
+                "timeoutMs": timeout_ms,
+            }
+        return payload
+
+    payload = _run(_run_with_services(_action))
     _emit_channel_inventory(payload, json_output=json_output)
 
 

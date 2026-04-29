@@ -102,7 +102,11 @@ default/resolved/allowed/auth status fields while keeping live auth probes
 unavailable until the native model auth health runtime exists. Top-level `health`
 now queries the live gateway `/api/health` and `/readyz` owners, emits
 OpenClaw-shaped JSON/human readiness fields, and propagates the configured
-connection timeout.
+connection timeout. `channels status --probe --timeout <ms> --json` now
+accepts the upstream options and preserves probe/timeout metadata with an
+honest unavailable provider-probe posture; remaining channel CLI parity is the
+real provider credential probe runtime plus broader channel subcommands such
+as capabilities/resolve/logs.
 
 Current queue-head adjustment: `tools.invoke` plugin execution now routes
 through a fakeable `GatewayPluginRuntimeService`, preserving core mappings
