@@ -3051,6 +3051,32 @@ async def _build_capability_web_search_payload(
     return envelope
 
 
+async def _build_capability_web_fetch_payload(
+    services: CliServices,
+    *,
+    url: str,
+    provider: str | None,
+    format_hint: str | None,
+) -> dict[str, object]:
+    runtime = _web_runtime(services)
+    fetch = getattr(runtime, "fetch", None) if runtime is not None else None
+    if not callable(fetch):
+        raise ValueError("web.fetch local transport is unavailable until web runtime is wired.")
+    result = await fetch(url=url, provider=provider, format=format_hint)
+    result_payload = dict(result) if isinstance(result, dict) else {"result": result}
+    envelope: dict[str, object] = {
+        "ok": True,
+        "capability": "web.fetch",
+        "transport": "local",
+        "attempts": [],
+        "outputs": [{"result": result_payload.get("result")}],
+    }
+    provider_id = _optional_cli_string(result_payload.get("provider"))
+    if provider_id is not None:
+        envelope["provider"] = provider_id
+    return envelope
+
+
 async def _build_capability_video_describe_payload(
     services: CliServices,
     *,
@@ -8632,6 +8658,29 @@ def capability_web_search_command(
             query=query,
             provider=provider,
             limit=limit,
+        )
+
+    try:
+        payload = _run(_run_with_services(_action))
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    _emit_capability_model_run(payload, json_output=json_output)
+
+
+@capability_web_app.command("fetch")
+def capability_web_fetch_command(
+    url: str = typer.Option(..., "--url", help="URL."),
+    provider: str | None = typer.Option(None, "--provider", help="Provider id."),
+    format_hint: str | None = typer.Option(None, "--format", help="Format hint."),
+    json_output: bool = typer.Option(False, "--json", help="Output JSON."),
+) -> None:
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_capability_web_fetch_payload(
+            services,
+            url=url,
+            provider=provider,
+            format_hint=format_hint,
         )
 
     try:

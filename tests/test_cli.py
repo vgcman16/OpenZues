@@ -4344,6 +4344,74 @@ def test_infer_web_search_json_wraps_native_web_runtime(monkeypatch) -> None:
     assert calls == [{"query": "OpenZues parity", "provider": "serpapi", "limit": 3}]
 
 
+def test_capability_web_fetch_json_wraps_native_web_runtime(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeWebRuntime:
+        async def fetch(
+            self,
+            *,
+            url: str,
+            provider: str | None,
+            format: str | None,
+        ) -> dict[str, object]:
+            calls.append({"url": url, "provider": provider, "format": format})
+            return {
+                "provider": "browserless",
+                "result": {
+                    "url": url,
+                    "format": format,
+                    "content": "# OpenZues\nParity notes",
+                },
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(web_runtime=FakeWebRuntime()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "capability",
+            "web",
+            "fetch",
+            "--url",
+            "https://example.test/openzues",
+            "--provider",
+            "browserless",
+            "--format",
+            "markdown",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout) == {
+        "ok": True,
+        "capability": "web.fetch",
+        "transport": "local",
+        "provider": "browserless",
+        "attempts": [],
+        "outputs": [
+            {
+                "result": {
+                    "url": "https://example.test/openzues",
+                    "format": "markdown",
+                    "content": "# OpenZues\nParity notes",
+                }
+            }
+        ],
+    }
+    assert calls == [
+        {
+            "url": "https://example.test/openzues",
+            "provider": "browserless",
+            "format": "markdown",
+        }
+    ]
+
+
 def test_capability_model_run_rejects_local_and_gateway_together() -> None:
     result = runner.invoke(
         app,
