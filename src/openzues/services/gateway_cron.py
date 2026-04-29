@@ -1672,6 +1672,8 @@ def build_gateway_cron_task_blueprint(job_create: dict[str, Any]) -> TaskBluepri
         raise ValueError("invalid cron.add params: enabled must be a boolean")
 
     resolved_schedule_kind = cast(Literal["every", "at", "cron"], schedule_kind)
+    if cron_delete_after_run is None and resolved_schedule_kind == "at":
+        cron_delete_after_run = True
 
     return TaskBlueprintCreate(
         name=name,

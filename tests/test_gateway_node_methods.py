@@ -22307,6 +22307,61 @@ async def test_cron_add_accepts_delete_after_run_true_like_openclaw() -> None:
 
 
 @pytest.mark.asyncio
+async def test_cron_add_defaults_one_shot_delete_after_run_like_openclaw() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-add-delete-after-run-default"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-cron-add-delete-after-run-default.db")
+    await database.initialize()
+
+    async def create_task(payload: TaskBlueprintCreate) -> object:
+        task_id = await database.create_task_blueprint(
+            name=payload.name,
+            summary=payload.summary,
+            project_id=payload.project_id,
+            instance_id=payload.instance_id,
+            cadence_minutes=payload.cadence_minutes,
+            enabled=payload.enabled,
+            payload=payload.model_dump(
+                mode="json",
+                exclude={
+                    "name",
+                    "summary",
+                    "project_id",
+                    "instance_id",
+                    "cadence_minutes",
+                    "enabled",
+                },
+            ),
+        )
+        return type("CreatedTask", (), {"id": task_id})()
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        create_task_blueprint=create_task,
+    )
+
+    payload = await service.call(
+        "cron.add",
+        {
+            "name": "Default One Shot Delete",
+            "enabled": True,
+            "schedule": {"kind": "at", "at": "2026-03-23T22:00:00Z"},
+            "sessionTarget": "isolated",
+            "wakeMode": "next-heartbeat",
+            "payload": {"kind": "agentTurn", "message": "Run once."},
+        },
+    )
+    task_id = int(str(payload["id"]).split(":", 1)[1])
+    stored = await database.get_task_blueprint(task_id)
+
+    assert payload["deleteAfterRun"] is True
+    assert stored is not None
+    assert stored["cron_delete_after_run"] is True
+
+
+@pytest.mark.asyncio
 async def test_cron_add_accepts_failure_alert_object_like_openclaw() -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-add-failure-alert"
     shutil.rmtree(tmp_path, ignore_errors=True)

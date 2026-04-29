@@ -1467,8 +1467,20 @@ These are complete within the bounded OpenZues-local parity contract verified in
   -q -k "one_shot or cron_ or failure_alert"` (`22 passed`), `ruff check
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\ops_mesh.py`.
-- Next cron parity should cover default one-shot delete-after-run semantics and
-  the remaining direct `--at` timezone normalization breadth.
+- Gateway-created one-shot `cron.add` jobs now default `deleteAfterRun` to true
+  when the caller does not explicitly set `--keep-after-run` /
+  `deleteAfterRun=false`, matching upstream normalized one-shot behavior while
+  preserving legacy manually-created local tasks that lack the metadata.
+- Verified default one-shot delete-after-run with `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "cron_add_defaults_one_shot_delete_after_run_like_openclaw"` (`1 passed`),
+  adjacent gateway cron pack `python -m pytest tests\test_gateway_node_methods.py
+  -q -k "cron_update or cron_add or cron_list or cron_run"` (`52 passed`),
+  `ruff check src\openzues\services\gateway_cron.py src\openzues\schemas.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_cron.py src\openzues\schemas.py`.
+- Next cron parity should cover the remaining direct `--at` timezone
+  normalization breadth.
 
 ## References
 
