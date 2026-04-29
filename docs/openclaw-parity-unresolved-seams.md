@@ -2302,6 +2302,13 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   src\openzues\services\gateway_node_methods.py src\openzues\schemas.py
   tests\test_gateway_node_methods.py`, and `mypy
   src\openzues\services\gateway_node_methods.py src\openzues\schemas.py`.
+- Closed the doctor sandbox shared-scope override warning seam: `doctor --json`
+  now adds OpenClaw-shaped warnings when agent-level `sandbox.docker`,
+  `sandbox.browser`, or `sandbox.prune` overrides resolve to `scope="shared"`
+  and would be ignored. Verified with `python -m pytest tests\test_cli.py -q
+  -k "doctor_json_warns_about_shared_sandbox_agent_overrides"`, adjacent doctor
+  sandbox/lock pack, `ruff check src\openzues\cli.py tests\test_cli.py`, and
+  `mypy src\openzues\cli.py`.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration, provider replay/direct
   announce consistency, CLI/runtime doctor parity, and session runtime methods

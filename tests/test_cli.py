@@ -13400,6 +13400,69 @@ def test_doctor_json_warns_when_sandbox_enabled_without_docker(monkeypatch) -> N
     ]
 
 
+def test_doctor_json_warns_about_shared_sandbox_agent_overrides(monkeypatch) -> None:
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str = "json") -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Hermes runtime profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {
+                "agents": {
+                    "defaults": {
+                        "sandbox": {
+                            "mode": "all",
+                            "scope": "shared",
+                        }
+                    },
+                    "list": [
+                        {
+                            "id": "work",
+                            "sandbox": {
+                                "mode": "all",
+                                "scope": "shared",
+                                "docker": {"setupCommand": "echo work"},
+                            },
+                        }
+                    ],
+                }
+            }
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=FakeGatewayConfig(),
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+    monkeypatch.setattr(cli_module, "_sandbox_docker_available", lambda: True, raising=False)
+
+    result = runner.invoke(app, ["doctor", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["warnings"] == [
+        '- agents.list (id "work") sandbox docker overrides ignored.\n'
+        '  scope resolves to "shared".'
+    ]
+
+
 def test_doctor_human_output_reports_session_lock_files(tmp_path, monkeypatch) -> None:
     data_dir = tmp_path / "data"
     sessions_dir = data_dir / "agents" / "main" / "sessions"

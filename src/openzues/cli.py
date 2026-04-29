@@ -1888,12 +1888,76 @@ def _doctor_sandbox_warning_from_config(
     )
 
 
+def _doctor_sandbox_scope_warnings_from_config(
+    config_service: GatewayConfigService | None,
+) -> list[str]:
+    if config_service is None:
+        return []
+    return _doctor_sandbox_scope_warnings_from_snapshot(config_service.build_snapshot())
+
+
+def _doctor_sandbox_scope_warnings_from_snapshot(snapshot: dict[str, Any]) -> list[str]:
+    warnings: list[str] = []
+    for agents_config in _doctor_agents_config_roots(snapshot):
+        defaults_config = agents_config.get("defaults")
+        default_sandbox = (
+            defaults_config.get("sandbox")
+            if isinstance(defaults_config, dict)
+            else None
+        )
+        default_scope = (
+            default_sandbox.get("scope")
+            if isinstance(default_sandbox, dict)
+            else None
+        )
+        raw_agents = agents_config.get("list")
+        if not isinstance(raw_agents, list):
+            continue
+        for raw_agent in raw_agents:
+            if not isinstance(raw_agent, dict):
+                continue
+            agent_sandbox = raw_agent.get("sandbox")
+            if not isinstance(agent_sandbox, dict):
+                continue
+            scope = _doctor_sandbox_scope(
+                agent_sandbox.get("scope") or default_scope,
+                per_session=agent_sandbox.get("perSession"),
+            )
+            if scope != "shared":
+                continue
+            overrides = [
+                key
+                for key in ("docker", "browser", "prune")
+                if isinstance(agent_sandbox.get(key), dict) and agent_sandbox.get(key)
+            ]
+            if not overrides:
+                continue
+            agent_id = str(raw_agent.get("id") or "").strip()
+            warnings.append(
+                "\n".join(
+                    [
+                        f'- agents.list (id "{agent_id}") sandbox '
+                        f'{"/".join(overrides)} overrides ignored.',
+                        '  scope resolves to "shared".',
+                    ]
+                )
+            )
+    return warnings
+
+
 def _with_doctor_sandbox_warnings(
     payload: dict[str, object],
     config_service: GatewayConfigService | None,
 ) -> dict[str, object]:
-    warning = _doctor_sandbox_warning_from_config(config_service)
-    if warning is None:
+    warnings_to_add = [
+        warning
+        for warning in (
+            _doctor_sandbox_warning_from_config(config_service),
+            *_doctor_sandbox_scope_warnings_from_config(config_service),
+        )
+        if warning
+    ]
+    if not warnings_to_add:
         return payload
     next_payload = dict(payload)
     existing = next_payload.get("warnings")
@@ -1903,8 +1967,12 @@ def _with_doctor_sandbox_warnings(
         warnings = []
     else:
         warnings = [existing]
-    if warning not in {str(item) for item in warnings}:
+    existing_warnings = {str(item) for item in warnings}
+    for warning in warnings_to_add:
+        if warning in existing_warnings:
+            continue
         warnings.append(warning)
+        existing_warnings.add(warning)
     next_payload["warnings"] = warnings
     return next_payload
 
@@ -2093,6 +2161,19 @@ def _doctor_sandbox_mode(value: object) -> Literal["off", "non-main", "all"]:
     if text in {"non-main", "all"}:
         return cast(Literal["non-main", "all"], text)
     return "off"
+
+
+def _doctor_sandbox_scope(
+    value: object,
+    *,
+    per_session: object = None,
+) -> Literal["shared", "session", "agent"]:
+    text = str(value or "").strip()
+    if text in {"shared", "session", "agent"}:
+        return cast(Literal["shared", "session", "agent"], text)
+    if isinstance(per_session, bool):
+        return "session" if per_session else "shared"
+    return "agent"
 
 
 def _doctor_sandbox_backend(value: object) -> str:

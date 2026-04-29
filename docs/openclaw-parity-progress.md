@@ -2072,6 +2072,20 @@ These are complete within the bounded OpenZues-local parity contract verified in
   `ruff check src\openzues\services\gateway_node_methods.py
   src\openzues\schemas.py tests\test_gateway_node_methods.py`, and `mypy
   src\openzues\services\gateway_node_methods.py src\openzues\schemas.py`.
+- `doctor --json` now mirrors OpenClaw's sandbox shared-scope warning for
+  ignored per-agent sandbox overrides: when an agent-level `docker`, `browser`,
+  or `prune` block resolves to `scope="shared"`, the doctor warnings list
+  includes the upstream-shaped `agents.list (id "...") sandbox ... overrides
+  ignored` note.
+- Verified the doctor sandbox scope warning with `python -m pytest
+  tests\test_cli.py -q -k
+  "doctor_json_warns_about_shared_sandbox_agent_overrides"` (`1 passed`),
+  adjacent doctor sandbox/lock pack `python -m pytest tests\test_cli.py -q -k
+  "doctor_json_warns_when_sandbox_enabled_without_docker or
+  doctor_json_warns_about_shared_sandbox_agent_overrides or
+  doctor_human_output_reports_session_lock_files or
+  doctor_json_includes_cli_runtime_surfaces"` (`3 passed`), `ruff check
+  src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
 
 ## References
 
