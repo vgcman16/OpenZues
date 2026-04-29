@@ -165,7 +165,9 @@ the stored route token and returns the numeric chat id plus normalized
 Discord native routes now have the first production live resolver slice:
 channel-id inputs and channel mentions call `/users/@me/guilds` plus
 `/channels/{id}` with the stored route token and return OpenClaw-shaped
-channel id/name rows.
+channel id/name rows. Guild-qualified Discord channel names now also call
+`/guilds/{guildId}/channels` and match OpenClaw-style normalized channel
+slugs.
 
 Current queue-head adjustment: `tools.invoke` plugin execution now routes
 through a fakeable `GatewayPluginRuntimeService`, preserving core mappings
@@ -1578,6 +1580,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   channel mentions and channel ids before returning OpenClaw-shaped resolve
   rows.
 - Verified the Discord channel-id resolver seam with `python -m pytest tests\test_cli.py -q -k "route_backed_discord_channel_resolver"`, adjacent `python -m pytest tests\test_cli.py -q -k "channels_resolve_json or route_backed_discord_channel_resolver or route_backed_discord_probe or route_backed_telegram_user_resolver or route_backed_telegram_probe or auto_groups_route_backed_slack_targets or route_backed_slack_channel_resolver or route_backed_slack_user_resolver or channels_status_json"`, `ruff check src\openzues\services\ops_mesh.py tests\test_cli.py`, and `mypy src\openzues\services\ops_mesh.py`.
+- Discord route-backed `channels resolve --kind channel` now also resolves
+  `guild/channel` and `guild#channel` inputs by listing `/guilds/{guildId}/channels`
+  and matching normalized OpenClaw-style channel slugs.
+- Verified the Discord guild-channel resolver seam with `python -m pytest tests\test_cli.py -q -k "route_backed_discord_guild_channel_resolver"`, adjacent `python -m pytest tests\test_cli.py -q -k "channels_resolve_json or route_backed_discord_channel_resolver or route_backed_discord_guild_channel_resolver or route_backed_discord_probe or route_backed_telegram_user_resolver or route_backed_telegram_probe or auto_groups_route_backed_slack_targets or route_backed_slack_channel_resolver or route_backed_slack_user_resolver or channels_status_json"`, `ruff check src\openzues\services\ops_mesh.py tests\test_cli.py`, and `mypy src\openzues\services\ops_mesh.py`.
 - `chat.history` and `sessions.history` now mirror OpenClaw's numeric history
   limit parsing: finite JSON numbers are floored and bounded instead of
   requiring integer-only input.

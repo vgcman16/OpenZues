@@ -922,6 +922,57 @@ def _parse_discord_channel_resolve_input(raw: str) -> dict[str, object]:
     return {"guild": trimmed, "guildOnly": True}
 
 
+def _normalize_discord_slug(value: str) -> str:
+    normalized = str(value or "").strip().lower()
+    normalized = normalized.removeprefix("#")
+    normalized = re.sub(r"[^a-z0-9]+", "-", normalized)
+    return normalized.strip("-")
+
+
+def _discord_guild_match(
+    guilds: list[dict[str, object]],
+    *,
+    guild_id: str | None = None,
+    guild_name: str | None = None,
+) -> dict[str, object] | None:
+    normalized_guild_id = str(guild_id or "").strip()
+    if normalized_guild_id:
+        return next(
+            (
+                guild
+                for guild in guilds
+                if str(guild.get("id") or "").strip() == normalized_guild_id
+            ),
+            None,
+        )
+    slug = _normalize_discord_slug(str(guild_name or ""))
+    if not slug:
+        return None
+    return next(
+        (
+            guild
+            for guild in guilds
+            if str(guild.get("slug") or "").strip() == slug
+        ),
+        None,
+    )
+
+
+def _prefer_active_discord_channel(
+    channels: list[dict[str, object]],
+) -> dict[str, object] | None:
+    if not channels:
+        return None
+
+    def score(channel: dict[str, object]) -> int:
+        channel_type = channel.get("type")
+        is_thread = channel_type in {11, 12}
+        archived = bool(channel.get("archived"))
+        return (0 if archived else 2) + (0 if is_thread else 1)
+
+    return sorted(channels, key=score, reverse=True)[0]
+
+
 def _discord_privileged_intents_from_flags(flags: int) -> dict[str, str]:
     def resolve(enabled_bit: int, limited_bit: int) -> str:
         if flags & enabled_bit:
@@ -5735,12 +5786,75 @@ class OpsMeshService:
                 guild_id = str(guild.get("id") or "").strip()
                 guild_name = str(guild.get("name") or "").strip()
                 if guild_id:
-                    guilds.append({"id": guild_id, "name": guild_name})
+                    guilds.append(
+                        {
+                            "id": guild_id,
+                            "name": guild_name,
+                            "slug": _normalize_discord_slug(guild_name),
+                        }
+                    )
 
         results: list[dict[str, object]] = []
         for input_value in inputs:
             parsed = _parse_discord_channel_resolve_input(input_value)
             channel_id = str(parsed.get("channelId") or "").strip()
+            channel_query = str(parsed.get("channel") or "").strip()
+            guild_query_id = str(parsed.get("guildId") or "").strip()
+            guild_query_name = str(parsed.get("guild") or "").strip()
+            if channel_query and (guild_query_id or guild_query_name):
+                guild = _discord_guild_match(
+                    guilds,
+                    guild_id=guild_query_id,
+                    guild_name=guild_query_name,
+                )
+                if guild is None:
+                    results.append(
+                        _unresolved_channel_target(input_value, "Discord guild not found.")
+                    )
+                    continue
+                channels = self._list_discord_guild_channels(
+                    authorization,
+                    str(guild.get("id") or ""),
+                )
+                normalized_channel_query = _normalize_discord_slug(channel_query)
+                if channel_query.isdigit():
+                    matches = [
+                        channel
+                        for channel in channels
+                        if str(channel.get("id") or "") == channel_query
+                    ]
+                    if not matches:
+                        matches = [
+                            channel
+                            for channel in channels
+                            if str(channel.get("slug") or "") == normalized_channel_query
+                        ]
+                else:
+                    matches = [
+                        channel
+                        for channel in channels
+                        if str(channel.get("slug") or "") == normalized_channel_query
+                    ]
+                match = _prefer_active_discord_channel(matches)
+                if match is None:
+                    guild_name = str(guild.get("name") or "").strip()
+                    note = (
+                        f"channel not found in guild {guild_name}"
+                        if guild_name
+                        else "channel not found"
+                    )
+                    results.append(_unresolved_channel_target(input_value, note))
+                    continue
+                guild_channel_payload: dict[str, object] = {
+                    "input": input_value,
+                    "resolved": True,
+                    "id": str(match.get("id") or ""),
+                }
+                channel_name = str(match.get("name") or "").strip()
+                if channel_name:
+                    guild_channel_payload["name"] = channel_name
+                results.append(guild_channel_payload)
+                continue
             if not channel_id:
                 results.append(
                     _unresolved_channel_target(
@@ -5789,6 +5903,44 @@ class OpsMeshService:
                 payload["name"] = channel_name
             results.append(payload)
         return results
+
+    def _list_discord_guild_channels(
+        self,
+        authorization: str,
+        guild_id: str,
+    ) -> list[dict[str, object]]:
+        channels_result = self._get_json_provider_url(
+            _discord_api_endpoint(f"guilds/{guild_id}/channels"),
+            secret_header_name="Authorization",
+            secret_token=authorization,
+        )
+        channels: list[dict[str, object]] = []
+        if not isinstance(channels_result, list):
+            return channels
+        for channel in channels_result:
+            if not isinstance(channel, dict):
+                continue
+            channel_id = str(channel.get("id") or "").strip()
+            channel_name = str(channel.get("name") or "").strip()
+            if not channel_id or not channel_name:
+                continue
+            thread_metadata = channel.get("thread_metadata")
+            archived = (
+                bool(thread_metadata.get("archived"))
+                if isinstance(thread_metadata, dict)
+                else False
+            )
+            channels.append(
+                {
+                    "id": channel_id,
+                    "name": channel_name,
+                    "slug": _normalize_discord_slug(channel_name),
+                    "guildId": guild_id,
+                    "type": channel.get("type"),
+                    "archived": archived,
+                }
+            )
+        return channels
 
     def _probe_discord_provider_route(
         self,

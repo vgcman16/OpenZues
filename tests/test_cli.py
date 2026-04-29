@@ -1526,6 +1526,103 @@ def test_channels_resolve_json_uses_route_backed_discord_channel_resolver(
     ]
 
 
+def test_channels_resolve_json_uses_route_backed_discord_guild_channel_resolver(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch, task_name="CLI Discord Guild Resolve")
+
+    database = Database(data_dir / "openzues.db")
+    asyncio.run(database.initialize())
+    asyncio.run(
+        database.create_notification_route(
+            name="Discord Native Guild Resolve Route",
+            kind="discord",
+            target="https://discord.com/api/v10",
+            events=["gateway/send"],
+            conversation_target={
+                "channel": "discord",
+                "account_id": "workspace-bot",
+                "peer_kind": "channel",
+                "peer_id": "channel:222",
+                "summary": "discord workspace-bot channel fallback",
+            },
+            enabled=True,
+            secret_header_name=None,
+            secret_token="discord-resolve-token",
+            vault_secret_id=None,
+        )
+    )
+    discord_gets: list[tuple[str, str | None, str | None]] = []
+
+    def fake_get_json_provider_url(
+        self: object,
+        target: str,
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object:
+        del self, timeout_seconds
+        discord_gets.append((target, secret_header_name, secret_token))
+        if target.endswith("/users/@me/guilds"):
+            return [{"id": "111", "name": "Ops Guild"}]
+        if target.endswith("/guilds/111/channels"):
+            return [
+                {
+                    "id": "222",
+                    "name": "deploy-room",
+                    "guild_id": "111",
+                    "type": 0,
+                }
+            ]
+        return {}
+
+    monkeypatch.setattr(
+        "openzues.services.ops_mesh.OpsMeshService._get_json_provider_url",
+        fake_get_json_provider_url,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "channels",
+            "resolve",
+            "Ops Guild/deploy-room",
+            "--channel",
+            "discord",
+            "--account",
+            "workspace-bot",
+            "--kind",
+            "channel",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout) == [
+        {
+            "input": "Ops Guild/deploy-room",
+            "resolved": True,
+            "id": "222",
+            "name": "deploy-room",
+        }
+    ]
+    assert discord_gets == [
+        (
+            "https://discord.com/api/v10/users/@me/guilds",
+            "Authorization",
+            "Bot discord-resolve-token",
+        ),
+        (
+            "https://discord.com/api/v10/guilds/111/channels",
+            "Authorization",
+            "Bot discord-resolve-token",
+        ),
+    ]
+
+
 def test_channels_logs_json_filters_channel_and_limits_lines(tmp_path, monkeypatch) -> None:
     _bootstrap_cli_workspace(tmp_path, monkeypatch, task_name="CLI Channel Logs")
     logs_dir = tmp_path / "logs"
