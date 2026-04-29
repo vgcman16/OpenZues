@@ -5289,6 +5289,48 @@ def test_plugins_inspect_json_projects_runtime_executor_tools(
     ]
 
 
+def test_plugins_inspect_json_projects_record_runtime_surfaces(monkeypatch) -> None:
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> dict[str, object]:
+            return {
+                "profile": {"hermes_source_path": None},
+                "warnings": [],
+                "plugins": {
+                    "items": [
+                        {
+                            "key": "runtime-surfaces",
+                            "label": "Runtime Surfaces",
+                            "status": "ready",
+                            "summary": "Plugin with registered runtime surfaces.",
+                            "capabilities": ["tool:runtime.search"],
+                            "commands": ["pair"],
+                            "cliCommands": ["memory"],
+                            "services": ["memory.index"],
+                            "gatewayMethods": ["memory.search"],
+                            "httpRoutes": 2,
+                            "bundleCapabilities": ["skills", "commands"],
+                        }
+                    ]
+                },
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(hermes_platform=FakeHermesPlatform()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["plugins", "inspect", "runtime-surfaces", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["commands"] == ["pair"]
+    assert payload["cliCommands"] == ["memory"]
+    assert payload["services"] == ["memory.index"]
+    assert payload["gatewayMethods"] == ["memory.search"]
+    assert payload["httpRouteCount"] == 2
+    assert payload["bundleCapabilities"] == ["skills", "commands"]
+
+
 def test_plugins_inspect_all_json_includes_saved_install_records(
     tmp_path,
     monkeypatch,

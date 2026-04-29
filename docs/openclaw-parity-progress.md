@@ -1680,6 +1680,16 @@ These are complete within the bounded OpenZues-local parity contract verified in
   routes_poll_human_output_calls_native_direct_poll_runtime"` (`24 passed`),
   `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
   src\openzues\cli.py`.
+- `plugins inspect --json` now carries OpenClaw plugin-record runtime surfaces:
+  `commands`, `cliCommands`, `services`, `gatewayMethods`, `httpRouteCount`,
+  and `bundleCapabilities` are projected from live inventory or metadata-only
+  manifest records instead of being reset to empty report placeholders.
+- Verified the plugin inspect runtime-surface slice with `python -m pytest
+  tests\test_cli.py -q -k
+  "plugins_inspect_json_projects_record_runtime_surfaces"` (`1 passed`),
+  adjacent CLI plugin pack `python -m pytest tests\test_cli.py -q -k
+  "plugins_"` (`18 passed`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, and `mypy src\openzues\cli.py`.
 - `cron.add` / `cron.update` now accept and project `deleteAfterRun=true`, and
   successful one-shot system-event `cron.run` dispatch deletes the task
   blueprint when that flag is set.

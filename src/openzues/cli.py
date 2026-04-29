@@ -7270,7 +7270,7 @@ def _plugin_inspect_report(
             runtime_tools=runtime_tools,
         ),
         "compatibility": _plugin_compatibility_notices(plugin),
-        "bundleCapabilities": [],
+        "bundleCapabilities": _plugin_record_string_list(plugin, "bundleCapabilities"),
         "typedHooks": [],
         "customHooks": [],
         "tools": (
@@ -7278,17 +7278,42 @@ def _plugin_inspect_report(
             if runtime_tools
             else []
         ),
-        "commands": [],
-        "cliCommands": [],
-        "services": [],
-        "gatewayMethods": [],
+        "commands": _plugin_record_string_list(plugin, "commands"),
+        "cliCommands": _plugin_record_string_list(plugin, "cliCommands"),
+        "services": _plugin_record_string_list(plugin, "services"),
+        "gatewayMethods": _plugin_record_string_list(plugin, "gatewayMethods"),
         "mcpServers": [],
         "lspServers": [],
-        "httpRouteCount": 0,
+        "httpRouteCount": _plugin_record_http_route_count(plugin),
         "policy": dict(policy) if policy is not None else {},
         "diagnostics": [],
         "install": dict(install) if isinstance(install, dict) else None,
     }
+
+
+def _plugin_record_string_list(plugin: dict[str, object], key: str) -> list[str]:
+    value = plugin.get(key)
+    if not isinstance(value, list):
+        return []
+    return _dedupe_cli_strings(
+        [
+            text
+            for item in value
+            if (text := _optional_cli_string(item)) is not None
+        ]
+    )
+
+
+def _plugin_record_http_route_count(plugin: dict[str, object]) -> int:
+    for key in ("httpRoutes", "httpRouteCount"):
+        value = plugin.get(key)
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, int):
+            return max(0, value)
+        if isinstance(value, list):
+            return len(value)
+    return 0
 
 
 def _plugin_runtime_specs_from_services(
@@ -7498,6 +7523,19 @@ def _plugin_record_from_deck_item(
         record["shape"] = shape
     if item.get("usesLegacyBeforeAgentStart") is True:
         record["usesLegacyBeforeAgentStart"] = True
+    for key in (
+        "commands",
+        "cliCommands",
+        "services",
+        "gatewayMethods",
+        "bundleCapabilities",
+    ):
+        values = _plugin_record_string_list(item, key)
+        if values:
+            record[key] = values
+    route_count = _plugin_record_http_route_count(item)
+    if route_count:
+        record["httpRoutes"] = route_count
     return record
 
 
@@ -7660,6 +7698,19 @@ def _plugin_record_from_openclaw_manifest(
     tool_names = contracts.get("tools")
     if isinstance(tool_names, list):
         record["toolNames"] = list(tool_names)
+    for key in (
+        "commands",
+        "cliCommands",
+        "services",
+        "gatewayMethods",
+        "bundleCapabilities",
+    ):
+        values = _plugin_record_string_list(manifest, key)
+        if values:
+            record[key] = values
+    route_count = _plugin_record_http_route_count(manifest)
+    if route_count:
+        record["httpRoutes"] = route_count
     return record
 
 

@@ -479,6 +479,10 @@ Inspect reports now also project OpenClaw-shaped policy summaries from
 `plugins.entries.<id>.hooks.allowPromptInjection` and
 `plugins.entries.<id>.subagent` (`allowModelOverride`, `allowedModels`, and
 `hasAllowedModelsConfig`) instead of always returning an empty policy object.
+`plugins inspect --json` now also preserves OpenClaw's plugin-record runtime
+surface fields: `commands`, `cliCommands`, `services`, `gatewayMethods`,
+`httpRouteCount`, and `bundleCapabilities` are copied from live inventory or
+metadata-only manifest records instead of being zeroed in the report.
 Remaining plugin CLI parity is remote marketplace clone/update breadth and
 deeper runtime activation/import metadata beyond the native metadata/runtime
 projection.
