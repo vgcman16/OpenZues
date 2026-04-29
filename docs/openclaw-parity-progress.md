@@ -2023,6 +2023,21 @@ These are complete within the bounded OpenZues-local parity contract verified in
   rejects_invalid_telegram_durations"` (`13 passed`), `ruff check
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\ops_mesh.py`.
+- `agents.files.list` now mirrors OpenClaw's memory-file projection by showing
+  `MEMORY.md` when the primary memory file exists, falling back to legacy
+  `memory.md` only when the primary file is absent, instead of advertising both
+  files when both are present.
+- Verified the agent files primary-memory slice with `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "agents_files_list_prefers_primary_memory_file_like_openclaw"` (`1 passed`),
+  adjacent agent-files pack `python -m pytest tests\test_gateway_node_methods.py
+  -q -k
+  "agents_files_list_includes_openclaw_bootstrap_and_memory_files or
+  agents_files_list_returns_bounded_workspace_instruction_inventory or
+  agents_files_get_and_set_support_openclaw_memory_file"` (`3 passed`), `ruff
+  check src\openzues\services\gateway_agent_files.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_agent_files.py`.
 
 ## References
 

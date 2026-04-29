@@ -19,6 +19,7 @@ _ALLOWED_FILES = {
     "memory.md": Path("memory.md"),
     ".codex/AGENTS.md": Path(".codex") / "AGENTS.md",
 }
+_MEMORY_FILE_NAMES = ("MEMORY.md", "memory.md")
 
 
 class GatewayAgentFilesService:
@@ -35,7 +36,7 @@ class GatewayAgentFilesService:
         resolved_agent_id, workspace_dir = await self._resolve_agent_file_context(agent_id)
         files = [
             self._file_summary(workspace_dir, name=name, relative_path=relative_path)
-            for name, relative_path in _ALLOWED_FILES.items()
+            for name, relative_path in _listed_agent_files(workspace_dir)
         ]
         return {
             "agentId": resolved_agent_id,
@@ -157,6 +158,23 @@ def _is_within_workspace(candidate: Path, workspace_dir: Path) -> bool:
     except ValueError:
         return False
     return True
+
+
+def _listed_agent_files(workspace_dir: Path) -> list[tuple[str, Path]]:
+    files: list[tuple[str, Path]] = []
+    for name, relative_path in _ALLOWED_FILES.items():
+        if name in _MEMORY_FILE_NAMES:
+            continue
+        files.append((name, relative_path))
+    primary_memory = _ALLOWED_FILES["MEMORY.md"]
+    legacy_memory = _ALLOWED_FILES["memory.md"]
+    if (workspace_dir / primary_memory).is_file():
+        files.append(("MEMORY.md", primary_memory))
+    elif (workspace_dir / legacy_memory).is_file():
+        files.append(("memory.md", legacy_memory))
+    else:
+        files.append(("MEMORY.md", primary_memory))
+    return files
 
 
 def _parse_timestamp(value: object) -> datetime | None:

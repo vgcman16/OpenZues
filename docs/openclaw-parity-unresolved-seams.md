@@ -2274,6 +2274,14 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   tests\test_ops_mesh.py -q -k "rejects_invalid_poll_shape"`, adjacent OpsMesh
   provider poll pack, `ruff check src\openzues\services\ops_mesh.py
   tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py`.
+- Closed the `agents.files.list` primary-memory projection seam: OpenZues now
+  mirrors OpenClaw by listing `MEMORY.md` when present, falling back to legacy
+  `memory.md` only when the primary file is absent, instead of returning both.
+  Verified with `python -m pytest tests\test_gateway_node_methods.py -q -k
+  "agents_files_list_prefers_primary_memory_file_like_openclaw"`, adjacent
+  agent-files pack, `ruff check
+  src\openzues\services\gateway_agent_files.py tests\test_gateway_node_methods.py`,
+  and `mypy src\openzues\services\gateway_agent_files.py`.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially ACP spawn harness parity, richer `tools.invoke` executor parity
   (real plugin HTTP ordering and any additional intentional high-risk

@@ -25487,11 +25487,30 @@ async def test_agents_files_list_includes_openclaw_bootstrap_and_memory_files() 
         "HEARTBEAT.md",
         "BOOTSTRAP.md",
         "MEMORY.md",
-        "memory.md",
     ):
         assert name in files_by_name
     assert files_by_name["MEMORY.md"]["missing"] is False
     assert files_by_name["MEMORY.md"]["path"] == str(workspace_root / "MEMORY.md")
+
+
+@pytest.mark.asyncio
+async def test_agents_files_list_prefers_primary_memory_file_like_openclaw() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-agents-files-primary-memory"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir(parents=True, exist_ok=True)
+    (workspace_root / "MEMORY.md").write_text("Primary memory.\n", encoding="utf-8")
+    (workspace_root / "memory.md").write_text("Legacy memory.\n", encoding="utf-8")
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        agent_files_service=GatewayAgentFilesService(workspace_dir=workspace_root),
+    )
+
+    payload = await service.call("agents.files.list", {"agentId": "main"})
+    names = [file["name"] for file in payload["files"]]
+
+    assert "MEMORY.md" in names
+    assert "memory.md" not in names
 
 
 @pytest.mark.asyncio
