@@ -2864,6 +2864,14 @@ async def _build_plugins_inventory_payload(
         plugin = _plugin_record_from_deck_item(item, workspace_dir=workspace_dir)
         if plugin is not None:
             plugins.append(plugin)
+    gateway_config = getattr(services, "gateway_config", None)
+    if isinstance(gateway_config, GatewayConfigService):
+        existing_ids = {str(plugin.get("id") or "") for plugin in plugins}
+        for plugin in _plugin_records_from_config_snapshot(gateway_config.build_snapshot()):
+            plugin_id = str(plugin.get("id") or "")
+            if plugin_id not in existing_ids:
+                plugins.append(plugin)
+                existing_ids.add(plugin_id)
     if enabled_only:
         plugins = [
             plugin
@@ -3580,6 +3588,60 @@ def _plugin_record_from_deck_item(
     if item.get("usesLegacyBeforeAgentStart") is True:
         record["usesLegacyBeforeAgentStart"] = True
     return record
+
+
+def _plugin_records_from_config_snapshot(snapshot: dict[str, object]) -> list[dict[str, object]]:
+    plugins = snapshot.get("plugins")
+    plugins_config = plugins if isinstance(plugins, dict) else {}
+    entries = plugins_config.get("entries")
+    entry_records = entries if isinstance(entries, dict) else {}
+    installs = plugins_config.get("installs")
+    install_records = installs if isinstance(installs, dict) else {}
+    plugin_ids = sorted(
+        {
+            *(str(key) for key in entry_records),
+            *(str(key) for key in install_records),
+        }
+    )
+    records: list[dict[str, object]] = []
+    for plugin_id in plugin_ids:
+        entry = entry_records.get(plugin_id)
+        entry_payload = entry if isinstance(entry, dict) else {}
+        install = install_records.get(plugin_id)
+        install_payload = install if isinstance(install, dict) else {}
+        install_source = _optional_cli_string(install_payload.get("source"))
+        install_path = _optional_cli_string(install_payload.get("installPath"))
+        source_path = _optional_cli_string(install_payload.get("sourcePath"))
+        version = _optional_cli_string(install_payload.get("version"))
+        enabled = entry_payload.get("enabled")
+        status = "disabled" if enabled is False else "loaded"
+        description = (
+            f"Installed {install_source} plugin."
+            if install_source is not None
+            else "Configured plugin."
+        )
+        record: dict[str, object] = {
+            "id": plugin_id,
+            "name": plugin_id,
+            "status": status,
+            "format": "openclaw-native",
+            "source": install_path or source_path or f"plugins.entries.{plugin_id}",
+            "origin": "config",
+            "description": description,
+            "capabilities": [],
+            "parityStatus": "configured",
+        }
+        if version is not None:
+            record["version"] = version
+        if install_payload:
+            record["install"] = dict(install_payload)
+        shape = _optional_cli_string(entry_payload.get("shape"))
+        if shape is not None:
+            record["shape"] = shape
+        if entry_payload.get("usesLegacyBeforeAgentStart") is True:
+            record["usesLegacyBeforeAgentStart"] = True
+        records.append(record)
+    return records
 
 
 def _openclaw_plugin_status(parity_status: str) -> str:
