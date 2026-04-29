@@ -378,6 +378,7 @@ capability_tts_app = typer.Typer(help="Inspect text-to-speech runtime metadata."
 capability_image_app = typer.Typer(help="Inspect image generation and description metadata.")
 capability_audio_app = typer.Typer(help="Inspect audio transcription runtime metadata.")
 capability_video_app = typer.Typer(help="Inspect video generation and description metadata.")
+capability_web_app = typer.Typer(help="Inspect web search and fetch metadata.")
 plugins_app = typer.Typer(help="Inspect plugin and runtime inventory.")
 plugins_marketplace_app = typer.Typer(help="Inspect Claude-compatible plugin marketplaces.")
 models_app = typer.Typer(help="Inspect model catalog and runtime posture.")
@@ -409,6 +410,7 @@ capability_app.add_typer(capability_tts_app, name="tts")
 capability_app.add_typer(capability_image_app, name="image")
 capability_app.add_typer(capability_audio_app, name="audio")
 capability_app.add_typer(capability_video_app, name="video")
+capability_app.add_typer(capability_web_app, name="web")
 app.add_typer(capability_app, name="capability")
 app.add_typer(capability_app, name="infer")
 app.add_typer(plugins_app, name="plugins")
@@ -2665,6 +2667,15 @@ def _video_generation_runtime(services: CliServices) -> Any | None:
     return runtime
 
 
+def _web_runtime(services: CliServices) -> Any | None:
+    runtime = getattr(services, "web_runtime", None)
+    if runtime is None:
+        runtime = getattr(services, "web", None)
+    if runtime is None:
+        runtime = getattr(services, "web_service", None)
+    return runtime
+
+
 async def _build_capability_image_providers_payload(
     services: CliServices,
 ) -> list[dict[str, object]]:
@@ -2960,6 +2971,58 @@ async def _build_capability_video_generate_payload(
     if model is not None:
         envelope["model"] = model
     return envelope
+
+
+def _project_web_provider_entries(raw_providers: object) -> list[dict[str, object]]:
+    if not isinstance(raw_providers, list):
+        return []
+    providers: list[dict[str, object]] = []
+    for raw_provider in raw_providers:
+        if not isinstance(raw_provider, dict):
+            continue
+        provider_id = _optional_cli_string(raw_provider.get("id"))
+        if provider_id is None:
+            continue
+        entry: dict[str, object] = {
+            "available": raw_provider.get("available")
+            if isinstance(raw_provider.get("available"), bool)
+            else True,
+            "configured": raw_provider.get("configured")
+            if isinstance(raw_provider.get("configured"), bool)
+            else False,
+            "selected": raw_provider.get("selected")
+            if isinstance(raw_provider.get("selected"), bool)
+            else False,
+            "id": provider_id,
+        }
+        env_vars = raw_provider.get("envVars")
+        if isinstance(env_vars, list):
+            entry["envVars"] = [env_var for env_var in env_vars if isinstance(env_var, str)]
+        providers.append(entry)
+    return providers
+
+
+async def _build_capability_web_providers_payload(
+    services: CliServices,
+) -> dict[str, object]:
+    runtime = _web_runtime(services)
+    list_search_providers = (
+        getattr(runtime, "list_search_providers", None) if runtime is not None else None
+    )
+    list_fetch_providers = (
+        getattr(runtime, "list_fetch_providers", None) if runtime is not None else None
+    )
+    search = (
+        _project_web_provider_entries(await list_search_providers())
+        if callable(list_search_providers)
+        else []
+    )
+    fetch = (
+        _project_web_provider_entries(await list_fetch_providers())
+        if callable(list_fetch_providers)
+        else []
+    )
+    return {"search": search, "fetch": fetch}
 
 
 async def _build_capability_video_describe_payload(
@@ -8517,6 +8580,17 @@ def capability_video_generate_command(
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
     _emit_capability_model_run(payload, json_output=json_output)
+
+
+@capability_web_app.command("providers")
+def capability_web_providers_command(
+    json_output: bool = typer.Option(False, "--json", help="Output JSON."),
+) -> None:
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_capability_web_providers_payload(services)
+
+    payload = _run(_run_with_services(_action))
+    _emit_capability_provider_summary(payload, json_output=json_output)
 
 
 @capability_video_app.command("describe")

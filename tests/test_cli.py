@@ -4226,6 +4226,62 @@ def test_capability_video_generate_json_wraps_native_video_generation(monkeypatc
     ]
 
 
+def test_infer_web_providers_json_projects_search_and_fetch(monkeypatch) -> None:
+    calls: list[str] = []
+
+    class FakeWebRuntime:
+        async def list_search_providers(self) -> list[dict[str, object]]:
+            calls.append("list_search_providers")
+            return [
+                {
+                    "id": "serpapi",
+                    "envVars": ["SERPAPI_API_KEY"],
+                    "configured": True,
+                    "selected": True,
+                }
+            ]
+
+        async def list_fetch_providers(self) -> list[dict[str, object]]:
+            calls.append("list_fetch_providers")
+            return [
+                {
+                    "id": "browserless",
+                    "envVars": ["BROWSERLESS_TOKEN"],
+                    "configured": False,
+                }
+            ]
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(web_runtime=FakeWebRuntime()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["infer", "web", "providers", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout) == {
+        "search": [
+            {
+                "available": True,
+                "configured": True,
+                "selected": True,
+                "id": "serpapi",
+                "envVars": ["SERPAPI_API_KEY"],
+            }
+        ],
+        "fetch": [
+            {
+                "available": True,
+                "configured": False,
+                "selected": False,
+                "id": "browserless",
+                "envVars": ["BROWSERLESS_TOKEN"],
+            }
+        ],
+    }
+    assert calls == ["list_search_providers", "list_fetch_providers"]
+
+
 def test_capability_model_run_rejects_local_and_gateway_together() -> None:
     result = runner.invoke(
         app,
