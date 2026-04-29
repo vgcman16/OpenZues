@@ -1073,20 +1073,22 @@ next-heartbeat`, and `--disabled`; `cron create` now aliases `cron add`, and
 `--model` trims into the agent-turn payload, and delivery flags now cover
 `--announce`, `--no-deliver`, `--channel`, `--to`, `--account`, and
 `--best-effort-deliver`; cron schedule flags now cover `--tz`, `--stagger`,
-and `--exact`. Remaining add gaps are at/date schedule normalization,
-delete-after-run/keep-after-run guards, and backend contract expansion for
-thinking/tools/light-context. `cron edit` now exists for basic name,
+and `--exact`, including OpenClaw-style `--at` parsing for IANA timezone
+offset-less datetimes, DST-gap rejection, relative durations with `--tz`,
+offset-less UTC defaults, and native `tzdata`-backed Windows timezone data.
+`cron edit` now exists for basic name,
 description, enable/disable, direct schedule patching, native-supported
 session/agent fields, agentTurn/systemEvent payload patching, and delivery
 metadata, failure-alert flags, and existing-cron `--exact` schedule patching;
 `cron.add` and `cron.update` now persist agentTurn payload extras (`thinking`,
 `timeoutSeconds`, `lightContext`, and `toolsAllow`), and `cron add` exposes the
 matching CLI flags. `cron edit` now exposes the same flags plus
-`--no-light-context` and `--clear-tools`. Remaining cron gaps are
-the remaining direct `--at` timezone normalization breadth; explicit
-`deleteAfterRun=true` storage, default one-shot delete-after-run on gateway
-created `cron.add` jobs, successful system-event `cron.run` cleanup, and
-isolated agent mission-completion cleanup now work.
+`--no-light-context` and `--clear-tools`. Explicit `deleteAfterRun=true`
+storage, default one-shot delete-after-run on gateway-created `cron.add` jobs,
+successful system-event `cron.run` cleanup, and isolated agent
+mission-completion cleanup now work. No smaller source-backed cron queue head
+remains; rotate back to the repo-level session/runtime-control and broader
+CLI/runtime/doctor queue.
 
 Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `agents.files.set` now cover OpenClaw's bootstrap/memory workspace files (`AGENTS.md`, `SOUL.md`, `TOOLS.md`, `IDENTITY.md`, `USER.md`, `HEARTBEAT.md`, `BOOTSTRAP.md`, `MEMORY.md`, and `memory.md`) while preserving the existing OpenZues `.codex/AGENTS.md` file. The next repo-level method seam should move to session/runtime-control surfaces instead of reopening agent-file filename breadth.
 

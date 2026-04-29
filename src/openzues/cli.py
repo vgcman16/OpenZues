@@ -14,12 +14,13 @@ import tempfile
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Annotated, Any, Literal, cast
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import typer
 import uvicorn
@@ -2488,7 +2489,7 @@ def _cron_cli_schedule(
             raise typer.BadParameter("Invalid --every; use e.g. 10m, 1h, 1d")
         return {"kind": "every", "everyMs": every_ms}
     assert normalized_at is not None
-    return {"kind": "at", "at": normalized_at}
+    return {"kind": "at", "at": _cron_cli_at(normalized_at, tz=normalized_tz)}
 
 
 def _cron_duration_ms(value: str) -> int | None:
@@ -2507,6 +2508,108 @@ def _cron_duration_ms(value: str) -> int | None:
         "d": 86_400_000,
     }[unit]
     return int(amount * factor)
+
+
+def _cron_format_utc_milliseconds(value: datetime) -> str:
+    return value.astimezone(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+_CRON_ISO_TZ_RE = re.compile(r"(Z|[+-]\d{2}:?\d{2})$", flags=re.IGNORECASE)
+_CRON_ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_CRON_ISO_DATE_TIME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T")
+_CRON_OFFSETLESS_ISO_DATETIME_RE = re.compile(
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?(\.\d+)?$"
+)
+
+
+def _cron_at_has_offset(value: str) -> bool:
+    return bool(_CRON_ISO_TZ_RE.search(value.strip()))
+
+
+def _cron_at_is_offsetless_iso_datetime(value: str) -> bool:
+    return bool(_CRON_OFFSETLESS_ISO_DATETIME_RE.fullmatch(value.strip()))
+
+
+def _cron_datetime_for_parse(value: str) -> str:
+    return re.sub(r"z$", "+00:00", value.strip(), flags=re.IGNORECASE)
+
+
+def _cron_timezone_offset(instant: datetime, zone: ZoneInfo) -> timedelta:
+    zoned = instant.astimezone(zone)
+    local_as_utc = datetime(
+        zoned.year,
+        zoned.month,
+        zoned.day,
+        zoned.hour,
+        zoned.minute,
+        zoned.second,
+        zoned.microsecond,
+        tzinfo=UTC,
+    )
+    return local_as_utc - instant
+
+
+def _cron_parse_offsetless_zoned_at(value: str, tz: str) -> str | None:
+    try:
+        zone = ZoneInfo(tz)
+    except ZoneInfoNotFoundError as exc:
+        raise typer.BadParameter(f"Unknown timezone: {tz}") from exc
+    try:
+        local = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    if local.tzinfo is not None:
+        return None
+    naive_utc = local.replace(tzinfo=UTC)
+    first_offset = _cron_timezone_offset(naive_utc, zone)
+    candidate_utc = naive_utc - first_offset
+    final_offset = _cron_timezone_offset(candidate_utc, zone)
+    resolved_utc = naive_utc - final_offset
+    round_tripped = resolved_utc.astimezone(zone).replace(tzinfo=None)
+    if round_tripped != local:
+        return None
+    return _cron_format_utc_milliseconds(resolved_utc)
+
+
+def _cron_parse_absolute_at(value: str) -> str | None:
+    raw = value.strip()
+    if re.fullmatch(r"\d+", raw):
+        timestamp_ms = int(raw)
+        if timestamp_ms > 0:
+            return _cron_format_utc_milliseconds(
+                datetime.fromtimestamp(timestamp_ms / 1000, tz=UTC)
+            )
+    normalized = raw
+    if _CRON_ISO_DATE_RE.fullmatch(raw):
+        normalized = f"{raw}T00:00:00+00:00"
+    elif _CRON_ISO_DATE_TIME_RE.match(raw) and not _cron_at_has_offset(raw):
+        normalized = f"{raw}+00:00"
+    else:
+        normalized = _cron_datetime_for_parse(raw)
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return _cron_format_utc_milliseconds(parsed)
+
+
+def _cron_cli_at(value: str, *, tz: str | None) -> str:
+    normalized_tz = _optional_cli_string(tz)
+    raw = value.strip()
+    if normalized_tz is not None and _cron_at_is_offsetless_iso_datetime(raw):
+        resolved = _cron_parse_offsetless_zoned_at(raw, normalized_tz)
+        if resolved is None:
+            raise typer.BadParameter("Invalid --at; use ISO time or duration like 20m")
+        return resolved
+    absolute = _cron_parse_absolute_at(raw)
+    if absolute is not None:
+        return absolute
+    duration_ms = _cron_duration_ms(raw)
+    if duration_ms is None:
+        raise typer.BadParameter("Invalid --at; use ISO time or duration like 20m")
+    return _cron_format_utc_milliseconds(datetime.now(UTC) + timedelta(milliseconds=duration_ms))
 
 
 def _cron_positive_int(value: str | None) -> int | None:

@@ -2940,6 +2940,163 @@ def test_cron_add_cron_timezone_and_stagger_shape_schedule(monkeypatch) -> None:
     }
 
 
+def test_cron_add_at_timezone_normalizes_offsetless_datetime(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {"ok": True, "id": "task-blueprint:7", "request": params}
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "cron",
+            "add",
+            "--name",
+            "Oslo one shot",
+            "--at",
+            "2026-03-23T23:00:00",
+            "--tz",
+            "Europe/Oslo",
+            "--message",
+            "Ship at local time.",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert calls[0][1]["schedule"] == {
+        "kind": "at",
+        "at": "2026-03-23T22:00:00.000Z",
+    }
+
+
+def test_cron_add_at_timezone_rejects_nonexistent_dst_gap(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {"ok": True, "id": "task-blueprint:7", "request": params}
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "cron",
+            "add",
+            "--name",
+            "DST gap",
+            "--at",
+            "2026-03-29T02:30:00",
+            "--tz",
+            "Europe/Oslo",
+            "--message",
+            "This wall-clock time does not exist.",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert calls == []
+
+
+def test_cron_add_at_timezone_allows_relative_duration(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {"ok": True, "id": "task-blueprint:7", "request": params}
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "cron",
+            "add",
+            "--name",
+            "Relative Oslo one shot",
+            "--at",
+            "20m",
+            "--tz",
+            "Europe/Oslo",
+            "--message",
+            "Relative scheduling ignores timezone.",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert calls[0][1]["schedule"]["kind"] == "at"
+    assert str(calls[0][1]["schedule"]["at"]).endswith("Z")
+
+
+def test_cron_add_at_offsetless_datetime_without_timezone_defaults_to_utc(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {"ok": True, "id": "task-blueprint:7", "request": params}
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "cron",
+            "add",
+            "--name",
+            "UTC one shot",
+            "--at",
+            "2026-03-23T23:00:00",
+            "--message",
+            "Default offsetless datetimes to UTC.",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert calls[0][1]["schedule"] == {
+        "kind": "at",
+        "at": "2026-03-23T23:00:00.000Z",
+    }
+
+
 def test_cron_add_payload_extra_flags_shape_agent_turn_payload(monkeypatch) -> None:
     calls: list[tuple[str, dict[str, object]]] = []
 
