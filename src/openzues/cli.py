@@ -1809,6 +1809,33 @@ def _emit_models_list(
         typer.echo(f"- {prefix}{model_id}: {label}{default}")
 
 
+def _emit_models_status(
+    payload: dict[str, object],
+    *,
+    json_output: bool,
+    plain: bool,
+) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+    resolved_default = _optional_cli_string(payload.get("resolvedDefault"))
+    if plain:
+        typer.echo(resolved_default or "")
+        return
+    typer.echo("Model status")
+    default_model = _optional_cli_string(payload.get("defaultModel"))
+    if default_model is not None:
+        typer.echo(f"default: {default_model}")
+    if resolved_default is not None:
+        typer.echo(f"resolved: {resolved_default}")
+    allowed = payload.get("allowed")
+    if isinstance(allowed, list):
+        typer.echo("configured models: " + (", ".join(str(item) for item in allowed) or "all"))
+    auth = payload.get("auth")
+    if isinstance(auth, dict):
+        typer.echo(f"auth: {auth.get('status') or 'unknown'}")
+
+
 def _emit_plugin_inspect(payload: object, *, json_output: bool) -> None:
     if json_output:
         _emit_payload(payload, json_output=True)
@@ -2403,6 +2430,83 @@ async def _build_models_list_payload(
             continue
         models.append(model)
     return {"models": models}
+
+
+async def _build_models_status_payload(
+    services: CliServices,
+    *,
+    probe: bool,
+) -> dict[str, object]:
+    catalog = await _build_models_list_payload(
+        services,
+        provider=None,
+        local_only=False,
+    )
+    raw_models = catalog.get("models")
+    models = [item for item in raw_models if isinstance(item, dict)] if isinstance(
+        raw_models,
+        list,
+    ) else []
+    default_model = next(
+        (item for item in models if item.get("isDefault") is True),
+        models[0] if models else None,
+    )
+    default_label = _model_display_label(default_model) if default_model is not None else None
+    resolved_default = _model_reference(default_model) if default_model is not None else None
+    allowed = [
+        model_ref
+        for model_ref in (_model_reference(item) for item in models)
+        if model_ref is not None
+    ]
+    providers_in_use = sorted(
+        {
+            provider
+            for provider in (_optional_cli_string(item.get("provider")) for item in models)
+            if provider is not None
+        }
+    )
+    probes: dict[str, object] | None = None
+    if probe:
+        probes = {
+            "status": "unavailable",
+            "reason": "models status probes require the model auth health runtime.",
+        }
+    return {
+        "ok": True,
+        "defaultModel": default_label,
+        "resolvedDefault": resolved_default,
+        "fallbacks": [],
+        "imageModel": None,
+        "imageFallbacks": [],
+        "aliases": {},
+        "allowed": allowed,
+        "auth": {
+            "status": "unavailable",
+            "providersWithOAuth": [],
+            "missingProvidersInUse": providers_in_use,
+            "providers": [],
+            "unusableProfiles": [],
+            "oauth": {
+                "profiles": [],
+                "providers": [],
+            },
+            "probes": probes,
+        },
+    }
+
+
+def _model_reference(model: dict[str, object] | None) -> str | None:
+    if model is None:
+        return None
+    model_id = _model_display_label(model)
+    if model_id is None:
+        return None
+    provider = _optional_cli_string(model.get("provider"))
+    return f"{provider}/{model_id}" if provider is not None else model_id
+
+
+def _model_display_label(model: dict[str, object]) -> str | None:
+    return _optional_cli_string(model.get("id")) or _optional_cli_string(model.get("name"))
 
 
 async def _build_plugin_inspect_payload(
@@ -4788,6 +4892,38 @@ def models_list_command(
 
     payload = _run(_run_with_services(_action))
     _emit_models_list(payload, json_output=json_output, plain=plain)
+
+
+@models_app.command("status")
+def models_status_command(
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit configured model status as JSON.",
+    ),
+    plain: bool = typer.Option(
+        False,
+        "--plain",
+        help="Emit the resolved default model only.",
+    ),
+    probe: bool = typer.Option(
+        False,
+        "--probe",
+        help="Include probe posture when a model auth runtime is available.",
+    ),
+    check: bool = typer.Option(
+        False,
+        "--check",
+        help="Exit non-zero when model auth is known unhealthy.",
+    ),
+) -> None:
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_models_status_payload(services, probe=probe)
+
+    payload = _run(_run_with_services(_action))
+    _emit_models_status(payload, json_output=json_output, plain=plain)
+    if check and payload.get("ok") is not True:
+        raise typer.Exit(code=1)
 
 
 @plugins_app.command("list")

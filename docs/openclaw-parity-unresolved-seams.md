@@ -74,12 +74,15 @@ Current queue-head adjustment: the CLI now exposes `sessions spawn` and
 service builder wires the same native ACP spawn, sandbox-required child-turn,
 route-backed thread binder, direct send/poll, config, model inventory, and
 control-chat submit seams used by the app-server path. Remaining CLI/runtime
-parity includes ACP/sandbox status commands, deeper model status/probe
+parity includes ACP/sandbox status commands, deeper model auth/probe
 inspection, plugin/runtime inspection, doctor readiness checks, non-metadata
 external sandbox container cleanup, and broader TUI ergonomics. The CLI now
 also exposes `models list` as a thin OpenClaw-shaped JSON/human wrapper over
 the production `models.list` gateway method owner, including provider/local
-filters without duplicating the model catalog runtime. Top-level `health`
+filters without duplicating the model catalog runtime, and `models status`
+projects the same catalog into OpenClaw-style default/resolved/allowed/auth
+status fields while keeping live auth probes unavailable until the native
+model auth health runtime exists. Top-level `health`
 now queries the live gateway `/api/health` and `/readyz` owners, emits
 OpenClaw-shaped JSON/human readiness fields, and propagates the configured
 connection timeout.
