@@ -37,7 +37,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
 | Chat + transcript contracts | Strong partial | ~96% | `chat.history`, direct session history REST/SSE, `chat.send`, `chat.inject`, `chat.abort`, live `session.message`, `sessions.changed`, transcript metadata, usage/cost, text caps, and sanitizer parity are verified against OpenClaw-shaped behavior where they map to SQLite-backed storage. |
 | Cron wake/delivery | Strong partial | ~96% | Direct send/poll, provider route callbacks, native route setup, replay/test dispatch, provider error/result metadata, OpenClaw-style cron-expression schedules, due-run behavior, and session-key wake routing are verified. |
 | Onboarding + setup | Partial | ~70% | QuickStart, gateway bootstrap, saved-lane handling, degraded bootstrap boundaries, remote saved-lane wizard progression, and broken-default repair posture are real, with broader OpenClaw setup breadth still open. |
-| CLI + operator control plane | Partial | ~81% | Health, status, continue, queue, recover/harden, gateway doctor, delivery replay, route creation, direct route send/poll, sandbox inventory/explain/recreate, sessions spawn/wait, models list/status, plugins list/doctor/inspect/info/marketplace list, and operator monitor surfaces exist; broader runtime CLI/TUI breadth remains. |
+| CLI + operator control plane | Partial | ~82% | Health, status, continue, queue, recover/harden, gateway doctor, delivery replay, route creation, direct route send/poll, sandbox inventory/explain/recreate, sessions spawn/wait, models list/status, plugins list/doctor/inspect/info/marketplace list/enable/disable, and operator monitor surfaces exist; broader runtime CLI/TUI breadth remains. |
 | Routing + session identity | Strong partial | ~84% | Session keys, routed targeting, custom-agent session creation/filtering/identity/workspace files, snapshot filtering, compaction inventory, spawned-session visibility, parent/child aliases, and direct session-history replay are real; provider-owned routing remains open. |
 | Skills + Ops Mesh | Partial | ~72% | Skill pins, skillbooks, inbox/snapshots/inventory, Hermes-inspired toolsets, recall/learning surfaces, and lane-aware supervision are useful but not complete OpenClaw/Hermes parity. |
 | Channels + direct announce delivery | Strong partial | ~94% | Shared outbound runtime ownership spans direct send/poll, explicit announce, saved replays, native adapters, Slack/Telegram/Discord/WhatsApp routes, CLI route send/poll commands, provider result metadata, OpenClaw-style send reply/thread/silent/document fields, Telegram native document/reply/silent/thread payloads, admin-scoped chat origin/system provenance, A2A announce/reply loops, and idle `sessions.steer` runtime sends; broader per-provider option coverage remains open. |
@@ -48,7 +48,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
 
 - Config-driven sandboxed target runtimes beyond the app-wired Codex workspace-write path, deeper persistent thread unbind/end-hook behavior, and push-native completion delivery beyond the bounded local wait/cleanup/idempotency implementation.
 - Broader provider-native outbound runtime breadth for all provider-specific reply/silent/document/media edge cases beyond the route send/poll CLI surface.
-- Plugin catalog/effective visibility and production plugin metadata inventory beyond the fakeable ordered executor registry.
+- Plugin catalog/effective visibility, remote marketplace install/update/uninstall, and production plugin metadata inventory beyond the fakeable ordered executor registry.
 - Broader OpenClaw companion apps, packaging/distribution, full CLI/TUI ergonomics, and non-Windows host parity.
 - OpenClaw file-store-only edge cases that do not cleanly map to OpenZues' current SQLite-backed transcript source of truth.
 
@@ -140,6 +140,11 @@ These are complete within the bounded OpenZues-local parity contract verified in
 - `python -m pytest tests\test_cli.py -q -k "plugins_ or models_ or health_json_surfaces"`: 10 passed after rechecking adjacent plugin/model/health CLI command surfaces.
 - `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the plugin marketplace list CLI slice.
 - `mypy src\openzues\cli.py`: clean after the plugin marketplace list CLI slice.
+- `python -m pytest tests\test_cli.py -q -k "plugins_enable_disable_json"`: 1 passed after adding `plugins enable` / `plugins disable` JSON config mutation.
+- `python -m pytest tests\test_cli.py -q -k "plugins_"`: 8 passed after rechecking plugin list/doctor/inspect/info/marketplace/toggle CLI surfaces.
+- `python -m pytest tests\test_gateway_node_methods.py -q -k "config_write_methods or config_schema_lookup_accepts_scoped_plugin_entry_paths"`: 5 passed after rechecking adjacent config mutation/schema behavior.
+- `ruff check src\openzues\cli.py src\openzues\services\gateway_config.py src\openzues\schemas.py tests\test_cli.py`: clean after the plugin toggle CLI slice.
+- `mypy src\openzues\cli.py src\openzues\services\gateway_config.py src\openzues\schemas.py`: clean after the plugin toggle CLI slice.
 - `ruff check src\openzues\services\gateway_acp_spawn.py src\openzues\services\gateway_node_methods.py src\openzues\services\gateway_outbound_runtime.py src\openzues\services\gateway_plugin_runtime.py src\openzues\services\ops_mesh.py src\openzues\app.py tests\test_gateway_acp_spawn.py tests\test_gateway_node_methods.py tests\test_ops_mesh.py`: clean.
 - `mypy src\openzues\services\gateway_acp_spawn.py src\openzues\services\gateway_node_methods.py src\openzues\services\gateway_outbound_runtime.py src\openzues\services\gateway_plugin_runtime.py src\openzues\services\ops_mesh.py src\openzues\app.py`: clean.
 - `pytest tests/test_gateway_node_methods.py -q -k cron`: 48 passed after adding cron-expression schedule create/update/due-run coverage.

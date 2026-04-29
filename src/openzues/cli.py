@@ -371,6 +371,7 @@ class CliServices:
     gateway_agents: GatewayAgentsService
     gateway_channels: GatewayChannelsService
     gateway_commands: GatewayCommandsService
+    gateway_config: GatewayConfigService
     gateway_node_methods: GatewayNodeMethodService
     ops_mesh: OpsMeshService
     recall: RecallService
@@ -558,6 +559,7 @@ async def _build_services(app_settings: Settings) -> CliServices:
         gateway_agents=gateway_agents,
         gateway_channels=gateway_channels,
         gateway_commands=gateway_commands,
+        gateway_config=gateway_config,
         gateway_node_methods=gateway_node_methods,
         ops_mesh=ops_mesh,
         recall=recall,
@@ -1775,6 +1777,21 @@ def _emit_plugins_doctor(payload: dict[str, object], *, json_output: bool) -> No
             typer.echo(f"- {prefix}{message}")
 
 
+def _emit_plugins_toggle(payload: dict[str, object], *, json_output: bool) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+    plugin_id = str(payload.get("pluginId") or payload.get("resolvedPluginId") or "").strip()
+    action = str(payload.get("action") or "").strip()
+    enabled = payload.get("enabled")
+    if action == "enable" and enabled is not True:
+        reason = str(payload.get("reason") or "unknown reason").strip()
+        typer.echo(f'Plugin "{plugin_id}" could not be enabled ({reason}).')
+        return
+    verb = "Enabled" if action == "enable" else "Disabled"
+    typer.echo(f'{verb} plugin "{plugin_id}". Restart the gateway to apply.')
+
+
 def _emit_plugins_marketplace_list(
     payload: dict[str, object],
     *,
@@ -2429,6 +2446,27 @@ async def _build_plugins_doctor_payload(services: CliServices) -> dict[str, obje
         "errors": errors,
         "diagnostics": diagnostics,
         "docs": "https://docs.openclaw.ai/plugin",
+    }
+
+
+async def _build_plugins_toggle_payload(
+    services: CliServices,
+    *,
+    plugin_id: str,
+    enabled: bool,
+) -> dict[str, object]:
+    result = services.gateway_config.set_plugin_enabled(plugin_id, enabled)
+    return {
+        "ok": True,
+        "action": "enable" if enabled else "disable",
+        "pluginId": result.get("pluginId"),
+        "resolvedPluginId": result.get("resolvedPluginId"),
+        "enabled": result.get("enabled"),
+        "reason": result.get("reason"),
+        "channelSynced": result.get("channelSynced"),
+        "path": result.get("path"),
+        "hash": result.get("hash"),
+        "restart": "gateway",
     }
 
 
@@ -5044,6 +5082,46 @@ def plugins_list_command(
 
     payload = _run(_run_with_services(_action))
     _emit_plugins_inventory(payload, json_output=json_output, verbose=verbose)
+
+
+def _plugins_toggle_command_impl(
+    plugin_id: str,
+    *,
+    enabled: bool,
+    json_output: bool,
+) -> None:
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_plugins_toggle_payload(
+            services,
+            plugin_id=plugin_id,
+            enabled=enabled,
+        )
+
+    try:
+        payload = _run(_run_with_services(_action))
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    except RuntimeError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    _emit_plugins_toggle(payload, json_output=json_output)
+
+
+@plugins_app.command("enable")
+def plugins_enable_command(
+    plugin_id: str = typer.Argument(..., help="Plugin id."),
+    json_output: bool = typer.Option(False, "--json", help="Emit enable result as JSON."),
+) -> None:
+    _plugins_toggle_command_impl(plugin_id, enabled=True, json_output=json_output)
+
+
+@plugins_app.command("disable")
+def plugins_disable_command(
+    plugin_id: str = typer.Argument(..., help="Plugin id."),
+    json_output: bool = typer.Option(False, "--json", help="Emit disable result as JSON."),
+) -> None:
+    _plugins_toggle_command_impl(plugin_id, enabled=False, json_output=json_output)
 
 
 def _plugins_inspect_command_impl(

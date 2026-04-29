@@ -10,6 +10,32 @@ from typing import Any
 
 from openzues.schemas import ControlUiBootstrapConfigView
 
+_OPENCLAW_CHANNEL_PLUGIN_ALIASES = {
+    "discord": "discord",
+    "feishu": "feishu",
+    "gchat": "googlechat",
+    "google-chat": "googlechat",
+    "googlechat": "googlechat",
+    "imessage": "imessage",
+    "imsg": "imessage",
+    "internet-relay-chat": "irc",
+    "irc": "irc",
+    "line": "line",
+    "matrix": "matrix",
+    "msteams": "msteams",
+    "nextcloud-talk": "nextcloud-talk",
+    "nostr": "nostr",
+    "signal": "signal",
+    "slack": "slack",
+    "teams": "msteams",
+    "telegram": "telegram",
+    "tg": "telegram",
+    "wa": "whatsapp",
+    "whatsapp": "whatsapp",
+    "zalo": "zalo",
+    "zulip": "zulip",
+}
+
 
 def _escape_powershell_single_quoted_string(value: str) -> str:
     return value.replace("'", "''")
@@ -105,6 +131,24 @@ class GatewayConfigService:
         result["restart"] = None
         result["sentinel"] = None
         return result
+
+    def set_plugin_enabled(self, plugin_id: str, enabled: bool) -> dict[str, Any]:
+        config_path = self._require_config_path()
+        current = self.build_snapshot()
+        toggle = _set_plugin_enabled_in_snapshot(current, plugin_id, enabled)
+        base_hash = self._snapshot_hash(current) if config_path.exists() else None
+        write_result = self._write_snapshot(toggle["config"], base_hash=base_hash)
+        write_result.update(
+            {
+                "pluginId": toggle["pluginId"],
+                "resolvedPluginId": toggle["resolvedPluginId"],
+                "enabled": toggle["enabled"],
+                "requestedEnabled": enabled,
+                "reason": toggle["reason"],
+                "channelSynced": toggle["channelSynced"],
+            }
+        )
+        return write_result
 
     def _default_snapshot(self) -> dict[str, Any]:
         return _clean_config_snapshot(
@@ -203,8 +247,87 @@ def _merge_config_patch(current: dict[str, Any], patch: dict[str, Any]) -> dict[
     return merged
 
 
+def _set_plugin_enabled_in_snapshot(
+    snapshot: dict[str, Any],
+    plugin_id: str,
+    enabled: bool,
+) -> dict[str, Any]:
+    requested_id = plugin_id.strip()
+    if not requested_id:
+        raise ValueError("plugin id is required")
+    channel_id = _normalize_openclaw_channel_plugin_id(requested_id)
+    resolved_id = channel_id or requested_id
+    plugins = snapshot.get("plugins")
+    plugins_config = dict(plugins) if isinstance(plugins, dict) else {}
+
+    if enabled:
+        if plugins_config.get("enabled") is False:
+            return {
+                "config": dict(snapshot),
+                "pluginId": requested_id,
+                "resolvedPluginId": resolved_id,
+                "enabled": False,
+                "reason": "plugins disabled",
+                "channelSynced": False,
+            }
+        deny = plugins_config.get("deny")
+        deny_values = {str(value) for value in deny} if isinstance(deny, list) else set()
+        if requested_id in deny_values or resolved_id in deny_values:
+            return {
+                "config": dict(snapshot),
+                "pluginId": requested_id,
+                "resolvedPluginId": resolved_id,
+                "enabled": False,
+                "reason": "blocked by denylist",
+                "channelSynced": False,
+            }
+
+    entries = plugins_config.get("entries")
+    next_entries = dict(entries) if isinstance(entries, dict) else {}
+    existing_entry = next_entries.get(resolved_id)
+    next_entry = dict(existing_entry) if isinstance(existing_entry, dict) else {}
+    next_entry["enabled"] = enabled
+    next_entries[resolved_id] = next_entry
+
+    next_plugins = dict(plugins_config)
+    next_plugins["entries"] = next_entries
+    if enabled:
+        allow = next_plugins.get("allow")
+        if isinstance(allow, list) and resolved_id not in {str(value) for value in allow}:
+            next_plugins["allow"] = [*allow, resolved_id]
+
+    next_snapshot = dict(snapshot)
+    next_snapshot["plugins"] = next_plugins
+    channel_synced = False
+    if channel_id is not None:
+        channels = next_snapshot.get("channels")
+        next_channels = dict(channels) if isinstance(channels, dict) else {}
+        existing_channel = next_channels.get(channel_id)
+        next_channel = dict(existing_channel) if isinstance(existing_channel, dict) else {}
+        next_channel["enabled"] = enabled
+        next_channels[channel_id] = next_channel
+        next_snapshot["channels"] = next_channels
+        channel_synced = True
+
+    return {
+        "config": next_snapshot,
+        "pluginId": requested_id,
+        "resolvedPluginId": resolved_id,
+        "enabled": enabled,
+        "reason": None,
+        "channelSynced": channel_synced,
+    }
+
+
+def _normalize_openclaw_channel_plugin_id(plugin_id: str) -> str | None:
+    normalized = plugin_id.strip().lower()
+    if not normalized:
+        return None
+    return _OPENCLAW_CHANNEL_PLUGIN_ALIASES.get(normalized)
+
+
 def _clean_config_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
-    omitted_null_sections = ("gateway", "session", "tools")
+    omitted_null_sections = ("gateway", "session", "tools", "plugins", "channels")
     if any(snapshot.get(section) is None for section in omitted_null_sections):
         snapshot = dict(snapshot)
         for section in omitted_null_sections:

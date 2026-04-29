@@ -108,9 +108,14 @@ load errors from the same projection and preserves OpenClaw's
 its `plugins info` alias now return OpenClaw-shaped JSON reports with
 `plugin`, `shape`, `capabilityMode`, capability kinds, diagnostics, policy, and
 install placeholders projected from the same inventory, and `inspect --all`
-returns all records. Remaining plugin CLI parity is compatibility notices,
-enable/disable mutation, remote marketplace install/update/uninstall flows, and
-deeper production plugin metadata discovery. `plugins marketplace list` now
+returns all records. `plugins enable` / `plugins disable` now write through the
+existing gateway config owner with OpenClaw-shaped
+`plugins.entries.<id>.enabled` persistence, preserve existing entry config,
+append configured allowlists on enable, and mirror built-in channel plugin
+toggles into `channels.<id>.enabled` for channel-backed providers. Remaining
+plugin CLI parity is compatibility notices, remote marketplace
+install/update/uninstall flows, and deeper production plugin metadata
+discovery. `plugins marketplace list` now
 supports local Claude-compatible marketplace manifests from
 `.claude-plugin/marketplace.json` or `marketplace.json`, returning the
 OpenClaw-shaped `source`, `name`, `version`, and `plugins` JSON payload while

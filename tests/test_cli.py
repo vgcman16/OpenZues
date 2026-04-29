@@ -35,6 +35,7 @@ from openzues.schemas import (
 )
 from openzues.services.control_chat import ControlChatPlan
 from openzues.services.device_bootstrap_profile import BOOTSTRAP_HANDOFF_OPERATOR_SCOPES
+from openzues.services.gateway_config import GatewayConfigService
 from openzues.services.gateway_method_policy import list_known_gateway_methods
 from openzues.services.ops_mesh import OUTBOUND_DELIVERY_MAX_RETRIES
 from openzues.settings import Settings
@@ -968,6 +969,85 @@ def test_plugins_marketplace_list_json_reads_local_manifest(tmp_path) -> None:
                 "source": {"type": "path", "path": "plugins/frontend-design"},
             }
         ],
+    }
+
+
+def test_plugins_enable_disable_json_persists_openclaw_config(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {
+                    "allow": ["existing-plugin"],
+                    "entries": {
+                        "demo-plugin": {
+                            "config": {"mode": "test"},
+                        }
+                    },
+                },
+                "channels": {
+                    "slack": {
+                        "botToken": "xoxb-redacted",
+                    }
+                },
+            }
+        )
+    )
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_config=gateway_config))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    enable_result = runner.invoke(app, ["plugins", "enable", "demo-plugin", "--json"])
+
+    assert enable_result.exit_code == 0, enable_result.stdout
+    enable_payload = json.loads(enable_result.stdout)
+    assert enable_payload["ok"] is True
+    assert enable_payload["action"] == "enable"
+    assert enable_payload["pluginId"] == "demo-plugin"
+    assert enable_payload["resolvedPluginId"] == "demo-plugin"
+    assert enable_payload["enabled"] is True
+
+    disable_result = runner.invoke(app, ["plugins", "disable", "slack", "--json"])
+
+    assert disable_result.exit_code == 0, disable_result.stdout
+    disable_payload = json.loads(disable_result.stdout)
+    assert disable_payload["ok"] is True
+    assert disable_payload["action"] == "disable"
+    assert disable_payload["pluginId"] == "slack"
+    assert disable_payload["resolvedPluginId"] == "slack"
+    assert disable_payload["enabled"] is False
+
+    stored = json.loads(
+        (tmp_path / "settings" / "control-ui-config.json").read_text(encoding="utf-8")
+    )
+    assert stored["plugins"]["allow"] == ["existing-plugin", "demo-plugin"]
+    assert stored["plugins"]["entries"]["demo-plugin"] == {
+        "config": {"mode": "test"},
+        "enabled": True,
+    }
+    assert stored["plugins"]["entries"]["slack"]["enabled"] is False
+    assert stored["channels"]["slack"] == {
+        "botToken": "xoxb-redacted",
+        "enabled": False,
     }
 
 
