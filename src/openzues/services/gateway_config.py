@@ -265,6 +265,29 @@ class GatewayConfigService:
         write_result.update({"target": target, "fallbacks": fallbacks})
         return write_result
 
+    def remove_image_model_fallback(self, model_ref: str) -> dict[str, Any]:
+        config_path = self._require_config_path()
+        current = self.build_snapshot()
+        aliases = _model_aliases_from_config_snapshot(current)
+        target = _resolve_model_alias_target(model_ref, aliases=aliases)
+        existing = _model_fallbacks_from_config_snapshot(current, key="imageModel")
+        fallbacks = [
+            fallback
+            for fallback in existing
+            if _try_resolve_model_alias_target(fallback, aliases=aliases) != target
+        ]
+        if len(fallbacks) == len(existing):
+            raise ValueError(f"Image fallback not found: {target}")
+        next_snapshot = _set_model_fallbacks_in_snapshot(
+            current,
+            fallbacks=fallbacks,
+            key="imageModel",
+        )
+        base_hash = self._snapshot_hash(current) if config_path.exists() else None
+        write_result = self._write_snapshot(next_snapshot, base_hash=base_hash)
+        write_result.update({"target": target, "fallbacks": fallbacks})
+        return write_result
+
     def clear_model_fallbacks(self) -> dict[str, Any]:
         config_path = self._require_config_path()
         current = self.build_snapshot()

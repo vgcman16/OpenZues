@@ -5773,6 +5773,50 @@ def test_models_image_fallbacks_add_updates_config(tmp_path, monkeypatch) -> Non
     assert snapshot["agents"]["defaults"]["models"]["openai/dall-e-3"] == {}
 
 
+def test_models_image_fallbacks_remove_updates_config(tmp_path, monkeypatch) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "agents": {
+                    "defaults": {
+                        "imageModel": {
+                            "primary": "openai/gpt-image-1",
+                            "fallbacks": ["openai/dall-e-3", "google/imagen-4"],
+                        }
+                    }
+                },
+            }
+        )
+    )
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_config=gateway_config))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["models", "image-fallbacks", "remove", "dall-e-3"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "Image fallbacks: google/imagen-4" in result.stdout
+    snapshot = gateway_config.build_snapshot()
+    assert snapshot["agents"]["defaults"]["imageModel"]["fallbacks"] == ["google/imagen-4"]
+
+
 def test_models_status_json_projects_default_catalog_state(monkeypatch) -> None:
     calls: list[tuple[str, dict[str, object]]] = []
 
