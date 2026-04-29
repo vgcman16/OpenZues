@@ -929,6 +929,39 @@ def _tools_invoke_plugin_executor_allowed(
     return bool(plugin_token and plugin_token in allow_tokens) or "group:plugins" in allow_tokens
 
 
+def _tools_invoke_allow_policy_from_mapping(value: object) -> set[str]:
+    if not isinstance(value, dict):
+        return set()
+    tools = value.get("tools")
+    if not isinstance(tools, dict):
+        return set()
+    return _normalized_tools_invoke_policy_set(tools.get("allow"))
+
+
+def _tools_invoke_scoped_allow_policy(
+    config_service: GatewayConfigService | None,
+    *,
+    session_key: str | None,
+) -> set[str]:
+    if config_service is None:
+        return set()
+    try:
+        snapshot = config_service.build_snapshot()
+    except Exception:
+        return set()
+    scoped_allow = _tools_invoke_allow_policy_from_mapping(snapshot)
+    agent_id = resolve_agent_id_from_session_key(session_key or DEFAULT_MAIN_KEY)
+    for agents_config in _sessions_spawn_agents_config_roots(config_service):
+        defaults_config = agents_config.get("defaults")
+        scoped_allow.update(_tools_invoke_allow_policy_from_mapping(defaults_config))
+        agent_config = _sessions_spawn_agent_config_from_root(
+            agents_config,
+            agent_id=agent_id,
+        )
+        scoped_allow.update(_tools_invoke_allow_policy_from_mapping(agent_config))
+    return scoped_allow
+
+
 def _tools_invoke_sessions_send_result(
     result: object,
     params: dict[str, Any],
@@ -2113,6 +2146,7 @@ class GatewayNodeMethodService:
             resolved_tool_method = _GATEWAY_TOOLS_INVOKE_METHOD_ALIASES.get(tool_key)
         raw_args = payload.get("args")
         tool_args = dict(raw_args) if isinstance(raw_args, dict) else {}
+        session_key = _optional_normalized_string(payload.get("sessionKey"), label="sessionKey")
         plugin_executor: GatewayPluginExecutor | None = None
         if resolved_tool_method is None:
             plugin_resolution = self._plugin_runtime_service.resolve_executor(
@@ -2122,11 +2156,14 @@ class GatewayNodeMethodService:
             )
             if plugin_resolution is None:
                 _raise_tools_invoke_not_found(tool_key)
-            if not _tools_invoke_plugin_executor_allowed(plugin_resolution, allow_tools):
+            scoped_allow_tools = allow_tools | _tools_invoke_scoped_allow_policy(
+                self._config_service,
+                session_key=session_key,
+            )
+            if not _tools_invoke_plugin_executor_allowed(plugin_resolution, scoped_allow_tools):
                 _raise_tools_invoke_not_found(tool_key)
             plugin_executor = plugin_resolution.executor
 
-        session_key = _optional_normalized_string(payload.get("sessionKey"), label="sessionKey")
         if (
             session_key is not None
             and resolved_tool_method in _GATEWAY_TOOLS_INVOKE_SESSION_KEY_METHODS

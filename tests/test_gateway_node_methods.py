@@ -5399,6 +5399,61 @@ async def test_tools_invoke_runs_configured_plugin_executor(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_runs_plugin_executor_from_agent_tool_allowlist(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-tools-invoke-plugin-agent-allow.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "agents": {
+                    "list": [
+                        {
+                            "id": "main",
+                            "default": True,
+                            "tools": {"allow": ["tools_invoke_test"]},
+                        }
+                    ]
+                },
+            }
+        )
+    )
+    observed_calls: list[tuple[str, dict[str, object]]] = []
+
+    async def execute_tool(tool_call_id: str, args: dict[str, object]) -> dict[str, object]:
+        observed_calls.append((tool_call_id, args))
+        return {"ok": True, "mode": args.get("mode")}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        tools_invoke_executors={"tools_invoke_test": execute_tool},
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {"tool": "tools_invoke_test", "args": {"mode": "ok"}, "sessionKey": "main"},
+    )
+
+    assert payload == {"ok": True, "result": {"ok": True, "mode": "ok"}}
+    assert observed_calls[0][0].startswith("http-")
+    assert observed_calls[0][1] == {"mode": "ok"}
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_hides_plugin_executor_without_config_allow(tmp_path) -> None:
     database = Database(tmp_path / "gateway-tools-invoke-plugin-deny.db")
     await database.initialize()

@@ -2058,6 +2058,20 @@ These are complete within the bounded OpenZues-local parity contract verified in
   check src\openzues\services\gateway_node_methods.py
   tests\test_gateway_node_methods.py`, and `mypy
   src\openzues\services\gateway_node_methods.py`.
+- `tools.invoke` plugin executor visibility now follows OpenClaw's scoped tool
+  policy split: `gateway.tools.allow` still only relaxes the HTTP default-deny
+  set for high-risk core tools, while non-core plugin executors can be exposed
+  by the invoking agent's `tools.allow` policy. The config schema now preserves
+  agent-level and top-level OpenClaw-style `tools.allow` / `tools.deny` blocks.
+- Verified the scoped plugin executor slice with `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "tools_invoke_runs_plugin_executor_from_agent_tool_allowlist"` (`1 passed`),
+  adjacent `tools.invoke` plugin pack (`12 passed`), config smoke
+  `python -m pytest tests\test_gateway_node_methods.py -q -k
+  "config_get or config_set or config_patch or config_apply"` (`2 passed`),
+  `ruff check src\openzues\services\gateway_node_methods.py
+  src\openzues\schemas.py tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py src\openzues\schemas.py`.
 
 ## References
 

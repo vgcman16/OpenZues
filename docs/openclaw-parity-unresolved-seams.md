@@ -2291,10 +2291,20 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   spawn policy/runtime pack, `ruff check
   src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
   and `mypy src\openzues\services\gateway_node_methods.py`.
+- Closed the `tools.invoke` scoped plugin visibility seam: plugin executors
+  are no longer gated solely by `gateway.tools.allow`; non-core plugin tools
+  can be exposed by the invoking agent's OpenClaw-style `tools.allow` policy,
+  while the existing gateway default-deny behavior for high-risk core tools
+  remains intact. Verified with `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "tools_invoke_runs_plugin_executor_from_agent_tool_allowlist"`, adjacent
+  `tools.invoke` plugin pack, config smoke, `ruff check
+  src\openzues\services\gateway_node_methods.py src\openzues\schemas.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py src\openzues\schemas.py`.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
-  especially richer `tools.invoke` executor parity (real plugin HTTP ordering
-  and scoped plugin visibility), broader runtime/client integration, and
-  session runtime methods
+  especially broader runtime/client integration, provider replay/direct
+  announce consistency, CLI/runtime doctor parity, and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older approval lifecycle/config/
   device-token/agent-mutation/memory-doctor/placeheld provenance/false
   steer-runtime/custom-agent-session placeholders.
