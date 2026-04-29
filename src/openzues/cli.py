@@ -5792,6 +5792,18 @@ async def _set_default_model_payload(
     return dict(result)
 
 
+async def _set_default_image_model_payload(
+    services: CliServices,
+    *,
+    model: str,
+) -> dict[str, object]:
+    gateway_config = getattr(services, "gateway_config", None)
+    if not isinstance(gateway_config, GatewayConfigService):
+        raise ValueError("model config runtime is unavailable.")
+    result = gateway_config.set_default_image_model(model)
+    return dict(result)
+
+
 async def _set_model_alias_payload(
     services: CliServices,
     *,
@@ -9153,6 +9165,22 @@ def models_set_command(
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
     typer.echo(f"Default model: {payload.get('target')}")
+
+
+@models_app.command("set-image")
+def models_set_image_command(
+    model: str = typer.Argument(..., help="Model id or alias."),
+) -> None:
+    try:
+        payload = _run(
+            _run_with_services(
+                lambda services: _set_default_image_model_payload(services, model=model)
+            )
+        )
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    typer.echo(f"Image model: {payload.get('target')}")
 
 
 @models_auth_app.command("login")

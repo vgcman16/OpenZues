@@ -200,6 +200,24 @@ class GatewayConfigService:
         write_result.update({"target": target, "field": "model"})
         return write_result
 
+    def set_default_image_model(self, model_ref: str) -> dict[str, Any]:
+        config_path = self._require_config_path()
+        current = self.build_snapshot()
+        target = _resolve_model_alias_target(
+            model_ref,
+            aliases=_model_aliases_from_config_snapshot(current),
+        )
+        next_snapshot = _set_model_primary_in_snapshot(
+            current,
+            target=target,
+            key="imageModel",
+        )
+        next_snapshot = _ensure_model_config_entry_in_snapshot(next_snapshot, target=target)
+        base_hash = self._snapshot_hash(current) if config_path.exists() else None
+        write_result = self._write_snapshot(next_snapshot, base_hash=base_hash)
+        write_result.update({"target": target, "field": "imageModel"})
+        return write_result
+
     def set_model_alias(self, *, alias: str, model_ref: str) -> dict[str, Any]:
         config_path = self._require_config_path()
         current = self.build_snapshot()

@@ -256,7 +256,13 @@ and provider aliases, rewrites `agents.defaults.model.primary` into the
 OpenClaw object form, preserves fallback metadata, upserts the canonical model
 entry, migrates the duplicated OpenRouter legacy key, and reports the resolved
 default model. The remaining root model mutation queue head is
-`models set-image`, then non-interactive `models scan` posture.
+`models set-image`, then non-interactive `models scan` posture. `models
+set-image` now resolves aliases and provider aliases through the same native
+model config writer, rewrites `agents.defaults.imageModel.primary` into the
+OpenClaw object form, preserves image fallback metadata, upserts the canonical
+model entry, and reports the resolved image model. No smaller root model
+mutation command remains; the next model CLI queue head is non-interactive
+`models scan` posture.
 Live auth
 probes remain unavailable until the native model auth health runtime exists.
 Top-level `health`
