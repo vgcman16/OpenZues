@@ -278,3 +278,61 @@ async def test_start_turn_uses_danger_full_access_on_windows(monkeypatch) -> Non
         "approvalPolicy": "never",
         "sandboxPolicy": {"type": "dangerFullAccess"},
     }
+
+
+@pytest.mark.asyncio
+async def test_start_turn_can_force_workspace_write_sandbox_on_windows(monkeypatch) -> None:
+    client = CodexAppServerClient(
+        transport="stdio",
+        command="codex",
+        args="-a never -s danger-full-access app-server",
+        websocket_url=None,
+        cwd="C:/workspace",
+        event_callback=_noop_callback,
+        server_request_callback=_noop_callback,
+    )
+    recorded: dict[str, object] = {}
+
+    async def fake_prepare(
+        self: CodexAppServerClient,
+        *,
+        cwd: str | None = None,
+        sandbox_mode: str | None = None,
+    ) -> None:
+        recorded["prepare_cwd"] = cwd
+        recorded["prepare_sandbox_mode"] = sandbox_mode
+
+    async def fake_call(
+        self: CodexAppServerClient,
+        method: str,
+        params: dict | None = None,
+        timeout: float = 30.0,
+    ) -> dict:
+        recorded["method"] = method
+        recorded["params"] = params or {}
+        recorded["timeout"] = timeout
+        return {"turn": {"id": "turn_sandbox"}}
+
+    monkeypatch.setattr(codex_rpc.sys, "platform", "win32")
+    monkeypatch.setattr(CodexAppServerClient, "prepare_windows_sandbox", fake_prepare)
+    monkeypatch.setattr(CodexAppServerClient, "call", fake_call)
+
+    await client.start_turn(
+        thread_id="thread_123",
+        text="Run in the workspace sandbox.",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        sandbox_mode="workspace-write",
+    )
+
+    assert recorded["prepare_cwd"] == "C:/workspace"
+    assert recorded["prepare_sandbox_mode"] == "workspace-write"
+    assert recorded["method"] == "turn/start"
+    assert recorded["params"] == {
+        "threadId": "thread_123",
+        "input": [{"type": "text", "text": "Run in the workspace sandbox."}],
+        "cwd": "C:/workspace",
+        "model": "gpt-5.4",
+        "approvalPolicy": "never",
+        "sandboxPolicy": {"type": "workspaceWrite"},
+    }

@@ -110,6 +110,9 @@ class GatewayOutboundRuntimeMessageRequest:
     message: str
     media_urls: tuple[str, ...] = ()
     gif_playback: bool | None = None
+    reply_to_id: str | None = None
+    silent: bool | None = None
+    force_document: bool | None = None
     account_id: str | None = None
     thread_id: str | None = None
     session_key: str | None = None
@@ -283,6 +286,9 @@ class GatewayOutboundRuntimeService:
         target: str | None = None,
         media_urls: tuple[str, ...] = (),
         gif_playback: bool | None = None,
+        reply_to_id: str | None = None,
+        silent: bool | None = None,
+        force_document: bool | None = None,
         account_id: str | None = None,
         thread_id: str | None = None,
         agent_id: str | None = None,
@@ -302,6 +308,9 @@ class GatewayOutboundRuntimeService:
                         message=message,
                         media_urls=media_urls,
                         gif_playback=gif_playback,
+                        reply_to_id=_normalize_optional_string(reply_to_id),
+                        silent=silent,
+                        force_document=force_document,
                         account_id=_normalize_optional_string(account_id),
                         thread_id=_normalize_optional_string(thread_id),
                         session_key=_normalize_optional_string(session_key),
@@ -343,6 +352,9 @@ class GatewayOutboundRuntimeService:
                         message=message,
                         media_urls=media_urls,
                         gif_playback=gif_playback,
+                        reply_to_id=_normalize_optional_string(reply_to_id),
+                        silent=silent,
+                        force_document=force_document,
                         account_id=_normalize_optional_string(account_id),
                         thread_id=_normalize_optional_string(thread_id),
                         session_key=_normalize_optional_string(session_key),

@@ -2070,6 +2070,110 @@ async def test_ops_mesh_service_send_direct_channel_message_prefers_provider_run
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_preserves_provider_native_options(
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-provider-options"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+
+    provider_requests: list[GatewayOutboundRuntimeMessageRequest] = []
+
+    async def fake_provider_delivery(
+        request: GatewayOutboundRuntimeMessageRequest,
+    ) -> dict[str, object]:
+        provider_requests.append(request)
+        return {
+            "messageId": "provider-send-options-1",
+            "conversationId": "thread:topic-42",
+        }
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        outbound_runtime_service=GatewayOutboundRuntimeService(
+            provider_message_deliverer=fake_provider_delivery,
+        ),
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="telegram",
+        to="chat:ops",
+        message="Send provider-native options.",
+        media_urls=["https://example.com/report.pdf"],
+        account_id="alerts",
+        thread_id="topic-42",
+        reply_to_id="message-99",
+        silent=True,
+        force_document=True,
+        idempotency_key="idem-provider-runtime-send-options",
+    )
+
+    expected_session_key = resolve_thread_session_keys(
+        base_session_key=build_launch_session_key(
+            mode="workspace_affinity",
+            preferred_instance_id=None,
+            task_id=None,
+            project_id=None,
+            operator_id=None,
+            conversation_target=ConversationTargetView(
+                channel="telegram",
+                account_id="alerts",
+                peer_kind="channel",
+                peer_id="chat:ops",
+            ),
+        ),
+        thread_id="topic-42",
+    ).session_key
+    delivery = await database.get_outbound_delivery(1)
+
+    assert provider_requests == [
+        GatewayOutboundRuntimeMessageRequest(
+            channel="telegram",
+            target="chat:ops",
+            message="Send provider-native options.\n\nMedia:\n1. https://example.com/report.pdf",
+            media_urls=("https://example.com/report.pdf",),
+            account_id="alerts",
+            thread_id="topic-42",
+            session_key=expected_session_key,
+            reply_to_id="message-99",
+            silent=True,
+            force_document=True,
+        )
+    ]
+    assert result == {
+        "ok": True,
+        "runId": "idem-provider-runtime-send-options",
+        "channel": "telegram",
+        "messageId": "provider-send-options-1",
+        "sessionKey": expected_session_key,
+        "deliveryId": 1,
+        "transport": {
+            "runtime": "provider-backed",
+            "channel": "telegram",
+            "target": "chat:ops",
+            "accountId": "alerts",
+            "threadId": "topic-42",
+            "sessionKey": expected_session_key,
+        },
+        "conversationId": "thread:topic-42",
+    }
+    assert delivery is not None
+    assert delivery["event_payload"]["replyToId"] == "message-99"
+    assert delivery["event_payload"]["silent"] is True
+    assert delivery["event_payload"]["forceDocument"] is True
+    assert delivery["route_scope"]["provider_result"] == {
+        "conversationId": "thread:topic-42"
+    }
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_send_direct_channel_message_uses_native_adapter_binding(
 ) -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-native-adapter"
@@ -2568,6 +2672,97 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_telegram_native
         "mediaIds": ["large-photo"],
         "mediaUrls": ["https://example.com/telegram.png"],
     }
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_uses_telegram_native_options(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-telegram-options"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Telegram Native Send Options",
+        kind="telegram",
+        target="https://api.telegram.org",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="123456:telegram-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "telegram",
+            "account_id": "telegram-bot",
+            "peer_kind": "channel",
+            "peer_id": "channel:-100123",
+        },
+    )
+    telegram_posts: list[tuple[str, dict[str, object]]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self, secret_header_name, secret_token
+        telegram_posts.append((target, payload))
+        return {
+            "ok": True,
+            "result": {
+                "message_id": 43,
+                "chat": {"id": -100123},
+                "document": {"file_id": "report-document"},
+            },
+        }
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="telegram",
+        to="channel:-100123",
+        message="Ship native Telegram document parity.",
+        media_urls=["https://example.com/report.pdf"],
+        account_id="telegram-bot",
+        thread_id="forum-42",
+        reply_to_id="41",
+        silent=True,
+        force_document=True,
+        idempotency_key="idem-native-telegram-send-options",
+    )
+
+    assert result["messageId"] == "43"
+    assert result["mediaIds"] == ["report-document"]
+    assert telegram_posts == [
+        (
+            "https://api.telegram.org/bot123456:telegram-token/sendDocument",
+            {
+                "chat_id": "-100123",
+                "message_thread_id": "forum-42",
+                "reply_to_message_id": "41",
+                "disable_notification": True,
+                "document": "https://example.com/report.pdf",
+                "caption": (
+                    "Ship native Telegram document parity.\n\n"
+                    "Media:\n"
+                    "1. https://example.com/report.pdf"
+                ),
+            },
+        )
+    ]
 
 
 @pytest.mark.asyncio

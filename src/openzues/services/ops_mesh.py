@@ -643,16 +643,24 @@ def _telegram_media_ids(result: object) -> list[str]:
     for payload in _telegram_result_items(result):
         photos = payload.get("photo")
         photo_ids: list[str] = []
-        if not isinstance(photos, list):
-            continue
-        for photo in photos:
-            if not isinstance(photo, dict):
-                continue
-            file_id = str(photo.get("file_id") or "").strip()
-            if file_id:
-                photo_ids.append(file_id)
+        if isinstance(photos, list):
+            for photo in photos:
+                if not isinstance(photo, dict):
+                    continue
+                file_id = str(photo.get("file_id") or "").strip()
+                if file_id:
+                    photo_ids.append(file_id)
         if photo_ids:
             media_ids.append(photo_ids[-1])
+            continue
+        for media_key in ("document", "video", "animation", "audio", "voice"):
+            media = payload.get(media_key)
+            if not isinstance(media, dict):
+                continue
+            file_id = str(media.get("file_id") or "").strip()
+            if file_id:
+                media_ids.append(file_id)
+                break
     return media_ids
 
 
@@ -4925,6 +4933,12 @@ class OpsMeshService:
             payload["mediaUrls"] = list(request.media_urls)
         if request.gif_playback is not None:
             payload["gifPlayback"] = request.gif_playback
+        if request.reply_to_id is not None:
+            payload["replyToId"] = request.reply_to_id
+        if request.silent is not None:
+            payload["silent"] = request.silent
+        if request.force_document is not None:
+            payload["forceDocument"] = request.force_document
         if request.account_id is not None:
             payload["accountId"] = request.account_id
         if request.thread_id is not None:
@@ -5215,6 +5229,9 @@ class OpsMeshService:
                         )
                     ),
                     gif_playback=_optional_bool_payload_value(payload, "gifPlayback"),
+                    reply_to_id=str(payload.get("replyToId") or "").strip() or None,
+                    silent=_optional_bool_payload_value(payload, "silent"),
+                    force_document=_optional_bool_payload_value(payload, "forceDocument"),
                     account_id=resolved_target.account_id,
                     thread_id=normalized_thread_id,
                     agent_id=str(payload.get("agentId") or "").strip() or None,
@@ -5283,6 +5300,9 @@ class OpsMeshService:
         message: str,
         media_urls: list[str] | None = None,
         gif_playback: bool | None = None,
+        reply_to_id: str | None = None,
+        silent: bool | None = None,
+        force_document: bool | None = None,
         account_id: str | None = None,
         agent_id: str | None = None,
         thread_id: str | int | None = None,
@@ -5316,6 +5336,13 @@ class OpsMeshService:
                 payload["gifPlayback"] = gif_playback
             if not message.strip():
                 payload["summary"] = _summarize_direct_channel_media(normalized_media_urls)
+        normalized_reply_to_id = str(reply_to_id or "").strip() or None
+        if normalized_reply_to_id is not None:
+            payload["replyToId"] = normalized_reply_to_id
+        if silent is not None:
+            payload["silent"] = silent
+        if force_document is not None:
+            payload["forceDocument"] = force_document
         if account_id is not None:
             payload["accountId"] = account_id
         if agent_id is not None:
@@ -6477,6 +6504,9 @@ class OpsMeshService:
             raise RuntimeError("Telegram route is missing a chat target.")
         token = _telegram_bot_token(secret_token)
         thread_id = str(event.get("threadId") or "").strip()
+        reply_to_id = str(event.get("replyToId") or "").strip()
+        silent = _optional_bool_payload_value(event, "silent")
+        force_document = _optional_bool_payload_value(event, "forceDocument") is True
         if event_type == "gateway/poll":
             options = [str(option).strip() for option in event.get("options", [])]
             options = [option for option in options if option]
@@ -6495,11 +6525,8 @@ class OpsMeshService:
                     event,
                     "durationSeconds",
                 )
-            if _optional_bool_payload_value(event, "silent") is not None:
-                payload["disable_notification"] = _optional_bool_payload_value(
-                    event,
-                    "silent",
-                )
+            if silent is not None:
+                payload["disable_notification"] = silent
             if thread_id:
                 payload["message_thread_id"] = thread_id
             result = self._post_json_webhook(
@@ -6522,10 +6549,17 @@ class OpsMeshService:
             payload = {"chat_id": chat_id}
             if thread_id:
                 payload["message_thread_id"] = thread_id
+            if reply_to_id:
+                payload["reply_to_message_id"] = reply_to_id
+            if silent is not None:
+                payload["disable_notification"] = silent
             if len(media_urls) > 1:
                 media: list[dict[str, str]] = []
                 for index, media_url in enumerate(media_urls[:10]):
-                    item = {"type": "photo", "media": media_url}
+                    item = {
+                        "type": "document" if force_document else "photo",
+                        "media": media_url,
+                    }
                     if index == 0 and text:
                         item["caption"] = text[:1024]
                     media.append(item)
@@ -6539,14 +6573,14 @@ class OpsMeshService:
                     payload,
                 )
             elif media_urls:
-                payload["photo"] = media_urls[0]
+                payload["document" if force_document else "photo"] = media_urls[0]
                 if text:
                     payload["caption"] = text[:1024]
                 result = self._post_json_webhook(
                     _telegram_api_endpoint(
                         str(route.get("target") or ""),
                         token,
-                        "sendPhoto",
+                        "sendDocument" if force_document else "sendPhoto",
                     ),
                     payload,
                 )

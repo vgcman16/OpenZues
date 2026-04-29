@@ -1,21 +1,64 @@
 # OpenClaw Parity Unresolved Seams
 
-Updated: 2026-04-28
+Updated: 2026-04-29
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~43% overall, with a reasonable
-  band of ~38-48%.
-- The active gateway/session/tool-contract family is estimated at ~94% of the
+- Repo-wide OpenClaw parity is estimated at ~45% overall, with a reasonable
+  band of ~40-50%.
+- The active gateway/session/tool-contract family is estimated at ~97% of the
   bounded OpenZues-local parity path.
-- The chat/session contract subfamily is estimated at ~96% after the latest
+- The chat/session contract subfamily is estimated at ~98% after the latest
   `chat.send`, `chat.inject`, `chat.abort`, `sessions.create`,
-  `sessions.patch`, `sessions.delete`, and `tools.invoke` projection seams.
+  `sessions.patch`, `sessions.delete`, `sessions.spawn`, and `tools.invoke`
+  runtime seams.
 - Fully locked bounded slices are now tracked in
   `docs/openclaw-parity-progress.md` under "Fully Completed / Locked Bounded
-  Slices"; remaining queue heads here should focus on ACP spawn harness
-  execution, sandbox/thread lifecycle hooks, provider-native outbound runtime,
-  richer plugin executor ordering, and broader companion/CLI/runtime parity.
+  Slices"; remaining queue heads here should focus on sandbox runtime setup,
+  channel-registered thread binders, broader provider-native adapters,
+  CLI/runtime breadth, packaging/doctor surfaces, and companion app parity.
+
+Current queue-head adjustment: `sessions.spawn runtime="acp"` now uses a real
+native `GatewayAcpSpawnService` backed by `RuntimeManager`, including thread
+creation/resume, child turn start, durable ACP session metadata, tracked
+`agent.wait` cleanup, and parent completion announcements. The old unavailable
+boundary remains only when no ACP spawn service is registered, and ACP preflight
+errors for attachments, `lightContext`, and `sandbox="require"` are preserved.
+
+Current queue-head adjustment: `sessions.spawn sandbox="require"` now has a
+production app-wired `RuntimeManagerSandboxChatSendService` that starts Codex
+app-server child turns with an explicit `workspace-write` sandbox override,
+calls Windows sandbox setup before dispatch, persists `sandboxed`,
+`sandboxMode`, sandbox policy, runtime id, runtime thread/session ids, and
+still returns the existing precise forbidden response when no sandbox runtime
+is available. Remaining sandbox parity is config-driven per-agent sandbox
+target selection and deeper media/workspace staging behavior from OpenClaw.
+
+Current queue-head adjustment: `sessions.spawn thread=true` now has a
+production route-backed `GatewaySubagentThreadBinderRegistry` wired at app
+construction. Supported Slack, Telegram, Discord, and WhatsApp route contexts
+create persistent child sessions, force cleanup to `keep`, store
+thread/account/channel binding metadata, and route completion delivery through
+the bound thread. Binder results must now report both `status="ok"` and
+`threadBindingReady=true`; unsupported, unconfigured, or not-ready channels
+still return the upstream-shaped error before child dispatch. Remaining
+lifecycle parity is deeper provider-native unbind/end-hook behavior and
+ACP/session binding policy breadth.
+
+Current queue-head adjustment: provider-native direct `send` now preserves
+OpenClaw runtime delivery fields (`messageThreadId`, `replyToId`,
+`replyToMessageId`, `silent`, `forceDocument`, media, account, and thread)
+through gateway `send`, `OpsMeshService`, shared outbound runtime requests,
+route-backed providers, and Telegram native document/reply/silent/thread
+payloads. Remaining provider work is broader per-provider option coverage and
+CLI/runtime send surfaces.
+
+Current queue-head adjustment: `tools.invoke` plugin execution now routes
+through a fakeable `GatewayPluginRuntimeService`, preserving core mappings
+first, config allow/deny gating, owner-only hiding, before-call hooks, and
+OpenClaw-shaped plugin executor error projection. Remaining tool parity is
+loading richer plugin registry/config executor order from real plugin metadata
+instead of injected Python executors only.
 
 Current queue-head adjustment: `sessions.spawn` now preserves and applies
 OpenClaw's `gateway.agents.defaults.subagents.runTimeoutSeconds` config default
