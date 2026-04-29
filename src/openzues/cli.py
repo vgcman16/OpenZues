@@ -2359,6 +2359,50 @@ def _emit_sessions_inventory(payload: dict[str, object], *, json_output: bool) -
         )
 
 
+def _sessions_cleanup_summary(
+    payload: dict[str, object],
+    *,
+    agent_id: str | None,
+    mode: str,
+) -> dict[str, object]:
+    raw_sessions = payload.get("sessions")
+    sessions = raw_sessions if isinstance(raw_sessions, list) else []
+    count = payload.get("count")
+    if not isinstance(count, int) or isinstance(count, bool):
+        count = len(sessions)
+    return {
+        "agentId": agent_id or "default",
+        "storePath": "native-gateway-session-store",
+        "mode": mode,
+        "dryRun": True,
+        "beforeCount": count,
+        "afterCount": count,
+        "missing": 0,
+        "pruned": 0,
+        "capped": 0,
+        "diskBudget": None,
+        "wouldMutate": False,
+    }
+
+
+def _emit_sessions_cleanup(payload: dict[str, object], *, json_output: bool) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+    before_count = payload.get("beforeCount")
+    after_count = payload.get("afterCount")
+    if not isinstance(before_count, int) or isinstance(before_count, bool):
+        before_count = 0
+    if not isinstance(after_count, int) or isinstance(after_count, bool):
+        after_count = 0
+    typer.echo(f"Session store: {payload.get('storePath') or 'native-gateway-session-store'}")
+    typer.echo(f"Maintenance mode: {payload.get('mode') or 'warn'}")
+    typer.echo(f"Entries: {before_count} -> {after_count} (remove {before_count - after_count})")
+    typer.echo(f"Would prune missing transcripts: {payload.get('missing') or 0}")
+    typer.echo(f"Would prune stale: {payload.get('pruned') or 0}")
+    typer.echo(f"Would cap overflow: {payload.get('capped') or 0}")
+
+
 def _cron_duration_label(value: object) -> str:
     try:
         ms = int(cast("int | str", value))
@@ -10504,6 +10548,67 @@ def sessions_inventory_command(
 
     result = _run(_run_with_services(_action))
     _emit_sessions_inventory(result, json_output=json_output)
+
+
+@sessions_app.command("cleanup")
+def sessions_cleanup_command(
+    ctx: typer.Context,
+    store: str | None = typer.Option(
+        None,
+        "--store",
+        help="OpenClaw-compatible option; native OpenZues uses the gateway session store.",
+    ),
+    agent: str | None = typer.Option(None, "--agent", help="Agent id to maintain."),
+    all_agents: bool = typer.Option(
+        False,
+        "--all-agents",
+        help="Preview maintenance across all native gateway sessions.",
+    ),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Preview maintenance actions."),
+    enforce: bool = typer.Option(False, "--enforce", help="Preview enforce-mode maintenance."),
+    fix_missing: bool = typer.Option(
+        False,
+        "--fix-missing",
+        help="OpenClaw-compatible flag; dry-run reports native transcript posture.",
+    ),
+    active_key: str | None = typer.Option(
+        None,
+        "--active-key",
+        help="Protect this session key from budget eviction.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit cleanup summary as JSON."),
+) -> None:
+    parent_params = ctx.parent.params if ctx.parent is not None else {}
+    parent_store = _optional_cli_string(parent_params.get("store"))
+    normalized_store = _optional_cli_string(store) or parent_store
+    if normalized_store is not None:
+        raise typer.BadParameter("--store is not supported by the native OpenZues session store")
+    if not dry_run:
+        raise typer.BadParameter(
+            "Native session cleanup apply is not implemented yet; use --dry-run"
+        )
+    normalized_agent = _optional_cli_string(agent) or _optional_cli_string(
+        parent_params.get("agent")
+    )
+    include_all_agents = all_agents or bool(parent_params.get("all_agents"))
+    json_output = json_output or bool(parent_params.get("json_output"))
+    mode = "enforce" if enforce else "warn"
+    params: dict[str, object] = {}
+    if normalized_agent is not None:
+        params["agentId"] = normalized_agent
+    if include_all_agents:
+        params["includeGlobal"] = True
+
+    async def _action(services: CliServices) -> dict[str, object]:
+        inventory = await _call_gateway_node_method(services, "sessions.list", params)
+        return _sessions_cleanup_summary(
+            inventory,
+            agent_id=normalized_agent,
+            mode=mode,
+        )
+
+    result = _run(_run_with_services(_action))
+    _emit_sessions_cleanup(result, json_output=json_output)
 
 
 @sessions_app.command("spawn")

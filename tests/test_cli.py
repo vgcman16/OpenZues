@@ -3573,6 +3573,61 @@ def test_sessions_inventory_rejects_invalid_active_minutes(monkeypatch) -> None:
     assert calls == []
 
 
+def test_sessions_cleanup_dry_run_json_calls_sessions_list_owner(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {
+                "count": 2,
+                "sessions": [
+                    {"key": "agent:worker:main", "sessionKey": "agent:worker:main"},
+                    {"key": "agent:worker:child", "sessionKey": "agent:worker:child"},
+                ],
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "sessions",
+            "cleanup",
+            "--dry-run",
+            "--json",
+            "--agent",
+            " worker ",
+            "--active-key",
+            "agent:worker:main",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload == {
+        "agentId": "worker",
+        "storePath": "native-gateway-session-store",
+        "mode": "warn",
+        "dryRun": True,
+        "beforeCount": 2,
+        "afterCount": 2,
+        "missing": 0,
+        "pruned": 0,
+        "capped": 0,
+        "diskBudget": None,
+        "wouldMutate": False,
+    }
+    assert calls == [("sessions.list", {"agentId": "worker"})]
+
+
 def test_sessions_spawn_json_calls_gateway_method_owner(monkeypatch) -> None:
     calls: list[tuple[str, dict[str, object]]] = []
 
