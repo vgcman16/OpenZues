@@ -445,6 +445,9 @@ Gateway poll requests now mirror OpenClaw's provider capability guard for
 `durationSeconds`: Telegram can still opt into second-granularity polls, while
 Slack/Discord/WhatsApp reject `durationSeconds` before runtime dispatch and
 continue using `durationHours` where applicable.
+Telegram gateway poll validation now also matches the upstream Telegram adapter
+duration contract by accepting only `durationSeconds` in the 5-600 range and
+rejecting `durationHours` with the OpenClaw-shaped guidance message.
 
 Current queue-head adjustment: `tools.invoke` plugin execution now routes
 through a fakeable `GatewayPluginRuntimeService`, preserving core mappings

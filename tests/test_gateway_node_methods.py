@@ -36846,7 +36846,7 @@ async def test_poll_uses_channel_poll_runtime() -> None:
             "question": " Ship it? ",
             "options": [" Yes ", " No "],
             "maxSelections": 1,
-            "durationHours": 24,
+            "durationSeconds": 60,
             "silent": True,
             "isAnonymous": False,
             "channel": "telegram",
@@ -36863,8 +36863,8 @@ async def test_poll_uses_channel_poll_runtime() -> None:
             "question": "Ship it?",
             "options": ["Yes", "No"],
             "max_selections": 1,
-            "duration_seconds": None,
-            "duration_hours": 24,
+            "duration_seconds": 60,
+            "duration_hours": None,
             "silent": True,
             "is_anonymous": False,
             "account_id": "default",
@@ -36975,6 +36975,57 @@ async def test_poll_rejects_duration_seconds_for_non_telegram_like_openclaw() ->
                 "durationSeconds": 3600,
                 "channel": "slack",
                 "idempotencyKey": "idem-poll-duration-seconds",
+            },
+        )
+
+    assert exc_info.value.code == "INVALID_REQUEST"
+    assert exc_info.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_poll_rejects_telegram_duration_seconds_outside_openclaw_range() -> None:
+    service = GatewayNodeMethodService(GatewayNodeRegistry())
+
+    with pytest.raises(
+        GatewayNodeMethodError,
+        match="Telegram poll durationSeconds must be between 5 and 600",
+    ) as exc_info:
+        await service.call(
+            "poll",
+            {
+                "to": "123",
+                "question": "Ship it?",
+                "options": ["Yes", "No"],
+                "durationSeconds": 601,
+                "channel": "telegram",
+                "idempotencyKey": "idem-poll-telegram-duration-seconds",
+            },
+        )
+
+    assert exc_info.value.code == "INVALID_REQUEST"
+    assert exc_info.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_poll_rejects_telegram_duration_hours_like_openclaw() -> None:
+    service = GatewayNodeMethodService(GatewayNodeRegistry())
+
+    with pytest.raises(
+        GatewayNodeMethodError,
+        match=(
+            r"Telegram poll durationHours is not supported\. "
+            r"Use durationSeconds \(5-600\) instead\."
+        ),
+    ) as exc_info:
+        await service.call(
+            "poll",
+            {
+                "to": "123",
+                "question": "Ship it?",
+                "options": ["Yes", "No"],
+                "durationHours": 1,
+                "channel": "telegram",
+                "idempotencyKey": "idem-poll-telegram-duration-hours",
             },
         )
 

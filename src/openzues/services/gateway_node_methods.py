@@ -5710,6 +5710,11 @@ class GatewayNodeMethodService:
                 rejected_webchat_message="unsupported poll channel: webchat",
             )
             _validate_gateway_outbound_target(resolved_channel, to)
+            _validate_gateway_poll_duration_options(
+                resolved_channel,
+                duration_seconds=duration_seconds,
+                duration_hours=duration_hours,
+            )
             if duration_seconds is not None and not _gateway_poll_supports_duration_seconds(
                 resolved_channel
             ):
@@ -16325,6 +16330,31 @@ def _gateway_poll_supports_anonymous(channel: str) -> bool:
 
 def _gateway_poll_supports_duration_seconds(channel: str) -> bool:
     return channel == "telegram"
+
+
+def _validate_gateway_poll_duration_options(
+    channel: str,
+    *,
+    duration_seconds: int | None,
+    duration_hours: int | None,
+) -> None:
+    if channel != "telegram":
+        return
+    if duration_seconds is None and duration_hours is not None:
+        raise GatewayNodeMethodError(
+            code="INVALID_REQUEST",
+            message=(
+                "Telegram poll durationHours is not supported. "
+                "Use durationSeconds (5-600) instead."
+            ),
+            status_code=400,
+        )
+    if duration_seconds is not None and not 5 <= duration_seconds <= 600:
+        raise GatewayNodeMethodError(
+            code="INVALID_REQUEST",
+            message="Telegram poll durationSeconds must be between 5 and 600",
+            status_code=400,
+        )
 
 
 def _validate_gateway_outbound_target(channel: str, target: str) -> None:
