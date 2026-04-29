@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import codecs
+import inspect
 import json
 import os
 import re
@@ -65,6 +66,7 @@ from openzues.services.gateway_channels import GatewayChannelsService
 from openzues.services.gateway_commands import GatewayCommandsService
 from openzues.services.gateway_config import GatewayConfigService
 from openzues.services.gateway_logs import GatewayLogsService, GatewayLogsUnavailableError
+from openzues.services.gateway_model_scan import GatewayModelScanService
 from openzues.services.gateway_models import GatewayModelsService
 from openzues.services.gateway_node_methods import GatewayNodeMethodService
 from openzues.services.gateway_node_registry import GatewayNodeRegistry
@@ -782,6 +784,7 @@ class CliServices:
     gateway_commands: GatewayCommandsService
     gateway_config: GatewayConfigService
     gateway_logs: GatewayLogsService
+    model_scan: GatewayModelScanService
     gateway_node_methods: GatewayNodeMethodService
     ops_mesh: OpsMeshService
     recall: RecallService
@@ -859,6 +862,7 @@ async def _build_services(app_settings: Settings) -> CliServices:
         resolve_targets=ops_mesh.resolve_channel_targets,
     )
     gateway_logs = GatewayLogsService(logs_root=app_settings.data_dir.parent / "logs")
+    model_scan = GatewayModelScanService()
     control_chat = ControlChatService(
         database,
         mission_service,
@@ -905,6 +909,7 @@ async def _build_services(app_settings: Settings) -> CliServices:
                 gateway_commands=gateway_commands,
                 gateway_node_methods=None,
                 gateway_logs=gateway_logs,
+                model_scan=model_scan,
                 ops_mesh=ops_mesh,
                 recall=None,
                 hermes_platform=None,
@@ -976,6 +981,7 @@ async def _build_services(app_settings: Settings) -> CliServices:
         gateway_commands=gateway_commands,
         gateway_config=gateway_config,
         gateway_logs=gateway_logs,
+        model_scan=model_scan,
         gateway_node_methods=gateway_node_methods,
         ops_mesh=ops_mesh,
         recall=recall,
@@ -5780,6 +5786,271 @@ async def _clear_models_auth_order_payload(
     return dict(gateway_config.clear_model_auth_order(provider=provider, agent=agent))
 
 
+def _parse_model_scan_number(
+    value: str | None,
+    *,
+    option: str,
+    minimum: float,
+    allow_zero: bool,
+) -> int | float | None:
+    if value is None:
+        return None
+    try:
+        parsed = float(value)
+    except ValueError as exc:
+        comparator = ">=" if allow_zero else ">"
+        raise ValueError(f"{option} must be {comparator} {minimum:g}") from exc
+    valid = parsed >= minimum if allow_zero else parsed > minimum
+    if not valid:
+        comparator = ">=" if allow_zero else ">"
+        raise ValueError(f"{option} must be {comparator} {minimum:g}")
+    return int(parsed) if parsed.is_integer() else parsed
+
+
+def _parse_model_scan_int(
+    value: str | None,
+    *,
+    option: str,
+    default: int | None = None,
+) -> int | None:
+    parsed = _parse_model_scan_number(
+        value,
+        option=option,
+        minimum=0,
+        allow_zero=False,
+    )
+    if parsed is None:
+        return default
+    if not isinstance(parsed, int):
+        raise ValueError(f"{option} must be > 0")
+    return parsed
+
+
+def _model_scan_result_ref(entry: dict[str, object]) -> str | None:
+    for key in ("modelRef", "model_ref", "ref"):
+        value = _optional_cli_string(entry.get(key))
+        if value is not None:
+            return value
+    model_id = _optional_cli_string(entry.get("id"))
+    if model_id is None:
+        return None
+    return model_id if model_id.startswith("openrouter/") else f"openrouter/{model_id}"
+
+
+def _model_scan_probe_ok(entry: dict[str, object], key: str) -> bool:
+    probe = entry.get(key)
+    return isinstance(probe, dict) and probe.get("ok") is True
+
+
+def _model_scan_latency(entry: dict[str, object], key: str) -> float:
+    probe = entry.get(key)
+    if not isinstance(probe, dict):
+        return float("inf")
+    value = probe.get("latencyMs")
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return float("inf")
+    return float(value)
+
+
+def _model_scan_numeric(entry: dict[str, object], key: str) -> float:
+    value = entry.get(key)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return 0.0
+    return float(value)
+
+
+def _sort_model_scan_results(results: list[dict[str, object]]) -> list[dict[str, object]]:
+    return sorted(
+        results,
+        key=lambda entry: (
+            0 if _model_scan_probe_ok(entry, "image") else 1,
+            _model_scan_latency(entry, "tool"),
+            -_model_scan_numeric(entry, "contextLength"),
+            -_model_scan_numeric(entry, "inferredParamB"),
+            _model_scan_result_ref(entry) or "",
+        ),
+    )
+
+
+def _sort_model_scan_image_results(results: list[dict[str, object]]) -> list[dict[str, object]]:
+    return sorted(
+        results,
+        key=lambda entry: (
+            _model_scan_latency(entry, "image"),
+            -_model_scan_numeric(entry, "contextLength"),
+            -_model_scan_numeric(entry, "inferredParamB"),
+            _model_scan_result_ref(entry) or "",
+        ),
+    )
+
+
+async def _call_model_scan_runtime(
+    services: CliServices,
+    *,
+    min_params: int | float | None,
+    max_age_days: int | float | None,
+    provider: str | None,
+    timeout_ms: int | None,
+    concurrency: int | None,
+    probe: bool,
+) -> list[dict[str, object]]:
+    runtime = getattr(services, "model_scan", None) or GatewayModelScanService()
+    scan = getattr(runtime, "scan", None)
+    if not callable(scan):
+        raise ValueError("model scan runtime is unavailable.")
+    result = scan(
+        min_params=min_params,
+        max_age_days=max_age_days,
+        provider=provider,
+        timeout_ms=timeout_ms,
+        concurrency=concurrency,
+        probe=probe,
+    )
+    if inspect.isawaitable(result):
+        result = await result
+    if not isinstance(result, list):
+        raise ValueError("model scan runtime returned an invalid result.")
+    return [dict(item) for item in result if isinstance(item, dict)]
+
+
+async def _build_models_scan_payload(
+    services: CliServices,
+    *,
+    min_params: str | None,
+    max_age_days: str | None,
+    provider: str | None,
+    max_candidates: str,
+    timeout: str | None,
+    concurrency: str | None,
+    probe: bool,
+    yes: bool,
+    no_input: bool,
+    set_default: bool,
+    set_image: bool,
+    json_output: bool,
+) -> dict[str, object]:
+    min_param_value = _parse_model_scan_number(
+        min_params,
+        option="--min-params",
+        minimum=0,
+        allow_zero=True,
+    )
+    max_age_value = _parse_model_scan_number(
+        max_age_days,
+        option="--max-age-days",
+        minimum=0,
+        allow_zero=True,
+    )
+    max_candidate_value = _parse_model_scan_int(
+        max_candidates,
+        option="--max-candidates",
+        default=6,
+    ) or 6
+    timeout_ms = _parse_model_scan_int(timeout, option="--timeout")
+    concurrency_value = _parse_model_scan_int(concurrency, option="--concurrency")
+    results = await _call_model_scan_runtime(
+        services,
+        min_params=min_param_value,
+        max_age_days=max_age_value,
+        provider=provider,
+        timeout_ms=timeout_ms,
+        concurrency=concurrency_value,
+        probe=probe,
+    )
+    if not probe:
+        return {
+            "probe": False,
+            "results": results,
+            "jsonPayload": results,
+            "metadataOnly": True,
+        }
+    tool_ok = [entry for entry in results if _model_scan_probe_ok(entry, "tool")]
+    if not tool_ok:
+        raise ValueError("No tool-capable OpenRouter free models found.")
+    tool_sorted = _sort_model_scan_results(tool_ok)
+    image_sorted = _sort_model_scan_image_results(
+        [entry for entry in results if _model_scan_probe_ok(entry, "image")]
+    )
+    image_preferred = [entry for entry in tool_sorted if _model_scan_probe_ok(entry, "image")]
+    preselect_pool = image_preferred or tool_sorted
+    selected = [
+        ref
+        for entry in preselect_pool[:max_candidate_value]
+        for ref in (_model_scan_result_ref(entry),)
+        if ref is not None
+    ]
+    selected_images = [
+        ref
+        for entry in image_sorted[:max_candidate_value]
+        for ref in (_model_scan_result_ref(entry),)
+        if ref is not None
+    ]
+    if not sys.stdin.isatty() and not yes and not no_input and not json_output:
+        raise ValueError("Non-interactive scan: pass --yes to apply defaults.")
+    if not selected:
+        raise ValueError("No models selected for fallbacks.")
+    if set_image and not selected_images:
+        raise ValueError("No image-capable models selected for image model.")
+    gateway_config = getattr(services, "gateway_config", None)
+    if not isinstance(gateway_config, GatewayConfigService):
+        raise ValueError("model scan config runtime is unavailable.")
+    applied = gateway_config.apply_model_scan_selection(
+        selected=selected,
+        selected_images=selected_images,
+        set_default=set_default,
+        set_image=set_image,
+    )
+    selected = [
+        item
+        for item in applied.get("selected", selected)
+        if isinstance(item, str) and item.strip()
+    ]
+    selected_images = [
+        item
+        for item in applied.get("selectedImages", selected_images)
+        if isinstance(item, str) and item.strip()
+    ]
+    return {
+        "probe": True,
+        "results": results,
+        "selected": selected,
+        "selectedImages": selected_images,
+        "setDefault": set_default,
+        "setImage": set_image,
+        "warnings": [],
+    }
+
+
+def _emit_models_scan(payload: dict[str, object], *, json_output: bool) -> None:
+    if json_output:
+        typer.echo(json.dumps(payload.get("jsonPayload", payload), indent=2))
+        return
+    results = payload.get("results")
+    result_count = len(results) if isinstance(results, list) else 0
+    if payload.get("probe") is False:
+        typer.echo(
+            f"Found {result_count} OpenRouter free models "
+            "(metadata only; pass --probe to test tools/images)."
+        )
+        return
+    raw_selected = payload.get("selected")
+    selected = [item for item in raw_selected if isinstance(item, str)] if isinstance(
+        raw_selected,
+        list,
+    ) else []
+    raw_selected_images = payload.get("selectedImages")
+    selected_images = [
+        item for item in raw_selected_images if isinstance(item, str)
+    ] if isinstance(raw_selected_images, list) else []
+    typer.echo(f"Fallbacks: {', '.join(selected)}")
+    if selected_images:
+        typer.echo(f"Image fallbacks: {', '.join(selected_images)}")
+    if payload.get("setDefault") and selected:
+        typer.echo(f"Default model: {selected[0]}")
+    if payload.get("setImage") and selected_images:
+        typer.echo(f"Image model: {selected_images[0]}")
+
+
 async def _set_default_model_payload(
     services: CliServices,
     *,
@@ -9181,6 +9452,95 @@ def models_set_image_command(
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
     typer.echo(f"Image model: {payload.get('target')}")
+
+
+@models_app.command("scan")
+def models_scan_command(
+    min_params: str | None = typer.Option(
+        None,
+        "--min-params",
+        help="Minimum parameter size in billions.",
+    ),
+    max_age_days: str | None = typer.Option(
+        None,
+        "--max-age-days",
+        help="Skip models older than N days.",
+    ),
+    provider: str | None = typer.Option(
+        None,
+        "--provider",
+        help="Filter by OpenRouter provider prefix.",
+    ),
+    max_candidates: str = typer.Option(
+        "6",
+        "--max-candidates",
+        help="Maximum fallback candidates.",
+    ),
+    timeout: str | None = typer.Option(
+        None,
+        "--timeout",
+        help="Per-probe timeout in milliseconds.",
+    ),
+    concurrency: str | None = typer.Option(
+        None,
+        "--concurrency",
+        help="Probe concurrency.",
+    ),
+    probe: bool = typer.Option(
+        True,
+        "--probe/--no-probe",
+        help="Run live probes or only list metadata candidates.",
+    ),
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        help="Accept defaults without prompting.",
+    ),
+    no_input: bool = typer.Option(
+        False,
+        "--no-input",
+        help="Disable prompts and use defaults.",
+    ),
+    set_default: bool = typer.Option(
+        False,
+        "--set-default",
+        help="Set agents.defaults.model to the first selection.",
+    ),
+    set_image: bool = typer.Option(
+        False,
+        "--set-image",
+        help="Set agents.defaults.imageModel to the first image selection.",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit scan results as JSON.",
+    ),
+) -> None:
+    try:
+        payload = _run(
+            _run_with_services(
+                lambda services: _build_models_scan_payload(
+                    services,
+                    min_params=min_params,
+                    max_age_days=max_age_days,
+                    provider=provider,
+                    max_candidates=max_candidates,
+                    timeout=timeout,
+                    concurrency=concurrency,
+                    probe=probe,
+                    yes=yes,
+                    no_input=no_input,
+                    set_default=set_default,
+                    set_image=set_image,
+                    json_output=json_output,
+                )
+            )
+        )
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    _emit_models_scan(payload, json_output=json_output)
 
 
 @models_auth_app.command("login")

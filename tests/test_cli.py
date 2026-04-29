@@ -5713,6 +5713,175 @@ def test_models_set_image_normalizes_provider_alias(tmp_path, monkeypatch) -> No
     assert snapshot["agents"]["defaults"]["models"]["zai/glm-4.5-image"] == {}
 
 
+def test_models_scan_no_probe_json_calls_scan_runtime_with_options(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+    results = [
+        {
+            "id": "meta-llama/llama-3.3-70b-instruct:free",
+            "name": "Llama 3.3 70B Instruct Free",
+            "provider": "openrouter",
+            "modelRef": "openrouter/meta-llama/llama-3.3-70b-instruct:free",
+            "contextLength": 131072,
+            "inferredParamB": 70,
+            "tool": {"ok": False, "latencyMs": None, "skipped": True},
+            "image": {"ok": False, "latencyMs": None, "skipped": True},
+        }
+    ]
+
+    class FakeModelScan:
+        async def scan(self, **kwargs):
+            calls.append(kwargs)
+            return results
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(model_scan=FakeModelScan()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "models",
+            "scan",
+            "--no-probe",
+            "--json",
+            "--min-params",
+            "7",
+            "--max-age-days",
+            "30",
+            "--provider",
+            "meta-llama",
+            "--max-candidates",
+            "2",
+            "--timeout",
+            "1234",
+            "--concurrency",
+            "4",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout) == results
+    assert calls == [
+        {
+            "min_params": 7,
+            "max_age_days": 30,
+            "provider": "meta-llama",
+            "timeout_ms": 1234,
+            "concurrency": 4,
+            "probe": False,
+        }
+    ]
+
+
+def test_models_scan_yes_applies_default_and_image_model_choices(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "agents": {
+                    "defaults": {
+                        "model": {"primary": "openai/gpt-5.4"},
+                        "imageModel": {"primary": "openai/gpt-image-1"},
+                    }
+                },
+            }
+        )
+    )
+    results = [
+        {
+            "id": "meta-llama/llama-3.3-70b-instruct:free",
+            "name": "Llama 3.3 70B Instruct Free",
+            "provider": "openrouter",
+            "modelRef": "openrouter/meta-llama/llama-3.3-70b-instruct:free",
+            "contextLength": 131072,
+            "inferredParamB": 70,
+            "tool": {"ok": True, "latencyMs": 120},
+            "image": {"ok": True, "latencyMs": 180},
+        },
+        {
+            "id": "qwen/qwen3-coder:free",
+            "name": "Qwen3 Coder Free",
+            "provider": "openrouter",
+            "modelRef": "openrouter/qwen/qwen3-coder:free",
+            "contextLength": 65536,
+            "inferredParamB": 30,
+            "tool": {"ok": True, "latencyMs": 90},
+            "image": {"ok": False, "latencyMs": None, "skipped": True},
+        },
+    ]
+
+    class FakeModelScan:
+        async def scan(self, **kwargs):
+            return results
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(gateway_config=gateway_config, model_scan=FakeModelScan())
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        ["models", "scan", "--yes", "--set-default", "--set-image", "--max-candidates", "1"],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    selected = "openrouter/meta-llama/llama-3.3-70b-instruct:free"
+    assert f"Fallbacks: {selected}" in result.stdout
+    assert f"Image model: {selected}" in result.stdout
+    snapshot = gateway_config.build_snapshot()
+    defaults = snapshot["agents"]["defaults"]
+    assert defaults["model"] == {"primary": selected, "fallbacks": [selected]}
+    assert defaults["imageModel"] == {"primary": selected, "fallbacks": [selected]}
+    assert defaults["models"][selected] == {}
+
+
+def test_models_scan_human_noninteractive_requires_yes(monkeypatch) -> None:
+    class FakeModelScan:
+        async def scan(self, **kwargs):
+            return [
+                {
+                    "id": "meta-llama/llama-3.3-70b-instruct:free",
+                    "name": "Llama 3.3 70B Instruct Free",
+                    "provider": "openrouter",
+                    "modelRef": "openrouter/meta-llama/llama-3.3-70b-instruct:free",
+                    "contextLength": 131072,
+                    "inferredParamB": 70,
+                    "tool": {"ok": True, "latencyMs": 120},
+                    "image": {"ok": False, "latencyMs": None, "skipped": True},
+                }
+            ]
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(model_scan=FakeModelScan()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["models", "scan"])
+
+    assert result.exit_code == 1, result.stdout
+    assert "Non-interactive scan: pass --yes to apply defaults." in result.stderr
+
+
 def test_models_fallbacks_list_json_projects_config_fallbacks(tmp_path, monkeypatch) -> None:
     gateway_config = GatewayConfigService(
         assistant_name="OpenZues",

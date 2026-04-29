@@ -262,7 +262,15 @@ model config writer, rewrites `agents.defaults.imageModel.primary` into the
 OpenClaw object form, preserves image fallback metadata, upserts the canonical
 model entry, and reports the resolved image model. No smaller root model
 mutation command remains; the next model CLI queue head is non-interactive
-`models scan` posture.
+`models scan` posture. `models scan` now exposes upstream-shaped
+`--min-params`, `--max-age-days`, `--provider`, `--max-candidates`,
+`--timeout`, `--concurrency`, `--no-probe`, `--yes`, `--no-input`,
+`--set-default`, `--set-image`, and `--json` options; `--no-probe --json`
+returns fakeable/native OpenRouter free-model metadata without credentials, and
+`--yes` applies preselected text/image fallbacks plus default/image-model
+updates through the native config writer without prompting. The remaining scan
+depth is live OpenRouter tool/image probing parity beyond the metadata/runtime
+posture.
 Live auth
 probes remain unavailable until the native model auth health runtime exists.
 Top-level `health`

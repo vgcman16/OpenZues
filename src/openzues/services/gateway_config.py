@@ -360,6 +360,57 @@ class GatewayConfigService:
         write_result.update({"fallbacks": []})
         return write_result
 
+    def apply_model_scan_selection(
+        self,
+        *,
+        selected: list[str],
+        selected_images: list[str],
+        set_default: bool = False,
+        set_image: bool = False,
+    ) -> dict[str, Any]:
+        config_path = self._require_config_path()
+        current = self.build_snapshot()
+        aliases = _model_aliases_from_config_snapshot(current)
+        text_targets = [
+            _resolve_model_alias_target(model_ref, aliases=aliases)
+            for model_ref in selected
+        ]
+        image_targets = [
+            _resolve_model_alias_target(model_ref, aliases=aliases)
+            for model_ref in selected_images
+        ]
+        next_snapshot = _set_model_fallbacks_in_snapshot(current, fallbacks=text_targets)
+        if set_default and text_targets:
+            next_snapshot = _set_model_primary_in_snapshot(next_snapshot, target=text_targets[0])
+        if image_targets:
+            next_snapshot = _set_model_fallbacks_in_snapshot(
+                next_snapshot,
+                fallbacks=image_targets,
+                key="imageModel",
+            )
+            if set_image:
+                next_snapshot = _set_model_primary_in_snapshot(
+                    next_snapshot,
+                    target=image_targets[0],
+                    key="imageModel",
+                )
+        for target in [*text_targets, *image_targets]:
+            next_snapshot = _ensure_model_config_entry_in_snapshot(
+                next_snapshot,
+                target=target,
+            )
+        base_hash = self._snapshot_hash(current) if config_path.exists() else None
+        write_result = self._write_snapshot(next_snapshot, base_hash=base_hash)
+        write_result.update(
+            {
+                "selected": text_targets,
+                "selectedImages": image_targets,
+                "setDefault": set_default,
+                "setImage": set_image,
+            }
+        )
+        return write_result
+
     def get_model_auth_order(
         self,
         *,
@@ -1013,7 +1064,12 @@ def _set_model_fallbacks_in_snapshot(
     raw_defaults = agents.get("defaults")
     defaults = dict(raw_defaults) if isinstance(raw_defaults, dict) else {}
     raw_model = defaults.get(key)
-    model = dict(raw_model) if isinstance(raw_model, dict) else {}
+    if isinstance(raw_model, dict):
+        model = dict(raw_model)
+    elif isinstance(raw_model, str) and raw_model.strip():
+        model = {"primary": raw_model.strip()}
+    else:
+        model = {}
     model["fallbacks"] = list(fallbacks)
     defaults[key] = model
     agents["defaults"] = defaults
