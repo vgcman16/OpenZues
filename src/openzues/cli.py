@@ -2729,36 +2729,59 @@ async def _build_capability_image_describe_payload(
     file_path: str,
     model_ref: str | None,
 ) -> dict[str, object]:
+    return await _build_capability_image_describe_files_payload(
+        services,
+        file_paths=[file_path],
+        model_ref=model_ref,
+        capability="image.describe",
+    )
+
+
+async def _build_capability_image_describe_files_payload(
+    services: CliServices,
+    *,
+    file_paths: list[str],
+    model_ref: str | None,
+    capability: str,
+) -> dict[str, object]:
     active_model = _require_capability_provider_model_ref(model_ref)
+    if not file_paths:
+        raise ValueError("At least one --file value is required.")
     runtime = _media_understanding_runtime(services)
     describe_image_file = getattr(runtime, "describe_image_file", None)
     if not callable(describe_image_file):
         raise ValueError(
             "image.describe local transport is unavailable until media understanding is wired."
         )
-    resolved_path = str(Path(file_path).resolve())
-    result = await describe_image_file(file_path=resolved_path, active_model=active_model)
-    result_payload = dict(result) if isinstance(result, dict) else {}
-    text = _optional_cli_string(result_payload.get("text"))
-    if text is None:
-        raise ValueError(f"No description returned for image: {resolved_path}")
-    provider = _optional_cli_string(result_payload.get("provider"))
-    model = _optional_cli_string(result_payload.get("model"))
-    output: dict[str, object] = {
-        "path": resolved_path,
-        "text": text,
-        "kind": "image.description",
-    }
-    if provider is not None:
-        output["provider"] = provider
-    if model is not None:
-        output["model"] = model
+    outputs: list[dict[str, object]] = []
+    for file_path in file_paths:
+        resolved_path = str(Path(file_path).resolve())
+        result = await describe_image_file(file_path=resolved_path, active_model=active_model)
+        result_payload = dict(result) if isinstance(result, dict) else {}
+        text = _optional_cli_string(result_payload.get("text"))
+        if text is None:
+            raise ValueError(f"No description returned for image: {resolved_path}")
+        provider = _optional_cli_string(result_payload.get("provider"))
+        model = _optional_cli_string(result_payload.get("model"))
+        output: dict[str, object] = {
+            "path": resolved_path,
+            "text": text,
+            "kind": "image.description",
+        }
+        if provider is not None:
+            output["provider"] = provider
+        if model is not None:
+            output["model"] = model
+        outputs.append(output)
+    first_output = outputs[0] if outputs else {}
+    provider = _optional_cli_string(first_output.get("provider"))
+    model = _optional_cli_string(first_output.get("model"))
     envelope: dict[str, object] = {
         "ok": True,
-        "capability": "image.describe",
+        "capability": capability,
         "transport": "local",
         "attempts": [],
-        "outputs": [output],
+        "outputs": outputs,
     }
     if provider is not None:
         envelope["provider"] = provider
@@ -8063,6 +8086,28 @@ def capability_image_describe_command(
             services,
             file_path=file_path,
             model_ref=model,
+        )
+
+    try:
+        payload = _run(_run_with_services(_action))
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    _emit_capability_model_run(payload, json_output=json_output)
+
+
+@capability_image_app.command("describe-many")
+def capability_image_describe_many_command(
+    file_paths: Annotated[list[str] | None, typer.Option("--file", help="Image file.")] = None,
+    model: str | None = typer.Option(None, "--model", help="Model override."),
+    json_output: bool = typer.Option(False, "--json", help="Output JSON."),
+) -> None:
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_capability_image_describe_files_payload(
+            services,
+            file_paths=file_paths or [],
+            model_ref=model,
+            capability="image.describe-many",
         )
 
     try:

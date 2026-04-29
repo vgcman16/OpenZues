@@ -3620,6 +3620,80 @@ def test_infer_image_describe_json_wraps_native_media_understanding(monkeypatch)
     ]
 
 
+def test_capability_image_describe_many_json_wraps_each_image(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeImageUnderstanding:
+        async def describe_image_file(
+            self,
+            *,
+            file_path: str,
+            active_model: dict[str, str] | None,
+        ) -> dict[str, object]:
+            calls.append({"file_path": file_path, "active_model": active_model})
+            return {
+                "text": f"Description for {Path(file_path).name}",
+                "provider": "openai",
+                "model": "gpt-5.4-vision",
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(image_understanding=FakeImageUnderstanding()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "capability",
+            "image",
+            "describe-many",
+            "--file",
+            "moon.png",
+            "--file",
+            "sun.png",
+            "--model",
+            "openai/gpt-5.4-vision",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is True
+    assert payload["capability"] == "image.describe-many"
+    assert payload["transport"] == "local"
+    assert payload["provider"] == "openai"
+    assert payload["model"] == "gpt-5.4-vision"
+    assert payload["attempts"] == []
+    assert payload["outputs"] == [
+        {
+            "path": str((Path.cwd() / "moon.png").resolve()),
+            "text": "Description for moon.png",
+            "provider": "openai",
+            "model": "gpt-5.4-vision",
+            "kind": "image.description",
+        },
+        {
+            "path": str((Path.cwd() / "sun.png").resolve()),
+            "text": "Description for sun.png",
+            "provider": "openai",
+            "model": "gpt-5.4-vision",
+            "kind": "image.description",
+        },
+    ]
+    assert calls == [
+        {
+            "file_path": str((Path.cwd() / "moon.png").resolve()),
+            "active_model": {"provider": "openai", "model": "gpt-5.4-vision"},
+        },
+        {
+            "file_path": str((Path.cwd() / "sun.png").resolve()),
+            "active_model": {"provider": "openai", "model": "gpt-5.4-vision"},
+        },
+    ]
+
+
 def test_capability_model_run_rejects_local_and_gateway_together() -> None:
     result = runner.invoke(
         app,
