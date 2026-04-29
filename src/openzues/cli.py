@@ -2610,10 +2610,15 @@ def _build_capability_model_providers_payload(
     return [grouped[key] for key in sorted(grouped)]
 
 
-def _model_auth_runtime(services: CliServices) -> Any:
+def _optional_model_auth_runtime(services: CliServices) -> Any | None:
     runtime = getattr(services, "model_auth", None)
     if runtime is None:
         runtime = getattr(services, "model_auth_service", None)
+    return runtime
+
+
+def _model_auth_runtime(services: CliServices) -> Any:
+    runtime = _optional_model_auth_runtime(services)
     if runtime is None:
         raise ValueError("model auth runtime is unavailable.")
     return runtime
@@ -4828,6 +4833,30 @@ async def _build_models_status_payload(
             "status": "unavailable",
             "reason": "models status probes require the model auth health runtime.",
         }
+    auth_payload: dict[str, object] = {
+        "status": "unavailable",
+        "providersWithOAuth": [],
+        "missingProvidersInUse": providers_in_use,
+        "providers": [],
+        "unusableProfiles": [],
+        "oauth": {
+            "profiles": [],
+            "providers": [],
+        },
+        "probes": probes,
+    }
+    auth_runtime = _optional_model_auth_runtime(services)
+    status = getattr(auth_runtime, "status", None) if auth_runtime is not None else None
+    if not callable(status) and auth_runtime is not None:
+        status = getattr(auth_runtime, "get_status", None)
+    if callable(status):
+        runtime_status = await status(providers=providers_in_use, probe=probe)
+        if isinstance(runtime_status, dict):
+            runtime_auth = runtime_status.get("auth")
+            if isinstance(runtime_auth, dict):
+                auth_payload.update(dict(runtime_auth))
+            else:
+                auth_payload.update(dict(runtime_status))
     return {
         "ok": True,
         "defaultModel": default_label,
@@ -4837,18 +4866,7 @@ async def _build_models_status_payload(
         "imageFallbacks": [],
         "aliases": {},
         "allowed": allowed,
-        "auth": {
-            "status": "unavailable",
-            "providersWithOAuth": [],
-            "missingProvidersInUse": providers_in_use,
-            "providers": [],
-            "unusableProfiles": [],
-            "oauth": {
-                "profiles": [],
-                "providers": [],
-            },
-            "probes": probes,
-        },
+        "auth": auth_payload,
     }
 
 

@@ -3276,6 +3276,82 @@ def test_models_status_json_projects_default_catalog_state(monkeypatch) -> None:
     assert calls == [("models.list", {})]
 
 
+def test_models_status_probe_json_uses_model_auth_runtime(monkeypatch) -> None:
+    gateway_calls: list[tuple[str, dict[str, object]]] = []
+    auth_calls: list[dict[str, object]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            gateway_calls.append((method, params))
+            return {
+                "models": [
+                    {
+                        "id": "gpt-5.4",
+                        "name": "gpt-5.4",
+                        "provider": "openai",
+                        "isDefault": True,
+                    }
+                ]
+            }
+
+    class FakeModelAuth:
+        async def status(
+            self,
+            *,
+            providers: list[str],
+            probe: bool,
+        ) -> dict[str, object]:
+            auth_calls.append({"providers": providers, "probe": probe})
+            return {
+                "status": "ok",
+                "storePath": r"C:\agents\main\auth.json",
+                "providersWithOAuth": ["openai"],
+                "missingProvidersInUse": [],
+                "providers": [{"id": "openai", "status": "ok"}],
+                "unusableProfiles": [],
+                "oauth": {
+                    "profiles": [{"id": "openai-default", "status": "ok"}],
+                    "providers": [{"id": "openai", "profiles": 1}],
+                },
+                "probes": {"openai": {"status": "ok", "latencyMs": 12}},
+            }
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                gateway_node_methods=FakeGatewayNodeMethods(),
+                model_auth=FakeModelAuth(),
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["models", "status", "--probe", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is True
+    assert payload["auth"] == {
+        "status": "ok",
+        "storePath": r"C:\agents\main\auth.json",
+        "providersWithOAuth": ["openai"],
+        "missingProvidersInUse": [],
+        "providers": [{"id": "openai", "status": "ok"}],
+        "unusableProfiles": [],
+        "oauth": {
+            "profiles": [{"id": "openai-default", "status": "ok"}],
+            "providers": [{"id": "openai", "profiles": 1}],
+        },
+        "probes": {"openai": {"status": "ok", "latencyMs": 12}},
+    }
+    assert gateway_calls == [("models.list", {})]
+    assert auth_calls == [{"providers": ["openai"], "probe": True}]
+
+
 def test_infer_model_list_json_uses_openclaw_catalog_shape(monkeypatch) -> None:
     calls: list[tuple[str, dict[str, object]]] = []
 

@@ -200,9 +200,11 @@ session metadata path before dispatch; gateway model runs now wait for the
 final `agent.wait` result before projecting OpenClaw-style provider/model
 output envelopes. Model auth login/logout CLI commands now dispatch through a
 fakeable native model-auth runtime hook and keep a precise unavailable boundary
-when that runtime is absent. Remaining `infer` parity is production model-auth
-backend wiring, deeper TTS provider/runtime breadth beyond the now-landed CLI
-family, and any
+when that runtime is absent. `models status --probe` now also consumes a
+fakeable native model-auth status/probe runtime when one is registered, while
+keeping the honest unavailable probe posture when it is absent. Remaining
+`infer` parity is production model-auth backend wiring, deeper TTS
+provider/runtime breadth beyond the now-landed CLI family, and any
 gateway-backed capability transports not already covered by native OpenZues
 command families. The first TTS slices now project the native
 `tts.providers`, `tts.status`, `tts.enable`, `tts.disable`, and
