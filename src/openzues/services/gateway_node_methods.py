@@ -71,6 +71,7 @@ from openzues.services.gateway_plugin_runtime import (
     GatewayPluginExecutor,
     GatewayPluginRuntimeService,
 )
+from openzues.services.gateway_sandbox_spawn import sandbox_runtime_metadata
 from openzues.services.gateway_session_compaction import (
     GatewaySessionCompactionService,
     GatewaySessionCompactionUnavailableError,
@@ -7479,8 +7480,14 @@ class GatewayNodeMethodService:
                 return spawn_exception_response
             run_id = _optional_non_empty_string(send_result.get("runId"), label="runId")
             status_text = str(send_result.get("status") or "").strip().lower()
-            status = "accepted" if status_text in {"ok", "accepted", "started"} else "error"
-            if status == "error":
+            status = (
+                "accepted"
+                if status_text in {"ok", "accepted", "started"}
+                else "forbidden"
+                if status_text == "forbidden"
+                else "error"
+            )
+            if status != "accepted":
                 if attachment_dir is not None:
                     shutil.rmtree(attachment_dir, ignore_errors=True)
                 await self._database.delete_control_chat_messages(session_key=canonical_key)
@@ -7497,7 +7504,7 @@ class GatewayNodeMethodService:
                     or "spawn startup failed"
                 ).strip()
                 spawn_status_error_response: dict[str, Any] = {
-                    "status": "error",
+                    "status": status,
                     "error": spawn_error_text or "spawn startup failed",
                     "childSessionKey": canonical_key,
                     "runId": run_id,
@@ -7506,6 +7513,19 @@ class GatewayNodeMethodService:
                 }
                 spawn_status_error_response.update(role_context)
                 return spawn_status_error_response
+            runtime_metadata = sandbox_runtime_metadata(send_result)
+            if runtime_metadata:
+                metadata.update(runtime_metadata)
+                await self._database.upsert_gateway_session_metadata(
+                    session_key=canonical_key,
+                    metadata=metadata,
+                )
+                updated_entry = await self._sessions_service.build_session_payload_for_key(
+                    session_key=canonical_key,
+                    now_ms=timestamp_ms,
+                )
+                if updated_entry is not None:
+                    entry = updated_entry
             self._remember_gateway_chat_run(canonical_key, send_result, started_at_ms=timestamp_ms)
             await self._publish_sessions_changed_event(
                 session_key=canonical_key,

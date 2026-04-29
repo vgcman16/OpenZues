@@ -14182,6 +14182,57 @@ async def test_sessions_spawn_required_sandbox_dispatches_when_runtime_wired(
 
 
 @pytest.mark.asyncio
+async def test_sessions_spawn_required_sandbox_persists_runtime_policy_metadata(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-sessions-spawn-sandbox-runtime-metadata.db")
+    await database.initialize()
+
+    async def fake_sandbox_chat_send_service(**_kwargs: object) -> dict[str, object]:
+        return {
+            "runId": "turn-sandbox-child-1",
+            "status": "ok",
+            "runtime": "codex-app-server",
+            "runtimeId": 4,
+            "runtimeThreadId": "thread-sandbox-child-1",
+            "runtimeSessionId": "thread-sandbox-child-1",
+            "sandboxed": True,
+            "sandboxMode": "workspace-write",
+            "sandboxPolicy": {"type": "workspaceWrite"},
+        }
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        sandbox_chat_send_service=fake_sandbox_chat_send_service,
+    )
+
+    payload = await service.call(
+        "sessions.spawn",
+        {
+            "task": "Run this in a sandbox.",
+            "sandbox": "require",
+            "cleanup": "keep",
+        },
+    )
+
+    child_session_key = str(payload["childSessionKey"])
+    metadata_row = await database.get_gateway_session_metadata(child_session_key)
+    assert payload["status"] == "accepted"
+    assert payload["runId"] == "turn-sandbox-child-1"
+    assert metadata_row is not None
+    metadata = metadata_row["metadata"]
+    assert metadata["runtime"] == "codex-app-server"
+    assert metadata["runtimeId"] == 4
+    assert metadata["runtimeThreadId"] == "thread-sandbox-child-1"
+    assert metadata["runtimeSessionId"] == "thread-sandbox-child-1"
+    assert metadata["sandboxed"] is True
+    assert metadata["sandboxMode"] == "workspace-write"
+    assert metadata["sandboxPolicy"] == {"type": "workspaceWrite"}
+
+
+@pytest.mark.asyncio
 async def test_sessions_spawn_rejects_acp_required_sandbox_policy() -> None:
     service = GatewayNodeMethodService(GatewayNodeRegistry())
 

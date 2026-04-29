@@ -200,6 +200,7 @@ from openzues.services.gateway_node_methods import (
 from openzues.services.gateway_node_pairing import GatewayNodePairingService
 from openzues.services.gateway_node_service import GatewayNodeService
 from openzues.services.gateway_outbound_runtime import GatewayOutboundRuntimeService
+from openzues.services.gateway_sandbox_spawn import RuntimeManagerSandboxChatSendService
 from openzues.services.gateway_talk_mode import GatewayTalkModeService
 from openzues.services.gateway_tts import GatewayTtsService
 from openzues.services.gateway_tts_runtime import GatewayTtsRuntimeService
@@ -2312,6 +2313,7 @@ def create_app(
             send_channel_message_service=active_ops_mesh_service.send_direct_channel_message,
             send_channel_poll_service=active_ops_mesh_service.send_direct_channel_poll,
             acp_spawn_service=RuntimeManagerAcpSpawnService(active_manager),
+            sandbox_chat_send_service=RuntimeManagerSandboxChatSendService(active_manager),
             chat_send_service=submit_gateway_chat_message,
             chat_attachment_send_service=submit_gateway_chat_attachment_message,
             send_apns_push_service=active_gateway_apns_push_service.send_push,

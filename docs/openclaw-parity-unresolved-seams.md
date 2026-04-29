@@ -4,11 +4,11 @@ Updated: 2026-04-29
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~44% overall, with a reasonable
-  band of ~39-49%.
-- The active gateway/session/tool-contract family is estimated at ~96% of the
+- Repo-wide OpenClaw parity is estimated at ~45% overall, with a reasonable
+  band of ~40-50%.
+- The active gateway/session/tool-contract family is estimated at ~97% of the
   bounded OpenZues-local parity path.
-- The chat/session contract subfamily is estimated at ~97% after the latest
+- The chat/session contract subfamily is estimated at ~98% after the latest
   `chat.send`, `chat.inject`, `chat.abort`, `sessions.create`,
   `sessions.patch`, `sessions.delete`, `sessions.spawn`, and `tools.invoke`
   runtime seams.
@@ -25,12 +25,14 @@ creation/resume, child turn start, durable ACP session metadata, tracked
 boundary remains only when no ACP spawn service is registered, and ACP preflight
 errors for attachments, `lightContext`, and `sandbox="require"` are preserved.
 
-Current queue-head adjustment: `sessions.spawn sandbox="require"` can dispatch
-through a wired sandbox child-turn service, persists `sandboxed`,
-`sandboxMode`, and runtime sandbox policy metadata, and still returns the
-existing precise forbidden response before dispatch when no sandbox runtime is
-available. Remaining sandbox parity is the Windows sandbox setup/runtime owner
-that wires this hook in production.
+Current queue-head adjustment: `sessions.spawn sandbox="require"` now has a
+production app-wired `RuntimeManagerSandboxChatSendService` that starts Codex
+app-server child turns with an explicit `workspace-write` sandbox override,
+calls Windows sandbox setup before dispatch, persists `sandboxed`,
+`sandboxMode`, sandbox policy, runtime id, runtime thread/session ids, and
+still returns the existing precise forbidden response when no sandbox runtime
+is available. Remaining sandbox parity is config-driven per-agent sandbox
+target selection and deeper media/workspace staging behavior from OpenClaw.
 
 Current queue-head adjustment: `sessions.spawn thread=true` now has a fakeable
 thread-binder seam. With a registered binder it creates a persistent child
