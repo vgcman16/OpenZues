@@ -3628,6 +3628,51 @@ def test_sessions_cleanup_dry_run_json_calls_sessions_list_owner(monkeypatch) ->
     assert calls == [("sessions.list", {"agentId": "worker"})]
 
 
+def test_sessions_cleanup_enforce_json_returns_applied_noop_summary(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {
+                "count": 2,
+                "sessions": [
+                    {"key": "agent:worker:main", "sessionKey": "agent:worker:main"},
+                    {"key": "agent:worker:child", "sessionKey": "agent:worker:child"},
+                ],
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "sessions",
+            "cleanup",
+            "--enforce",
+            "--json",
+            "--agent",
+            "worker",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["mode"] == "enforce"
+    assert payload["dryRun"] is False
+    assert payload["applied"] is True
+    assert payload["appliedCount"] == 2
+    assert payload["wouldMutate"] is False
+    assert calls == [("sessions.list", {"agentId": "worker"})]
+
+
 def test_sessions_spawn_json_calls_gateway_method_owner(monkeypatch) -> None:
     calls: list[tuple[str, dict[str, object]]] = []
 

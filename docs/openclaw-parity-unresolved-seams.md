@@ -135,12 +135,13 @@ the production `sessions.list` gateway method owner, and still exposes
 `GatewayNodeMethodService` owner instead of duplicating runtime logic. The CLI
 service builder wires the same native ACP spawn, sandbox-required child-turn,
 route-backed thread binder, direct send/poll, config, model inventory, and
-control-chat submit seams used by the app-server path. `sessions cleanup
---dry-run` now accepts the upstream command shape and returns an
-OpenClaw-shaped no-mutation maintenance preview from the native
-`sessions.list` owner; remaining cleanup parity is apply-mode cleanup,
-`--fix-missing` transcript pruning, and multi-store/all-agent mutation
-semantics over OpenZues' SQLite-backed session metadata. Top-level
+control-chat submit seams used by the app-server path. `sessions cleanup`
+now accepts the upstream command shape and returns OpenClaw-shaped no-mutation
+maintenance summaries from the native `sessions.list` owner for both dry-run
+preview and enforce/apply no-op cases; remaining cleanup parity is actual
+stale/missing cleanup mutation, `--fix-missing` transcript pruning, and
+multi-store/all-agent mutation semantics over OpenZues' SQLite-backed session
+metadata. Top-level
 `status --json` now accepts OpenClaw's `--all`, `--usage`, `--deep`, and
 `--timeout` / `--timeout-ms` breadth flags, forwards the timeout into the
 native live health probe for `--deep`, and projects honest unavailable JSON

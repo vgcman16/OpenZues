@@ -2364,17 +2364,18 @@ def _sessions_cleanup_summary(
     *,
     agent_id: str | None,
     mode: str,
+    dry_run: bool,
 ) -> dict[str, object]:
     raw_sessions = payload.get("sessions")
     sessions = raw_sessions if isinstance(raw_sessions, list) else []
     count = payload.get("count")
     if not isinstance(count, int) or isinstance(count, bool):
         count = len(sessions)
-    return {
+    summary: dict[str, object] = {
         "agentId": agent_id or "default",
         "storePath": "native-gateway-session-store",
         "mode": mode,
-        "dryRun": True,
+        "dryRun": dry_run,
         "beforeCount": count,
         "afterCount": count,
         "missing": 0,
@@ -2383,6 +2384,10 @@ def _sessions_cleanup_summary(
         "diskBudget": None,
         "wouldMutate": False,
     }
+    if not dry_run:
+        summary["applied"] = True
+        summary["appliedCount"] = count
+    return summary
 
 
 def _emit_sessions_cleanup(payload: dict[str, object], *, json_output: bool) -> None:
@@ -10583,10 +10588,6 @@ def sessions_cleanup_command(
     normalized_store = _optional_cli_string(store) or parent_store
     if normalized_store is not None:
         raise typer.BadParameter("--store is not supported by the native OpenZues session store")
-    if not dry_run:
-        raise typer.BadParameter(
-            "Native session cleanup apply is not implemented yet; use --dry-run"
-        )
     normalized_agent = _optional_cli_string(agent) or _optional_cli_string(
         parent_params.get("agent")
     )
@@ -10605,6 +10606,7 @@ def sessions_cleanup_command(
             inventory,
             agent_id=normalized_agent,
             mode=mode,
+            dry_run=dry_run,
         )
 
     result = _run(_run_with_services(_action))
