@@ -785,15 +785,44 @@ def _telegram_api_endpoint(target: str | None, token: str, method: str) -> str:
     return endpoint
 
 
-def _telegram_chat_id(target: str | None) -> str | None:
+def _strip_telegram_target_prefixes(target: str | None) -> str:
     normalized = str(target or "").strip()
     while ":" in normalized:
         prefix, suffix = normalized.split(":", 1)
-        if prefix.strip().lower() in {"channel", "group", "dm", "direct", "telegram"}:
+        if prefix.strip().lower() in {
+            "channel",
+            "group",
+            "dm",
+            "direct",
+            "telegram",
+            "tg",
+        }:
             normalized = suffix.strip()
             continue
         break
-    return normalized or None
+    return normalized
+
+
+def _parse_telegram_delivery_target(target: str | None) -> dict[str, str]:
+    normalized = _strip_telegram_target_prefixes(target)
+    topic_match = re.match(r"^(.+?):topic:(\d+)$", normalized)
+    if topic_match:
+        return {
+            "chatId": str(topic_match.group(1)).strip(),
+            "threadId": str(topic_match.group(2)).strip(),
+        }
+    colon_match = re.match(r"^(.+):(\d+)$", normalized)
+    if colon_match:
+        return {
+            "chatId": str(colon_match.group(1)).strip(),
+            "threadId": str(colon_match.group(2)).strip(),
+        }
+    return {"chatId": normalized}
+
+
+def _telegram_chat_id(target: str | None) -> str | None:
+    chat_id = _parse_telegram_delivery_target(target).get("chatId")
+    return str(chat_id or "").strip() or None
 
 
 def _telegram_result_items(result: object) -> list[dict[str, Any]]:
@@ -7926,13 +7955,14 @@ class OpsMeshService:
         secret_token: str | None,
     ) -> dict[str, object]:
         conversation_target = _normalize_conversation_target(event.get("conversationTarget"))
-        chat_id = _telegram_chat_id(
+        parsed_target = _parse_telegram_delivery_target(
             str(event.get("to") or (conversation_target or {}).get("peer_id") or "")
         )
+        chat_id = str(parsed_target.get("chatId") or "").strip() or None
         if chat_id is None:
             raise RuntimeError("Telegram route is missing a chat target.")
         token = _telegram_bot_token(secret_token)
-        thread_id = str(event.get("threadId") or "").strip()
+        thread_id = str(event.get("threadId") or parsed_target.get("threadId") or "").strip()
         reply_to_id = str(event.get("replyToId") or "").strip()
         silent = _optional_bool_payload_value(event, "silent")
         force_document = _optional_bool_payload_value(event, "forceDocument") is True

@@ -172,6 +172,9 @@ non-thread channels, and report the upstream multiple-match note.
 Discord user resolution now searches guild members with the saved route token
 for guild-qualified names and preserves the OpenClaw-shaped id/name/note
 projection.
+Telegram native sends now parse topic-qualified targets like
+`telegram:group:<chatId>:topic:<threadId>` into a base `chat_id` plus
+`message_thread_id` instead of treating the full target as the chat id.
 
 Current queue-head adjustment: `tools.invoke` plugin execution now routes
 through a fakeable `GatewayPluginRuntimeService`, preserving core mappings
@@ -1596,6 +1599,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   guild-qualified user names through `/guilds/{guildId}/members/search`,
   applies OpenClaw's member scoring, and returns id/name/note rows.
 - Verified the Discord user resolver seam with `python -m pytest tests\test_cli.py -q -k "route_backed_discord_user_resolver"`, adjacent `python -m pytest tests\test_cli.py -q -k "channels_resolve_json or route_backed_discord_user_resolver or route_backed_discord_channel_resolver or route_backed_discord_guild_channel_resolver or route_backed_discord_global_channel_resolver or route_backed_discord_probe or route_backed_telegram_user_resolver or route_backed_telegram_probe or auto_groups_route_backed_slack_targets or route_backed_slack_channel_resolver or route_backed_slack_user_resolver or channels_status_json"`, `ruff check src\openzues\services\ops_mesh.py tests\test_cli.py`, and `mypy src\openzues\services\ops_mesh.py`.
+- Telegram native sends now parse topic-qualified targets into base `chat_id`
+  plus `message_thread_id`, matching OpenClaw's `parseTelegramTarget` behavior
+  for `telegram:group:<chatId>:topic:<threadId>`.
+- Verified the Telegram topic-target seam with `python -m pytest tests\test_ops_mesh.py -q -k "telegram_topic_target"`, adjacent `python -m pytest tests\test_ops_mesh.py -q -k "send_direct_channel_message_uses_telegram_native or telegram_topic_target or send_direct_channel_poll_uses_telegram"`, `ruff check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py`.
 - `chat.history` and `sessions.history` now mirror OpenClaw's numeric history
   limit parsing: finite JSON numbers are floored and bounded instead of
   requiring integer-only input.
