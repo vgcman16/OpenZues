@@ -7363,6 +7363,7 @@ class GatewayNodeMethodService:
                     metadata["lastAccountId"] = requester_origin["accountId"]
                 if "threadId" in requester_origin:
                     metadata["lastThreadId"] = requester_origin["threadId"]
+            thread_binding: dict[str, Any] | None = None
             if thread:
                 assert self._subagent_thread_binder is not None
                 raw_thread_binding = await self._subagent_thread_binder(
@@ -7472,6 +7473,21 @@ class GatewayNodeMethodService:
                     if sandbox == "require"
                     else {}
                 )
+                delivery_kwargs: dict[str, object] = {"deliver": None}
+                if thread_binding:
+                    delivery_kwargs["deliver"] = True
+                    bound_channel = _string_or_none(thread_binding.get("channel"))
+                    bound_to = _string_or_none(thread_binding.get("to"))
+                    bound_account_id = _string_or_none(thread_binding.get("accountId"))
+                    bound_thread_id = _string_or_none(thread_binding.get("threadId"))
+                    if bound_channel is not None:
+                        delivery_kwargs["channel"] = bound_channel
+                    if bound_to is not None:
+                        delivery_kwargs["to"] = bound_to
+                    if bound_account_id is not None:
+                        delivery_kwargs["account_id"] = bound_account_id
+                    if bound_thread_id is not None:
+                        delivery_kwargs["thread_id"] = bound_thread_id
                 send_result = await effective_chat_send_service(
                     session_key=canonical_key,
                     message=(
@@ -7481,8 +7497,8 @@ class GatewayNodeMethodService:
                     ),
                     idempotency_key=secrets.token_urlsafe(18),
                     thinking=thinking,
-                    deliver=None,
                     timeout_ms=timeout_ms,
+                    **delivery_kwargs,
                     **light_context_kwargs,
                     **sandbox_kwargs,
                 )

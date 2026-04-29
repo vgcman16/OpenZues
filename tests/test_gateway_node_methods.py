@@ -14986,6 +14986,62 @@ async def test_sessions_spawn_thread_mode_uses_thread_binding_hook(tmp_path) -> 
 
 
 @pytest.mark.asyncio
+async def test_sessions_spawn_thread_mode_delivers_initial_child_run_to_bound_origin(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-sessions-spawn-thread-bound-delivery.db")
+    await database.initialize()
+    send_calls: list[dict[str, object]] = []
+
+    async def fake_chat_send_service(**kwargs: object) -> dict[str, object]:
+        send_calls.append(dict(kwargs))
+        return {"runId": "run-thread-bound-delivery-1", "status": "ok"}
+
+    async def fake_subagent_thread_binder(
+        parent: dict[str, object],
+        child: dict[str, object],
+        context: dict[str, object],
+    ) -> dict[str, object]:
+        del parent, child, context
+        return {
+            "channel": "slack",
+            "to": "channel:C123",
+            "accountId": "workspace-bot",
+            "threadId": "1710000000.000200",
+        }
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        chat_send_service=fake_chat_send_service,
+        subagent_thread_binder=fake_subagent_thread_binder,
+    )
+
+    payload = await service.call(
+        "sessions.spawn",
+        {
+            "task": "Start directly in the bound thread.",
+            "thread": True,
+        },
+        requester=GatewayNodeMethodRequester(
+            message_channel="slack",
+            message_to="channel:C123",
+            message_account_id="workspace-bot",
+            message_thread_id="1710000000.000200",
+        ),
+    )
+
+    assert payload["status"] == "accepted"
+    assert len(send_calls) == 1
+    assert send_calls[0]["deliver"] is True
+    assert send_calls[0]["channel"] == "slack"
+    assert send_calls[0]["to"] == "channel:C123"
+    assert send_calls[0]["account_id"] == "workspace-bot"
+    assert send_calls[0]["thread_id"] == "1710000000.000200"
+
+
+@pytest.mark.asyncio
 async def test_sessions_spawn_thread_mode_preserves_no_hook_with_unresolved_registry(
     tmp_path,
 ) -> None:

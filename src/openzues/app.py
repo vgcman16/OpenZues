@@ -2192,6 +2192,8 @@ def create_app(
         timeout_ms: int | None,
         channel: str | None = None,
         to: str | None = None,
+        account_id: str | None = None,
+        thread_id: str | None = None,
         bootstrap_context_mode: str | None = None,
         bootstrap_context_run_kind: str | None = None,
     ) -> dict[str, object]:
@@ -2201,6 +2203,8 @@ def create_app(
             timeout_ms,
             channel,
             to,
+            account_id,
+            thread_id,
             bootstrap_context_mode,
             bootstrap_context_run_kind,
         )

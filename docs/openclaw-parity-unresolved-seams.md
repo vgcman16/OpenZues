@@ -54,6 +54,9 @@ the bound thread. Binder results must now report both `status="ok"` and
 still return the upstream-shaped error before child dispatch. Remaining
 lifecycle parity is deeper provider-native unbind/end-hook behavior and
 ACP/session binding policy breadth.
+Initial thread-bound child runs now dispatch through the chat-send adapter with
+the bound `channel`, `to`, `account_id`, and `thread_id` kwargs instead of
+starting as an unbound control-chat-only turn.
 
 Current queue-head adjustment: provider-native direct `send` now preserves
 OpenClaw runtime delivery fields (`messageThreadId`, `replyToId`,
@@ -1526,6 +1529,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   of a live `probeAccount` hook as `status="unsupported"` without `ok=false`,
   so `channels.status --probe` does not degrade a WhatsApp-only account.
 - Verified the WhatsApp no-hook probe seam with `python -m pytest tests\test_cli.py -q -k "whatsapp_no_hook_probe"`, adjacent `python -m pytest tests\test_cli.py -q -k "route_backed_slack_probe or route_backed_telegram_probe or route_backed_discord_probe or whatsapp_no_hook_probe or channels_status_json or channels_capabilities_json"`, `ruff check src\openzues\services\ops_mesh.py tests\test_cli.py`, and `mypy src\openzues\services\ops_mesh.py`.
+- Thread-bound `sessions.spawn` initial child runs now pass the bound delivery
+  origin into the chat-send runtime as `deliver=true`, `channel`, `to`,
+  `account_id`, and `thread_id`, matching the upstream bind-before-run flow.
+- Verified the thread-bound initial child delivery seam with `python -m pytest tests\test_gateway_node_methods.py -q -k "thread_mode_delivers_initial_child_run"`, adjacent `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_spawn_thread_mode or thread_mode_delivers_initial_child_run or sessions_spawn_session_mode"`, `ruff check src\openzues\services\gateway_node_methods.py src\openzues\app.py tests\test_gateway_node_methods.py`, and `mypy src\openzues\services\gateway_node_methods.py src\openzues\app.py`.
 - `chat.history` and `sessions.history` now mirror OpenClaw's numeric history
   limit parsing: finite JSON numbers are floored and bounded instead of
   requiring integer-only input.
