@@ -668,6 +668,60 @@ def test_channels_status_json_uses_route_backed_discord_probe(tmp_path, monkeypa
     ]
 
 
+def test_channels_status_json_keeps_whatsapp_no_hook_probe_non_degraded(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch, task_name="CLI WhatsApp Probe")
+
+    database = Database(data_dir / "openzues.db")
+    asyncio.run(database.initialize())
+    asyncio.run(
+        database.create_notification_route(
+            name="WhatsApp Native Probe Boundary",
+            kind="whatsapp",
+            target="https://graph.facebook.com/v19.0/phone-number-id/messages",
+            events=["gateway/send"],
+            conversation_target={
+                "channel": "whatsapp",
+                "account_id": "business",
+                "peer_kind": "direct",
+                "peer_id": "whatsapp:+15551234567",
+                "summary": "whatsapp business direct +15551234567",
+            },
+            enabled=True,
+            secret_header_name=None,
+            secret_token="whatsapp-token",
+            vault_secret_id=None,
+        )
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "channels",
+            "status",
+            "--probe",
+            "--timeout",
+            "2500",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["probeStatus"] == {"status": "ok", "timeoutMs": 2500}
+    assert payload["channelAccounts"]["whatsapp"][0]["probe"] == {
+        "status": "unsupported",
+        "reason": "native_provider_probe_unsupported",
+        "provider": "whatsapp",
+        "accountId": "business",
+        "summary": "This channel does not expose an upstream account probe hook.",
+        "timeoutMs": 2500,
+    }
+
+
 def test_channels_status_json_calls_gateway_method_owner_with_probe(monkeypatch) -> None:
     calls: list[tuple[str, dict[str, object]]] = []
 

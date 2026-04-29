@@ -136,6 +136,7 @@ OUTBOUND_DELIVERY_BACKOFF_SECONDS = (5, 25, 120, 600)
 SLACK_API_BASE_URL = "https://slack.com/api"
 TELEGRAM_API_BASE_URL = "https://api.telegram.org"
 NATIVE_PROVIDER_ROUTE_KINDS = {"slack", "telegram", "discord", "whatsapp"}
+PROBEABLE_NATIVE_PROVIDER_ROUTE_KINDS = {"slack", "telegram", "discord"}
 OUTBOUND_DELIVERY_PERMANENT_ERROR_PATTERNS = (
     re.compile(r"chat not found", re.IGNORECASE),
     re.compile(r"user not found", re.IGNORECASE),
@@ -5022,6 +5023,15 @@ class OpsMeshService:
                 "timeoutMs": timeout_ms,
             }
         route_kind = str(route.get("kind") or "").strip().lower()
+        if route_kind not in PROBEABLE_NATIVE_PROVIDER_ROUTE_KINDS:
+            return {
+                "status": "unsupported",
+                "reason": "native_provider_probe_unsupported",
+                "provider": route_kind,
+                "accountId": normalized_account_id,
+                "summary": "This channel does not expose an upstream account probe hook.",
+                "timeoutMs": timeout_ms,
+            }
         secret_token = await self._notification_route_secret_token(route)
         if not secret_token:
             return {
@@ -5069,16 +5079,6 @@ class OpsMeshService:
                     "error": str(exc).strip() or type(exc).__name__,
                     "timeoutMs": timeout_ms,
                 }
-        if route_kind != "slack":
-            return {
-                "ok": False,
-                "status": "unavailable",
-                "reason": "native_provider_probe_unsupported",
-                "provider": route_kind,
-                "accountId": normalized_account_id,
-                "summary": "Native provider route probes are not implemented for this channel yet.",
-                "timeoutMs": timeout_ms,
-            }
         try:
             return await asyncio.to_thread(
                 self._probe_slack_provider_route,

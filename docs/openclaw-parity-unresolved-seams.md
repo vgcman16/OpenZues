@@ -87,6 +87,9 @@ envelope.
 Discord native routes now probe Discord API `/users/@me` and
 `/oauth2/applications/@me` with the saved bot token, returning bot identity and
 privileged intent metadata through the same account probe envelope.
+WhatsApp matches the upstream channel plugin's no-`probeAccount` posture: route
+status reports an unsupported/no-hook probe envelope without degrading the
+overall `channels.status --probe` result.
 
 Current queue-head adjustment: the CLI now exposes `sessions spawn` and
 `sessions wait` as thin JSON/human wrappers over the production
@@ -1519,6 +1522,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   `oauth2/applications/@me` with the saved bot token and return bot identity
   plus privileged intent metadata.
 - Verified the route-backed Discord probe seam with `python -m pytest tests\test_cli.py -q -k "route_backed_discord_probe"`, adjacent `python -m pytest tests\test_cli.py -q -k "route_backed_slack_probe or route_backed_telegram_probe or route_backed_discord_probe or channels_status_json or channels_capabilities_json"`, `ruff check src\openzues\services\ops_mesh.py tests\test_cli.py`, and `mypy src\openzues\services\ops_mesh.py`.
+- WhatsApp route-backed channel status now reflects the upstream plugin's lack
+  of a live `probeAccount` hook as `status="unsupported"` without `ok=false`,
+  so `channels.status --probe` does not degrade a WhatsApp-only account.
+- Verified the WhatsApp no-hook probe seam with `python -m pytest tests\test_cli.py -q -k "whatsapp_no_hook_probe"`, adjacent `python -m pytest tests\test_cli.py -q -k "route_backed_slack_probe or route_backed_telegram_probe or route_backed_discord_probe or whatsapp_no_hook_probe or channels_status_json or channels_capabilities_json"`, `ruff check src\openzues\services\ops_mesh.py tests\test_cli.py`, and `mypy src\openzues\services\ops_mesh.py`.
 - `chat.history` and `sessions.history` now mirror OpenClaw's numeric history
   limit parsing: finite JSON numbers are floored and bounded instead of
   requiring integer-only input.
