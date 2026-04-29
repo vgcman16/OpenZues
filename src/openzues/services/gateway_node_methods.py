@@ -89,6 +89,7 @@ from openzues.services.gateway_skill_status import GatewaySkillStatusService
 from openzues.services.gateway_system_presence import GatewaySystemPresenceService
 from openzues.services.gateway_talk_config import GatewayTalkConfigService
 from openzues.services.gateway_talk_mode import GatewayTalkModeService
+from openzues.services.gateway_thread_binding import resolve_thread_binding_result
 from openzues.services.gateway_tools_catalog import GatewayToolsCatalogService
 from openzues.services.gateway_tts import GatewayTtsService, normalize_tts_provider
 from openzues.services.gateway_tts_runtime import (
@@ -7347,11 +7348,17 @@ class GatewayNodeMethodService:
                     {"sessionKey": canonical_key, "agentId": target_agent_id},
                     dict(requester_origin or {}),
                 )
-                thread_binding: dict[str, str] = {}
-                for key in ("channel", "to", "accountId", "threadId"):
-                    thread_binding_value = _string_or_none(raw_thread_binding.get(key))
-                    if thread_binding_value is not None:
-                        thread_binding[key] = thread_binding_value
+                thread_binding, thread_binding_error = resolve_thread_binding_result(
+                    raw_thread_binding
+                )
+                if thread_binding_error is not None:
+                    thread_binding_response: dict[str, Any] = {
+                        "status": "error",
+                        "error": thread_binding_error,
+                    }
+                    thread_binding_response.update(role_context)
+                    return thread_binding_response
+                assert thread_binding is not None
                 metadata["threadBinding"] = thread_binding
                 metadata["completionDelivery"] = {
                     "mode": "thread",

@@ -34,12 +34,15 @@ still returns the existing precise forbidden response when no sandbox runtime
 is available. Remaining sandbox parity is config-driven per-agent sandbox
 target selection and deeper media/workspace staging behavior from OpenClaw.
 
-Current queue-head adjustment: `sessions.spawn thread=true` now has a fakeable
-thread-binder seam. With a registered binder it creates a persistent child
-session, forces cleanup to `keep`, stores thread/account/channel binding
-metadata, and prepares thread completion delivery; without a binder it keeps the
-upstream-shaped no-hook error. Remaining thread parity is binding real channel
-plugins into this adapter.
+Current queue-head adjustment: `sessions.spawn thread=true` now has a
+production route-backed `GatewaySubagentThreadBinderRegistry` wired at app
+construction. Supported Slack, Telegram, Discord, and WhatsApp route contexts
+create persistent child sessions, force cleanup to `keep`, store
+thread/account/channel binding metadata, and route completion delivery through
+the bound thread. Unsupported or unconfigured channels still return the
+upstream-shaped no-hook error before child dispatch. Remaining lifecycle parity
+is deeper provider-native unbind/end-hook behavior and ACP/session binding
+policy breadth.
 
 Current queue-head adjustment: provider-native direct `send` now preserves
 OpenClaw runtime delivery fields (`messageThreadId`, `replyToId`,
