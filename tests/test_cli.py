@@ -6123,6 +6123,38 @@ def test_models_auth_login_github_copilot_calls_device_login(monkeypatch) -> Non
     assert calls == [{"provider": "github-copilot", "method": "device", "yes": True}]
 
 
+def test_models_auth_setup_token_calls_model_auth_runtime(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeModelAuth:
+        async def setup_token(
+            self,
+            *,
+            provider: str | None,
+            yes: bool,
+        ) -> dict[str, object]:
+            calls.append({"provider": provider, "yes": yes})
+            return {
+                "provider": provider,
+                "status": "interactive",
+                "message": f"Setup-token started for {provider}.",
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(model_auth=FakeModelAuth()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        ["models", "auth", "setup-token", "--provider", "moonshot", "--yes"],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert "Setup-token started for moonshot." in result.stdout
+    assert calls == [{"provider": "moonshot", "yes": True}]
+
+
 def test_models_status_json_projects_default_catalog_state(monkeypatch) -> None:
     calls: list[tuple[str, dict[str, object]]] = []
 

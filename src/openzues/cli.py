@@ -3451,6 +3451,25 @@ async def _build_models_auth_login_github_copilot_payload(
     return payload
 
 
+async def _build_models_auth_setup_token_payload(
+    services: CliServices,
+    *,
+    provider: str | None,
+    yes: bool,
+) -> dict[str, object]:
+    runtime = _model_auth_runtime(services)
+    setup_token = getattr(runtime, "setup_token", None)
+    if not callable(setup_token):
+        setup_token = getattr(runtime, "setupToken", None)
+    if not callable(setup_token):
+        raise ValueError("model auth setup-token is unavailable until model auth runtime is wired.")
+    result = await setup_token(provider=provider, yes=yes)
+    payload = dict(result) if isinstance(result, dict) else {}
+    if provider is not None:
+        payload.setdefault("provider", provider)
+    return payload
+
+
 async def _build_capability_model_auth_logout_payload(
     services: CliServices,
     *,
@@ -9120,6 +9139,35 @@ def models_auth_login_github_copilot_command(
             _run_with_services(
                 lambda services: _build_models_auth_login_github_copilot_payload(
                     services,
+                    yes=yes,
+                )
+            )
+        )
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    _emit_capability_model_auth_login(payload)
+
+
+@models_auth_app.command("setup-token")
+def models_auth_setup_token_command(
+    provider: str | None = typer.Option(
+        None,
+        "--provider",
+        help="Provider id.",
+    ),
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        help="Skip confirmation.",
+    ),
+) -> None:
+    try:
+        payload = _run(
+            _run_with_services(
+                lambda services: _build_models_auth_setup_token_payload(
+                    services,
+                    provider=provider,
                     yes=yes,
                 )
             )
