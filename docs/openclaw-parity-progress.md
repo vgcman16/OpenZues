@@ -1313,6 +1313,16 @@ These are complete within the bounded OpenZues-local parity contract verified in
   routes_poll_human_output_calls_native_direct_poll_runtime"` (`14 passed`),
   `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
   src\openzues\cli.py`.
+- `cron create` now aliases `cron add`, and `cron add/create --model` trims
+  and forwards the model override into the agent-turn payload using the
+  existing native cron method contract.
+- Verified the cron create/model CLI slice with `python -m pytest
+  tests\test_cli.py -q -k "cron_create_alias_trims_model_for_agent_turn_payload"`
+  (`1 passed`), adjacent CLI pack `python -m pytest tests\test_cli.py -q -k
+  "cron_ or sessions_ or routes_send_json_calls_native_direct_send_runtime or
+  routes_poll_human_output_calls_native_direct_poll_runtime"` (`15 passed`),
+  `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
 - Next cron CLI parity should continue with the remaining upstream `cron add`
   option breadth, then `cron edit`.
 

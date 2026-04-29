@@ -2725,6 +2725,63 @@ def test_cron_add_main_system_event_every_options_call_gateway_method_owner(
     ]
 
 
+def test_cron_create_alias_trims_model_for_agent_turn_payload(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {"id": "task-blueprint:9", "name": params.get("name")}
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "cron",
+            "create",
+            "--name",
+            "Model report",
+            "--cron",
+            "0 * * * *",
+            "--message",
+            "Write the model report.",
+            "--model",
+            "  gpt-5.4  ",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["id"] == "task-blueprint:9"
+    assert calls == [
+        (
+            "cron.add",
+            {
+                "name": "Model report",
+                "enabled": True,
+                "schedule": {"kind": "cron", "expr": "0 * * * *"},
+                "sessionTarget": "isolated",
+                "wakeMode": "now",
+                "payload": {
+                    "kind": "agentTurn",
+                    "message": "Write the model report.",
+                    "model": "gpt-5.4",
+                },
+                "delivery": {"mode": "announce", "channel": "last"},
+            },
+        )
+    ]
+
+
 def test_sessions_spawn_json_calls_gateway_method_owner(monkeypatch) -> None:
     calls: list[tuple[str, dict[str, object]]] = []
 

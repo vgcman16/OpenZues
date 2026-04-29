@@ -2492,6 +2492,7 @@ def _cron_cli_payload(
     *,
     message: str | None,
     system_event: str | None,
+    model: str | None = None,
 ) -> dict[str, object]:
     normalized_message = _optional_cli_string(message)
     normalized_system_event = _optional_cli_string(system_event)
@@ -2500,7 +2501,11 @@ def _cron_cli_payload(
     if normalized_system_event is not None:
         return {"kind": "systemEvent", "text": normalized_system_event}
     assert normalized_message is not None
-    return {"kind": "agentTurn", "message": normalized_message}
+    payload: dict[str, object] = {"kind": "agentTurn", "message": normalized_message}
+    normalized_model = _optional_cli_string(model)
+    if normalized_model is not None:
+        payload["model"] = normalized_model
+    return payload
 
 
 def _emit_plugins_inventory(
@@ -9682,6 +9687,7 @@ def cron_disable_command(
     _cron_toggle_command(job_id, enabled=False, json_output=json_output)
 
 
+@cron_app.command("create")
 @cron_app.command("add")
 def cron_add_command(
     name: str = typer.Option(..., "--name", help="Cron job name."),
@@ -9695,6 +9701,7 @@ def cron_add_command(
         "--system-event",
         help="Main-session system event payload.",
     ),
+    model: str | None = typer.Option(None, "--model", help="Model override for agent jobs."),
     session: str | None = typer.Option(None, "--session", help="Session target."),
     session_key: str | None = typer.Option(None, "--session-key", help="Session routing key."),
     wake: str = typer.Option("now", "--wake", help="Wake mode: now or next-heartbeat."),
@@ -9703,7 +9710,7 @@ def cron_add_command(
     json_output: bool = typer.Option(False, "--json", help="Emit created cron job as JSON."),
 ) -> None:
     schedule = _cron_cli_schedule(cron_expr=cron_expr, every=every, at=at)
-    payload = _cron_cli_payload(message=message, system_event=system_event)
+    payload = _cron_cli_payload(message=message, system_event=system_event, model=model)
     wake_mode = _optional_cli_string(wake) or "now"
     if wake_mode not in {"now", "next-heartbeat"}:
         raise typer.BadParameter("--wake must be now or next-heartbeat")
