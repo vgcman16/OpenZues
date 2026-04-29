@@ -2003,6 +2003,7 @@ def create_app(
     active_gateway_channels_service = GatewayChannelsService(
         list_notification_route_views=list_gateway_notification_route_views,
         probe_account=active_ops_mesh_service.probe_channel_account,
+        resolve_targets=active_ops_mesh_service.resolve_channel_targets,
     )
     active_setup_service = SetupService(
         active_database,

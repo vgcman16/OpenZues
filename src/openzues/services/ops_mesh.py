@@ -555,6 +555,85 @@ def _slack_channel_from_result(result: object, fallback: str) -> str:
     return fallback
 
 
+def _parse_slack_channel_resolve_input(raw: str) -> dict[str, str]:
+    trimmed = raw.strip()
+    if not trimmed:
+        return {}
+    mention = re.match(r"^<#([A-Z0-9]+)(?:\|([^>]+))?>$", trimmed, re.IGNORECASE)
+    if mention:
+        parsed: dict[str, str] = {"id": str(mention.group(1)).upper()}
+        name = str(mention.group(2) or "").strip()
+        if name:
+            parsed["name"] = name
+        return parsed
+    prefixed = re.sub(r"^(slack:|channel:)", "", trimmed, flags=re.IGNORECASE)
+    if re.match(r"^[CG][A-Z0-9]+$", prefixed, re.IGNORECASE):
+        return {"id": prefixed.upper()}
+    name = prefixed.removeprefix("#").strip()
+    return {"name": name} if name else {}
+
+
+def _unresolved_channel_target(input_value: str, note: str) -> dict[str, object]:
+    return {
+        "input": input_value,
+        "resolved": False,
+        "note": note,
+    }
+
+
+def _resolve_slack_channel_target(
+    input_value: str,
+    channels: list[dict[str, object]],
+) -> dict[str, object]:
+    parsed = _parse_slack_channel_resolve_input(input_value)
+    parsed_id = parsed.get("id")
+    if parsed_id:
+        match = next(
+            (
+                channel
+                for channel in channels
+                if str(channel.get("id") or "").strip().upper() == parsed_id
+            ),
+            None,
+        )
+        payload: dict[str, object] = {
+            "input": input_value,
+            "resolved": True,
+            "id": parsed_id,
+        }
+        name = str((match or {}).get("name") or parsed.get("name") or "").strip()
+        if name:
+            payload["name"] = name
+        if bool((match or {}).get("archived")):
+            payload["note"] = "archived"
+        return payload
+    parsed_name = str(parsed.get("name") or "").strip().lower()
+    if parsed_name:
+        matches = [
+            channel
+            for channel in channels
+            if str(channel.get("name") or "").strip().lower() == parsed_name
+        ]
+        if matches:
+            match = next(
+                (channel for channel in matches if not bool(channel.get("archived"))),
+                matches[0],
+            )
+            payload = {
+                "input": input_value,
+                "resolved": True,
+                "id": str(match.get("id") or ""),
+                "name": str(match.get("name") or ""),
+            }
+            if bool(match.get("archived")):
+                payload["note"] = "archived"
+            return payload
+    return {
+        "input": input_value,
+        "resolved": False,
+    }
+
+
 def _slack_media_filename(media_url: str, index: int) -> str:
     parsed = urlparse(media_url)
     name = unquote(Path(parsed.path).name).strip()
@@ -5169,6 +5248,108 @@ class OpsMeshService:
             "firstName": str(bot.get("first_name") or ""),
             "timeoutMs": timeout_ms,
         }
+
+    async def resolve_channel_targets(
+        self,
+        *,
+        channel: str | None,
+        account_id: str | None,
+        kind: str,
+        inputs: list[str],
+    ) -> list[dict[str, object]]:
+        normalized_inputs = [str(input_value).strip() for input_value in inputs]
+        normalized_inputs = [input_value for input_value in normalized_inputs if input_value]
+        if not normalized_inputs:
+            return []
+        normalized_channel = str(channel or "").strip().lower()
+        normalized_kind = str(kind or "").strip().lower()
+        if normalized_channel != "slack" or normalized_kind not in {
+            "auto",
+            "channel",
+            "group",
+        }:
+            return [
+                _unresolved_channel_target(input_value, "native provider resolver unavailable")
+                for input_value in normalized_inputs
+            ]
+        normalized_account_id = (
+            normalize_optional_account_id(str(account_id or "").strip())
+            or DEFAULT_ACCOUNT_ID
+        )
+        route = await self._provider_route_for_channel_account(
+            channel=normalized_channel,
+            account_id=normalized_account_id,
+        )
+        if route is None:
+            return [
+                _unresolved_channel_target(input_value, "missing Slack route")
+                for input_value in normalized_inputs
+            ]
+        secret_token = await self._notification_route_secret_token(route)
+        if not secret_token:
+            return [
+                _unresolved_channel_target(input_value, "missing Slack token")
+                for input_value in normalized_inputs
+            ]
+        return await asyncio.to_thread(
+            self._resolve_slack_channel_targets,
+            route,
+            secret_token,
+            normalized_inputs,
+        )
+
+    def _resolve_slack_channel_targets(
+        self,
+        route: dict[str, Any],
+        secret_token: str,
+        inputs: list[str],
+    ) -> list[dict[str, object]]:
+        channels: list[dict[str, object]] = []
+        cursor: str | None = None
+        while True:
+            payload: dict[str, object] = {
+                "types": "public_channel,private_channel",
+                "exclude_archived": False,
+                "limit": 1000,
+            }
+            if cursor:
+                payload["cursor"] = cursor
+            result = self._post_json_webhook(
+                _slack_api_endpoint(str(route.get("target") or ""), "conversations.list"),
+                payload,
+                secret_header_name="Authorization",
+                secret_token=_slack_bearer_token(secret_token),
+            )
+            if not isinstance(result, dict):
+                raise RuntimeError("Slack API returned a non-JSON response.")
+            if result.get("ok") is False:
+                error = str(result.get("error") or "unknown_error")
+                raise RuntimeError(f"Slack API returned {error}.")
+            raw_channels = result.get("channels")
+            if isinstance(raw_channels, list):
+                for channel in raw_channels:
+                    if not isinstance(channel, dict):
+                        continue
+                    channel_id = str(channel.get("id") or "").strip()
+                    channel_name = str(channel.get("name") or "").strip()
+                    if not channel_id or not channel_name:
+                        continue
+                    channels.append(
+                        {
+                            "id": channel_id,
+                            "name": channel_name,
+                            "archived": bool(channel.get("is_archived")),
+                        }
+                    )
+            metadata = result.get("response_metadata")
+            cursor = (
+                str(metadata.get("next_cursor") or "").strip()
+                if isinstance(metadata, dict)
+                else ""
+            ) or None
+            if cursor is None:
+                break
+        return [_resolve_slack_channel_target(input_value, channels) for input_value in inputs]
 
     def _probe_discord_provider_route(
         self,

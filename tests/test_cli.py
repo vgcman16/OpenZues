@@ -1018,6 +1018,103 @@ def test_channels_resolve_json_uses_registered_live_resolver(monkeypatch) -> Non
     ]
 
 
+def test_channels_resolve_json_uses_route_backed_slack_channel_resolver(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch, task_name="CLI Slack Resolve")
+
+    database = Database(data_dir / "openzues.db")
+    asyncio.run(database.initialize())
+    asyncio.run(
+        database.create_notification_route(
+            name="Slack Native Resolve Route",
+            kind="slack",
+            target="https://slack.com/api",
+            events=["gateway/send"],
+            conversation_target={
+                "channel": "slack",
+                "account_id": "workspace-bot",
+                "peer_kind": "channel",
+                "peer_id": "channel:C999",
+                "summary": "slack workspace-bot channel fallback",
+            },
+            enabled=True,
+            secret_header_name=None,
+            secret_token="xoxb-resolve-token",
+            vault_secret_id=None,
+        )
+    )
+    slack_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_post_json_webhook(
+        self: object,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        slack_posts.append((target, payload, secret_header_name, secret_token))
+        return {
+            "ok": True,
+            "channels": [
+                {
+                    "id": "C123",
+                    "name": "deploy-room",
+                    "is_archived": False,
+                    "is_private": False,
+                }
+            ],
+            "response_metadata": {"next_cursor": ""},
+        }
+
+    monkeypatch.setattr(
+        "openzues.services.ops_mesh.OpsMeshService._post_json_webhook",
+        fake_post_json_webhook,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "channels",
+            "resolve",
+            "#deploy-room",
+            "--channel",
+            "slack",
+            "--account",
+            "workspace-bot",
+            "--kind",
+            "channel",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout) == [
+        {
+            "input": "#deploy-room",
+            "resolved": True,
+            "id": "C123",
+            "name": "deploy-room",
+        }
+    ]
+    assert slack_posts == [
+        (
+            "https://slack.com/api/conversations.list",
+            {
+                "types": "public_channel,private_channel",
+                "exclude_archived": False,
+                "limit": 1000,
+            },
+            "Authorization",
+            "Bearer xoxb-resolve-token",
+        )
+    ]
+
+
 def test_channels_logs_json_filters_channel_and_limits_lines(tmp_path, monkeypatch) -> None:
     _bootstrap_cli_workspace(tmp_path, monkeypatch, task_name="CLI Channel Logs")
     logs_dir = tmp_path / "logs"

@@ -535,6 +535,7 @@ async def _build_services(app_settings: Settings) -> CliServices:
     gateway_channels = GatewayChannelsService(
         list_notification_route_views=ops_mesh.list_notification_route_views,
         probe_account=ops_mesh.probe_channel_account,
+        resolve_targets=ops_mesh.resolve_channel_targets,
     )
     gateway_logs = GatewayLogsService(logs_root=app_settings.data_dir.parent / "logs")
     control_chat = ControlChatService(
