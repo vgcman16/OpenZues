@@ -373,6 +373,7 @@ acp_app = typer.Typer(
 )
 sandbox_app = typer.Typer(help="Inspect sandbox runtime inventory.")
 sessions_app = typer.Typer(help="Spawn and wait on gateway sessions.")
+cron_app = typer.Typer(help="Inspect and run Gateway cron jobs.")
 capability_app = typer.Typer(
     help="Run provider-backed inference commands through a stable CLI surface."
 )
@@ -409,6 +410,7 @@ app.add_typer(channels_app, name="channels")
 app.add_typer(acp_app, name="acp")
 app.add_typer(sandbox_app, name="sandbox")
 app.add_typer(sessions_app, name="sessions")
+app.add_typer(cron_app, name="cron")
 capability_app.add_typer(capability_model_app, name="model")
 capability_model_app.add_typer(capability_model_auth_app, name="auth")
 capability_app.add_typer(capability_tts_app, name="tts")
@@ -2260,6 +2262,122 @@ def _emit_session_method_result(payload: dict[str, object], *, json_output: bool
     error = str(payload.get("error") or "").strip()
     if error:
         typer.echo(f"error: {error}")
+
+
+def _cron_duration_label(value: object) -> str:
+    try:
+        ms = int(cast("int | str", value))
+    except (TypeError, ValueError):
+        return "n/a"
+    if ms < 0:
+        return "n/a"
+    if ms < 1000:
+        return f"{ms}ms"
+    seconds = round(ms / 1000)
+    if seconds < 60:
+        return f"{seconds}s"
+    minutes = round(seconds / 60)
+    if minutes < 60:
+        return f"{minutes}m"
+    hours = round(minutes / 60)
+    if hours < 24:
+        return f"{hours}h"
+    days = round(hours / 24)
+    return f"{days}d"
+
+
+def _cron_iso_minute(value: object) -> str:
+    if not isinstance(value, str):
+        return "-"
+    raw = value.strip()
+    if not raw:
+        return "-"
+    normalized = raw[:-1] + "+00:00" if raw.endswith("Z") else raw
+    try:
+        moment = datetime.fromisoformat(normalized)
+    except ValueError:
+        return raw
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=UTC)
+    iso = moment.astimezone(UTC).isoformat().replace("+00:00", "Z")
+    return f"{iso[:10]} {iso[11:16]}Z"
+
+
+def _cron_schedule_label(value: object) -> str:
+    if not isinstance(value, dict):
+        return "-"
+    kind = str(value.get("kind") or "").strip()
+    if kind == "at":
+        return f"at {_cron_iso_minute(value.get('at'))}"
+    if kind == "every":
+        return f"every {_cron_duration_label(value.get('everyMs'))}"
+    if kind == "cron":
+        expr = str(value.get("expr") or "").strip()
+        tz = str(value.get("tz") or "").strip()
+        if expr and tz:
+            return f"cron {expr} @ {tz}"
+        if expr:
+            return f"cron {expr}"
+    return kind or "-"
+
+
+def _cron_status_label(job: dict[str, object]) -> str:
+    if not bool(job.get("enabled")):
+        return "disabled"
+    state = job.get("state")
+    state_payload = state if isinstance(state, dict) else {}
+    if state_payload.get("runningAtMs"):
+        return "running"
+    status = str(
+        state_payload.get("lastStatus") or state_payload.get("lastRunStatus") or ""
+    ).strip()
+    return status or "idle"
+
+
+def _cron_payload_model(job: dict[str, object]) -> str:
+    payload = job.get("payload")
+    payload_data = payload if isinstance(payload, dict) else {}
+    if payload_data.get("kind") != "agentTurn":
+        return "-"
+    model = str(payload_data.get("model") or "").strip()
+    return model or "-"
+
+
+def _emit_cron_status(payload: dict[str, object], *, json_output: bool) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+    typer.echo(f"enabled: {bool(payload.get('enabled'))}")
+    jobs = payload.get("jobs")
+    if jobs is not None:
+        typer.echo(f"jobs: {jobs}")
+    next_wake_at_ms = payload.get("nextWakeAtMs")
+    if next_wake_at_ms is not None:
+        typer.echo(f"nextWakeAtMs: {next_wake_at_ms}")
+    store_path = str(payload.get("storePath") or "").strip()
+    if store_path:
+        typer.echo(f"store: {store_path}")
+
+
+def _emit_cron_list(payload: dict[str, object], *, json_output: bool) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+    raw_jobs = payload.get("jobs")
+    jobs = [job for job in raw_jobs if isinstance(job, dict)] if isinstance(raw_jobs, list) else []
+    if not jobs:
+        typer.echo("No cron jobs.")
+        return
+    typer.echo("ID Name Schedule Status Target Agent ID Model")
+    for job in jobs:
+        job_id = str(job.get("id") or "").strip() or "-"
+        name = str(job.get("name") or "").strip() or "-"
+        schedule = _cron_schedule_label(job.get("schedule"))
+        status = _cron_status_label(cast("dict[str, object]", job))
+        target = str(job.get("sessionTarget") or "-").strip() or "-"
+        agent_id = str(job.get("agentId") or "-").strip() or "-"
+        model = _cron_payload_model(cast("dict[str, object]", job))
+        typer.echo(f"{job_id} {name} {schedule} {status} {target} {agent_id} {model}")
 
 
 def _emit_plugins_inventory(
@@ -9309,6 +9427,35 @@ def sandbox_explain_command(
 
     payload = _run(_run_with_services(_action))
     _emit_sandbox_explain(payload, json_output=json_output)
+
+
+@cron_app.command("status")
+def cron_status_command(
+    json_output: bool = typer.Option(False, "--json", help="Emit cron scheduler status as JSON."),
+) -> None:
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _call_gateway_node_method(services, "cron.status", {})
+
+    payload = _run(_run_with_services(_action))
+    _emit_cron_status(payload, json_output=json_output)
+
+
+@cron_app.command("list")
+def cron_list_command(
+    include_disabled: bool = typer.Option(
+        False,
+        "--all",
+        help="Include disabled cron jobs.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit cron jobs as JSON."),
+) -> None:
+    params: dict[str, object] = {"includeDisabled": True} if include_disabled else {}
+
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _call_gateway_node_method(services, "cron.list", params)
+
+    payload = _run(_run_with_services(_action))
+    _emit_cron_list(payload, json_output=json_output)
 
 
 @sessions_app.command("spawn")

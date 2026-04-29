@@ -2368,6 +2368,80 @@ def test_sandbox_explain_json_uses_saved_sandbox_metadata(monkeypatch) -> None:
     assert "agents.defaults.sandbox.mode" in payload["fixIt"]
 
 
+def test_cron_status_json_calls_gateway_method_owner(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {
+                "enabled": True,
+                "storePath": r"C:\Users\skull\.openzues\cron.json",
+                "jobs": 2,
+                "nextWakeAtMs": 1_800_000_000_000,
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["cron", "status", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["enabled"] is True
+    assert payload["storePath"] == r"C:\Users\skull\.openzues\cron.json"
+    assert calls == [("cron.status", {})]
+
+
+def test_cron_list_human_output_calls_gateway_method_owner(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {
+                "jobs": [
+                    {
+                        "id": "task-blueprint:7",
+                        "name": "Daily report",
+                        "enabled": True,
+                        "schedule": {"kind": "every", "everyMs": 3_600_000},
+                        "state": {
+                            "nextRunAtMs": 1_800_000_000_000,
+                            "lastStatus": "ok",
+                        },
+                        "sessionTarget": "isolated",
+                        "agentId": "worker",
+                        "payload": {"kind": "agentTurn", "model": "gpt-5.4"},
+                    }
+                ]
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["cron", "list", "--all"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "task-blueprint:7" in result.stdout
+    assert "Daily report" in result.stdout
+    assert "every 1h" in result.stdout
+    assert "isolated" in result.stdout
+    assert calls == [("cron.list", {"includeDisabled": True})]
+
+
 def test_sessions_spawn_json_calls_gateway_method_owner(monkeypatch) -> None:
     calls: list[tuple[str, dict[str, object]]] = []
 
