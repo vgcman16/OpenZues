@@ -5037,6 +5037,10 @@ async def test_ops_mesh_service_send_direct_channel_poll_uses_telegram_native_ro
             "Telegram poll durationHours is not supported. "
             "Use durationSeconds (5-600) instead.",
         ),
+        (
+            {"duration_seconds": 60, "duration_hours": 1},
+            "durationSeconds and durationHours are mutually exclusive",
+        ),
     ],
 )
 @pytest.mark.asyncio

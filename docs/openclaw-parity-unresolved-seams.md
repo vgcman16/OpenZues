@@ -2221,6 +2221,23 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\gateway_node_methods.py
   src\openzues\services\ops_mesh.py`.
+- Closed the poll duration mutual-exclusion seam from OpenClaw
+  `normalizePollInput`: Gateway `poll` and OpsMesh direct/native provider poll
+  paths now reject requests that set both `durationSeconds` and
+  `durationHours` before runtime dispatch or replay/provider post
+  construction. Verified with `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "poll_rejects_mutual_duration_fields"`, `python -m pytest
+  tests\test_ops_mesh.py -q -k "rejects_invalid_telegram_durations"`,
+  adjacent gateway/OpsMesh poll packs, `ruff check
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\ops_mesh.py tests\test_gateway_node_methods.py
+  tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\ops_mesh.py`.
+- Next provider poll normalization queue heads: filter blank poll options
+  after trimming instead of rejecting them, then default omitted
+  `maxSelections` to `1` before gateway/runtime/provider dispatch.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially ACP spawn harness parity, richer `tools.invoke` executor parity
   (real plugin HTTP ordering and any additional intentional high-risk

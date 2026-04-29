@@ -16368,6 +16368,12 @@ def _validate_gateway_poll_duration_options(
     duration_seconds: int | None,
     duration_hours: int | None,
 ) -> None:
+    if duration_seconds is not None and duration_hours is not None:
+        raise GatewayNodeMethodError(
+            code="INVALID_REQUEST",
+            message="durationSeconds and durationHours are mutually exclusive",
+            status_code=400,
+        )
     if channel != "telegram":
         return
     if duration_seconds is None and duration_hours is not None:

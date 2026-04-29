@@ -1397,6 +1397,8 @@ def _validate_telegram_poll_duration_options(
     duration_seconds: int | None,
     duration_hours: int | None,
 ) -> None:
+    if duration_seconds is not None and duration_hours is not None:
+        raise ValueError("durationSeconds and durationHours are mutually exclusive")
     if duration_seconds is None and duration_hours is not None:
         raise ValueError(
             "Telegram poll durationHours is not supported. "
@@ -1432,6 +1434,15 @@ def _validate_direct_channel_poll_max_selections(
     cleaned = [option.strip() for option in options if option.strip()]
     if max_selections > len(cleaned):
         raise ValueError("maxSelections cannot exceed option count")
+
+
+def _validate_direct_channel_poll_duration_exclusivity(
+    *,
+    duration_seconds: int | None,
+    duration_hours: int | None,
+) -> None:
+    if duration_seconds is not None and duration_hours is not None:
+        raise ValueError("durationSeconds and durationHours are mutually exclusive")
 
 
 def _whatsapp_messages_endpoint(target: str | None) -> str:
@@ -7293,6 +7304,10 @@ class OpsMeshService:
             normalized_options,
             max_selections,
         )
+        _validate_direct_channel_poll_duration_exclusivity(
+            duration_seconds=duration_seconds,
+            duration_hours=duration_hours,
+        )
         if conversation_target.channel == "telegram":
             _validate_telegram_poll_duration_options(
                 duration_seconds=duration_seconds,
@@ -8550,6 +8565,10 @@ class OpsMeshService:
             )
             duration_seconds = _optional_int_payload_value(event, "durationSeconds")
             duration_hours = _optional_int_payload_value(event, "durationHours")
+            _validate_direct_channel_poll_duration_exclusivity(
+                duration_seconds=duration_seconds,
+                duration_hours=duration_hours,
+            )
             _validate_telegram_poll_duration_options(
                 duration_seconds=duration_seconds,
                 duration_hours=duration_hours,
@@ -8694,6 +8713,10 @@ class OpsMeshService:
             _validate_direct_channel_poll_option_count("discord", options)
             max_selections = _optional_int_payload_value(event, "maxSelections")
             _validate_direct_channel_poll_max_selections(options, max_selections)
+            _validate_direct_channel_poll_duration_exclusivity(
+                duration_seconds=_optional_int_payload_value(event, "durationSeconds"),
+                duration_hours=_optional_int_payload_value(event, "durationHours"),
+            )
             payload: dict[str, Any] = {
                 "poll": {
                     "question": {
@@ -8791,6 +8814,10 @@ class OpsMeshService:
             _validate_direct_channel_poll_max_selections(
                 options,
                 _optional_int_payload_value(event, "maxSelections"),
+            )
+            _validate_direct_channel_poll_duration_exclusivity(
+                duration_seconds=_optional_int_payload_value(event, "durationSeconds"),
+                duration_hours=_optional_int_payload_value(event, "durationHours"),
             )
             options = options[:3]
             payload: dict[str, Any] = {

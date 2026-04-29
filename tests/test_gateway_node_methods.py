@@ -37033,6 +37033,31 @@ async def test_poll_rejects_telegram_duration_hours_like_openclaw() -> None:
     assert exc_info.value.status_code == 400
 
 
+@pytest.mark.asyncio
+async def test_poll_rejects_mutual_duration_fields_like_openclaw() -> None:
+    service = GatewayNodeMethodService(GatewayNodeRegistry())
+
+    with pytest.raises(
+        GatewayNodeMethodError,
+        match="durationSeconds and durationHours are mutually exclusive",
+    ) as exc_info:
+        await service.call(
+            "poll",
+            {
+                "to": "123",
+                "question": "Ship it?",
+                "options": ["Yes", "No"],
+                "durationSeconds": 60,
+                "durationHours": 1,
+                "channel": "telegram",
+                "idempotencyKey": "idem-poll-duration-mutual",
+            },
+        )
+
+    assert exc_info.value.code == "INVALID_REQUEST"
+    assert exc_info.value.status_code == 400
+
+
 @pytest.mark.parametrize(
     ("channel", "target"),
     [

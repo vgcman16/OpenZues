@@ -1924,6 +1924,31 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\gateway_node_methods.py
   src\openzues\services\ops_mesh.py`.
+- Gateway `poll` and OpsMesh direct/native provider poll paths now reject
+  requests that set both `durationSeconds` and `durationHours`, using the
+  OpenClaw `normalizePollInput` mutual-exclusion error before runtime dispatch,
+  route lookup, or replay/provider payload construction.
+- Verified the duration mutual-exclusion slice with `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "poll_rejects_mutual_duration_fields"` (`1 passed`), `python -m pytest
+  tests\test_ops_mesh.py -q -k "rejects_invalid_telegram_durations"` (`3
+  passed`), adjacent gateway poll pack `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "poll_rejects_mutual_duration_fields or poll_rejects_telegram_duration or
+  poll_rejects_duration_seconds_for_non_telegram_like_openclaw or
+  poll_uses_channel_poll_runtime or
+  poll_rejects_max_selections_above_option_count"` (`6 passed`), adjacent
+  OpsMesh poll pack `python -m pytest tests\test_ops_mesh.py -q -k
+  "rejects_invalid_telegram_durations or
+  send_direct_channel_poll_uses_telegram_native_route or
+  send_direct_channel_poll_uses_discord_native_route or
+  send_direct_channel_poll_uses_whatsapp_native_route or
+  rejects_max_selections_above_options"` (`7 passed`), `ruff check
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\ops_mesh.py tests\test_gateway_node_methods.py
+  tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\ops_mesh.py`.
 
 ## References
 
