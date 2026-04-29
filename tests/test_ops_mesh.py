@@ -3738,6 +3738,85 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_whatsapp_native
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_chunks_whatsapp_long_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-whatsapp-long-text"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="WhatsApp Native Long Text Provider",
+        kind="whatsapp",
+        target="https://graph.facebook.com/v20.0/123456789",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="wa-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "whatsapp",
+            "account_id": "wa-business",
+            "peer_kind": "direct",
+            "peer_id": "direct:+15551234567",
+        },
+    )
+    whatsapp_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        whatsapp_posts.append((target, payload, secret_header_name, secret_token))
+        return {
+            "messaging_product": "whatsapp",
+            "contacts": [{"input": "+15551234567", "wa_id": "15551234567"}],
+            "messages": [{"id": f"wamid.chunk.{len(whatsapp_posts)}"}],
+        }
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+    long_text = "x" * 8500
+
+    result = await service.send_direct_channel_message(
+        channel="whatsapp",
+        to="direct:+15551234567",
+        message=long_text,
+        account_id="wa-business",
+        idempotency_key="idem-native-whatsapp-long-text",
+    )
+    delivery = await database.get_outbound_delivery(1)
+
+    assert result["messageId"] == "wamid.chunk.3"
+    assert len(whatsapp_posts) == 3
+    bodies = [post[1]["text"]["body"] for post in whatsapp_posts]  # type: ignore[index]
+    assert [len(body) for body in bodies] == [4000, 4000, 500]
+    assert "".join(str(body) for body in bodies) == long_text
+    assert all(
+        post[0] == "https://graph.facebook.com/v20.0/123456789/messages"
+        for post in whatsapp_posts
+    )
+    assert all(post[2] == "Authorization" for post in whatsapp_posts)
+    assert all(post[3] == "Bearer wa-access-token" for post in whatsapp_posts)
+    assert delivery is not None
+    assert delivery["route_scope"]["provider_result"]["messageId"] == "wamid.chunk.3"
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_send_direct_channel_message_splits_whatsapp_media(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

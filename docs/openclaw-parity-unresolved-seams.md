@@ -433,6 +433,10 @@ Telegram native sends now parse topic-qualified targets like
 `message_thread_id` instead of treating the full target as the chat id.
 Telegram parent supergroup routes now also match topic-qualified sends for the
 same chat id, while topic-specific routes remain specific to their thread id.
+WhatsApp native route sends now match OpenClaw's direct text/media outbound
+chunking contract for text-only long sends by splitting bodies into 4000
+character messages and returning the last provider message id instead of
+truncating the payload.
 
 Current queue-head adjustment: `tools.invoke` plugin execution now routes
 through a fakeable `GatewayPluginRuntimeService`, preserving core mappings

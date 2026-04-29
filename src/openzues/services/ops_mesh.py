@@ -1455,6 +1455,13 @@ def _whatsapp_apply_reply_context(payload: dict[str, Any], reply_to_id: str) -> 
         payload["context"] = {"message_id": normalized_reply_to_id}
 
 
+def _whatsapp_text_chunks(text: str, *, limit: int = 4000) -> list[str]:
+    if not text:
+        return [""]
+    safe_limit = max(1, limit)
+    return [text[index : index + safe_limit] for index in range(0, len(text), safe_limit)]
+
+
 def _cron_delivery_summary(mission: dict[str, Any]) -> str | None:
     summary = str(mission.get("last_checkpoint") or "").strip()
     return summary or None
@@ -8816,11 +8823,55 @@ class OpsMeshService:
                 }
                 _whatsapp_apply_reply_context(payload, reply_to_id)
             else:
+                text_chunks = _whatsapp_text_chunks(text)
+                if len(text_chunks) > 1:
+                    endpoint = _whatsapp_messages_endpoint(str(route.get("target") or ""))
+                    bearer_token = _whatsapp_bearer_token(secret_token)
+                    message_id = ""
+                    delivered_contact = recipient_id
+                    for chunk in text_chunks:
+                        message_payload = {
+                            "messaging_product": "whatsapp",
+                            "to": recipient_id,
+                            "type": "text",
+                            "text": {"body": chunk},
+                        }
+                        _whatsapp_apply_reply_context(message_payload, reply_to_id)
+                        result = self._post_json_webhook(
+                            endpoint,
+                            message_payload,
+                            secret_header_name="Authorization",
+                            secret_token=bearer_token,
+                        )
+                        if not isinstance(result, dict):
+                            raise RuntimeError("WhatsApp API returned a non-JSON response.")
+                        if result.get("error"):
+                            error = result.get("error")
+                            if isinstance(error, dict):
+                                detail = str(
+                                    error.get("message") or error.get("code") or "unknown"
+                                )
+                            else:
+                                detail = str(error)
+                            raise RuntimeError(f"WhatsApp API returned {detail}.")
+                        chunk_message_id = _whatsapp_message_id(result)
+                        if chunk_message_id is None:
+                            raise RuntimeError(
+                                "WhatsApp API response did not include a message id."
+                            )
+                        message_id = chunk_message_id
+                        delivered_contact = _whatsapp_contact_id(result, delivered_contact)
+                    return {
+                        "runtime": "native-provider-backed",
+                        "messageId": message_id,
+                        "chatId": delivered_contact,
+                        "channelId": delivered_contact,
+                    }
                 payload = {
                     "messaging_product": "whatsapp",
                     "to": recipient_id,
                     "type": "text",
-                    "text": {"body": text[:4096]},
+                    "text": {"body": text},
                 }
                 _whatsapp_apply_reply_context(payload, reply_to_id)
         result = self._post_json_webhook(
