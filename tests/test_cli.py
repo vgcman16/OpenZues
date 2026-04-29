@@ -2079,6 +2079,34 @@ def test_status_json_breadth_flags_add_runtime_sections_with_timeout(
     assert payload["securityAudit"]["status"] == "unavailable"
 
 
+def test_status_all_human_output_renders_pasteable_diagnosis(
+    tmp_path, monkeypatch
+) -> None:
+    _bootstrap_cli_workspace(tmp_path, monkeypatch)
+
+    async def fake_live_status(_settings: Settings) -> dict[str, object]:
+        return {
+            "headline": "Live dashboard headline",
+            "summary": "Live dashboard summary",
+            "mission_summary": {"active_count": 1, "blocked_count": 0},
+            "instance_summary": {"connected_count": 1, "total_count": 2},
+            "gateway_capability": {"summary": "Gateway route is configured."},
+        }
+
+    monkeypatch.setattr(cli_module, "_try_live_status_payload", fake_live_status)
+
+    result = runner.invoke(app, ["status", "--all", "--timeout", "5000"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "OpenClaw status --all" in result.stdout
+    assert "Overview" in result.stdout
+    assert "Channels" in result.stdout
+    assert "Agents" in result.stdout
+    assert "Diagnosis (read-only)" in result.stdout
+    assert "Live dashboard headline" in result.stdout
+    assert "timeout: 5000 ms" in result.stdout
+
+
 def test_routes_list_json_surfaces_saved_notification_routes(tmp_path, monkeypatch) -> None:
     data_dir = tmp_path / "data"
     _bootstrap_cli_workspace(tmp_path, monkeypatch)

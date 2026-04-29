@@ -78,10 +78,13 @@ control-chat submit seams used by the app-server path. Top-level
 `--timeout` / `--timeout-ms` breadth flags, forwards the timeout into the
 native live health probe for `--deep`, and projects honest unavailable JSON
 sections for provider usage and security-audit runtime adapters that do not
-yet exist. Remaining CLI/runtime parity includes text-mode `status --all`
-pasteable diagnosis output, ACP/sandbox status commands, deeper model
-auth/probe inspection, plugin/runtime inspection, doctor readiness checks,
-non-metadata external sandbox container cleanup, and broader TUI ergonomics.
+yet exist. Text-mode `status --all` now renders the OpenClaw-shaped
+pasteable report skeleton with overview, channel, agent, and read-only
+diagnosis sections backed by the same native status payload. Remaining
+CLI/runtime parity includes ACP/sandbox status commands, deeper model
+auth/probe inspection, provider usage/security-audit runtime adapters,
+plugin/runtime inspection, doctor readiness checks, non-metadata external
+sandbox container cleanup, and broader TUI ergonomics.
 The CLI now also exposes `models list` as a thin OpenClaw-shaped JSON/human
 wrapper over the production `models.list` gateway method owner, including
 provider/local filters without duplicating the model catalog runtime, and

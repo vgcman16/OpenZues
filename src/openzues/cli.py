@@ -1384,6 +1384,83 @@ def _emit_continue_action(payload: dict[str, object], *, json_output: bool) -> N
         typer.echo(f"mission: {mission_id}")
 
 
+def _emit_status_all_report(payload: dict[str, object]) -> None:
+    typer.echo("OpenClaw status --all")
+    typer.echo("")
+    typer.echo("Overview")
+    headline = str(payload.get("headline") or "").strip()
+    if headline:
+        typer.echo(f"headline: {headline}")
+    summary = str(payload.get("summary") or "").strip()
+    if summary:
+        typer.echo(f"summary: {summary}")
+    mission_summary = payload.get("mission_summary")
+    if isinstance(mission_summary, dict):
+        typer.echo(
+            "missions: "
+            f"{mission_summary.get('active_count', 0)} active, "
+            f"{mission_summary.get('blocked_count', 0)} blocked, "
+            f"{mission_summary.get('paused_count', 0)} paused, "
+            f"{mission_summary.get('failed_count', 0)} failed"
+        )
+    instance_summary = payload.get("instance_summary")
+    if isinstance(instance_summary, dict):
+        typer.echo(
+            "lanes: "
+            f"{instance_summary.get('connected_count', 0)} connected / "
+            f"{instance_summary.get('total_count', 0)} total"
+        )
+    gateway_capability = payload.get("gateway_capability")
+    if isinstance(gateway_capability, dict):
+        gateway_summary = str(gateway_capability.get("summary") or "").strip()
+        if gateway_summary:
+            typer.echo(f"gateway: {gateway_summary}")
+
+    typer.echo("")
+    typer.echo("Channels")
+    if isinstance(gateway_capability, dict):
+        connected_lane_health = gateway_capability.get("connected_lane_health")
+        if isinstance(connected_lane_health, dict):
+            typer.echo("lane health: " + str(connected_lane_health.get("summary") or ""))
+        warnings = gateway_capability.get("warnings")
+        if isinstance(warnings, list) and warnings:
+            for warning in warnings[:5]:
+                typer.echo("warning: " + str(warning))
+        else:
+            typer.echo("warning: none")
+    else:
+        typer.echo("warning: gateway capability unavailable")
+
+    typer.echo("")
+    typer.echo("Agents")
+    status_plan = payload.get("status_plan")
+    if isinstance(status_plan, dict):
+        action_kind = str(status_plan.get("action_kind") or "observe").strip()
+        typer.echo(f"status action: {action_kind}")
+    queue_plan = payload.get("queue_plan")
+    if isinstance(queue_plan, dict):
+        signal_id = str(queue_plan.get("signal_id") or "").strip()
+        if signal_id:
+            typer.echo(f"attention signal: {signal_id}")
+
+    typer.echo("")
+    typer.echo("Diagnosis (read-only)")
+    status_all = payload.get("status_all")
+    if isinstance(status_all, dict):
+        timeout_ms = status_all.get("timeoutMs")
+        if timeout_ms is not None:
+            typer.echo(f"timeout: {timeout_ms} ms")
+    health = payload.get("health")
+    if isinstance(health, dict):
+        typer.echo("health: " + str(health.get("status") or "unknown"))
+    usage = payload.get("usage")
+    if isinstance(usage, dict):
+        typer.echo("usage: " + str(usage.get("status") or "unknown"))
+    security_audit = payload.get("securityAudit")
+    if isinstance(security_audit, dict):
+        typer.echo("security audit: " + str(security_audit.get("status") or "unknown"))
+
+
 def _emit_attention_queue_action(payload: dict[str, object], *, json_output: bool) -> None:
     if json_output:
         _emit_payload(payload, json_output=True)
@@ -1416,6 +1493,9 @@ def _emit_attention_queue_action(payload: dict[str, object], *, json_output: boo
 def _emit_status(payload: dict[str, object], *, json_output: bool) -> None:
     if json_output:
         _emit_payload(payload, json_output=True)
+        return
+    if isinstance(payload.get("status_all"), dict):
+        _emit_status_all_report(payload)
         return
 
     headline = str(payload.get("headline") or "").strip()
@@ -4543,6 +4623,8 @@ def status_command(
                 timeout_ms=timeout_ms,
             )
         )
+        if all_output and not json_output:
+            payload["status_all"] = {"timeoutMs": timeout_ms}
         return payload
 
     payload = _run(_run_with_services(_action))
