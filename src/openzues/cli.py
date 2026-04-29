@@ -5656,6 +5656,14 @@ async def _remove_model_fallback_payload(
     return dict(result)
 
 
+async def _clear_model_fallbacks_payload(services: CliServices) -> dict[str, object]:
+    gateway_config = getattr(services, "gateway_config", None)
+    if not isinstance(gateway_config, GatewayConfigService):
+        raise ValueError("model fallback config runtime is unavailable.")
+    result = gateway_config.clear_model_fallbacks()
+    return dict(result)
+
+
 async def _build_models_list_payload(
     services: CliServices,
     *,
@@ -9035,6 +9043,16 @@ def models_fallbacks_remove_command(
     raw_fallbacks = payload.get("fallbacks")
     fallbacks = raw_fallbacks if isinstance(raw_fallbacks, list) else []
     typer.echo("Fallbacks: " + ", ".join(str(item) for item in fallbacks))
+
+
+@models_fallbacks_app.command("clear")
+def models_fallbacks_clear_command() -> None:
+    try:
+        _run(_run_with_services(_clear_model_fallbacks_payload))
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    typer.echo("Fallback list cleared.")
 
 
 @models_app.command("status")

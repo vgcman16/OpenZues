@@ -219,10 +219,12 @@ model aliases to canonical provider/model keys, upserts the configured model
 entry, appends only missing fallback targets, and writes through
 `GatewayConfigService`. `models fallbacks remove` now resolves model aliases,
 removes matching canonical fallback targets, preserves the remaining order, and
-returns the upstream not-found error for missing fallback targets. The next
-model CLI queue head is fallback clear,
-followed by image fallback and auth-order mutation clusters. Live auth probes
-remain unavailable until the native model auth health runtime exists.
+returns the upstream not-found error for missing fallback targets. `models
+fallbacks clear` now empties the configured text fallback list while preserving
+the existing primary model config. No smaller text fallback CLI command remains;
+the next model CLI queue head is image fallback list/add/remove/clear, followed
+by auth-order mutation clusters. Live auth probes remain unavailable until the
+native model auth health runtime exists.
 Top-level `health`
 now queries the live gateway `/api/health` and `/readyz` owners, emits
 OpenClaw-shaped JSON/human readiness fields, and propagates the configured

@@ -241,6 +241,15 @@ class GatewayConfigService:
         write_result.update({"target": target, "fallbacks": fallbacks})
         return write_result
 
+    def clear_model_fallbacks(self) -> dict[str, Any]:
+        config_path = self._require_config_path()
+        current = self.build_snapshot()
+        next_snapshot = _set_model_fallbacks_in_snapshot(current, fallbacks=[])
+        base_hash = self._snapshot_hash(current) if config_path.exists() else None
+        write_result = self._write_snapshot(next_snapshot, base_hash=base_hash)
+        write_result.update({"fallbacks": []})
+        return write_result
+
     def record_marketplace_plugin_install(
         self,
         *,
