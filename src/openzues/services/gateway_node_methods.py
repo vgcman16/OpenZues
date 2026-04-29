@@ -5082,6 +5082,8 @@ class GatewayNodeMethodService:
                 raw,
                 base_hash=base_hash,
             )
+            if patch_result.get("noop") is True:
+                return patch_result
             return await _attach_config_restart_sentinel(
                 self._database,
                 patch_result,

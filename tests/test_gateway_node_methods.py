@@ -30051,6 +30051,49 @@ async def test_config_write_methods_return_explicit_unavailable_contract(
 
 
 @pytest.mark.asyncio
+async def test_config_patch_noop_skips_restart_sentinel(tmp_path) -> None:
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        config_service=GatewayConfigService(
+            assistant_name="OpenZues",
+            assistant_avatar="/static/favicon.svg",
+            assistant_agent_id="assistant-control-ui",
+            server_version="9.9.9",
+            data_dir=tmp_path,
+        ),
+    )
+    raw_snapshot = json.dumps(
+        {
+            "basePath": "",
+            "assistantName": "Parity Builder",
+            "assistantAvatar": "/static/parity.svg",
+            "assistantAgentId": "assistant-control-ui",
+            "serverVersion": "9.9.9",
+            "localMediaPreviewRoots": [],
+            "embedSandbox": "scripts",
+            "allowExternalEmbedUrls": False,
+        }
+    )
+
+    set_payload = await service.call("config.set", {"raw": raw_snapshot})
+    noop_payload = await service.call(
+        "config.patch",
+        {
+            "raw": "{}",
+            "baseHash": set_payload["hash"],
+            "sessionKey": "agent:main:thread:demo",
+            "note": "This should not restart.",
+        },
+    )
+
+    assert noop_payload["ok"] is True
+    assert noop_payload["noop"] is True
+    assert noop_payload["config"] == set_payload["config"]
+    assert "restart" not in noop_payload
+    assert "sentinel" not in noop_payload
+
+
+@pytest.mark.asyncio
 async def test_config_write_methods_persist_control_ui_config_with_base_hash(tmp_path) -> None:
     expected_path = tmp_path / "settings" / "control-ui-config.json"
     service = GatewayNodeMethodService(
