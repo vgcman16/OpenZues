@@ -82,6 +82,10 @@ These are complete within the bounded OpenZues-local parity contract verified in
 - `python -m pytest tests\test_gateway_acp_spawn.py -q`: 2 passed after adding the native ACP spawn service.
 - `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_spawn or agent_wait or send_uses_channel_message_runtime or send_preserves_provider_native or tools_invoke"`: 98 passed after ACP, sandbox, thread-binder, provider-send, and plugin-runtime slices.
 - `python -m pytest tests\test_ops_mesh.py -q -k "send_direct_channel_message"`: 15 passed after preserving provider-native send options and Telegram document/reply/silent/thread payloads.
+- `python -m pytest tests\test_ops_mesh.py -q -k "send_direct_channel_message or send_direct_channel_poll or replay_outbound_deliveries_retries_saved_failed"`: 34 passed after widening provider result metadata, Slack/Discord native option handling, and provider-backed saved send/poll replay.
+- `python -m pytest tests\test_ops_mesh.py -q`: 96 passed after the provider-native outbound replay and metadata slice.
+- `ruff check src\openzues\services\gateway_outbound_runtime.py src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`: clean after the provider-native outbound replay and metadata slice.
+- `mypy src\openzues\services\gateway_outbound_runtime.py src\openzues\services\ops_mesh.py`: clean after the provider-native outbound replay and metadata slice.
 - `ruff check src\openzues\services\gateway_acp_spawn.py src\openzues\services\gateway_node_methods.py src\openzues\services\gateway_outbound_runtime.py src\openzues\services\gateway_plugin_runtime.py src\openzues\services\ops_mesh.py src\openzues\app.py tests\test_gateway_acp_spawn.py tests\test_gateway_node_methods.py tests\test_ops_mesh.py`: clean.
 - `mypy src\openzues\services\gateway_acp_spawn.py src\openzues\services\gateway_node_methods.py src\openzues\services\gateway_outbound_runtime.py src\openzues\services\gateway_plugin_runtime.py src\openzues\services\ops_mesh.py src\openzues\app.py`: clean.
 - `pytest tests/test_gateway_node_methods.py -q -k cron`: 48 passed after adding cron-expression schedule create/update/due-run coverage.

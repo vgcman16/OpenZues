@@ -50,8 +50,13 @@ OpenClaw runtime delivery fields (`messageThreadId`, `replyToId`,
 `replyToMessageId`, `silent`, `forceDocument`, media, account, and thread)
 through gateway `send`, `OpsMeshService`, shared outbound runtime requests,
 route-backed providers, and Telegram native document/reply/silent/thread
-payloads. Remaining provider work is broader per-provider option coverage and
-CLI/runtime send surfaces.
+payloads. The provider runtime result envelope now also persists `messageId`,
+`runtime`, `channel`, `roomId`, `timestamp`, and safe `meta` fields, Slack
+route sends use `replyToId` as the thread fallback, Discord route sends preserve
+reply and silent flags, and saved failed `gateway/send` / `gateway/poll` rows
+replay through provider-native runtime calls with their original OpenClaw-style
+delivery options. Remaining provider work is CLI/runtime send surfaces and any
+deeper provider-specific edge cases not yet exposed by focused tests.
 
 Current queue-head adjustment: `tools.invoke` plugin execution now routes
 through a fakeable `GatewayPluginRuntimeService`, preserving core mappings

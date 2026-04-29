@@ -1130,15 +1130,21 @@ def _serialize_gateway_direct_channel_transport(
 def _serialize_gateway_provider_result(result: dict[str, Any]) -> dict[str, object]:
     payload: dict[str, object] = {}
     for key in (
+        "runtime",
+        "messageId",
+        "channel",
         "chatId",
         "channelId",
+        "roomId",
         "toJid",
         "conversationId",
+        "timestamp",
         "pollId",
         "mediaId",
         "mediaIds",
         "mediaUrl",
         "mediaUrls",
+        "meta",
     ):
         value = result.get(key)
         if value in (None, "", [], {}):
@@ -1147,6 +1153,14 @@ def _serialize_gateway_provider_result(result: dict[str, Any]) -> dict[str, obje
             payload[key] = value
         else:
             payload[key] = str(value)
+    return payload
+
+
+def _serialize_gateway_response_provider_result(
+    result: dict[str, Any],
+) -> dict[str, object]:
+    payload = _serialize_gateway_provider_result(result)
+    payload.pop("runtime", None)
     return payload
 
 
@@ -3660,7 +3674,14 @@ class OpsMeshService:
     ) -> tuple[bool, str | None]:
         delivery_id = int(delivery_row["id"])
         route_kind = str(delivery_row.get("route_kind") or "").strip().lower() or "session"
+        event_type = str(delivery_row.get("event_type") or "").strip().lower()
         session_key = str(delivery_row.get("session_key") or "").strip()
+        event_payload = delivery_row.get("event_payload")
+        payload = event_payload if isinstance(event_payload, dict) else {}
+        route_scope = dict(delivery_row.get("route_scope") or {})
+        conversation_target = _normalize_conversation_target(
+            delivery_row.get("conversation_target")
+        ) or _normalize_conversation_target(payload.get("conversationTarget"))
         replay_message = _saved_outbound_delivery_replay_message(delivery_row)
         runtime = self._resolve_outbound_runtime_service()
         attempt_started_at = utcnow()
@@ -3703,10 +3724,102 @@ class OpsMeshService:
             )
             return False, error
         try:
-            runtime_result = await runtime.deliver_message(
-                session_key=session_key,
-                message=replay_message,
-            )
+            if event_type == "gateway/poll":
+                raw_options = payload.get("options")
+                poll_options = (
+                    tuple(str(option).strip() for option in raw_options if str(option).strip())
+                    if isinstance(raw_options, list)
+                    else ()
+                )
+                runtime_result = await runtime.deliver_poll(
+                    session_key=session_key,
+                    message=replay_message,
+                    channel=str(
+                        payload.get("channel")
+                        or (conversation_target or {}).get("channel")
+                        or ""
+                    ).strip()
+                    or None,
+                    target=str(
+                        payload.get("to")
+                        or (conversation_target or {}).get("peer_id")
+                        or ""
+                    ).strip()
+                    or None,
+                    question=str(payload.get("question") or payload.get("summary") or ""),
+                    options=poll_options,
+                    max_selections=_optional_int_payload_value(payload, "maxSelections"),
+                    duration_seconds=_optional_int_payload_value(
+                        payload,
+                        "durationSeconds",
+                    ),
+                    duration_hours=_optional_int_payload_value(payload, "durationHours"),
+                    silent=_optional_bool_payload_value(payload, "silent"),
+                    is_anonymous=_optional_bool_payload_value(payload, "isAnonymous"),
+                    account_id=str(
+                        payload.get("accountId")
+                        or (conversation_target or {}).get("account_id")
+                        or route_scope.get("resolved_account_id")
+                        or ""
+                    ).strip()
+                    or None,
+                    thread_id=str(
+                        payload.get("threadId") or route_scope.get("thread_id") or ""
+                    ).strip()
+                    or None,
+                )
+            elif event_type == "gateway/send":
+                raw_media_url = payload.get("mediaUrl")
+                raw_media_urls = payload.get("mediaUrls")
+                media_url = raw_media_url if isinstance(raw_media_url, str) else None
+                media_urls = (
+                    [str(media_url) for media_url in raw_media_urls]
+                    if isinstance(raw_media_urls, list)
+                    else None
+                )
+                runtime_result = await runtime.deliver_message(
+                    session_key=session_key,
+                    message=replay_message,
+                    channel=str(
+                        payload.get("channel")
+                        or (conversation_target or {}).get("channel")
+                        or ""
+                    ).strip()
+                    or None,
+                    target=str(
+                        payload.get("to")
+                        or (conversation_target or {}).get("peer_id")
+                        or ""
+                    ).strip()
+                    or None,
+                    media_urls=tuple(
+                        _normalize_direct_channel_media_urls(
+                            media_url=media_url,
+                            media_urls=media_urls,
+                        )
+                    ),
+                    gif_playback=_optional_bool_payload_value(payload, "gifPlayback"),
+                    reply_to_id=str(payload.get("replyToId") or "").strip() or None,
+                    silent=_optional_bool_payload_value(payload, "silent"),
+                    force_document=_optional_bool_payload_value(payload, "forceDocument"),
+                    account_id=str(
+                        payload.get("accountId")
+                        or (conversation_target or {}).get("account_id")
+                        or route_scope.get("resolved_account_id")
+                        or ""
+                    ).strip()
+                    or None,
+                    thread_id=str(
+                        payload.get("threadId") or route_scope.get("thread_id") or ""
+                    ).strip()
+                    or None,
+                    agent_id=str(payload.get("agentId") or "").strip() or None,
+                )
+            else:
+                runtime_result = await runtime.deliver_message(
+                    session_key=session_key,
+                    message=replay_message,
+                )
         except (GatewayOutboundRuntimeUnavailableError, Exception) as exc:
             error = str(exc)[:240]
             await self.database.update_outbound_delivery(
@@ -3718,6 +3831,11 @@ class OpsMeshService:
                 last_error=error,
             )
             return False, error
+        delivered_route_scope = dict(route_scope)
+        delivered_route_scope["transport_runtime"] = runtime_result.transport.runtime
+        provider_result = _serialize_gateway_provider_result(runtime_result.native_result)
+        if provider_result:
+            delivered_route_scope["provider_result"] = provider_result
         await self.database.update_outbound_delivery(
             delivery_id,
             delivery_state="delivered",
@@ -3726,6 +3844,7 @@ class OpsMeshService:
             delivered_at=utcnow(),
             last_error=None,
             delivery_message_id=runtime_result.message_id,
+            route_scope=delivered_route_scope,
         )
         return True, None
 
@@ -5389,7 +5508,7 @@ class OpsMeshService:
             response["transport"] = _serialize_gateway_direct_channel_transport(transport)
         provider_result = result.get("provider_result")
         if isinstance(provider_result, dict):
-            response.update(_serialize_gateway_provider_result(provider_result))
+            response.update(_serialize_gateway_response_provider_result(provider_result))
         message_id = str(result.get("message_id") or "").strip()
         if message_id:
             response["messageId"] = message_id
@@ -5483,7 +5602,7 @@ class OpsMeshService:
             response["transport"] = _serialize_gateway_direct_channel_transport(transport)
         provider_result = result.get("provider_result")
         if isinstance(provider_result, dict):
-            response.update(_serialize_gateway_provider_result(provider_result))
+            response.update(_serialize_gateway_response_provider_result(provider_result))
         message_id = str(result.get("message_id") or "").strip()
         if message_id:
             response["messageId"] = message_id
@@ -6421,7 +6540,7 @@ class OpsMeshService:
                 else None
             ),
         )
-        thread_id = str(event.get("threadId") or "").strip()
+        thread_id = str(event.get("replyToId") or event.get("threadId") or "").strip()
         if media_urls and event_type == "gateway/send":
             media_ids = self._upload_slack_media_files(
                 route=route,
@@ -6645,6 +6764,8 @@ class OpsMeshService:
             event.get("to") or (conversation_target or {}).get("peer_id") or ""
         ).strip()
         thread_id = str(event.get("threadId") or "").strip()
+        reply_to_id = str(event.get("replyToId") or "").strip()
+        silent = _optional_bool_payload_value(event, "silent")
         if event_type == "gateway/poll":
             options = [str(option).strip() for option in event.get("options", [])]
             options = [option for option in options if option]
@@ -6683,6 +6804,13 @@ class OpsMeshService:
                     {"image": {"url": media_url}}
                     for media_url in media_urls[:10]
                 ]
+        if silent is True:
+            payload["flags"] = int(payload.get("flags") or 0) | (1 << 12)
+        if reply_to_id and event_type == "gateway/send":
+            payload["message_reference"] = {
+                "message_id": reply_to_id,
+                "fail_if_not_exists": False,
+            }
         if thread_id:
             payload["thread_id"] = thread_id
         result = self._post_json_webhook(

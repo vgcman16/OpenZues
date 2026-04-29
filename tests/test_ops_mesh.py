@@ -2169,6 +2169,7 @@ async def test_ops_mesh_service_send_direct_channel_message_preserves_provider_n
     assert delivery["event_payload"]["silent"] is True
     assert delivery["event_payload"]["forceDocument"] is True
     assert delivery["route_scope"]["provider_result"] == {
+        "messageId": "provider-send-options-1",
         "conversationId": "thread:topic-42"
     }
 
@@ -2278,10 +2279,160 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_native_adapter_
     assert delivery is not None
     assert delivery["route_scope"]["transport_runtime"] == "native-provider-backed"
     assert delivery["route_scope"]["provider_result"] == {
+        "messageId": "native-slack-send-1",
         "chatId": "C123",
         "channelId": "slack:C123",
         "mediaIds": ["file-1"],
     }
+
+
+@pytest.mark.asyncio
+async def test_provider_result_persistence_keeps_message_id_runtime_and_meta() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-provider-result-metadata"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+
+    async def fake_native_delivery(
+        request: GatewayOutboundRuntimeMessageRequest,
+    ) -> dict[str, object]:
+        assert request.channel == "slack"
+        return {
+            "runtime": "native-provider-backed",
+            "messageId": "native-meta-1",
+            "channel": "slack",
+            "chatId": "C123",
+            "channelId": "slack:C123",
+            "conversationId": "thread:C123",
+            "pollId": "poll-123",
+            "roomId": "room-9",
+            "timestamp": 1713980000,
+            "meta": {"hook": "ok", "attempt": 1},
+        }
+
+    runtime = GatewayOutboundRuntimeService()
+    runtime.bind_native_message_deliverer(
+        channel="slack",
+        deliverer=fake_native_delivery,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        outbound_runtime_service=runtime,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="slack",
+        to="channel:C123",
+        message="Preserve provider metadata.",
+        idempotency_key="idem-provider-result-metadata",
+    )
+
+    delivery = await database.get_outbound_delivery(1)
+
+    assert result["messageId"] == "native-meta-1"
+    assert result["chatId"] == "C123"
+    assert result["channelId"] == "slack:C123"
+    assert result["conversationId"] == "thread:C123"
+    assert result["pollId"] == "poll-123"
+    assert result["roomId"] == "room-9"
+    assert result["timestamp"] == 1713980000
+    assert result["meta"] == {"hook": "ok", "attempt": 1}
+    assert delivery is not None
+    assert delivery["delivery_message_id"] == "native-meta-1"
+    assert delivery["route_scope"]["provider_result"] == {
+        "runtime": "native-provider-backed",
+        "messageId": "native-meta-1",
+        "channel": "slack",
+        "chatId": "C123",
+        "channelId": "slack:C123",
+        "conversationId": "thread:C123",
+        "pollId": "poll-123",
+        "roomId": "room-9",
+        "timestamp": 1713980000,
+        "meta": {"hook": "ok", "attempt": 1},
+    }
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_uses_slack_reply_to_thread(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-slack-reply-to"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Slack Reply Native Provider",
+        kind="slack",
+        target="https://slack.com/api",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="xoxb-route-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "slack",
+            "account_id": "workspace-bot",
+            "peer_kind": "channel",
+            "peer_id": "channel:C123",
+        },
+    )
+    slack_posts: list[tuple[str, dict[str, object]]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self, secret_header_name, secret_token
+        slack_posts.append((target, payload))
+        return {
+            "ok": True,
+            "channel": "C123",
+            "ts": "1713980000.000300",
+        }
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    await service.send_direct_channel_message(
+        channel="slack",
+        to="channel:C123",
+        message="Reply in the existing Slack thread.",
+        account_id="workspace-bot",
+        reply_to_id="1712000000.000001",
+        idempotency_key="idem-native-slack-reply-to",
+    )
+
+    assert slack_posts == [
+        (
+            "https://slack.com/api/chat.postMessage",
+            {
+                "channel": "C123",
+                "text": "Reply in the existing Slack thread.",
+                "thread_ts": "1712000000.000001",
+            },
+        )
+    ]
 
 
 @pytest.mark.asyncio
@@ -2432,6 +2583,8 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_slack_native_ro
     assert delivery is not None
     assert delivery["route_scope"]["transport_runtime"] == "native-provider-backed"
     assert delivery["route_scope"]["provider_result"] == {
+        "runtime": "native-provider-backed",
+        "messageId": "F111",
         "chatId": "C123",
         "channelId": "C123",
         "mediaIds": ["F111"],
@@ -2544,6 +2697,8 @@ async def test_ops_mesh_service_tests_slack_native_route_with_native_payload(
     assert delivery["delivery_message_id"] == "1713980000.000300"
     assert delivery["route_scope"]["transport_runtime"] == "native-provider-backed"
     assert delivery["route_scope"]["provider_result"] == {
+        "runtime": "native-provider-backed",
+        "messageId": "1713980000.000300",
         "chatId": "C123",
         "channelId": "C123",
     }
@@ -2667,6 +2822,8 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_telegram_native
     assert delivery is not None
     assert delivery["route_scope"]["transport_runtime"] == "native-provider-backed"
     assert delivery["route_scope"]["provider_result"] == {
+        "runtime": "native-provider-backed",
+        "messageId": "42",
         "chatId": "-100123",
         "channelId": "-100123",
         "mediaIds": ["large-photo"],
@@ -2984,10 +3141,87 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_discord_native_
     assert delivery is not None
     assert delivery["route_scope"]["transport_runtime"] == "native-provider-backed"
     assert delivery["route_scope"]["provider_result"] == {
+        "runtime": "native-provider-backed",
+        "messageId": "discord-message-1",
         "chatId": "987654321",
         "channelId": "987654321",
         "mediaUrls": ["https://example.com/discord.png"],
     }
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_preserves_discord_reply_and_silent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-discord-reply"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Discord Reply Native Provider",
+        kind="discord",
+        target="https://discord.com/api/webhooks/webhook-id/webhook-token",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token=None,
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "discord",
+            "account_id": "discord-webhook",
+            "peer_kind": "channel",
+            "peer_id": "channel:987654321",
+        },
+    )
+    discord_posts: list[tuple[str, dict[str, object]]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self, secret_header_name, secret_token
+        discord_posts.append((target, payload))
+        return {"id": "discord-reply-1", "channel_id": "987654321"}
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    await service.send_direct_channel_message(
+        channel="discord",
+        to="channel:987654321",
+        message="Reply without notifying everyone.",
+        account_id="discord-webhook",
+        reply_to_id="parent-message-1",
+        silent=True,
+        idempotency_key="idem-native-discord-reply-silent",
+    )
+
+    assert discord_posts == [
+        (
+            "https://discord.com/api/webhooks/webhook-id/webhook-token?wait=true",
+            {
+                "content": "Reply without notifying everyone.",
+                "flags": 1 << 12,
+                "message_reference": {
+                    "message_id": "parent-message-1",
+                    "fail_if_not_exists": False,
+                },
+            },
+        )
+    ]
 
 
 @pytest.mark.asyncio
@@ -3109,6 +3343,8 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_whatsapp_native
     assert delivery is not None
     assert delivery["route_scope"]["transport_runtime"] == "native-provider-backed"
     assert delivery["route_scope"]["provider_result"] == {
+        "runtime": "native-provider-backed",
+        "messageId": "wamid.send.1",
         "chatId": "15551234567",
         "channelId": "15551234567",
         "mediaUrls": ["https://example.com/whatsapp.png"],
@@ -3350,6 +3586,7 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_gateway_route_a
     assert delivery["delivery_state"] == "delivered"
     assert delivery["delivery_message_id"] == "route-provider-send-1"
     assert delivery["route_scope"]["provider_result"] == {
+        "messageId": "route-provider-send-1",
         "chatId": "C123",
         "channelId": "slack:C123",
         "toJid": "C123@slack",
@@ -4008,6 +4245,8 @@ async def test_ops_mesh_service_send_direct_channel_poll_uses_slack_native_route
     assert delivery is not None
     assert delivery["route_scope"]["transport_runtime"] == "native-provider-backed"
     assert delivery["route_scope"]["provider_result"] == {
+        "runtime": "native-provider-backed",
+        "messageId": "1713980000.000200",
         "chatId": "C123",
         "channelId": "C123",
         "conversationId": "C123",
@@ -4134,6 +4373,8 @@ async def test_ops_mesh_service_send_direct_channel_poll_uses_telegram_native_ro
     assert delivery is not None
     assert delivery["route_scope"]["transport_runtime"] == "native-provider-backed"
     assert delivery["route_scope"]["provider_result"] == {
+        "runtime": "native-provider-backed",
+        "messageId": "43",
         "chatId": "-100123",
         "channelId": "-100123",
         "conversationId": "-100123",
@@ -4255,6 +4496,8 @@ async def test_ops_mesh_service_send_direct_channel_poll_uses_discord_native_rou
     assert delivery is not None
     assert delivery["route_scope"]["transport_runtime"] == "native-provider-backed"
     assert delivery["route_scope"]["provider_result"] == {
+        "runtime": "native-provider-backed",
+        "messageId": "discord-poll-1",
         "chatId": "987654321",
         "channelId": "987654321",
         "conversationId": "987654321",
@@ -4394,6 +4637,8 @@ async def test_ops_mesh_service_send_direct_channel_poll_uses_whatsapp_native_ro
     assert delivery is not None
     assert delivery["route_scope"]["transport_runtime"] == "native-provider-backed"
     assert delivery["route_scope"]["provider_result"] == {
+        "runtime": "native-provider-backed",
+        "messageId": "wamid.poll.1",
         "chatId": "15551234567",
         "channelId": "15551234567",
         "conversationId": "15551234567",
@@ -7311,6 +7556,247 @@ async def test_replay_outbound_deliveries_retries_saved_failed_gateway_poll_deli
     assert refreshed_delivery["delivery_state"] == "delivered"
     assert refreshed_delivery["attempt_count"] == 2
     assert refreshed_delivery["last_error"] is None
+
+
+@pytest.mark.asyncio
+async def test_replay_outbound_deliveries_retries_saved_failed_gateway_send_via_provider_runtime(
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-replay-gateway-send-provider"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    session_key = (
+        "launch:mode:workspace_affinity:channel:telegram:account:alerts:"
+        "peer:chat:ops:thread:topic-42"
+    )
+    conversation_target = {
+        "channel": "telegram",
+        "account_id": "alerts",
+        "peer_kind": "channel",
+        "peer_id": "chat:ops",
+        "summary": "telegram account alerts channel ops",
+    }
+    delivery_id = await database.create_outbound_delivery(
+        route_id=None,
+        route_name="Gateway send to Replay Provider",
+        route_kind="announce",
+        route_target="telegram account alerts channel ops",
+        event_type="gateway/send",
+        session_key=session_key,
+        conversation_target=conversation_target,
+        route_scope={
+            "route_name": "Gateway send to Replay Provider",
+            "route_kind": "announce",
+            "route_target": "telegram account alerts channel ops",
+            "route_match": "explicitTarget",
+            "source": "gateway.send",
+            "idempotency_key": "idem-replay-send-provider",
+            "thread_id": "topic-42",
+        },
+        event_payload={
+            "message": "Replay provider send.",
+            "channel": "telegram",
+            "to": "chat:ops",
+            "accountId": "alerts",
+            "threadId": "topic-42",
+            "replyToId": "message-99",
+            "silent": True,
+            "forceDocument": True,
+            "mediaUrl": "https://example.com/replay.pdf",
+            "mediaUrls": ["https://example.com/replay.pdf"],
+            "gifPlayback": False,
+            "agentId": "release-bot",
+            "sessionKey": session_key,
+            "conversationTarget": conversation_target,
+        },
+        message_summary="Replay provider send.",
+        test_delivery=False,
+        delivery_state="failed",
+        attempt_count=1,
+        last_attempt_at=(datetime.now(UTC) - timedelta(minutes=10)).isoformat(),
+        last_error="temporary delivery timeout",
+    )
+    provider_requests: list[GatewayOutboundRuntimeMessageRequest] = []
+
+    async def fake_provider_delivery(
+        request: GatewayOutboundRuntimeMessageRequest,
+    ) -> dict[str, object]:
+        provider_requests.append(request)
+        return {
+            "runtime": "provider-backed",
+            "messageId": "provider-replay-send-1",
+            "conversationId": "topic-42",
+            "roomId": "room-telegram",
+        }
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),
+        FakeMissionService([]),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        outbound_runtime_service=GatewayOutboundRuntimeService(
+            provider_message_deliverer=fake_provider_delivery,
+        ),
+    )
+
+    result = await service.replay_outbound_deliveries(limit=10)
+    refreshed_delivery = await database.get_outbound_delivery(delivery_id)
+
+    assert result.ok is True
+    assert result.replayed_count == 1
+    assert provider_requests == [
+        GatewayOutboundRuntimeMessageRequest(
+            channel="telegram",
+            target="chat:ops",
+            message=(
+                "Replay provider send.\n\n"
+                "Media:\n"
+                "1. https://example.com/replay.pdf\n\n"
+                "Settings: gifPlayback=false"
+            ),
+            media_urls=("https://example.com/replay.pdf",),
+            gif_playback=False,
+            reply_to_id="message-99",
+            silent=True,
+            force_document=True,
+            account_id="alerts",
+            thread_id="topic-42",
+            session_key=session_key,
+            agent_id="release-bot",
+        )
+    ]
+    assert refreshed_delivery is not None
+    assert refreshed_delivery["delivery_state"] == "delivered"
+    assert refreshed_delivery["delivery_message_id"] == "provider-replay-send-1"
+    assert refreshed_delivery["route_scope"]["transport_runtime"] == "provider-backed"
+    assert refreshed_delivery["route_scope"]["provider_result"] == {
+        "runtime": "provider-backed",
+        "messageId": "provider-replay-send-1",
+        "conversationId": "topic-42",
+        "roomId": "room-telegram",
+    }
+
+
+@pytest.mark.asyncio
+async def test_replay_outbound_deliveries_retries_saved_failed_gateway_poll_via_provider_runtime(
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-replay-gateway-poll-provider"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    session_key = (
+        "launch:mode:workspace_affinity:channel:slack:account:workspace-bot:"
+        "peer:channel:C123:thread:1710000000.9999"
+    )
+    conversation_target = {
+        "channel": "slack",
+        "account_id": "workspace-bot",
+        "peer_kind": "channel",
+        "peer_id": "channel:C123",
+        "summary": "slack account workspace-bot channel C123",
+    }
+    delivery_id = await database.create_outbound_delivery(
+        route_id=None,
+        route_name="Gateway poll to Replay Provider",
+        route_kind="announce",
+        route_target="slack account workspace-bot channel C123",
+        event_type="gateway/poll",
+        session_key=session_key,
+        conversation_target=conversation_target,
+        route_scope={
+            "route_name": "Gateway poll to Replay Provider",
+            "route_kind": "announce",
+            "route_target": "slack account workspace-bot channel C123",
+            "route_match": "explicitTarget",
+            "source": "gateway.poll",
+            "idempotency_key": "idem-replay-poll-provider",
+            "thread_id": "1710000000.9999",
+        },
+        event_payload={
+            "summary": "Replay provider poll?",
+            "question": "Replay provider poll?",
+            "options": ["Yes", "No"],
+            "channel": "slack",
+            "to": "channel:C123",
+            "accountId": "workspace-bot",
+            "maxSelections": 1,
+            "durationSeconds": 3600,
+            "silent": True,
+            "isAnonymous": False,
+            "threadId": "1710000000.9999",
+            "sessionKey": session_key,
+            "conversationTarget": conversation_target,
+        },
+        message_summary="Replay provider poll?",
+        test_delivery=False,
+        delivery_state="failed",
+        attempt_count=1,
+        last_attempt_at=(datetime.now(UTC) - timedelta(minutes=10)).isoformat(),
+        last_error="temporary delivery timeout",
+    )
+    provider_requests: list[GatewayOutboundRuntimePollRequest] = []
+
+    async def fake_provider_delivery(
+        request: GatewayOutboundRuntimePollRequest,
+    ) -> dict[str, object]:
+        provider_requests.append(request)
+        return {
+            "runtime": "provider-backed",
+            "messageId": "provider-replay-poll-1",
+            "pollId": "poll-provider-1",
+            "conversationId": "C123",
+            "timestamp": 1713980000,
+        }
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),
+        FakeMissionService([]),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        outbound_runtime_service=GatewayOutboundRuntimeService(
+            provider_poll_deliverer=fake_provider_delivery,
+        ),
+    )
+
+    result = await service.replay_outbound_deliveries(limit=10)
+    refreshed_delivery = await database.get_outbound_delivery(delivery_id)
+
+    assert result.ok is True
+    assert result.replayed_count == 1
+    assert provider_requests == [
+        GatewayOutboundRuntimePollRequest(
+            channel="slack",
+            target="channel:C123",
+            question="Replay provider poll?",
+            options=("Yes", "No"),
+            max_selections=1,
+            duration_seconds=3600,
+            silent=True,
+            is_anonymous=False,
+            account_id="workspace-bot",
+            thread_id="1710000000.9999",
+            session_key=session_key,
+        )
+    ]
+    assert refreshed_delivery is not None
+    assert refreshed_delivery["delivery_state"] == "delivered"
+    assert refreshed_delivery["delivery_message_id"] == "provider-replay-poll-1"
+    assert refreshed_delivery["route_scope"]["transport_runtime"] == "provider-backed"
+    assert refreshed_delivery["route_scope"]["provider_result"] == {
+        "runtime": "provider-backed",
+        "messageId": "provider-replay-poll-1",
+        "conversationId": "C123",
+        "timestamp": 1713980000,
+        "pollId": "poll-provider-1",
+    }
 
 
 @pytest.mark.asyncio
