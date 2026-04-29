@@ -1336,6 +1336,18 @@ These are complete within the bounded OpenZues-local parity contract verified in
   routes_poll_human_output_calls_native_direct_poll_runtime"` (`17 passed`),
   `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
   src\openzues\cli.py`.
+- `cron add` now preserves upstream cron-schedule timezone and staggering
+  flags for native-supported schedules: `--tz`, `--stagger`, and `--exact`
+  populate `schedule.tz` and `schedule.staggerMs` with the same cron-only
+  validation rules.
+- Verified the cron add schedule breadth slice with `python -m pytest
+  tests\test_cli.py -q -k
+  "cron_add_cron_timezone_and_stagger_shape_schedule"` (`1 passed`), adjacent
+  CLI pack `python -m pytest tests\test_cli.py -q -k "cron_ or sessions_ or
+  routes_send_json_calls_native_direct_send_runtime or
+  routes_poll_human_output_calls_native_direct_poll_runtime"` (`18 passed`),
+  `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
 - Next cron CLI parity should continue with the remaining upstream `cron add`
   option breadth, then `cron edit`.
 

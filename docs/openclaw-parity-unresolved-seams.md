@@ -1072,7 +1072,8 @@ jobs now cover `--every`, `--description`, `--session-key`, `--wake
 next-heartbeat`, and `--disabled`; `cron create` now aliases `cron add`, and
 `--model` trims into the agent-turn payload, and delivery flags now cover
 `--announce`, `--no-deliver`, `--channel`, `--to`, `--account`, and
-`--best-effort-deliver`. Remaining add gaps are at/date schedule normalization,
+`--best-effort-deliver`; cron schedule flags now cover `--tz`, `--stagger`,
+and `--exact`. Remaining add gaps are at/date schedule normalization,
 delete-after-run/keep-after-run guards, and backend contract expansion for
 thinking/tools/light-context before `cron edit`.
 

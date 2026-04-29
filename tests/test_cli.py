@@ -2895,6 +2895,51 @@ def test_cron_add_no_deliver_sets_delivery_none(monkeypatch) -> None:
     ]
 
 
+def test_cron_add_cron_timezone_and_stagger_shape_schedule(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {"id": "task-blueprint:12", "schedule": params.get("schedule")}
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "cron",
+            "add",
+            "--name",
+            "Zoned report",
+            "--cron",
+            "0 12 * * *",
+            "--tz",
+            "America/Chicago",
+            "--stagger",
+            "5m",
+            "--message",
+            "Write the zoned report.",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert calls[0][1]["schedule"] == {
+        "kind": "cron",
+        "expr": "0 12 * * *",
+        "tz": "America/Chicago",
+        "staggerMs": 300_000,
+    }
+
+
 def test_sessions_spawn_json_calls_gateway_method_owner(monkeypatch) -> None:
     calls: list[tuple[str, dict[str, object]]] = []
 

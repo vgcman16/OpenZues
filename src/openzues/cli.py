@@ -2448,10 +2448,17 @@ def _cron_cli_schedule(
     cron_expr: str | None,
     every: str | None,
     at: str | None,
+    tz: str | None = None,
+    stagger: str | None = None,
+    exact: bool = False,
 ) -> dict[str, object]:
     normalized_cron = _optional_cli_string(cron_expr)
     normalized_every = _optional_cli_string(every)
     normalized_at = _optional_cli_string(at)
+    normalized_tz = _optional_cli_string(tz)
+    normalized_stagger = _optional_cli_string(stagger)
+    if normalized_stagger is not None and exact:
+        raise typer.BadParameter("Choose either --stagger or --exact, not both")
     chosen = [
         bool(normalized_cron),
         bool(normalized_every),
@@ -2460,7 +2467,21 @@ def _cron_cli_schedule(
     if chosen != 1:
         raise typer.BadParameter("Choose exactly one schedule: --at, --every, or --cron")
     if normalized_cron is not None:
-        return {"kind": "cron", "expr": normalized_cron}
+        schedule: dict[str, object] = {"kind": "cron", "expr": normalized_cron}
+        if normalized_tz is not None:
+            schedule["tz"] = normalized_tz
+        if exact:
+            schedule["staggerMs"] = 0
+        elif normalized_stagger is not None:
+            stagger_ms = _cron_duration_ms(normalized_stagger)
+            if stagger_ms is None:
+                raise typer.BadParameter("Invalid --stagger; use e.g. 30s, 1m, 5m")
+            schedule["staggerMs"] = stagger_ms
+        return schedule
+    if normalized_tz is not None and normalized_every is not None:
+        raise typer.BadParameter("--tz is only valid with --cron or offset-less --at")
+    if normalized_stagger is not None or exact:
+        raise typer.BadParameter("--stagger/--exact are only valid for cron schedules")
     if normalized_every is not None:
         every_ms = _cron_duration_ms(normalized_every)
         if every_ms is None:
@@ -9695,6 +9716,9 @@ def cron_add_command(
     cron_expr: str | None = typer.Option(None, "--cron", help="Cron expression."),
     every: str | None = typer.Option(None, "--every", help="Run every duration, such as 10m."),
     at: str | None = typer.Option(None, "--at", help="Run once at an ISO time."),
+    tz: str | None = typer.Option(None, "--tz", help="Timezone for cron expressions."),
+    stagger: str | None = typer.Option(None, "--stagger", help="Cron stagger window."),
+    exact: bool = typer.Option(False, "--exact", help="Disable cron staggering."),
     message: str | None = typer.Option(None, "--message", help="Agent message payload."),
     system_event: str | None = typer.Option(
         None,
@@ -9720,7 +9744,14 @@ def cron_add_command(
 ) -> None:
     if announce and no_deliver:
         raise typer.BadParameter("Choose at most one of --announce or --no-deliver")
-    schedule = _cron_cli_schedule(cron_expr=cron_expr, every=every, at=at)
+    schedule = _cron_cli_schedule(
+        cron_expr=cron_expr,
+        every=every,
+        at=at,
+        tz=tz,
+        stagger=stagger,
+        exact=exact,
+    )
     payload = _cron_cli_payload(message=message, system_event=system_event, model=model)
     wake_mode = _optional_cli_string(wake) or "now"
     if wake_mode not in {"now", "next-heartbeat"}:
