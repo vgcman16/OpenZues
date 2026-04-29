@@ -300,6 +300,11 @@ These are complete within the bounded OpenZues-local parity contract verified in
 - `python -m pytest tests\test_cli.py -q -k "capability_model_run_gateway_json_wraps_agent_payloads or infer_model_run_json_wraps_local_control_chat_reply or capability_model_run_rejects_local_and_gateway_together"`: 3 passed after rechecking the `infer` / `capability model run` CLI envelope against gateway agent dispatch.
 - `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py tests\test_cli.py src\openzues\cli.py`: clean after the gateway `agent` provider/model override dispatch slice.
 - `mypy src\openzues\services\gateway_node_methods.py src\openzues\cli.py`: clean after the gateway `agent` provider/model override dispatch slice.
+- `python -m pytest tests\test_cli.py -q -k "capability_model_run_gateway_json_wraps_agent_payloads"`: 1 passed after gateway `infer` / `capability model run` began waiting on `agent.wait` for final payloads.
+- `python -m pytest tests\test_cli.py -q -k "capability_model_run_gateway_json_wraps_agent_payloads or infer_model_run_json_wraps_local_control_chat_reply or capability_model_run_rejects_local_and_gateway_together"`: 3 passed after rechecking adjacent model-run transport behavior.
+- `python -m pytest tests\test_cli.py -q -k "infer_model or capability_model or models_status or models_list or capability_list_json_surfaces_openclaw_capability_metadata or infer_inspect_json_uses_capability_alias"`: 11 passed after rechecking adjacent model/capability CLI surfaces.
+- `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the gateway `model.run` final-wait slice.
+- `mypy src\openzues\cli.py`: clean after the gateway `model.run` final-wait slice.
 - `python -m pytest tests\test_cli.py -q -k "channels_status_json_accepts_probe_timeout_options"`: 1 passed after adding `channels status --probe --timeout` option metadata.
 - `python -m pytest tests\test_cli.py -q -k "channels_status"`: 2 passed after rechecking adjacent channel status CLI output.
 - `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the channels status probe-option slice.

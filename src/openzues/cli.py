@@ -2720,6 +2720,13 @@ async def _build_capability_model_run_payload(
         if model is not None:
             params["model"] = model
         result = await _call_gateway_node_method(services, "agent", params)
+        run_id = _optional_cli_string(result.get("runId"))
+        if run_id is not None:
+            result = await _call_gateway_node_method(
+                services,
+                "agent.wait",
+                {"runId": run_id, "timeoutMs": 120_000},
+            )
         return _normalize_capability_model_run_envelope(
             result,
             transport=transport,

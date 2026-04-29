@@ -196,8 +196,9 @@ model-status gateway method owners while preserving OpenClaw's model-run
 capability envelope, raw catalog-array, provider-summary, and model-auth status
 JSON shapes. The gateway `agent` method now accepts model-only and
 provider/model `model run` overrides and persists them through the native
-session metadata path before dispatch. Remaining `infer` parity is deeper
-`model run` final-wait/provider-result behavior, model auth login/logout
+session metadata path before dispatch; gateway model runs now wait for the
+final `agent.wait` result before projecting OpenClaw-style provider/model
+output envelopes. Remaining `infer` parity is model auth login/logout
 mutation, image/audio/video/web/embedding runtime commands, deeper TTS
 provider/runtime breadth beyond the now-landed CLI family, and any
 gateway-backed capability transports not already covered by native OpenZues

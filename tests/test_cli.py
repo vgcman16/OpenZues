@@ -3531,12 +3531,18 @@ def test_capability_model_run_gateway_json_wraps_agent_payloads(monkeypatch) -> 
             params: dict[str, object],
         ) -> dict[str, object]:
             calls.append((method, params))
-            return {
-                "result": {
-                    "payloads": [{"text": "Gateway reply", "mediaUrls": ["media://one"]}],
-                    "meta": {"agentMeta": {"provider": "openai", "model": "gpt-5.4"}},
+            if method == "agent":
+                return {"runId": "model-run-final-1", "status": "accepted"}
+            if method == "agent.wait":
+                return {
+                    "runId": "model-run-final-1",
+                    "status": "completed",
+                    "result": {
+                        "payloads": [{"text": "Gateway reply", "mediaUrls": ["media://one"]}],
+                        "meta": {"agentMeta": {"provider": "openai", "model": "gpt-5.4"}},
+                    },
                 }
-            }
+            return {}
 
     async def fake_run_with_services(action):
         return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
@@ -3578,7 +3584,8 @@ def test_capability_model_run_gateway_json_wraps_agent_payloads(monkeypatch) -> 
                 "model": "gpt-5.4",
                 "idempotencyKey": calls[0][1]["idempotencyKey"],
             },
-        )
+        ),
+        ("agent.wait", {"runId": "model-run-final-1", "timeoutMs": 120_000}),
     ]
 
 
