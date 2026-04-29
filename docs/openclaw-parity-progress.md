@@ -27,6 +27,22 @@ These are complete within the bounded OpenZues-local parity contract verified in
 - Custom-agent control-plane ownership is landed for persisted agent create/update/delete, identity lookup, workspace file ownership, session creation/filtering, alias resolution, and deleted-agent send/steer guards.
 - `tools.invoke` core bridge is landed for allow/deny policy, owner-only controls, before-call hooks, ordered registry-backed plugin runtime service envelopes, safe core mappings, plugin error projection, plugin-published `tools.catalog` and `tools.effective` groups, and OpenClaw-style projection/visibility for neighboring session tools.
 - Native runtime seams are now landed for ACP spawn dispatch/tracking plus delete/reset cleanup, app-wired sandbox-required child-turn dispatch through Codex app-server workspace-write policy, route-backed thread-bound spawn binding, shared provider-native send metadata, and Telegram native document/reply/silent/thread payloads.
+- ACP `sessions.spawn streamTo="parent"` now uses the full accepted-run
+  tracking path: OpenZues persists the child session metadata, stores
+  `streamTo` / `streamLogPath`, registers the run for `agent.wait`, applies
+  terminal cleanup, and preserves the parent completion announcement while
+  returning the stream log/note envelope.
+- Verified the ACP parent-stream tracking slice with `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "sessions_spawn_acp_stream_to_parent_tracks_child_run"` (`1 passed`),
+  adjacent ACP pack `python -m pytest tests\test_gateway_node_methods.py
+  tests\test_gateway_acp_spawn.py -q -k "sessions_spawn_acp or acp_spawn or
+  agent_wait_applies_spawn_cleanup_delete_on_terminal_child_run or
+  agent_wait_announces_spawn_completion_to_parent_session"` (`12 passed`),
+  `ruff check src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py tests\test_gateway_acp_spawn.py`, and
+  `mypy src\openzues\services\gateway_node_methods.py
+  src\openzues\services\gateway_acp_spawn.py`.
 
 ## Feature Families
 

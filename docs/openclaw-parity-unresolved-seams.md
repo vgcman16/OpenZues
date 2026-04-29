@@ -42,6 +42,13 @@ default, missing targets return `errorCode="target_agent_required"`, and
 `errorCode="agent_forbidden"`. Accepted RuntimeManager ACP child sessions are
 now stamped under `agent:<targetAgentId>:acp:<runtimeId>` and persist the
 resolved target agent id in session metadata.
+ACP `streamTo="parent"` accepted runs now continue through the same native
+tracking path as ordinary ACP spawns: child metadata is persisted, run tracking
+is registered for `agent.wait`, cleanup policy is consumed on terminal waits,
+parent completion announcements still fire, and `streamLogPath` / `note`
+fields are preserved in the spawn response. Remaining ACP parity is the
+standalone ACP bridge server/client harness and deeper protocol session
+presentation, permission, replay, and parent-stream relay breadth.
 
 Current queue-head adjustment: `sessions.spawn sandbox="require"` now has a
 production app-wired `RuntimeManagerSandboxChatSendService` that starts Codex

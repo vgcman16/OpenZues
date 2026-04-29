@@ -16018,6 +16018,116 @@ async def test_sessions_spawn_acp_runtime_tracks_wait_cleanup_and_completion(
 
 
 @pytest.mark.asyncio
+async def test_sessions_spawn_acp_stream_to_parent_tracks_child_run(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-sessions-spawn-acp-parent-stream.db")
+    await database.initialize()
+    calls: list[dict[str, object]] = []
+    stream_log_path = str(tmp_path / "agent-main-acp-stream.jsonl")
+
+    class FakeAcpSpawnService:
+        async def spawn(
+            self,
+            params: dict[str, object],
+            context: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append({"params": dict(params), "context": dict(context)})
+            return {
+                "status": "accepted",
+                "childSessionKey": "agent:main:acp:thread-acp-stream",
+                "runId": "run-acp-stream-1",
+                "mode": "run",
+                "runtimeThreadId": "thread-acp-stream",
+                "runtimeSessionId": "session-acp-stream",
+                "streamLogPath": stream_log_path,
+                "note": "streaming progress to parent session",
+            }
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        hub=BroadcastHub(),
+        sessions_service=GatewaySessionsService(database),
+        acp_spawn_service=FakeAcpSpawnService(),
+    )
+
+    spawn_payload = await service.call(
+        "sessions.spawn",
+        {
+            "task": "Run this through ACP and stream progress home.",
+            "runtime": "acp",
+            "agentId": "main",
+            "streamTo": "parent",
+            "cleanup": "delete",
+            "runTimeoutSeconds": 11,
+        },
+        now_ms=20_000,
+    )
+
+    child_session_key = str(spawn_payload["childSessionKey"])
+    assert spawn_payload["status"] == "accepted"
+    assert spawn_payload["runId"] == "run-acp-stream-1"
+    assert spawn_payload["streamLogPath"] == stream_log_path
+    assert spawn_payload["note"] == "streaming progress to parent session"
+    assert calls[0]["params"]["streamTo"] == "parent"
+    metadata_row = await database.get_gateway_session_metadata(child_session_key)
+    assert metadata_row is not None
+    metadata = metadata_row["metadata"]
+    assert metadata["runtime"] == "acp"
+    assert metadata["runtimeThreadId"] == "thread-acp-stream"
+    assert metadata["runtimeSessionId"] == "session-acp-stream"
+    assert metadata["streamTo"] == "parent"
+    assert metadata["cleanup"] == "delete"
+    assert metadata["runTimeoutSeconds"] == 11
+    parent_session_key = str(metadata["parentSessionKey"])
+
+    mission_id = await database.create_mission(
+        name="ACP parent-stream mission",
+        objective="Finish through ACP with parent streaming.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread-acp-stream",
+        session_key=child_session_key,
+        cwd=str(tmp_path),
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=False,
+        run_verification=False,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        swarm={"run_id": "run-acp-stream-1"},
+    )
+    await database.update_mission(
+        mission_id,
+        status="completed",
+        in_progress=0,
+        phase="completed",
+        last_checkpoint="ACP streamed child finished.",
+    )
+
+    wait_payload = await service.call(
+        "agent.wait",
+        {"runId": "run-acp-stream-1", "timeoutMs": 0},
+    )
+
+    parent_messages = await database.list_control_chat_messages(session_key=parent_session_key)
+    assert wait_payload["status"] == "ok"
+    assert await database.get_gateway_session_metadata(child_session_key) is None
+    assert [message["content"] for message in parent_messages] == [
+        f"Subagent {child_session_key} completed: ACP streamed child finished."
+    ]
+
+
+@pytest.mark.asyncio
 async def test_sessions_spawn_session_mode_requires_thread_binding(tmp_path) -> None:
     database = Database(tmp_path / "gateway-sessions-spawn-session-mode.db")
     await database.initialize()

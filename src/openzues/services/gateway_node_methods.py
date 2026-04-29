@@ -7329,10 +7329,6 @@ class GatewayNodeMethodService:
                     acp_error_response = dict(acp_result)
                     acp_error_response.update(role_context)
                     return acp_error_response
-                if stream_to == "parent":
-                    acp_stream_response = dict(acp_result)
-                    acp_stream_response.update(role_context)
-                    return acp_stream_response
                 child_session_key = _require_non_empty_string(
                     acp_result.get("childSessionKey"),
                     label="childSessionKey",
@@ -7362,6 +7358,8 @@ class GatewayNodeMethodService:
                     "runTimeoutSeconds": run_timeout_seconds,
                     "runtimeThreadId": _string_or_none(acp_result.get("runtimeThreadId")),
                     "runtimeSessionId": _string_or_none(acp_result.get("runtimeSessionId")),
+                    "streamTo": stream_to,
+                    "streamLogPath": _string_or_none(acp_result.get("streamLogPath")),
                 }
                 acp_metadata = {
                     key: metadata_value
@@ -7416,7 +7414,7 @@ class GatewayNodeMethodService:
                 }
                 if entry is not None:
                     acp_response["entry"] = entry
-                for key in ("runtimeThreadId", "runtimeSessionId", "note"):
+                for key in ("runtimeThreadId", "runtimeSessionId", "streamLogPath", "note"):
                     acp_result_value = acp_result.get(key)
                     if acp_result_value is not None:
                         acp_response[key] = acp_result_value
