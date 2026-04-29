@@ -2074,6 +2074,41 @@ def _emit_plugins_install(payload: dict[str, object], *, json_output: bool) -> N
     typer.echo("Restart the gateway to apply changes.")
 
 
+def _emit_plugins_uninstall(payload: dict[str, object], *, json_output: bool) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+    plugin_id = str(payload.get("pluginId") or "").strip()
+    actions = payload.get("actions")
+    action_payload = actions if isinstance(actions, dict) else {}
+    removed = [
+        label
+        for key, label in (
+            ("entry", "config entry"),
+            ("install", "install record"),
+            ("allowlist", "allowlist"),
+            ("loadPath", "load path"),
+            ("memorySlot", "memory slot"),
+            ("channelConfig", "channel config"),
+            ("directory", "directory"),
+        )
+        if action_payload.get(key) is True
+    ]
+    if payload.get("dryRun") is True:
+        typer.echo(
+            f'Plugin "{plugin_id}" would remove: '
+            + (", ".join(removed) if removed else "nothing")
+        )
+        typer.echo("Dry run, no changes made.")
+        return
+    typer.echo(
+        f'Uninstalled plugin "{plugin_id}". Removed: '
+        + (", ".join(removed) if removed else "nothing")
+        + "."
+    )
+    typer.echo("Restart the gateway to apply changes.")
+
+
 def _emit_plugins_marketplace_list(
     payload: dict[str, object],
     *,
@@ -2976,6 +3011,32 @@ async def _build_plugins_marketplace_install_payload(
         },
         "install": install_payload,
         "loadPath": result.get("loadPath"),
+        "path": result.get("path"),
+        "hash": result.get("hash"),
+        "restart": result.get("restart") or "gateway",
+    }
+
+
+async def _build_plugins_uninstall_payload(
+    services: CliServices,
+    *,
+    plugin_id: str,
+    dry_run: bool,
+) -> dict[str, object]:
+    result = (
+        services.gateway_config.preview_plugin_uninstall(plugin_id)
+        if dry_run
+        else services.gateway_config.uninstall_plugin(plugin_id)
+    )
+    actions = result.get("actions")
+    warnings = result.get("warnings")
+    return {
+        "ok": True,
+        "action": "uninstall",
+        "pluginId": result.get("pluginId") or plugin_id,
+        "dryRun": dry_run,
+        "actions": dict(actions) if isinstance(actions, dict) else {},
+        "warnings": list(warnings) if isinstance(warnings, list) else [],
         "path": result.get("path"),
         "hash": result.get("hash"),
         "restart": result.get("restart") or "gateway",
@@ -6293,6 +6354,53 @@ def plugins_install_command(
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
     _emit_plugins_install(payload, json_output=json_output)
+
+
+@plugins_app.command("uninstall")
+def plugins_uninstall_command(
+    plugin_id: str = typer.Argument(..., help="Plugin id."),
+    keep_files: bool = typer.Option(
+        False,
+        "--keep-files",
+        help="Accepted for OpenClaw CLI compatibility; native local installs keep files.",
+    ),
+    keep_config: bool = typer.Option(
+        False,
+        "--keep-config",
+        help="Deprecated OpenClaw alias for --keep-files.",
+    ),
+    force: bool = typer.Option(False, "--force", help="Skip confirmation prompt."),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Show what would be removed without writing config.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit uninstall result as JSON."),
+) -> None:
+    del keep_files
+    if keep_config and not json_output:
+        typer.echo("`--keep-config` is deprecated, use `--keep-files`.")
+    if not dry_run and not force:
+        if not typer.confirm(f'Uninstall plugin "{plugin_id}"?'):
+            typer.echo("Cancelled.")
+            return
+
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_plugins_uninstall_payload(
+            services,
+            plugin_id=plugin_id,
+            dry_run=dry_run,
+        )
+
+    try:
+        payload = _run(_run_with_services(_action))
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    except RuntimeError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    _emit_plugins_uninstall(payload, json_output=json_output)
 
 
 @plugins_app.command("enable")

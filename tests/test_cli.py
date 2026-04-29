@@ -1612,6 +1612,89 @@ def test_plugins_install_marketplace_json_persists_local_manifest_entry(
     assert isinstance(stored["plugins"]["installs"]["frontend-design"]["installedAt"], str)
 
 
+def test_plugins_uninstall_json_removes_native_install_metadata(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    plugin_dir = tmp_path / "marketplace" / "plugins" / "frontend-design"
+    plugin_dir.mkdir(parents=True)
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {
+                    "allow": ["existing-plugin", "frontend-design"],
+                    "entries": {
+                        "frontend-design": {
+                            "enabled": True,
+                            "config": {"theme": "quiet"},
+                        },
+                    },
+                    "installs": {
+                        "frontend-design": {
+                            "source": "marketplace",
+                            "installPath": str(plugin_dir),
+                            "marketplaceSource": str(tmp_path / "marketplace"),
+                            "marketplacePlugin": "frontend-design",
+                            "installedAt": "2026-04-29T12:00:00Z",
+                        },
+                    },
+                    "load": {"paths": [str(plugin_dir)]},
+                },
+            }
+        )
+    )
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_config=gateway_config))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        ["plugins", "uninstall", "frontend-design", "--force", "--json"],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is True
+    assert payload["action"] == "uninstall"
+    assert payload["pluginId"] == "frontend-design"
+    assert payload["actions"] == {
+        "entry": True,
+        "install": True,
+        "allowlist": True,
+        "loadPath": True,
+        "memorySlot": False,
+        "channelConfig": False,
+        "directory": False,
+    }
+    assert payload["restart"] == "gateway"
+    assert plugin_dir.exists()
+
+    stored = json.loads(
+        (tmp_path / "settings" / "control-ui-config.json").read_text(encoding="utf-8")
+    )
+    assert stored["plugins"]["allow"] == ["existing-plugin"]
+    assert "entries" not in stored["plugins"]
+    assert "installs" not in stored["plugins"]
+    assert "load" not in stored["plugins"]
+
+
 def test_plugins_enable_disable_json_persists_openclaw_config(
     tmp_path,
     monkeypatch,

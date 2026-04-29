@@ -187,6 +187,33 @@ class GatewayConfigService:
         )
         return write_result
 
+    def preview_plugin_uninstall(self, plugin_id: str) -> dict[str, Any]:
+        current = self.build_snapshot()
+        result = _uninstall_plugin_in_snapshot(current, plugin_id=plugin_id)
+        return {
+            "ok": True,
+            "pluginId": result["pluginId"],
+            "actions": result["actions"],
+            "warnings": result["warnings"],
+            "restart": "gateway",
+        }
+
+    def uninstall_plugin(self, plugin_id: str) -> dict[str, Any]:
+        config_path = self._require_config_path()
+        current = self.build_snapshot()
+        result = _uninstall_plugin_in_snapshot(current, plugin_id=plugin_id)
+        base_hash = self._snapshot_hash(current) if config_path.exists() else None
+        write_result = self._write_snapshot(result["config"], base_hash=base_hash)
+        write_result.update(
+            {
+                "pluginId": result["pluginId"],
+                "actions": result["actions"],
+                "warnings": result["warnings"],
+                "restart": "gateway",
+            }
+        )
+        return write_result
+
     def _default_snapshot(self) -> dict[str, Any]:
         return _clean_config_snapshot(
             ControlUiBootstrapConfigView.model_validate(
@@ -437,6 +464,130 @@ def _record_marketplace_plugin_install_in_snapshot(
         "pluginId": requested_id,
         "install": install_record,
         "loadPath": normalized_install_path,
+    }
+
+
+def _uninstall_plugin_in_snapshot(
+    snapshot: dict[str, Any],
+    *,
+    plugin_id: str,
+) -> dict[str, Any]:
+    requested_id = plugin_id.strip()
+    if not requested_id:
+        raise ValueError("plugin id is required")
+
+    plugins = snapshot.get("plugins")
+    plugins_config = dict(plugins) if isinstance(plugins, dict) else {}
+    entries = plugins_config.get("entries")
+    next_entries = dict(entries) if isinstance(entries, dict) else {}
+    installs = plugins_config.get("installs")
+    next_installs = dict(installs) if isinstance(installs, dict) else {}
+    has_entry = requested_id in next_entries
+    has_install = requested_id in next_installs
+    if not has_entry and not has_install:
+        raise ValueError(f"Plugin not found: {requested_id}")
+
+    install_record = next_installs.get(requested_id)
+    install_payload = install_record if isinstance(install_record, dict) else {}
+    actions: dict[str, bool] = {
+        "entry": False,
+        "install": False,
+        "allowlist": False,
+        "loadPath": False,
+        "memorySlot": False,
+        "channelConfig": False,
+        "directory": False,
+    }
+    if has_entry:
+        next_entries.pop(requested_id, None)
+        actions["entry"] = True
+    if has_install:
+        next_installs.pop(requested_id, None)
+        actions["install"] = True
+
+    allow = plugins_config.get("allow")
+    next_allow = list(allow) if isinstance(allow, list) else []
+    filtered_allow = [value for value in next_allow if str(value) != requested_id]
+    if len(filtered_allow) != len(next_allow):
+        actions["allowlist"] = True
+
+    load = plugins_config.get("load")
+    next_load = dict(load) if isinstance(load, dict) else {}
+    paths = next_load.get("paths")
+    next_paths = [str(value) for value in paths] if isinstance(paths, list) else []
+    removable_paths = {
+        str(value)
+        for value in (
+            install_payload.get("installPath"),
+            install_payload.get("sourcePath"),
+        )
+        if isinstance(value, str) and value.strip()
+    }
+    if removable_paths:
+        filtered_paths = [path for path in next_paths if path not in removable_paths]
+        if len(filtered_paths) != len(next_paths):
+            actions["loadPath"] = True
+        next_paths = filtered_paths
+    if next_paths:
+        next_load["paths"] = next_paths
+    else:
+        next_load.pop("paths", None)
+
+    slots = plugins_config.get("slots")
+    next_slots = dict(slots) if isinstance(slots, dict) else {}
+    if next_slots.get("memory") == requested_id:
+        next_slots["memory"] = "memory-core"
+        actions["memorySlot"] = True
+
+    next_snapshot = dict(snapshot)
+    channels = next_snapshot.get("channels")
+    if has_install and isinstance(channels, dict):
+        next_channels = dict(channels)
+        channel_keys = {requested_id}
+        normalized_channel = _normalize_openclaw_channel_plugin_id(requested_id)
+        if normalized_channel is not None:
+            channel_keys.add(normalized_channel)
+        for key in channel_keys:
+            if key in next_channels:
+                next_channels.pop(key, None)
+                actions["channelConfig"] = True
+        if next_channels:
+            next_snapshot["channels"] = next_channels
+        elif "channels" in next_snapshot:
+            next_snapshot.pop("channels", None)
+
+    next_plugins = dict(plugins_config)
+    if next_entries:
+        next_plugins["entries"] = next_entries
+    else:
+        next_plugins.pop("entries", None)
+    if next_installs:
+        next_plugins["installs"] = next_installs
+    else:
+        next_plugins.pop("installs", None)
+    if filtered_allow:
+        next_plugins["allow"] = filtered_allow
+    else:
+        next_plugins.pop("allow", None)
+    if next_load:
+        next_plugins["load"] = next_load
+    else:
+        next_plugins.pop("load", None)
+    if next_slots:
+        next_plugins["slots"] = next_slots
+    else:
+        next_plugins.pop("slots", None)
+
+    if next_plugins:
+        next_snapshot["plugins"] = next_plugins
+    else:
+        next_snapshot.pop("plugins", None)
+
+    return {
+        "config": next_snapshot,
+        "pluginId": requested_id,
+        "actions": actions,
+        "warnings": [],
     }
 
 
