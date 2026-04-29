@@ -2072,6 +2072,102 @@ def test_acp_client_command_reports_native_runtime_unavailable() -> None:
     assert r"C:\work\OpenZues" in result.stderr
 
 
+def test_acp_client_spawn_plan_strips_provider_auth_for_default_bridge() -> None:
+    from openzues.services.acp_client_runtime import build_acp_client_spawn_plan
+
+    plan = build_acp_client_spawn_plan(
+        cwd=r"C:\work\OpenZues",
+        server=None,
+        server_args=None,
+        base_env={
+            "PATH": r"C:\Windows",
+            "openai_api_key": "openai-secret",
+            "GITHUB_TOKEN": "github-secret",
+            "HF_TOKEN": "hf-secret",
+            "OPENCLAW_SHELL": "interactive",
+            "OPENZUES_ACTIVE_SKILL_SECRET": "skill-secret",
+        },
+        active_skill_env_keys=["OPENZUES_ACTIVE_SKILL_SECRET"],
+    )
+
+    assert plan.cwd == r"C:\work\OpenZues"
+    assert plan.server_command == "openzues"
+    assert plan.server_args == ("acp",)
+    assert plan.strip_provider_auth_env_vars is True
+    assert plan.env == {
+        "PATH": r"C:\Windows",
+        "OPENCLAW_SHELL": "acp-client",
+    }
+    assert plan.stripped_env_keys == (
+        "GITHUB_TOKEN",
+        "HF_TOKEN",
+        "OPENAI_API_KEY",
+        "OPENZUES_ACTIVE_SKILL_SECRET",
+    )
+
+
+def test_acp_client_spawn_plan_preserves_provider_auth_for_custom_server() -> None:
+    from openzues.services.acp_client_runtime import build_acp_client_spawn_plan
+
+    plan = build_acp_client_spawn_plan(
+        server="vendor-acp",
+        server_args=["--stdio"],
+        server_verbose=True,
+        base_env={
+            "OPENAI_API_KEY": "openai-secret",
+            "GITHUB_TOKEN": "github-secret",
+            "OPENCLAW_SHELL": "interactive",
+        },
+    )
+
+    assert plan.server_command == "vendor-acp"
+    assert plan.server_args == ("acp", "--stdio", "--verbose")
+    assert plan.strip_provider_auth_env_vars is False
+    assert plan.env == {
+        "OPENAI_API_KEY": "openai-secret",
+        "GITHUB_TOKEN": "github-secret",
+        "OPENCLAW_SHELL": "acp-client",
+    }
+    assert plan.stripped_env_keys == ()
+
+
+def test_acp_client_command_passes_spawn_plan_to_registered_runner(monkeypatch) -> None:
+    from openzues.services.acp_client_runtime import AcpClientSpawnPlan
+
+    calls: list[AcpClientSpawnPlan] = []
+
+    def fake_runner(plan: AcpClientSpawnPlan) -> int:
+        calls.append(plan)
+        return 7
+
+    monkeypatch.setenv("OPENAI_API_KEY", "openai-secret")
+    monkeypatch.setattr(cli_module, "_acp_client_runner", fake_runner)
+
+    result = runner.invoke(
+        app,
+        [
+            "acp",
+            "client",
+            "--cwd",
+            r"C:\work\OpenZues",
+            "--server-args",
+            "--stdio",
+            "--server-verbose",
+            "--verbose",
+        ],
+    )
+
+    assert result.exit_code == 7
+    assert len(calls) == 1
+    plan = calls[0]
+    assert plan.cwd == r"C:\work\OpenZues"
+    assert plan.server_command == "openzues"
+    assert plan.server_args == ("acp", "--stdio", "--verbose")
+    assert plan.verbose is True
+    assert "OPENAI_API_KEY" not in plan.env
+    assert plan.env["OPENCLAW_SHELL"] == "acp-client"
+
+
 def test_acp_bridge_rejects_mixed_token_sources(tmp_path) -> None:
     token_file = tmp_path / "gateway-token.txt"
     token_file.write_text("file-token\n", encoding="utf-8")

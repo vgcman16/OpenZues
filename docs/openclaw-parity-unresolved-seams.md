@@ -157,6 +157,12 @@ ACP CLI parity is the real bridge server/client runtime. The unavailable
 boundary now validates provenance modes, rejects mixed inline/file secret
 sources, validates secret-file readability, and warns when inline token or
 password flags are used.
+`acp client` now also builds an OpenClaw-shaped native spawn plan before that
+unavailable boundary: default OpenZues ACP server launches use `openzues acp`,
+set `OPENCLAW_SHELL=acp-client`, strip provider auth and active-skill env keys
+case-insensitively, and preserve provider auth when callers choose an explicit
+custom ACP server. Remaining ACP CLI parity is still the real bridge
+client/server protocol runtime rather than the spawn preflight contract.
 The CLI now also exposes `models list` as a thin OpenClaw-shaped JSON/human
 wrapper over the production `models.list` gateway method owner, including
 provider/local filters without duplicating the model catalog runtime, and

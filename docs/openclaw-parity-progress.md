@@ -274,6 +274,10 @@ These are complete within the bounded OpenZues-local parity contract verified in
 - `python -m pytest tests\test_cli.py -q -k "acp_ or sessions_spawn_json_calls_gateway_method_owner or sessions_wait_human_output_calls_agent_wait"`: 7 passed after rechecking adjacent ACP/session CLI surfaces.
 - `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the ACP CLI option validation slice.
 - `mypy src\openzues\cli.py`: clean after the ACP CLI option validation slice.
+- `python -m pytest tests\test_cli.py -q -k "acp_client"`: 4 passed after adding the native ACP client spawn-plan helper and fakeable runner seam.
+- `python -m pytest tests\test_cli.py -q -k "acp_bridge or acp_client"`: 8 passed after rechecking adjacent ACP bridge/client CLI boundaries.
+- `ruff check src\openzues\cli.py src\openzues\services\acp_client_runtime.py tests\test_cli.py`: clean after the ACP client spawn-plan slice.
+- `mypy src\openzues\cli.py src\openzues\services\acp_client_runtime.py`: clean after the ACP client spawn-plan slice.
 - `python -m pytest tests\test_cli.py -q -k "capability_list_json_surfaces_openclaw_capability_metadata or infer_inspect_json_uses_capability_alias"`: 2 passed after adding OpenClaw's metadata-only `infer` / `capability` list and inspect surfaces.
 - `python -m pytest tests\test_cli.py -q -k "capability_list_json_surfaces_openclaw_capability_metadata or infer_inspect_json_uses_capability_alias or models_list or models_status"`: 4 passed after rechecking adjacent CLI model/runtime metadata commands.
 - `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the `infer` / `capability` metadata slice.
@@ -1193,6 +1197,17 @@ These are complete within the bounded OpenZues-local parity contract verified in
   state when the wake is queued, including `lastRunStatus="ok"`, duration,
   delivery status, and reset consecutive failure metadata.
 - Verified the system-event wake state slice with `python -m pytest tests\test_ops_mesh.py -q -k "routes_due_main_system_event_task_through_wake_queue"` (`1 passed`), adjacent wake/cron pack `python -m pytest tests\test_ops_mesh.py -q -k "main_system_event or cron_failure_alert_threshold or cron_failure or scheduled"` (`16 passed`), adjacent API cron-run pack `python -m pytest tests\test_gateway_nodes_api.py -q -k "main_system_event_cron_run_routes_session_key_through_wake_queue or cron_run"` (`5 passed`), `ruff check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py`.
+- `acp client` now builds an OpenClaw-shaped native spawn plan before handing
+  off to a registered runner or returning the existing unavailable boundary:
+  default OpenZues ACP launches use `openzues acp`, set
+  `OPENCLAW_SHELL=acp-client`, strip provider auth and active-skill env keys,
+  and preserve provider auth for explicit custom ACP servers.
+- Verified the ACP client spawn-plan slice with `python -m pytest
+  tests\test_cli.py -q -k "acp_client"` (`4 passed`), adjacent ACP CLI pack
+  `python -m pytest tests\test_cli.py -q -k "acp_bridge or acp_client"` (`8
+  passed`), `ruff check src\openzues\cli.py
+  src\openzues\services\acp_client_runtime.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py src\openzues\services\acp_client_runtime.py`.
 - Next repo-level parity work should continue with broader cron runtime
   hardening: global `cron.failureAlert` config, retry/backoff policy, and
   provider-specific alert result metadata.

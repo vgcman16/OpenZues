@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -42,6 +43,7 @@ from openzues.schemas import (
     SetupWizardSessionUpdate,
 )
 from openzues.services.access import AccessService
+from openzues.services.acp_client_runtime import AcpClientSpawnPlan, build_acp_client_spawn_plan
 from openzues.services.browser_posture import build_browser_posture
 from openzues.services.codex_desktop import CodexDesktopService
 from openzues.services.control_chat import (
@@ -99,6 +101,8 @@ _BROWSER_SNAPSHOT_CHAR_LIMIT = 24_000
 _BROWSER_SNAPSHOT_LINE_LIMIT = 240
 _CHANNEL_LOG_DEFAULT_LIMIT = 200
 _CHANNEL_LOG_MAX_BYTES = 1_000_000
+_AcpClientRunner = Callable[[AcpClientSpawnPlan], int | None]
+_acp_client_runner: _AcpClientRunner | None = None
 _CHANNEL_CAPABILITY_SUPPORT: dict[str, dict[str, object]] = {
     "discord": {
         "chatTypes": ["direct", "channel"],
@@ -2467,6 +2471,11 @@ def _emit_plugins_marketplace_list(
         suffix = f" v{version}" if version is not None else ""
         detail = f" - {description}" if description is not None else ""
         typer.echo(f"{name}{suffix}{detail}")
+
+
+def configure_acp_client_runner(runner: _AcpClientRunner | None) -> None:
+    global _acp_client_runner
+    _acp_client_runner = runner
 
 
 def _emit_acp_bridge_unavailable(
@@ -8552,14 +8561,27 @@ def acp_client_command(
     ),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose client logging."),
 ) -> None:
+    plan = build_acp_client_spawn_plan(
+        cwd=cwd,
+        server=server,
+        server_args=server_args,
+        server_verbose=server_verbose,
+        verbose=verbose,
+    )
+    if _acp_client_runner is not None:
+        code = _acp_client_runner(plan)
+        raise typer.Exit(code=0 if code is None else code)
     _emit_acp_bridge_unavailable(
         kind="client",
         context={
-            "cwd": cwd,
-            "server": server,
-            "serverArgs": " ".join(server_args or []),
-            "serverVerbose": server_verbose,
-            "verbose": verbose,
+            "cwd": plan.cwd,
+            "server": plan.server_command,
+            "serverArgs": " ".join(plan.server_args),
+            "serverVerbose": plan.server_verbose,
+            "verbose": plan.verbose,
+            "openclawShell": plan.env.get("OPENCLAW_SHELL"),
+            "stripProviderAuthEnvVars": plan.strip_provider_auth_env_vars,
+            "strippedEnvKeys": ",".join(plan.stripped_env_keys),
         },
     )
     raise typer.Exit(code=1)
