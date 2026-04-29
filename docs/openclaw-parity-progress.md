@@ -234,6 +234,10 @@ These are complete within the bounded OpenZues-local parity contract verified in
 - `python -m pytest tests\test_cli.py -q -k "plugins_"`: 13 passed after rechecking plugin list/doctor/inspect/info/marketplace/install/update/uninstall/toggle CLI surfaces.
 - `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the plugin saved-record inventory slice.
 - `mypy src\openzues\cli.py`: clean after the plugin saved-record inventory slice.
+- `python -m pytest tests\test_cli.py -q -k "plugins_inspect_all_json_includes_saved_install_records"`: 1 passed after preserving saved plugin install metadata in `plugins inspect --all --json`.
+- `python -m pytest tests\test_cli.py -q -k "plugins_inspect or plugins_info or plugins_list_json_includes_saved_config_install_records"`: 4 passed after rechecking adjacent inspect/info/list plugin CLI surfaces.
+- `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the plugin inspect install metadata slice.
+- `mypy src\openzues\cli.py`: clean after the plugin inspect install metadata slice.
 - `python -m pytest tests\test_cli.py -q -k "status_json_breadth_flags"`: 1 passed after adding top-level `status --json` breadth flags and timeout forwarding.
 - `python -m pytest tests\test_cli.py -q -k "status_json or health_json"`: 8 passed after rechecking adjacent status and health JSON surfaces.
 - `python -m pytest tests\test_cli.py -q -k "emit_status_human_output or status_json_reuses_gateway_contract"`: 2 passed after rechecking adjacent status output behavior.

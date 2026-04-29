@@ -291,8 +291,9 @@ load errors from the same projection and preserves OpenClaw's
 `No plugin issues detected.` clean snapshot behavior. `plugins inspect` and
 its `plugins info` alias now return OpenClaw-shaped JSON reports with
 `plugin`, `shape`, `capabilityMode`, capability kinds, diagnostics, policy, and
-install placeholders projected from the same inventory, and `inspect --all`
-returns all records. `plugins enable` / `plugins disable` now write through the
+install metadata projected from the same inventory, and `inspect --all` returns
+all records with top-level saved install metadata when present. `plugins enable`
+/ `plugins disable` now write through the
 existing gateway config owner with OpenClaw-shaped
 `plugins.entries.<id>.enabled` persistence, preserve existing entry config,
 append configured allowlists on enable, and mirror built-in channel plugin
@@ -318,7 +319,8 @@ OpenClaw-shaped compatibility notices for legacy `before_agent_start` and
 hook-only plugin inventory signals. `plugins list` now also merges saved
 OpenClaw-shaped `plugins.entries` / `plugins.installs` records from the native
 gateway config owner, so config-installed marketplace plugins are visible even
-when the live platform deck has not loaded them yet.
+when the live platform deck has not loaded them yet; `plugins inspect --all --json`
+now preserves those saved install records in the report-level `install` field.
 
 Current queue-head adjustment: `sessions.spawn` now preserves and applies
 OpenClaw's `gateway.agents.defaults.subagents.runTimeoutSeconds` config default

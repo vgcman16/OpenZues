@@ -2583,6 +2583,72 @@ def test_plugins_list_json_includes_saved_config_install_records(tmp_path, monke
     ]
 
 
+def test_plugins_inspect_all_json_includes_saved_install_records(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    plugin_dir = tmp_path / "plugins" / "frontend-design"
+    plugin_dir.mkdir(parents=True)
+    install_record = {
+        "source": "marketplace",
+        "installPath": str(plugin_dir),
+        "version": "0.2.0",
+        "marketplaceSource": str(tmp_path / "marketplace.json"),
+        "marketplacePlugin": "frontend-design",
+        "installedAt": "2026-04-29T12:00:00Z",
+    }
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {
+                    "entries": {"frontend-design": {"enabled": True}},
+                    "installs": {"frontend-design": install_record},
+                },
+            }
+        )
+    )
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> dict[str, object]:
+            return {
+                "profile": {"hermes_source_path": None},
+                "warnings": [],
+                "plugins": {"items": []},
+            }
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=gateway_config,
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["plugins", "inspect", "--all", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload[0]["plugin"]["id"] == "frontend-design"
+    assert payload[0]["install"] == install_record
+
+
 def test_plugins_doctor_human_reports_no_plugin_issues(monkeypatch) -> None:
     class FakeHermesPlatform:
         async def get_doctor_view(self) -> dict[str, object]:

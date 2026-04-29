@@ -5009,6 +5009,7 @@ def _plugin_inspect_report(plugin: dict[str, object]) -> dict[str, object]:
         for capability in (capabilities if isinstance(capabilities, list) else [])
         if str(capability).strip()
     ]
+    install = plugin.get("install")
     return {
         "plugin": dict(plugin),
         "shape": _plugin_inspect_shape(plugin),
@@ -5030,7 +5031,7 @@ def _plugin_inspect_report(plugin: dict[str, object]) -> dict[str, object]:
         "httpRouteCount": 0,
         "policy": {},
         "diagnostics": [],
-        "install": None,
+        "install": dict(install) if isinstance(install, dict) else None,
     }
 
 
