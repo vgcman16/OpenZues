@@ -423,6 +423,7 @@ class GatewayOutboundRuntimeService:
             channel=normalized_channel,
             account_id=account_id,
         )
+        resolved_max_selections = max_selections if max_selections is not None else 1
         if native_poll_deliverer is not None and normalized_target is not None:
             try:
                 poll_result = await native_poll_deliverer(
@@ -431,7 +432,7 @@ class GatewayOutboundRuntimeService:
                         target=normalized_target,
                         question=question,
                         options=options,
-                        max_selections=max_selections,
+                        max_selections=resolved_max_selections,
                         duration_seconds=duration_seconds,
                         duration_hours=duration_hours,
                         silent=silent,
@@ -472,7 +473,7 @@ class GatewayOutboundRuntimeService:
                         target=normalized_target,
                         question=question,
                         options=options,
-                        max_selections=max_selections,
+                        max_selections=resolved_max_selections,
                         duration_seconds=duration_seconds,
                         duration_hours=duration_hours,
                         silent=silent,

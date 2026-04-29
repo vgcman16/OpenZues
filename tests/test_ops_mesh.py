@@ -4661,6 +4661,42 @@ async def test_ops_mesh_service_send_direct_channel_poll_prefers_provider_runtim
 
 
 @pytest.mark.asyncio
+async def test_gateway_outbound_runtime_poll_defaults_max_selections_to_one() -> None:
+    provider_requests: list[GatewayOutboundRuntimePollRequest] = []
+
+    async def fake_provider_delivery(
+        request: GatewayOutboundRuntimePollRequest,
+    ) -> dict[str, str]:
+        provider_requests.append(request)
+        return {"id": "provider-poll-default-1"}
+
+    runtime = GatewayOutboundRuntimeService(
+        provider_poll_deliverer=fake_provider_delivery,
+    )
+
+    result = await runtime.deliver_poll(
+        session_key="launch:channel:slack:peer:channel:C123",
+        message="Poll: Default max selections?",
+        channel="slack",
+        target="channel:C123",
+        question="Default max selections?",
+        options=("Yes", "No"),
+    )
+
+    assert result.message_id == "provider-poll-default-1"
+    assert provider_requests == [
+        GatewayOutboundRuntimePollRequest(
+            channel="slack",
+            target="channel:C123",
+            question="Default max selections?",
+            options=("Yes", "No"),
+            max_selections=1,
+            session_key="launch:channel:slack:peer:channel:C123",
+        )
+    ]
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_send_direct_channel_poll_uses_native_adapter_binding() -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-poll-native-adapter"
     shutil.rmtree(tmp_path, ignore_errors=True)
@@ -5589,7 +5625,6 @@ async def test_ops_mesh_service_send_direct_channel_poll_uses_gateway_route_adap
         to="channel:C123",
         question="Use the route provider?",
         options=["Yes", "No"],
-        max_selections=1,
         duration_hours=2,
         silent=True,
         account_id="workspace-bot",
@@ -5600,7 +5635,6 @@ async def test_ops_mesh_service_send_direct_channel_poll_uses_gateway_route_adap
         to="channel:C123",
         question="Use the route provider?",
         options=["Yes", "No"],
-        max_selections=1,
         duration_hours=2,
         silent=True,
         account_id="workspace-bot",
@@ -5646,11 +5680,13 @@ async def test_ops_mesh_service_send_direct_channel_poll_uses_gateway_route_adap
     assert event_type == "gateway/poll"
     assert event["question"] == "Use the route provider?"
     assert event["options"] == ["Yes", "No"]
+    assert event["maxSelections"] == 1
     assert event["durationHours"] == 2
     assert event["silent"] is True
     assert event["routeMatch"] == "peer"
     assert secret_token is None
     assert delivery is not None
+    assert delivery["event_payload"]["maxSelections"] == 1
     assert delivery["delivery_state"] == "delivered"
     assert delivery["delivery_message_id"] == "route-provider-poll-1"
     assert delivery["route_scope"]["provider_result"] == {

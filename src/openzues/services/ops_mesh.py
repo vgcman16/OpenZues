@@ -7300,13 +7300,14 @@ class OpsMeshService:
             raise ValueError("poll requires an explicit channel target")
         normalized_question = str(question).strip()
         normalized_options = _normalize_direct_channel_poll_options(options)
+        resolved_max_selections = max_selections if max_selections is not None else 1
         _validate_direct_channel_poll_option_count(
             conversation_target.channel,
             normalized_options,
         )
         _validate_direct_channel_poll_max_selections(
             normalized_options,
-            max_selections,
+            resolved_max_selections,
         )
         _validate_direct_channel_poll_duration_exclusivity(
             duration_seconds=duration_seconds,
@@ -7326,8 +7327,7 @@ class OpsMeshService:
         }
         if account_id is not None:
             payload["accountId"] = account_id
-        if max_selections is not None:
-            payload["maxSelections"] = max_selections
+        payload["maxSelections"] = resolved_max_selections
         if duration_seconds is not None:
             payload["durationSeconds"] = duration_seconds
         if duration_hours is not None:
@@ -7345,7 +7345,7 @@ class OpsMeshService:
             message=_format_direct_channel_poll_message(
                 question=normalized_question,
                 options=normalized_options,
-                max_selections=max_selections,
+                max_selections=resolved_max_selections,
                 duration_seconds=duration_seconds,
                 duration_hours=duration_hours,
                 silent=silent,

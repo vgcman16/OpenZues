@@ -1975,6 +1975,37 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\gateway_node_methods.py
   src\openzues\services\ops_mesh.py`.
+- Gateway `poll`, OpsMesh direct/provider poll delivery, and the shared
+  outbound runtime now normalize omitted `maxSelections` to `1` before runtime
+  dispatch, persisted delivery payloads, and native/provider request
+  construction, matching OpenClaw's `normalizePollInput` default.
+- Verified the omitted max-selection default slice with `python -m pytest
+  tests\test_gateway_node_methods.py -q -k "test_poll_uses_channel_poll_runtime"`
+  (`1 passed`), `python -m pytest tests\test_ops_mesh.py -q -k
+  "send_direct_channel_poll_uses_gateway_route_adapter or
+  gateway_outbound_runtime_poll_defaults_max_selections_to_one"` (`2 passed`),
+  adjacent gateway poll pack `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "poll_uses_channel_poll_runtime or
+  poll_rejects_channel_specific_option_limit_like_openclaw or
+  poll_rejects_max_selections_above_option_count or
+  poll_rejects_mutual_duration_fields or
+  poll_returns_validated_unavailable_contract"` (`6 passed`), adjacent OpsMesh
+  poll pack `python -m pytest tests\test_ops_mesh.py -q -k
+  "gateway_outbound_runtime_poll_defaults_max_selections_to_one or
+  send_direct_channel_poll_uses_gateway_route_adapter or
+  send_direct_channel_poll_uses_telegram_native_route or
+  send_direct_channel_poll_uses_discord_native_route or
+  send_direct_channel_poll_uses_whatsapp_native_route or
+  send_direct_channel_poll_uses_native_adapter_binding or
+  rejects_provider_option_caps or rejects_max_selections_above_options"` (`9
+  passed`), `ruff check src\openzues\services\gateway_node_methods.py
+  src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_outbound_runtime.py
+  tests\test_gateway_node_methods.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_outbound_runtime.py`.
 
 ## References
 

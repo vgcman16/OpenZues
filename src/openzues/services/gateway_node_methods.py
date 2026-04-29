@@ -5693,6 +5693,8 @@ class GatewayNodeMethodService:
                 minimum=1,
                 maximum=12,
             )
+            if max_selections is None:
+                max_selections = 1
             duration_seconds = _optional_bounded_int(
                 payload.get("durationSeconds"),
                 label="durationSeconds",

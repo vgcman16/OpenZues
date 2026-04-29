@@ -2249,8 +2249,23 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\gateway_node_methods.py
   src\openzues\services\ops_mesh.py`.
-- Next provider poll normalization queue head: default omitted
-  `maxSelections` to `1` before gateway/runtime/provider dispatch.
+- Closed the omitted poll `maxSelections` default seam from OpenClaw
+  `normalizePollInput`: Gateway `poll`, OpsMesh direct/provider poll delivery,
+  and the shared outbound runtime now normalize missing `maxSelections` to `1`
+  before runtime dispatch, persisted delivery payloads, and native/provider
+  request construction. Verified with `python -m pytest
+  tests\test_gateway_node_methods.py -q -k "test_poll_uses_channel_poll_runtime"`,
+  `python -m pytest tests\test_ops_mesh.py -q -k
+  "send_direct_channel_poll_uses_gateway_route_adapter or
+  gateway_outbound_runtime_poll_defaults_max_selections_to_one"`, adjacent
+  gateway/OpsMesh poll packs, `ruff check
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_outbound_runtime.py
+  tests\test_gateway_node_methods.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_outbound_runtime.py`.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially ACP spawn harness parity, richer `tools.invoke` executor parity
   (real plugin HTTP ordering and any additional intentional high-risk

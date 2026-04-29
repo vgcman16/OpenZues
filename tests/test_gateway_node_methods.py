@@ -36845,7 +36845,6 @@ async def test_poll_uses_channel_poll_runtime() -> None:
             "to": " 123 ",
             "question": " Ship it? ",
             "options": [" Yes ", "   ", " No "],
-            "maxSelections": 1,
             "durationSeconds": 60,
             "silent": True,
             "isAnonymous": False,
