@@ -3739,6 +3739,621 @@ def test_sessions_cleanup_fix_missing_enforce_deletes_metadata_rows(monkeypatch)
     assert calls == [("sessions.list", {"agentId": "worker"})]
 
 
+def test_tasks_list_json_filters_native_background_tasks(monkeypatch) -> None:
+    calls: list[str] = []
+    created_at = datetime(2026, 4, 29, 14, 30, tzinfo=UTC)
+    updated_at = datetime(2026, 4, 29, 14, 45, tzinfo=UTC)
+
+    class FakeMissionService:
+        async def list_views(self) -> list[SimpleNamespace]:
+            calls.append("missions")
+            return [
+                SimpleNamespace(
+                    id=17,
+                    name="Gateway hardener",
+                    objective="Stabilize the next parity slice.",
+                    status="active",
+                    in_progress=True,
+                    task_blueprint_id=5,
+                    session_key="agent:worker:main",
+                    thread_id="thread-17",
+                    last_turn_id="turn-17",
+                    instance_id=2,
+                    model="gpt-5.4",
+                    last_error=None,
+                    last_checkpoint=None,
+                    last_activity_at=None,
+                    created_at=created_at,
+                    updated_at=updated_at,
+                )
+            ]
+
+    class FakeOpsMesh:
+        async def list_task_blueprint_views(self) -> list[SimpleNamespace]:
+            calls.append("tasks")
+            return [
+                SimpleNamespace(
+                    id=7,
+                    name="Nightly digest",
+                    objective_template="Send the recurring workspace digest.",
+                    summary="Recurring digest",
+                    schedule_kind="cron",
+                    cadence_minutes=None,
+                    enabled=True,
+                    last_status=None,
+                    last_result_summary=None,
+                    last_launched_at=None,
+                    created_at=created_at,
+                    updated_at=updated_at,
+                )
+            ]
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                mission_service=FakeMissionService(),
+                ops_mesh=FakeOpsMesh(),
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "tasks",
+            "--json",
+            "--runtime",
+            "subagent",
+            "--status",
+            "running",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["runtime"] == "subagent"
+    assert payload["status"] == "running"
+    assert payload["count"] == 1
+    assert payload["tasks"][0] == {
+        "taskId": "mission:17",
+        "runtime": "subagent",
+        "taskKind": "mission",
+        "sourceId": "mission:17",
+        "requesterSessionKey": "agent:worker:main",
+        "ownerKey": "mission:17",
+        "scopeKind": "session",
+        "parentFlowId": "task-blueprint:5",
+        "childSessionKey": "agent:worker:main",
+        "agentId": "openzues",
+        "runId": "thread-17",
+        "label": "Gateway hardener",
+        "task": "Stabilize the next parity slice.",
+        "status": "running",
+        "deliveryStatus": "not_applicable",
+        "notifyPolicy": "done_only",
+        "createdAt": int(created_at.timestamp() * 1000),
+        "startedAt": int(created_at.timestamp() * 1000),
+        "lastEventAt": int(updated_at.timestamp() * 1000),
+        "progressSummary": "turn-17",
+    }
+    assert calls == ["missions", "tasks"]
+
+
+def test_tasks_show_json_resolves_session_key(monkeypatch) -> None:
+    created_at = datetime(2026, 4, 29, 14, 30, tzinfo=UTC)
+    updated_at = datetime(2026, 4, 29, 14, 45, tzinfo=UTC)
+
+    class FakeMissionService:
+        async def list_views(self) -> list[SimpleNamespace]:
+            return [
+                SimpleNamespace(
+                    id=17,
+                    name="Gateway hardener",
+                    objective="Stabilize the next parity slice.",
+                    status="completed",
+                    in_progress=False,
+                    task_blueprint_id=5,
+                    session_key="agent:worker:main",
+                    thread_id="thread-17",
+                    last_turn_id="turn-17",
+                    instance_id=2,
+                    model="gpt-5.4",
+                    last_error=None,
+                    last_checkpoint="Verified and committed.",
+                    last_activity_at=None,
+                    created_at=created_at,
+                    updated_at=updated_at,
+                )
+            ]
+
+    class FakeOpsMesh:
+        async def list_task_blueprint_views(self) -> list[SimpleNamespace]:
+            return []
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                mission_service=FakeMissionService(),
+                ops_mesh=FakeOpsMesh(),
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["tasks", "show", "agent:worker:main", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["taskId"] == "mission:17"
+    assert payload["status"] == "succeeded"
+    assert payload["terminalOutcome"] == "succeeded"
+    assert payload["terminalSummary"] == "Verified and committed."
+
+
+def test_tasks_audit_json_filters_native_stale_running_tasks(monkeypatch) -> None:
+    created_at = datetime(2020, 1, 1, 14, 30, tzinfo=UTC)
+
+    class FakeMissionService:
+        async def list_views(self) -> list[SimpleNamespace]:
+            return [
+                SimpleNamespace(
+                    id=17,
+                    name="Gateway hardener",
+                    objective="Stabilize the next parity slice.",
+                    status="active",
+                    in_progress=True,
+                    task_blueprint_id=5,
+                    session_key="agent:worker:main",
+                    thread_id="thread-17",
+                    last_turn_id="turn-17",
+                    instance_id=2,
+                    model="gpt-5.4",
+                    last_error=None,
+                    last_checkpoint=None,
+                    last_activity_at=None,
+                    created_at=created_at,
+                    updated_at=created_at,
+                )
+            ]
+
+    class FakeOpsMesh:
+        async def list_task_blueprint_views(self) -> list[SimpleNamespace]:
+            return []
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                mission_service=FakeMissionService(),
+                ops_mesh=FakeOpsMesh(),
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "tasks",
+            "audit",
+            "--json",
+            "--severity",
+            "error",
+            "--code",
+            "stale_running",
+            "--limit",
+            "1",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["count"] == 1
+    assert payload["filteredCount"] == 1
+    assert payload["displayed"] == 1
+    assert payload["filters"] == {
+        "severity": "error",
+        "code": "stale_running",
+        "limit": 1,
+    }
+    assert payload["summary"]["combined"] == {"total": 1, "errors": 1, "warnings": 0}
+    assert payload["summary"]["taskFlows"]["total"] == 0
+    finding = payload["findings"][0]
+    assert finding["kind"] == "task"
+    assert finding["severity"] == "error"
+    assert finding["code"] == "stale_running"
+    assert finding["status"] == "running"
+    assert finding["token"] == "mission:17"
+    assert finding["ageMs"] > 30 * 60_000
+    assert finding["task"]["taskId"] == "mission:17"
+
+
+def test_tasks_maintenance_json_previews_native_cleanup_accounting(monkeypatch) -> None:
+    created_at = datetime(2026, 4, 29, 14, 30, tzinfo=UTC)
+    updated_at = datetime(2026, 4, 29, 14, 45, tzinfo=UTC)
+
+    class FakeMissionService:
+        async def list_views(self) -> list[SimpleNamespace]:
+            return [
+                SimpleNamespace(
+                    id=17,
+                    name="Gateway hardener",
+                    objective="Stabilize the next parity slice.",
+                    status="completed",
+                    in_progress=False,
+                    task_blueprint_id=5,
+                    session_key="agent:worker:main",
+                    thread_id="thread-17",
+                    last_turn_id="turn-17",
+                    instance_id=2,
+                    model="gpt-5.4",
+                    last_error=None,
+                    last_checkpoint="Verified and committed.",
+                    last_activity_at=None,
+                    created_at=created_at,
+                    updated_at=updated_at,
+                )
+            ]
+
+    class FakeOpsMesh:
+        async def list_task_blueprint_views(self) -> list[SimpleNamespace]:
+            return []
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                mission_service=FakeMissionService(),
+                ops_mesh=FakeOpsMesh(),
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["tasks", "maintenance", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["mode"] == "preview"
+    assert payload["maintenance"] == {
+        "tasks": {
+            "reconciled": 0,
+            "recovered": 0,
+            "cleanupStamped": 1,
+            "pruned": 0,
+        },
+        "taskFlows": {"reconciled": 0, "pruned": 0},
+    }
+    assert payload["tasks"]["total"] == 1
+    assert payload["tasks"]["terminal"] == 1
+    assert payload["tasks"]["byStatus"]["succeeded"] == 1
+    assert payload["tasks"]["byRuntime"]["subagent"] == 1
+    assert payload["auditBefore"] == payload["auditAfter"]
+    assert payload["auditBefore"]["warnings"] == 1
+    assert payload["auditBefore"]["taskFlows"]["total"] == 0
+
+
+def test_tasks_flow_list_json_projects_task_blueprint_flows(monkeypatch) -> None:
+    created_at = datetime(2026, 4, 29, 14, 30, tzinfo=UTC)
+    updated_at = datetime(2026, 4, 29, 14, 45, tzinfo=UTC)
+
+    class FakeMissionService:
+        async def list_views(self) -> list[SimpleNamespace]:
+            return [
+                SimpleNamespace(
+                    id=17,
+                    name="Gateway hardener",
+                    objective="Stabilize the next parity slice.",
+                    status="active",
+                    in_progress=True,
+                    task_blueprint_id=7,
+                    session_key="agent:worker:main",
+                    thread_id="thread-17",
+                    last_turn_id="turn-17",
+                    instance_id=2,
+                    model="gpt-5.4",
+                    last_error=None,
+                    last_checkpoint=None,
+                    last_activity_at=None,
+                    created_at=created_at,
+                    updated_at=updated_at,
+                )
+            ]
+
+    class FakeOpsMesh:
+        async def list_task_blueprint_views(self) -> list[SimpleNamespace]:
+            return [
+                SimpleNamespace(
+                    id=7,
+                    name="Nightly digest",
+                    objective_template="Send the recurring workspace digest.",
+                    summary="Recurring digest",
+                    schedule_kind="cron",
+                    cadence_minutes=None,
+                    enabled=True,
+                    last_status="active",
+                    last_result_summary=None,
+                    last_launched_at=created_at,
+                    created_at=created_at,
+                    updated_at=updated_at,
+                )
+            ]
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                mission_service=FakeMissionService(),
+                ops_mesh=FakeOpsMesh(),
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["tasks", "flow", "list", "--json", "--status", "running"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["count"] == 1
+    assert payload["status"] == "running"
+    flow = payload["flows"][0]
+    assert flow["flowId"] == "task-blueprint:7"
+    assert flow["syncMode"] == "task_mirrored"
+    assert flow["status"] == "running"
+    assert flow["goal"] == "Send the recurring workspace digest."
+    assert flow["tasks"][0]["taskId"] == "mission:17"
+    assert flow["tasks"][0]["parentFlowId"] == "task-blueprint:7"
+    assert flow["taskSummary"]["total"] == 1
+    assert flow["taskSummary"]["active"] == 1
+
+
+def test_tasks_flow_show_json_resolves_task_blueprint_flow(monkeypatch) -> None:
+    created_at = datetime(2026, 4, 29, 14, 30, tzinfo=UTC)
+    updated_at = datetime(2026, 4, 29, 14, 45, tzinfo=UTC)
+
+    class FakeMissionService:
+        async def list_views(self) -> list[SimpleNamespace]:
+            return []
+
+    class FakeOpsMesh:
+        async def list_task_blueprint_views(self) -> list[SimpleNamespace]:
+            return [
+                SimpleNamespace(
+                    id=7,
+                    name="Nightly digest",
+                    objective_template="Send the recurring workspace digest.",
+                    summary="Recurring digest",
+                    schedule_kind="cron",
+                    cadence_minutes=None,
+                    enabled=True,
+                    last_status=None,
+                    last_result_summary=None,
+                    last_launched_at=None,
+                    created_at=created_at,
+                    updated_at=updated_at,
+                )
+            ]
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                mission_service=FakeMissionService(),
+                ops_mesh=FakeOpsMesh(),
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["tasks", "flow", "show", "task-blueprint:7", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["flowId"] == "task-blueprint:7"
+    assert payload["status"] == "queued"
+    assert payload["tasks"] == []
+    assert payload["taskSummary"]["total"] == 0
+
+
+def test_tasks_cancel_pauses_native_mission_task(monkeypatch) -> None:
+    paused: list[int] = []
+    created_at = datetime(2026, 4, 29, 14, 30, tzinfo=UTC)
+
+    class FakeMissionService:
+        async def list_views(self) -> list[SimpleNamespace]:
+            return [
+                SimpleNamespace(
+                    id=17,
+                    name="Gateway hardener",
+                    objective="Stabilize the next parity slice.",
+                    status="active",
+                    in_progress=True,
+                    task_blueprint_id=7,
+                    session_key="agent:worker:main",
+                    thread_id="thread-17",
+                    last_turn_id="turn-17",
+                    instance_id=2,
+                    model="gpt-5.4",
+                    last_error=None,
+                    last_checkpoint=None,
+                    last_activity_at=None,
+                    created_at=created_at,
+                    updated_at=created_at,
+                )
+            ]
+
+        async def pause(self, mission_id: int) -> SimpleNamespace:
+            paused.append(mission_id)
+            return SimpleNamespace(id=mission_id, status="paused")
+
+    class FakeOpsMesh:
+        async def list_task_blueprint_views(self) -> list[SimpleNamespace]:
+            return []
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                mission_service=FakeMissionService(),
+                ops_mesh=FakeOpsMesh(),
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["tasks", "cancel", "agent:worker:main"])
+
+    assert result.exit_code == 0, result.stdout
+    assert paused == [17]
+    assert "Cancelled mission:17 (subagent) run thread-17." in result.stdout
+
+
+def test_tasks_notify_persists_native_session_notify_policy(monkeypatch) -> None:
+    upserts: list[tuple[str, dict[str, object]]] = []
+    created_at = datetime(2026, 4, 29, 14, 30, tzinfo=UTC)
+
+    class FakeMissionService:
+        async def list_views(self) -> list[SimpleNamespace]:
+            return [
+                SimpleNamespace(
+                    id=17,
+                    name="Gateway hardener",
+                    objective="Stabilize the next parity slice.",
+                    status="active",
+                    in_progress=True,
+                    task_blueprint_id=7,
+                    session_key="agent:worker:main",
+                    thread_id="thread-17",
+                    last_turn_id="turn-17",
+                    instance_id=2,
+                    model="gpt-5.4",
+                    last_error=None,
+                    last_checkpoint=None,
+                    last_activity_at=None,
+                    created_at=created_at,
+                    updated_at=created_at,
+                )
+            ]
+
+    class FakeOpsMesh:
+        async def list_task_blueprint_views(self) -> list[SimpleNamespace]:
+            return []
+
+    class FakeDatabase:
+        async def get_gateway_session_metadata(self, session_key: str) -> dict[str, object]:
+            assert session_key == "agent:worker:main"
+            return {"session_key": session_key, "metadata": {"label": "Worker"}}
+
+        async def upsert_gateway_session_metadata(
+            self,
+            *,
+            session_key: str,
+            metadata: dict[str, object],
+        ) -> None:
+            upserts.append((session_key, metadata))
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                database=FakeDatabase(),
+                mission_service=FakeMissionService(),
+                ops_mesh=FakeOpsMesh(),
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["tasks", "notify", "agent:worker:main", "silent"])
+
+    assert result.exit_code == 0, result.stdout
+    assert upserts == [
+        (
+            "agent:worker:main",
+            {"label": "Worker", "taskNotifyPolicy": "silent"},
+        )
+    ]
+    assert "Updated mission:17 notify policy to silent." in result.stdout
+
+
+def test_tasks_flow_cancel_disables_task_blueprint_and_pauses_linked_missions(monkeypatch) -> None:
+    paused: list[int] = []
+    updates: list[tuple[int, dict[str, object]]] = []
+    created_at = datetime(2026, 4, 29, 14, 30, tzinfo=UTC)
+
+    class FakeMissionService:
+        async def list_views(self) -> list[SimpleNamespace]:
+            return [
+                SimpleNamespace(
+                    id=17,
+                    name="Gateway hardener",
+                    objective="Stabilize the next parity slice.",
+                    status="active",
+                    in_progress=True,
+                    task_blueprint_id=7,
+                    session_key="agent:worker:main",
+                    thread_id="thread-17",
+                    last_turn_id="turn-17",
+                    instance_id=2,
+                    model="gpt-5.4",
+                    last_error=None,
+                    last_checkpoint=None,
+                    last_activity_at=None,
+                    created_at=created_at,
+                    updated_at=created_at,
+                )
+            ]
+
+        async def pause(self, mission_id: int) -> SimpleNamespace:
+            paused.append(mission_id)
+            return SimpleNamespace(id=mission_id, status="paused")
+
+    class FakeOpsMesh:
+        async def list_task_blueprint_views(self) -> list[SimpleNamespace]:
+            return [
+                SimpleNamespace(
+                    id=7,
+                    name="Nightly digest",
+                    objective_template="Send the recurring workspace digest.",
+                    summary="Recurring digest",
+                    schedule_kind="cron",
+                    cadence_minutes=None,
+                    enabled=True,
+                    last_status="active",
+                    last_result_summary=None,
+                    last_launched_at=created_at,
+                    created_at=created_at,
+                    updated_at=created_at,
+                )
+            ]
+
+    class FakeDatabase:
+        async def update_task_blueprint(self, task_id: int, **fields: object) -> None:
+            updates.append((task_id, fields))
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                database=FakeDatabase(),
+                mission_service=FakeMissionService(),
+                ops_mesh=FakeOpsMesh(),
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["tasks", "flow", "cancel", "task-blueprint:7"])
+
+    assert result.exit_code == 0, result.stdout
+    assert paused == [17]
+    assert updates == [
+        (
+            7,
+            {
+                "enabled": 0,
+                "last_status": "cancelled",
+                "last_result_summary": "TaskFlow task-blueprint:7 cancelled via CLI.",
+            },
+        )
+    ]
+    assert "Cancelled task-blueprint:7 (task_mirrored) with status cancelled." in result.stdout
+
+
 def test_sessions_spawn_json_calls_gateway_method_owner(monkeypatch) -> None:
     calls: list[tuple[str, dict[str, object]]] = []
 
@@ -4762,6 +5377,176 @@ def test_models_list_json_calls_gateway_method_owner(monkeypatch) -> None:
         ]
     }
     assert calls == [("models.list", {})]
+
+
+def test_models_aliases_list_json_projects_config_aliases(tmp_path, monkeypatch) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "agents": {
+                    "defaults": {
+                        "models": {
+                            "openai/gpt-5.4": {"alias": "workhorse"},
+                            "anthropic/claude-opus-4.5": {"alias": "longform"},
+                            "openai/gpt-5.4-mini": {},
+                        }
+                    }
+                },
+            }
+        )
+    )
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_config=gateway_config))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["models", "aliases", "list", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout) == {
+        "aliases": {
+            "workhorse": "openai/gpt-5.4",
+            "longform": "anthropic/claude-opus-4.5",
+        }
+    }
+
+
+def test_models_aliases_add_updates_config_model_alias(tmp_path, monkeypatch) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "agents": {"defaults": {"models": {"openai/gpt-5.4-mini": {}}}},
+            }
+        )
+    )
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_config=gateway_config))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["models", "aliases", "add", "fast", "gpt-5.4-mini"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "Alias fast -> openai/gpt-5.4-mini" in result.stdout
+    snapshot = gateway_config.build_snapshot()
+    assert snapshot["agents"]["defaults"]["models"]["openai/gpt-5.4-mini"]["alias"] == "fast"
+
+
+def test_models_aliases_remove_clears_config_model_alias(tmp_path, monkeypatch) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "agents": {
+                    "defaults": {
+                        "models": {"openai/gpt-5.4-mini": {"alias": "fast"}}
+                    }
+                },
+            }
+        )
+    )
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_config=gateway_config))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["models", "aliases", "remove", "fast"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "No aliases configured." in result.stdout
+    snapshot = gateway_config.build_snapshot()
+    assert "alias" not in snapshot["agents"]["defaults"]["models"]["openai/gpt-5.4-mini"]
+
+
+def test_models_fallbacks_list_json_projects_config_fallbacks(tmp_path, monkeypatch) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "agents": {
+                    "defaults": {
+                        "model": {
+                            "primary": "openai/gpt-5.4",
+                            "fallbacks": ["openai/gpt-5.4-mini", "anthropic/claude-opus-4.5"],
+                        }
+                    }
+                },
+            }
+        )
+    )
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_config=gateway_config))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["models", "fallbacks", "list", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout) == {
+        "fallbacks": ["openai/gpt-5.4-mini", "anthropic/claude-opus-4.5"]
+    }
 
 
 def test_models_status_json_projects_default_catalog_state(monkeypatch) -> None:

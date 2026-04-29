@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import subprocess
 import sys
 from collections.abc import Callable
@@ -36,6 +37,8 @@ _OPENCLAW_CHANNEL_PLUGIN_ALIASES = {
     "zalo": "zalo",
     "zulip": "zulip",
 }
+_MODEL_ALIAS_PATTERN = re.compile(r"^[A-Za-z0-9_.:-]+$")
+_DEFAULT_MODEL_PROVIDER = "openai"
 
 
 def _escape_powershell_single_quoted_string(value: str) -> str:
@@ -161,6 +164,40 @@ class GatewayConfigService:
                 "requestedEnabled": enabled,
                 "reason": toggle["reason"],
                 "channelSynced": toggle["channelSynced"],
+            }
+        )
+        return write_result
+
+    def set_model_alias(self, *, alias: str, model_ref: str) -> dict[str, Any]:
+        config_path = self._require_config_path()
+        current = self.build_snapshot()
+        alias_value = _normalize_model_alias(alias)
+        target = _resolve_model_alias_target(
+            model_ref,
+            aliases=_model_aliases_from_config_snapshot(current),
+        )
+        next_snapshot = _set_model_alias_in_snapshot(
+            current,
+            alias=alias_value,
+            target=target,
+        )
+        base_hash = self._snapshot_hash(current) if config_path.exists() else None
+        write_result = self._write_snapshot(next_snapshot, base_hash=base_hash)
+        write_result.update({"alias": alias_value, "target": target})
+        return write_result
+
+    def remove_model_alias(self, alias: str) -> dict[str, Any]:
+        config_path = self._require_config_path()
+        current = self.build_snapshot()
+        alias_value = _normalize_model_alias(alias)
+        next_snapshot = _remove_model_alias_in_snapshot(current, alias=alias_value)
+        base_hash = self._snapshot_hash(current) if config_path.exists() else None
+        write_result = self._write_snapshot(next_snapshot, base_hash=base_hash)
+        remaining_aliases = _model_aliases_from_config_snapshot(next_snapshot)
+        write_result.update(
+            {
+                "alias": alias_value,
+                "aliasesRemaining": len(remaining_aliases),
             }
         )
         return write_result
@@ -311,6 +348,116 @@ class GatewayConfigService:
                 "error": "failed to open config file",
             }
         return {"ok": True, "path": str(self._config_path)}
+
+
+def _normalize_model_alias(alias: str) -> str:
+    normalized = alias.strip()
+    if not normalized:
+        raise ValueError("Alias cannot be empty.")
+    if _MODEL_ALIAS_PATTERN.fullmatch(normalized) is None:
+        raise ValueError("Alias must use letters, numbers, dots, underscores, colons, or dashes.")
+    return normalized
+
+
+def _resolve_model_alias_target(raw: str, *, aliases: dict[str, str]) -> str:
+    normalized = raw.strip()
+    if not normalized:
+        raise ValueError(f"Invalid model reference: {raw}")
+    alias_target = aliases.get(normalized)
+    if alias_target:
+        return alias_target
+    if "/" in normalized:
+        provider, model = normalized.split("/", 1)
+    else:
+        provider, model = _DEFAULT_MODEL_PROVIDER, normalized
+    provider = provider.strip().lower()
+    model = model.strip()
+    if not provider or not model:
+        raise ValueError(f"Invalid model reference: {raw}")
+    return f"{provider}/{model}"
+
+
+def _model_aliases_from_config_snapshot(snapshot: dict[str, Any]) -> dict[str, str]:
+    models = _agents_defaults_models_from_snapshot(snapshot)
+    aliases: dict[str, str] = {}
+    for model_key, raw_entry in models.items():
+        if not isinstance(raw_entry, dict):
+            continue
+        alias = raw_entry.get("alias")
+        if isinstance(alias, str) and alias.strip():
+            aliases[alias.strip()] = model_key
+    return aliases
+
+
+def _agents_defaults_models_from_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
+    agents = snapshot.get("agents")
+    if not isinstance(agents, dict):
+        return {}
+    defaults = agents.get("defaults")
+    if not isinstance(defaults, dict):
+        return {}
+    models = defaults.get("models")
+    return dict(models) if isinstance(models, dict) else {}
+
+
+def _set_model_alias_in_snapshot(
+    snapshot: dict[str, Any],
+    *,
+    alias: str,
+    target: str,
+) -> dict[str, Any]:
+    models = _agents_defaults_models_from_snapshot(snapshot)
+    for model_key, raw_entry in models.items():
+        entry = raw_entry if isinstance(raw_entry, dict) else {}
+        existing = entry.get("alias")
+        if isinstance(existing, str) and existing.strip() == alias and model_key != target:
+            raise ValueError(f"Alias {alias} already points to {model_key}.")
+    target_entry = models.get(target)
+    next_models = dict(models)
+    next_entry = dict(target_entry) if isinstance(target_entry, dict) else {}
+    next_entry["alias"] = alias
+    next_models[target] = next_entry
+    next_snapshot = dict(snapshot)
+    raw_agents = next_snapshot.get("agents")
+    agents = dict(raw_agents) if isinstance(raw_agents, dict) else {}
+    raw_defaults = agents.get("defaults")
+    defaults = dict(raw_defaults) if isinstance(raw_defaults, dict) else {}
+    defaults["models"] = next_models
+    agents["defaults"] = defaults
+    next_snapshot["agents"] = agents
+    return next_snapshot
+
+
+def _remove_model_alias_in_snapshot(
+    snapshot: dict[str, Any],
+    *,
+    alias: str,
+) -> dict[str, Any]:
+    models = _agents_defaults_models_from_snapshot(snapshot)
+    found_key: str | None = None
+    for model_key, raw_entry in models.items():
+        if not isinstance(raw_entry, dict):
+            continue
+        existing = raw_entry.get("alias")
+        if isinstance(existing, str) and existing.strip() == alias:
+            found_key = model_key
+            break
+    if found_key is None:
+        raise ValueError(f"Alias not found: {alias}")
+    next_models = dict(models)
+    target_entry = next_models.get(found_key)
+    next_entry = dict(target_entry) if isinstance(target_entry, dict) else {}
+    next_entry.pop("alias", None)
+    next_models[found_key] = next_entry
+    next_snapshot = dict(snapshot)
+    raw_agents = next_snapshot.get("agents")
+    agents = dict(raw_agents) if isinstance(raw_agents, dict) else {}
+    raw_defaults = agents.get("defaults")
+    defaults = dict(raw_defaults) if isinstance(raw_defaults, dict) else {}
+    defaults["models"] = next_models
+    agents["defaults"] = defaults
+    next_snapshot["agents"] = agents
+    return next_snapshot
 
 
 def _merge_config_patch(current: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:

@@ -143,7 +143,31 @@ missing transcript-file pruning onto OpenZues' SQLite-backed session metadata
 by deleting only agent-filtered metadata rows whose control-chat transcript has
 no messages. Remaining cleanup parity is stale/age/count/disk-budget cleanup
 and richer multi-store/all-agent mutation semantics over OpenZues' native
-session store. Top-level
+session store. The CLI now also exposes read-only `tasks`, `tasks list`, and
+`tasks show` inspection over native OpenZues mission and task-blueprint state,
+returning OpenClaw-shaped task records with `runtime`, `status`, `taskId`,
+session/run lookup, delivery, notify, timestamp, progress, and terminal summary
+fields. `tasks audit` now applies OpenClaw-shaped stale-running, stale-queued,
+lost, delivery-failed, missing-cleanup, and timestamp-consistency checks to
+those native records with the upstream JSON filter/summary envelope and an
+explicit empty TaskFlow audit summary. `tasks maintenance` now returns the
+upstream preview/apply envelope with native task summary, audit-before/after,
+cleanup-stamp accounting, and explicit zero TaskFlow maintenance. `tasks flow
+list/show` now projects saved task blueprints as `task_mirrored` TaskFlows,
+links mission task records through `parentFlowId`, and returns upstream-shaped
+linked tasks plus task summaries. `tasks cancel` now resolves task id, run id,
+or session key lookups against native task records and pauses active
+mission-backed tasks through `MissionService.pause()`, preserving the upstream
+not-found/could-not-cancel boundary for unsupported records. `tasks notify`
+now persists `taskNotifyPolicy` in gateway session metadata and the task
+read-model projects the saved policy through later list/show output. `tasks
+flow cancel` now disables the native task blueprint, stamps an OpenClaw-shaped
+cancelled result, and pauses active linked mission tasks while preserving the
+upstream not-found/could-not-cancel boundary. No smaller source-backed `tasks`
+CLI command remains in the current native projection; deeper parity would be a
+richer native TaskFlow mutation registry if OpenZues grows a first-class flow
+owner.
+Top-level
 `status --json` now accepts OpenClaw's `--all`, `--usage`, `--deep`, and
 `--timeout` / `--timeout-ms` breadth flags, forwards the timeout into the
 native live health probe for `--deep`, and projects honest unavailable JSON
@@ -178,8 +202,23 @@ The CLI now also exposes `models list` as a thin OpenClaw-shaped JSON/human
 wrapper over the production `models.list` gateway method owner, including
 provider/local filters without duplicating the model catalog runtime, and
 `models status` projects the same catalog into OpenClaw-style
-default/resolved/allowed/auth status fields while keeping live auth probes
-unavailable until the native model auth health runtime exists. Top-level `health`
+default/resolved/allowed/auth status fields. `models aliases list` now reads
+OpenClaw-shaped `agents.defaults.models[*].alias` config from the native
+OpenZues config projection, falls back to model-catalog alias metadata when
+available, and supports the upstream JSON/plain/human output shapes. `models
+aliases add` now normalizes aliases, defaults unqualified model ids to the
+OpenAI provider, rejects duplicates pointing elsewhere, and writes the alias
+through `GatewayConfigService` into `agents.defaults.models`. `models aliases
+remove` now clears the alias field from the matched configured model, preserves
+the model entry, reports the upstream empty-alias message when none remain, and
+returns the upstream not-found error for missing aliases. No smaller model alias
+CLI command remains. `models fallbacks list` now projects
+`agents.defaults.model.fallbacks` from the native config snapshot and supports
+the upstream JSON/plain/human output shapes. The next model CLI queue head is
+fallback add/remove/clear, followed by image fallback and auth-order mutation
+clusters. Live auth probes remain unavailable until the native model auth
+health runtime exists.
+Top-level `health`
 now queries the live gateway `/api/health` and `/readyz` owners, emits
 OpenClaw-shaped JSON/human readiness fields, and propagates the configured
 connection timeout. `channels status --probe --timeout <ms> --json` now
