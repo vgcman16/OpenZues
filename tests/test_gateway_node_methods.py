@@ -9491,6 +9491,246 @@ async def test_chat_abort_interrupts_tracked_gateway_run_with_injected_runtime()
 
 
 @pytest.mark.asyncio
+async def test_chat_abort_rejects_non_owner_requester_like_openclaw() -> None:
+    observed_interrupt: list[dict[str, object | None]] = []
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        del session_key, message, thinking, deliver, timeout_ms
+        return {"runId": idempotency_key, "status": "ok"}
+
+    async def fake_chat_abort_service(
+        *,
+        session_key: str,
+        run_id: str | None,
+    ) -> dict[str, object]:
+        observed_interrupt.append({"session_key": session_key, "run_id": run_id})
+        return {"ok": True}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        chat_send_service=fake_chat_send_service,
+        chat_abort_service=fake_chat_abort_service,
+    )
+
+    await service.call(
+        "chat.send",
+        {
+            "sessionKey": "openzues:thread:demo",
+            "message": "status",
+            "idempotencyKey": "run-chat-owner-1",
+        },
+        requester=GatewayNodeMethodRequester(
+            client_id="conn-owner",
+            node_id="device-owner",
+            caller_scopes=(WRITE_GATEWAY_METHOD_SCOPE,),
+        ),
+    )
+
+    with pytest.raises(GatewayNodeMethodError) as exc_info:
+        await service.call(
+            "chat.abort",
+            {"sessionKey": "openzues:thread:demo", "runId": "run-chat-owner-1"},
+            requester=GatewayNodeMethodRequester(
+                client_id="conn-other",
+                node_id="device-other",
+                caller_scopes=(WRITE_GATEWAY_METHOD_SCOPE,),
+            ),
+        )
+
+    assert exc_info.value.code == "INVALID_REQUEST"
+    assert exc_info.value.message == "unauthorized"
+    assert observed_interrupt == []
+
+
+@pytest.mark.asyncio
+async def test_chat_abort_session_scope_rejects_non_owner_requester_like_openclaw() -> None:
+    observed_interrupt: list[dict[str, object | None]] = []
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        del session_key, message, thinking, deliver, timeout_ms
+        return {"runId": idempotency_key, "status": "ok"}
+
+    async def fake_chat_abort_service(
+        *,
+        session_key: str,
+        run_id: str | None,
+    ) -> dict[str, object]:
+        observed_interrupt.append({"session_key": session_key, "run_id": run_id})
+        return {"ok": True}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        chat_send_service=fake_chat_send_service,
+        chat_abort_service=fake_chat_abort_service,
+    )
+
+    await service.call(
+        "chat.send",
+        {
+            "sessionKey": "openzues:thread:demo",
+            "message": "status",
+            "idempotencyKey": "run-chat-session-owner-1",
+        },
+        requester=GatewayNodeMethodRequester(
+            client_id="conn-owner",
+            node_id="device-owner",
+            caller_scopes=(WRITE_GATEWAY_METHOD_SCOPE,),
+        ),
+    )
+
+    with pytest.raises(GatewayNodeMethodError) as exc_info:
+        await service.call(
+            "chat.abort",
+            {"sessionKey": "openzues:thread:demo"},
+            requester=GatewayNodeMethodRequester(
+                client_id="conn-other",
+                node_id="device-other",
+                caller_scopes=(WRITE_GATEWAY_METHOD_SCOPE,),
+            ),
+        )
+
+    assert exc_info.value.code == "INVALID_REQUEST"
+    assert exc_info.value.message == "unauthorized"
+    assert observed_interrupt == []
+
+
+@pytest.mark.asyncio
+async def test_chat_abort_allows_same_device_after_reconnect_like_openclaw() -> None:
+    observed_interrupt: dict[str, object | None] = {}
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        del session_key, message, thinking, deliver, timeout_ms
+        return {"runId": idempotency_key, "status": "ok"}
+
+    async def fake_chat_abort_service(
+        *,
+        session_key: str,
+        run_id: str | None,
+    ) -> dict[str, object]:
+        observed_interrupt.update({"session_key": session_key, "run_id": run_id})
+        return {"ok": True}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        chat_send_service=fake_chat_send_service,
+        chat_abort_service=fake_chat_abort_service,
+    )
+
+    await service.call(
+        "chat.send",
+        {
+            "sessionKey": "openzues:thread:demo",
+            "message": "status",
+            "idempotencyKey": "run-chat-device-owner-1",
+        },
+        requester=GatewayNodeMethodRequester(
+            client_id="conn-old",
+            node_id="device-owner",
+            caller_scopes=(WRITE_GATEWAY_METHOD_SCOPE,),
+        ),
+    )
+    payload = await service.call(
+        "chat.abort",
+        {"sessionKey": "openzues:thread:demo", "runId": "run-chat-device-owner-1"},
+        requester=GatewayNodeMethodRequester(
+            client_id="conn-new",
+            node_id="device-owner",
+            caller_scopes=(WRITE_GATEWAY_METHOD_SCOPE,),
+        ),
+    )
+
+    assert observed_interrupt == {
+        "session_key": "openzues:thread:demo",
+        "run_id": "run-chat-device-owner-1",
+    }
+    assert payload == {"ok": True, "aborted": True, "runIds": ["run-chat-device-owner-1"]}
+
+
+@pytest.mark.asyncio
+async def test_chat_abort_allows_admin_bypass_like_openclaw() -> None:
+    observed_interrupt: dict[str, object | None] = {}
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        del session_key, message, thinking, deliver, timeout_ms
+        return {"runId": idempotency_key, "status": "ok"}
+
+    async def fake_chat_abort_service(
+        *,
+        session_key: str,
+        run_id: str | None,
+    ) -> dict[str, object]:
+        observed_interrupt.update({"session_key": session_key, "run_id": run_id})
+        return {"ok": True}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        chat_send_service=fake_chat_send_service,
+        chat_abort_service=fake_chat_abort_service,
+    )
+
+    await service.call(
+        "chat.send",
+        {
+            "sessionKey": "openzues:thread:demo",
+            "message": "status",
+            "idempotencyKey": "run-chat-admin-bypass-1",
+        },
+        requester=GatewayNodeMethodRequester(
+            client_id="conn-owner",
+            node_id="device-owner",
+            caller_scopes=(WRITE_GATEWAY_METHOD_SCOPE,),
+        ),
+    )
+    payload = await service.call(
+        "chat.abort",
+        {"sessionKey": "openzues:thread:demo", "runId": "run-chat-admin-bypass-1"},
+        requester=GatewayNodeMethodRequester(
+            client_id="conn-admin",
+            node_id="device-admin",
+            caller_scopes=(ADMIN_GATEWAY_METHOD_SCOPE,),
+        ),
+    )
+
+    assert observed_interrupt == {
+        "session_key": "openzues:thread:demo",
+        "run_id": "run-chat-admin-bypass-1",
+    }
+    assert payload == {"ok": True, "aborted": True, "runIds": ["run-chat-admin-bypass-1"]}
+
+
+@pytest.mark.asyncio
 async def test_chat_abort_uses_resolved_subagent_store_key() -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-chat-abort-subagent-alias"
     shutil.rmtree(tmp_path, ignore_errors=True)

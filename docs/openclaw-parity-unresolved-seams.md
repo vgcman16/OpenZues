@@ -860,6 +860,15 @@ runtime dispatch, run tracking, pending-message counts, and session-change
 events. The next bounded seam should continue through remaining session-keyed
 runtime surfaces such as abort/wait if a focused mismatch is proven.
 
+Current queue-head adjustment: `chat.abort` now records tracked run owner
+connection/device metadata from `chat.send`, `sessions.send`,
+`sessions.steer`, `sessions.spawn`, `sessions.create`, and `agent`, then
+rejects explicit and session-scoped aborts from non-owner requesters unless the
+caller has `operator.admin`, while preserving same-device reconnect aborts and
+legacy ownerless-run compatibility. The next bounded seam should continue into
+OpenClaw abort partial transcript persistence or the adjacent `agent.wait`
+read model if a focused mismatch is proven.
+
 ## How To Read This Queue
 
 - This queue is repo-level and cross-cutting. It is for seams likely to fall between shard workers or cut across cron, session, gateway, delivery, and integration ownership.
@@ -1863,6 +1872,14 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   snapshots when no instances are present, and missing-provider synthesis for
   refreshable configured providers without env-backed API keys.
 - Verified the `models.authStatus` seam with `python -m pytest tests\test_gateway_models.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "models_auth_status"`, adjacent `python -m pytest tests\test_gateway_models.py -q`, `python -m pytest tests\test_cli.py -q -k "model_auth_status or models_status or infer_model_auth"`, `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "models_auth_status or models_list or secrets_resolve or secrets_reload"`, `ruff check src\openzues\services\gateway_models.py src\openzues\services\gateway_node_methods.py tests\test_gateway_models.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`, and `mypy src\openzues\services\gateway_models.py src\openzues\services\gateway_node_methods.py`.
+- `chat.abort` now enforces OpenClaw's tracked-run ownership guard. Runs store
+  owner connection/device metadata when started through `chat.send`,
+  `sessions.send`, `sessions.steer`, `sessions.spawn`, `sessions.create`, and
+  `agent`; explicit and session-scoped aborts from other requesters return
+  `INVALID_REQUEST` / `unauthorized`, same-device reconnects remain allowed,
+  admin callers bypass the owner check, and legacy ownerless tracked runs keep
+  the historical compatible behavior.
+- Verified the `chat.abort` ownership seam with `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_abort"`, API proof `python -m pytest tests\test_gateway_nodes_api.py -q -k "chat_abort"`, adjacent `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_abort or sessions_steer or sessions_abort or compaction_restore"`, `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`, and `mypy src\openzues\services\gateway_node_methods.py`.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially ACP spawn harness parity, richer `tools.invoke` executor parity
   (real plugin HTTP ordering and any additional intentional high-risk

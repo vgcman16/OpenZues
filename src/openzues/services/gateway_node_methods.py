@@ -401,6 +401,8 @@ class GatewayTrackedChatRun:
     run_id: str
     session_key: str
     started_at_ms: int
+    owner_client_id: str | None = None
+    owner_node_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -5975,6 +5977,7 @@ class GatewayNodeMethodService:
                 return await self._abort_gateway_chat_run(
                     session_key=session_key,
                     run_id=None,
+                    requester=resolved_requester,
                 )
             timestamp_ms = _timestamp_ms(now_ms)
             inherited_delivery_route = await self._chat_send_inherited_delivery_route(
@@ -6053,6 +6056,7 @@ class GatewayNodeMethodService:
                 session_key,
                 send_result,
                 started_at_ms=timestamp_ms,
+                owner_requester=resolved_requester,
             )
             return _sanitize_gateway_chat_result_payload(send_result)
 
@@ -6206,6 +6210,7 @@ class GatewayNodeMethodService:
                 stop_result = await self._abort_gateway_chat_run(
                     session_key=session_key,
                     run_id=None,
+                    requester=resolved_requester,
                 )
                 await self._publish_sessions_changed_event(
                     session_key=session_key,
@@ -6289,6 +6294,7 @@ class GatewayNodeMethodService:
                 session_key,
                 send_result,
                 started_at_ms=timestamp_ms,
+                owner_requester=resolved_requester,
             )
             await self._publish_sessions_changed_event(
                 session_key=session_key,
@@ -6354,7 +6360,11 @@ class GatewayNodeMethodService:
                         ),
                         status_code=503,
                     )
-                await self._abort_gateway_chat_run(session_key=session_key, run_id=None)
+                await self._abort_gateway_chat_run(
+                    session_key=session_key,
+                    run_id=None,
+                    requester=resolved_requester,
+                )
                 interrupted_active_run = True
             steer_event_reason = "steer" if interrupted_active_run else "send"
             if _is_gateway_chat_stop_command_text(message):
@@ -6370,6 +6380,7 @@ class GatewayNodeMethodService:
                 stop_result = await self._abort_gateway_chat_run(
                     session_key=session_key,
                     run_id=None,
+                    requester=resolved_requester,
                 )
                 if interrupted_active_run and stop_result.get("ok") is True:
                     stop_result = {
@@ -6443,6 +6454,7 @@ class GatewayNodeMethodService:
                 session_key,
                 steer_result,
                 started_at_ms=timestamp_ms,
+                owner_requester=resolved_requester,
             )
             await self._publish_sessions_changed_event(
                 session_key=session_key,
@@ -6463,6 +6475,7 @@ class GatewayNodeMethodService:
             abort_payload = await self._abort_gateway_chat_run(
                 session_key=session_key,
                 run_id=run_id,
+                requester=resolved_requester,
             )
             run_ids = abort_payload.get("runIds")
             aborted_run_id = (
@@ -6698,7 +6711,11 @@ class GatewayNodeMethodService:
                 now_ms=now_ms,
             )
             if self._tracked_gateway_chat_run_id(canonical_key) is not None:
-                await self._abort_gateway_chat_run(session_key=canonical_key, run_id=None)
+                await self._abort_gateway_chat_run(
+                    session_key=canonical_key,
+                    run_id=None,
+                    requester=resolved_requester,
+                )
             existing_metadata_row = await self._database.get_gateway_session_metadata(canonical_key)
             next_metadata: dict[str, Any] = {}
             if isinstance(existing_metadata_row, dict):
@@ -7375,6 +7392,7 @@ class GatewayNodeMethodService:
                     child_session_key,
                     {"runId": run_id},
                     started_at_ms=timestamp_ms,
+                    owner_requester=resolved_requester,
                 )
                 await self._publish_sessions_changed_event(
                     session_key=child_session_key,
@@ -7852,7 +7870,12 @@ class GatewayNodeMethodService:
                 )
                 if updated_entry is not None:
                     entry = updated_entry
-            self._remember_gateway_chat_run(canonical_key, send_result, started_at_ms=timestamp_ms)
+            self._remember_gateway_chat_run(
+                canonical_key,
+                send_result,
+                started_at_ms=timestamp_ms,
+                owner_requester=resolved_requester,
+            )
             await self._publish_sessions_changed_event(
                 session_key=canonical_key,
                 reason="create",
@@ -8070,6 +8093,7 @@ class GatewayNodeMethodService:
                         canonical_key,
                         send_result,
                         started_at_ms=timestamp_ms,
+                        owner_requester=resolved_requester,
                     )
                     run_started = bool(
                         isinstance(send_result.get("runId"), str)
@@ -8363,6 +8387,7 @@ class GatewayNodeMethodService:
             return await self._abort_gateway_chat_run(
                 session_key=session_key,
                 run_id=run_id,
+                requester=resolved_requester,
             )
 
         if resolved_method == "agent":
@@ -8719,6 +8744,7 @@ class GatewayNodeMethodService:
                 target_session_key,
                 send_result,
                 started_at_ms=timestamp_ms,
+                owner_requester=resolved_requester,
             )
             await self._publish_sessions_changed_event(
                 session_key=target_session_key,
@@ -11544,6 +11570,7 @@ class GatewayNodeMethodService:
         payload: dict[str, object],
         *,
         started_at_ms: int | None = None,
+        owner_requester: GatewayNodeMethodRequester | None = None,
     ) -> None:
         run_id = payload.get("runId")
         if not isinstance(run_id, str):
@@ -11559,6 +11586,16 @@ class GatewayNodeMethodService:
             run_id=trimmed_run_id,
             session_key=canonical_session_key,
             started_at_ms=_timestamp_ms(started_at_ms),
+            owner_client_id=(
+                _string_or_none(owner_requester.client_id)
+                if owner_requester is not None
+                else None
+            ),
+            owner_node_id=(
+                _string_or_none(owner_requester.node_id)
+                if owner_requester is not None
+                else None
+            ),
         )
         for alias in _session_key_aliases(canonical_session_key):
             self._gateway_chat_run_ids_by_session_key[alias] = trimmed_run_id
@@ -11568,6 +11605,7 @@ class GatewayNodeMethodService:
         *,
         session_key: str,
         run_id: str | None,
+        requester: GatewayNodeMethodRequester,
     ) -> dict[str, object]:
         if self._chat_abort_service is None:
             raise GatewayNodeMethodError(
@@ -11575,23 +11613,44 @@ class GatewayNodeMethodService:
                 message="chat.abort is unavailable until control chat cancellation is wired",
                 status_code=503,
             )
-        tracked_run_id = self._tracked_gateway_chat_run_id(session_key)
-        if run_id is not None and tracked_run_id != run_id:
-            return {"ok": True, "aborted": False, "runIds": []}
+        canonical_session_key = _canonical_session_key(session_key)
+        tracked_run_id = self._tracked_gateway_chat_run_id(canonical_session_key)
+        tracked_run: GatewayTrackedChatRun | None = None
+        if run_id is not None:
+            tracked_run = self._gateway_tracked_chat_runs_by_id.get(run_id)
+            if tracked_run is None:
+                return {"ok": True, "aborted": False, "runIds": []}
+            if tracked_run.session_key != canonical_session_key:
+                raise GatewayNodeMethodError(
+                    code="INVALID_REQUEST",
+                    message="runId does not match sessionKey",
+                    status_code=400,
+                )
+        elif tracked_run_id is not None:
+            tracked_run = self._gateway_tracked_chat_runs_by_id.get(tracked_run_id)
+        if tracked_run is not None and not _can_requester_abort_gateway_chat_run(
+            tracked_run,
+            requester,
+        ):
+            raise GatewayNodeMethodError(
+                code="INVALID_REQUEST",
+                message="unauthorized",
+                status_code=400,
+            )
         interrupt_result = await self._chat_abort_service(
-            session_key=session_key,
+            session_key=canonical_session_key,
             run_id=run_id,
         )
         if interrupt_result.get("ok") is True:
             aborted_run_id = run_id or tracked_run_id
-            self._forget_gateway_chat_run(session_key)
+            self._forget_gateway_chat_run(canonical_session_key)
             return {
                 "ok": True,
                 "aborted": True,
                 "runIds": [aborted_run_id] if aborted_run_id is not None else [],
             }
         if str(interrupt_result.get("reason") or "").strip().lower() == "no_active_turn":
-            self._forget_gateway_chat_run(session_key)
+            self._forget_gateway_chat_run(canonical_session_key)
             return {"ok": True, "aborted": False, "runIds": []}
         raise GatewayNodeMethodError(
             code="UNAVAILABLE",
@@ -11990,6 +12049,26 @@ class GatewayNodeMethodService:
 
 def _timestamp_ms(now_ms: int | None) -> int:
     return int(time.time() * 1000) if now_ms is None else int(now_ms)
+
+
+def _can_requester_abort_gateway_chat_run(
+    tracked_run: GatewayTrackedChatRun,
+    requester: GatewayNodeMethodRequester,
+) -> bool:
+    if (
+        requester.caller_scopes is not None
+        and ADMIN_GATEWAY_METHOD_SCOPE in requester.caller_scopes
+    ):
+        return True
+    owner_node_id = _string_or_none(tracked_run.owner_node_id)
+    owner_client_id = _string_or_none(tracked_run.owner_client_id)
+    if owner_node_id is None and owner_client_id is None:
+        return True
+    requester_node_id = _string_or_none(requester.node_id)
+    if owner_node_id is not None and requester_node_id == owner_node_id:
+        return True
+    requester_client_id = _string_or_none(requester.client_id)
+    return owner_client_id is not None and requester_client_id == owner_client_id
 
 
 def _exec_approval_allowed_decisions(ask: object) -> list[str]:
