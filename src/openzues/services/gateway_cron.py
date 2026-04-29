@@ -1546,6 +1546,10 @@ def build_gateway_cron_task_blueprint(job_create: dict[str, Any]) -> TaskBluepri
     payload_kind = _require_cron_add_string(payload.get("kind"), label="payload.kind")
     objective_template: str
     model: str | None = None
+    reasoning_effort: str | None = None
+    cron_payload_timeout_seconds: int | None = None
+    cron_payload_light_context: bool | None = None
+    cron_payload_tools_allow: list[str] | None = None
     cron_payload_text: str | None = None
     if payload_kind == "agentTurn":
         if session_target == "main":
@@ -1557,13 +1561,41 @@ def build_gateway_cron_task_blueprint(job_create: dict[str, Any]) -> TaskBluepri
             payload,
             method="cron.add",
             label="payload",
-            allowed_keys={"kind", "message", "model"},
+            allowed_keys={
+                "kind",
+                "lightContext",
+                "message",
+                "model",
+                "thinking",
+                "timeoutSeconds",
+                "toolsAllow",
+            },
         )
         objective_template = _require_cron_add_string(
             payload.get("message"),
             label="payload.message",
         )
         model = _optional_cron_add_string(payload.get("model"), label="payload.model")
+        if "thinking" in payload:
+            reasoning_effort = _optional_cron_add_string(
+                payload.get("thinking"),
+                label="payload.thinking",
+            )
+        if "timeoutSeconds" in payload:
+            cron_payload_timeout_seconds = _optional_cron_add_non_negative_int(
+                payload.get("timeoutSeconds"),
+                label="payload.timeoutSeconds",
+            )
+        if "lightContext" in payload:
+            cron_payload_light_context = _optional_cron_add_bool(
+                payload.get("lightContext"),
+                label="payload.lightContext",
+            )
+        if "toolsAllow" in payload:
+            cron_payload_tools_allow = _optional_cron_add_string_list(
+                payload.get("toolsAllow"),
+                label="payload.toolsAllow",
+            )
     elif payload_kind == "systemEvent":
         if session_target != "main":
             raise ValueError(
@@ -1641,6 +1673,9 @@ def build_gateway_cron_task_blueprint(job_create: dict[str, Any]) -> TaskBluepri
         cron_wake_mode=cast(Literal["now", "next-heartbeat"], wake_mode),
         cron_payload_kind=cast(Literal["agentTurn", "systemEvent"], payload_kind),
         cron_payload_text=cron_payload_text,
+        cron_payload_timeout_seconds=cron_payload_timeout_seconds,
+        cron_payload_light_context=cron_payload_light_context,
+        cron_payload_tools_allow=cron_payload_tools_allow,
         cron_delivery_mode=cron_delivery_mode,
         cron_delivery_channel=cron_delivery_channel,
         cron_delivery_to=cron_delivery_to,
@@ -1651,6 +1686,7 @@ def build_gateway_cron_task_blueprint(job_create: dict[str, Any]) -> TaskBluepri
         cron_failure_alert=cron_failure_alert,
         cron_notify_enabled=True if notify else None,
         model=model or "gpt-5.4",
+        reasoning_effort=reasoning_effort,
         enabled=resolved_enabled,
     )
 
@@ -2161,6 +2197,37 @@ def _optional_cron_add_string(value: object, *, label: str) -> str | None:
         raise ValueError(f"invalid cron.add params: {label} must be a string")
     trimmed = value.strip()
     return trimmed or None
+
+
+def _optional_cron_add_bool(value: object, *, label: str) -> bool | None:
+    if value is None:
+        return None
+    if not isinstance(value, bool):
+        raise ValueError(f"invalid cron.add params: {label} must be a boolean")
+    return value
+
+
+def _optional_cron_add_non_negative_int(value: object, *, label: str) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError(f"invalid cron.add params: {label} must be a non-negative integer")
+    return value
+
+
+def _optional_cron_add_string_list(value: object, *, label: str) -> list[str] | None:
+    if value is None:
+        return None
+    if not isinstance(value, list):
+        raise ValueError(f"invalid cron.add params: {label} must be an array")
+    output: list[str] = []
+    for index, item in enumerate(value):
+        if not isinstance(item, str):
+            raise ValueError(f"invalid cron.add params: {label}[{index}] must be a string")
+        trimmed = item.strip()
+        if trimmed:
+            output.append(trimmed)
+    return output
 
 
 def _require_cron_update_string(value: object, *, label: str) -> str:

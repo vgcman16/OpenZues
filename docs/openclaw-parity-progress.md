@@ -1410,8 +1410,19 @@ These are complete within the bounded OpenZues-local parity contract verified in
   `ruff check src\openzues\services\gateway_cron.py src\openzues\schemas.py
   tests\test_gateway_node_methods.py`, and `mypy
   src\openzues\services\gateway_cron.py src\openzues\schemas.py`.
-- Next cron parity should add the same payload extras to `cron.add`, then expose
-  the matching CLI flags before returning to delete-after-run behavior.
+- `cron.add` now accepts the same upstream agentTurn payload extras
+  (`thinking`, `timeoutSeconds`, `lightContext`, and `toolsAllow`) and persists
+  them into the native task blueprint payload.
+- Verified the backend cron add payload-extras slice with `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "cron_add_accepts_agent_turn_payload_extras_like_openclaw"` (`1 passed`),
+  adjacent gateway cron pack `python -m pytest tests\test_gateway_node_methods.py
+  -q -k "cron_update or cron_add or cron_list or cron_run"` (`49 passed`),
+  `ruff check src\openzues\services\gateway_cron.py src\openzues\schemas.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_cron.py src\openzues\schemas.py`.
+- Next cron parity should expose the matching CLI flags before returning to
+  delete-after-run behavior.
 
 ## References
 

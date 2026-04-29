@@ -22128,6 +22128,81 @@ async def test_cron_add_creates_every_schedule_agent_turn_job() -> None:
 
 
 @pytest.mark.asyncio
+async def test_cron_add_accepts_agent_turn_payload_extras_like_openclaw() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-add-payload-extras"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-cron-add-payload-extras.db")
+    await database.initialize()
+    created_payloads: list[TaskBlueprintCreate] = []
+
+    async def create_task(payload: TaskBlueprintCreate) -> object:
+        created_payloads.append(payload)
+        task_id = await database.create_task_blueprint(
+            name=payload.name,
+            summary=payload.summary,
+            project_id=payload.project_id,
+            instance_id=payload.instance_id,
+            cadence_minutes=payload.cadence_minutes,
+            enabled=payload.enabled,
+            payload=payload.model_dump(
+                mode="json",
+                exclude={
+                    "name",
+                    "summary",
+                    "project_id",
+                    "instance_id",
+                    "cadence_minutes",
+                    "enabled",
+                },
+            ),
+        )
+        return type("CreatedTask", (), {"id": task_id})()
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        create_task_blueprint=create_task,
+    )
+
+    payload = await service.call(
+        "cron.add",
+        {
+            "name": "Nightly Extras",
+            "enabled": True,
+            "schedule": {"kind": "every", "everyMs": 3_600_000},
+            "sessionTarget": "isolated",
+            "wakeMode": "next-heartbeat",
+            "payload": {
+                "kind": "agentTurn",
+                "message": "Ship with payload extras.",
+                "model": "gpt-5.4-mini",
+                "thinking": "high",
+                "timeoutSeconds": 300,
+                "lightContext": True,
+                "toolsAllow": ["read", "write"],
+            },
+        },
+    )
+
+    assert len(created_payloads) == 1
+    created = created_payloads[0]
+    assert created.reasoning_effort == "high"
+    assert created.cron_payload_timeout_seconds == 300
+    assert created.cron_payload_light_context is True
+    assert created.cron_payload_tools_allow == ["read", "write"]
+    assert payload["payload"] == {
+        "kind": "agentTurn",
+        "message": "Ship with payload extras.",
+        "model": "gpt-5.4-mini",
+        "thinking": "high",
+        "timeoutSeconds": 300,
+        "lightContext": True,
+        "toolsAllow": ["read", "write"],
+    }
+
+
+@pytest.mark.asyncio
 async def test_cron_add_accepts_failure_alert_object_like_openclaw() -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-add-failure-alert"
     shutil.rmtree(tmp_path, ignore_errors=True)
