@@ -1421,8 +1421,20 @@ These are complete within the bounded OpenZues-local parity contract verified in
   `ruff check src\openzues\services\gateway_cron.py src\openzues\schemas.py
   tests\test_gateway_node_methods.py`, and `mypy
   src\openzues\services\gateway_cron.py src\openzues\schemas.py`.
-- Next cron parity should expose the matching CLI flags before returning to
-  delete-after-run behavior.
+- `cron add` now exposes upstream agent payload extra flags: `--thinking`,
+  `--timeout-seconds`, `--light-context`, and `--tools`, shaping them into
+  `payload.thinking`, `payload.timeoutSeconds`, `payload.lightContext`, and
+  `payload.toolsAllow`.
+- Verified the cron add payload-extra CLI slice with `python -m pytest
+  tests\test_cli.py -q -k
+  "cron_add_payload_extra_flags_shape_agent_turn_payload"` (`1 passed`),
+  adjacent CLI pack `python -m pytest tests\test_cli.py -q -k "cron_ or
+  sessions_ or routes_send_json_calls_native_direct_send_runtime or
+  routes_poll_human_output_calls_native_direct_poll_runtime"` (`23 passed`),
+  `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+- Next cron parity should expose the matching `cron edit` CLI flags before
+  returning to delete-after-run behavior.
 
 ## References
 

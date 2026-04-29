@@ -2940,6 +2940,72 @@ def test_cron_add_cron_timezone_and_stagger_shape_schedule(monkeypatch) -> None:
     }
 
 
+def test_cron_add_payload_extra_flags_shape_agent_turn_payload(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {"ok": True, "id": "task-blueprint:7", "request": params}
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "cron",
+            "add",
+            "--name",
+            "Payload extras",
+            "--cron",
+            "* * * * *",
+            "--message",
+            "Ship with extras.",
+            "--model",
+            " gpt-5.4-mini ",
+            "--thinking",
+            " high ",
+            "--timeout-seconds",
+            "300",
+            "--light-context",
+            "--tools",
+            "exec read write",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert calls == [
+        (
+            "cron.add",
+            {
+                "name": "Payload extras",
+                "enabled": True,
+                "schedule": {"kind": "cron", "expr": "* * * * *"},
+                "sessionTarget": "isolated",
+                "wakeMode": "now",
+                "payload": {
+                    "kind": "agentTurn",
+                    "message": "Ship with extras.",
+                    "model": "gpt-5.4-mini",
+                    "thinking": "high",
+                    "timeoutSeconds": 300,
+                    "lightContext": True,
+                    "toolsAllow": ["exec", "read", "write"],
+                },
+                "delivery": {"mode": "announce", "channel": "last"},
+            },
+        )
+    ]
+
+
 def test_cron_edit_basic_patch_calls_gateway_method_owner(monkeypatch) -> None:
     calls: list[tuple[str, dict[str, object]]] = []
 

@@ -2509,11 +2509,34 @@ def _cron_duration_ms(value: str) -> int | None:
     return int(amount * factor)
 
 
+def _cron_positive_int(value: str | None) -> int | None:
+    normalized = _optional_cli_string(value)
+    if normalized is None:
+        return None
+    try:
+        parsed = int(normalized)
+    except ValueError:
+        return None
+    return parsed if parsed > 0 else None
+
+
+def _cron_cli_tools_allow(value: str | None) -> list[str] | None:
+    normalized = _optional_cli_string(value)
+    if normalized is None:
+        return None
+    tools = [part.strip() for part in re.split(r"[,\s]+", normalized) if part.strip()]
+    return tools or None
+
+
 def _cron_cli_payload(
     *,
     message: str | None,
     system_event: str | None,
     model: str | None = None,
+    thinking: str | None = None,
+    timeout_seconds: str | None = None,
+    light_context: bool = False,
+    tools: str | None = None,
 ) -> dict[str, object]:
     normalized_message = _optional_cli_string(message)
     normalized_system_event = _optional_cli_string(system_event)
@@ -2526,6 +2549,17 @@ def _cron_cli_payload(
     normalized_model = _optional_cli_string(model)
     if normalized_model is not None:
         payload["model"] = normalized_model
+    normalized_thinking = _optional_cli_string(thinking)
+    if normalized_thinking is not None:
+        payload["thinking"] = normalized_thinking
+    parsed_timeout_seconds = _cron_positive_int(timeout_seconds)
+    if parsed_timeout_seconds is not None:
+        payload["timeoutSeconds"] = parsed_timeout_seconds
+    if light_context:
+        payload["lightContext"] = True
+    tools_allow = _cron_cli_tools_allow(tools)
+    if tools_allow is not None:
+        payload["toolsAllow"] = tools_allow
     return payload
 
 
@@ -9726,6 +9760,18 @@ def cron_add_command(
         help="Main-session system event payload.",
     ),
     model: str | None = typer.Option(None, "--model", help="Model override for agent jobs."),
+    thinking: str | None = typer.Option(None, "--thinking", help="Thinking level for agent jobs."),
+    timeout_seconds: str | None = typer.Option(
+        None,
+        "--timeout-seconds",
+        help="Timeout seconds for agent jobs.",
+    ),
+    light_context: bool = typer.Option(
+        False,
+        "--light-context",
+        help="Use lightweight bootstrap context.",
+    ),
+    tools: str | None = typer.Option(None, "--tools", help="Tool allow-list."),
     session: str | None = typer.Option(None, "--session", help="Session target."),
     session_key: str | None = typer.Option(None, "--session-key", help="Session routing key."),
     wake: str = typer.Option("now", "--wake", help="Wake mode: now or next-heartbeat."),
@@ -9752,7 +9798,15 @@ def cron_add_command(
         stagger=stagger,
         exact=exact,
     )
-    payload = _cron_cli_payload(message=message, system_event=system_event, model=model)
+    payload = _cron_cli_payload(
+        message=message,
+        system_event=system_event,
+        model=model,
+        thinking=thinking,
+        timeout_seconds=timeout_seconds,
+        light_context=light_context,
+        tools=tools,
+    )
     wake_mode = _optional_cli_string(wake) or "now"
     if wake_mode not in {"now", "next-heartbeat"}:
         raise typer.BadParameter("--wake must be now or next-heartbeat")
