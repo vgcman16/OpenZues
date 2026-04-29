@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -109,13 +110,33 @@ async def test_runtime_manager_acp_spawn_starts_thread_and_turn() -> None:
         {
             "instance_id": 7,
             "thread_id": "thread-acp-new",
-            "text": "Run this through ACP.",
+            "text": "[Working directory: C:/workspace]\n\nRun this through ACP.",
             "cwd": "C:/workspace",
             "model": None,
             "reasoning_effort": None,
             "collaboration_mode": None,
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_runtime_manager_acp_spawn_prefixes_cwd_like_openclaw() -> None:
+    manager = FakeManager()
+    service = RuntimeManagerAcpSpawnService(manager)
+    cwd = f"{Path.home()}\\openclaw-test"
+
+    await service.spawn(
+        {
+            "task": "Run this through ACP.",
+            "agentId": "codex",
+            "cwd": cwd,
+        },
+        {},
+    )
+
+    assert manager.start_turn_calls[0]["text"] == (
+        "[Working directory: ~\\openclaw-test]\n\nRun this through ACP."
+    )
 
 
 @pytest.mark.asyncio

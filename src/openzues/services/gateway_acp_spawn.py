@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any, Protocol
 
 from openzues.services.codex_rpc import extract_turn_id
@@ -66,6 +67,26 @@ def _read_thread_id(result: object) -> str | None:
     if isinstance(thread_id, str):
         return thread_id.strip() or None
     return None
+
+
+def _display_cwd_for_prompt(cwd: str) -> str:
+    home = str(Path.home())
+    for separator in ("\\", "/"):
+        normalized_home = home.replace("\\", separator).replace("/", separator).rstrip(separator)
+        normalized_cwd = cwd.replace("\\", separator).replace("/", separator)
+        home_prefix = f"{normalized_home}{separator}"
+        if normalized_cwd.lower().startswith(home_prefix.lower()):
+            remainder = normalized_cwd[len(home_prefix) :]
+            return f"~{separator}{remainder}" if remainder else "~"
+        if normalized_cwd.lower() == normalized_home.lower():
+            return "~"
+    return cwd
+
+
+def _prefix_acp_prompt_cwd(task: str, cwd: str | None) -> str:
+    if cwd is None:
+        return task
+    return f"[Working directory: {_display_cwd_for_prompt(cwd)}]\n\n{task}"
 
 
 class RuntimeManagerAcpSpawnService:
@@ -137,7 +158,7 @@ class RuntimeManagerAcpSpawnService:
             turn_result = await self._manager.start_turn(
                 instance_id,
                 thread_id=thread_id,
-                text=task,
+                text=_prefix_acp_prompt_cwd(task, cwd),
                 cwd=cwd,
                 model=None,
                 reasoning_effort=None,

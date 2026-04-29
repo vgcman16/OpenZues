@@ -43,6 +43,18 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_gateway_node_methods.py tests\test_gateway_acp_spawn.py`, and
   `mypy src\openzues\services\gateway_node_methods.py
   src\openzues\services\gateway_acp_spawn.py`.
+- RuntimeManager-backed ACP child turns now prepend OpenClaw's prompt cwd
+  presentation line when `cwd` is present, including home-directory redaction
+  to `~` and preservation of Windows backslash separators.
+- Verified the ACP prompt cwd presentation slice with `python -m pytest
+  tests\test_gateway_acp_spawn.py -q -k
+  "prefixes_cwd_like_openclaw"` (`1 passed`), full ACP adapter proof
+  `python -m pytest tests\test_gateway_acp_spawn.py -q` (`6 passed`),
+  adjacent gateway ACP spawn proof `python -m pytest
+  tests\test_gateway_node_methods.py -q -k "sessions_spawn_acp"` (`5
+  passed`), `ruff check src\openzues\services\gateway_acp_spawn.py
+  tests\test_gateway_acp_spawn.py`, and `mypy
+  src\openzues\services\gateway_acp_spawn.py`.
 
 ## Feature Families
 

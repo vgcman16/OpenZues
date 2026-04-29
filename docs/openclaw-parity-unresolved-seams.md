@@ -49,6 +49,11 @@ parent completion announcements still fire, and `streamLogPath` / `note`
 fields are preserved in the spawn response. Remaining ACP parity is the
 standalone ACP bridge server/client harness and deeper protocol session
 presentation, permission, replay, and parent-stream relay breadth.
+RuntimeManager-backed ACP prompt dispatch now also mirrors OpenClaw's prompt
+presentation prefix: when a child turn has `cwd`, the adapter sends
+`[Working directory: ...]` before the task text and redacts the user home to
+`~` while preserving Windows backslash separators. Remaining ACP presentation
+parity is deeper bridge server/client protocol metadata and replay behavior.
 
 Current queue-head adjustment: `sessions.spawn sandbox="require"` now has a
 production app-wired `RuntimeManagerSandboxChatSendService` that starts Codex
