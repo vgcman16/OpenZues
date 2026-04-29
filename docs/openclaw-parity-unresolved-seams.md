@@ -109,8 +109,12 @@ its `plugins info` alias now return OpenClaw-shaped JSON reports with
 `plugin`, `shape`, `capabilityMode`, capability kinds, diagnostics, policy, and
 install placeholders projected from the same inventory, and `inspect --all`
 returns all records. Remaining plugin CLI parity is compatibility notices,
-enable/disable mutation, marketplace/install/update/uninstall flows, and deeper
-production plugin metadata discovery.
+enable/disable mutation, remote marketplace install/update/uninstall flows, and
+deeper production plugin metadata discovery. `plugins marketplace list` now
+supports local Claude-compatible marketplace manifests from
+`.claude-plugin/marketplace.json` or `marketplace.json`, returning the
+OpenClaw-shaped `source`, `name`, `version`, and `plugins` JSON payload while
+leaving remote clone/install semantics to the heavier packaging/install queue.
 
 Current queue-head adjustment: `sessions.spawn` now preserves and applies
 OpenClaw's `gateway.agents.defaults.subagents.runTimeoutSeconds` config default

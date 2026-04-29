@@ -926,6 +926,51 @@ def test_plugins_info_alias_json_uses_inspect_payload(monkeypatch) -> None:
     assert payload["shape"] == "openzues-runtime-inventory"
 
 
+def test_plugins_marketplace_list_json_reads_local_manifest(tmp_path) -> None:
+    marketplace_dir = tmp_path / "marketplace"
+    manifest_dir = marketplace_dir / ".claude-plugin"
+    manifest_dir.mkdir(parents=True)
+    manifest_path = manifest_dir / "marketplace.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "name": "Local Marketplace",
+                "version": "1.0.0",
+                "plugins": [
+                    {
+                        "name": "frontend-design",
+                        "version": "0.2.0",
+                        "description": "Design helper.",
+                        "source": {"type": "path", "path": "plugins/frontend-design"},
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(
+        app,
+        ["plugins", "marketplace", "list", str(marketplace_dir), "--json"],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload == {
+        "source": str(manifest_path),
+        "name": "Local Marketplace",
+        "version": "1.0.0",
+        "plugins": [
+            {
+                "name": "frontend-design",
+                "version": "0.2.0",
+                "description": "Design helper.",
+                "source": {"type": "path", "path": "plugins/frontend-design"},
+            }
+        ],
+    }
+
+
 def test_models_list_json_calls_gateway_method_owner(monkeypatch) -> None:
     calls: list[tuple[str, dict[str, object]]] = []
 

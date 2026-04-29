@@ -111,6 +111,7 @@ channels_app = typer.Typer(help="Inspect notification route channels.")
 sandbox_app = typer.Typer(help="Inspect sandbox runtime inventory.")
 sessions_app = typer.Typer(help="Spawn and wait on gateway sessions.")
 plugins_app = typer.Typer(help="Inspect plugin and runtime inventory.")
+plugins_marketplace_app = typer.Typer(help="Inspect Claude-compatible plugin marketplaces.")
 models_app = typer.Typer(help="Inspect model catalog and runtime posture.")
 hermes_profile_app = typer.Typer(
     help="Inspect or update the saved Hermes runtime profile.",
@@ -135,6 +136,7 @@ app.add_typer(sandbox_app, name="sandbox")
 app.add_typer(sessions_app, name="sessions")
 app.add_typer(plugins_app, name="plugins")
 app.add_typer(models_app, name="models")
+plugins_app.add_typer(plugins_marketplace_app, name="marketplace")
 hermes_app.add_typer(hermes_profile_app, name="profile")
 app.add_typer(update_app, name="update")
 app.add_typer(setup_app, name="setup")
@@ -1773,6 +1775,31 @@ def _emit_plugins_doctor(payload: dict[str, object], *, json_output: bool) -> No
             typer.echo(f"- {prefix}{message}")
 
 
+def _emit_plugins_marketplace_list(
+    payload: dict[str, object],
+    *,
+    json_output: bool,
+) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+    plugins = payload.get("plugins")
+    plugin_rows = plugins if isinstance(plugins, list) else []
+    if not plugin_rows:
+        typer.echo(f"No plugins found in marketplace {payload.get('source')}.")
+        return
+    typer.echo(f"Marketplace {payload.get('name') or payload.get('source')}")
+    for item in plugin_rows:
+        if not isinstance(item, dict):
+            continue
+        name = _optional_cli_string(item.get("name")) or "(unknown)"
+        version = _optional_cli_string(item.get("version"))
+        description = _optional_cli_string(item.get("description"))
+        suffix = f" v{version}" if version is not None else ""
+        detail = f" - {description}" if description is not None else ""
+        typer.echo(f"{name}{suffix}{detail}")
+
+
 def _emit_models_list(
     payload: dict[str, object],
     *,
@@ -2403,6 +2430,71 @@ async def _build_plugins_doctor_payload(services: CliServices) -> dict[str, obje
         "diagnostics": diagnostics,
         "docs": "https://docs.openclaw.ai/plugin",
     }
+
+
+def _build_plugins_marketplace_list_payload(source: str) -> dict[str, object]:
+    manifest_path = _resolve_plugins_marketplace_manifest_path(source)
+    try:
+        parsed = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except ValueError as exc:
+        raise ValueError(f"invalid marketplace JSON at {manifest_path}: {exc}") from exc
+    except OSError as exc:
+        raise ValueError(f"failed to read marketplace manifest at {manifest_path}: {exc}") from exc
+    if not isinstance(parsed, dict):
+        raise ValueError(f"invalid marketplace JSON at {manifest_path}: expected object")
+    raw_plugins = parsed.get("plugins")
+    if not isinstance(raw_plugins, list):
+        raise ValueError(f"invalid marketplace JSON at {manifest_path}: missing plugins[]")
+    plugins: list[dict[str, object]] = []
+    for raw_plugin in raw_plugins:
+        if not isinstance(raw_plugin, dict):
+            raise ValueError(f"invalid marketplace entry in {manifest_path}: expected object")
+        name = _optional_cli_string(raw_plugin.get("name"))
+        if name is None:
+            raise ValueError(f"invalid marketplace entry in {manifest_path}: missing name")
+        source_value = raw_plugin.get("source")
+        if not isinstance(source_value, (str, dict)):
+            raise ValueError(
+                f'invalid marketplace entry "{name}" in {manifest_path}: missing source'
+            )
+        plugin: dict[str, object] = {"name": name}
+        for key in ("version", "description"):
+            value = _optional_cli_string(raw_plugin.get(key))
+            if value is not None:
+                plugin[key] = value
+        plugin["source"] = dict(source_value) if isinstance(source_value, dict) else source_value
+        plugins.append(plugin)
+    payload: dict[str, object] = {
+        "source": str(manifest_path),
+        "plugins": plugins,
+    }
+    name = _optional_cli_string(parsed.get("name"))
+    if name is not None:
+        payload["name"] = name
+    version = _optional_cli_string(parsed.get("version"))
+    if version is not None:
+        payload["version"] = version
+    return payload
+
+
+def _resolve_plugins_marketplace_manifest_path(source: str) -> Path:
+    normalized_source = _optional_cli_string(source)
+    if normalized_source is None:
+        raise ValueError("marketplace source is required")
+    if re.match(r"^(https?|ssh)://", normalized_source, flags=re.IGNORECASE):
+        raise ValueError(f"unsupported marketplace source: {normalized_source}")
+    source_path = Path(normalized_source).expanduser()
+    if source_path.is_file():
+        return source_path.resolve()
+    if source_path.is_dir():
+        for relative in (
+            Path(".claude-plugin") / "marketplace.json",
+            Path("marketplace.json"),
+        ):
+            candidate = source_path / relative
+            if candidate.is_file():
+                return candidate.resolve()
+    raise ValueError(f"marketplace manifest not found under {normalized_source}")
 
 
 async def _build_models_list_payload(
@@ -5021,6 +5113,23 @@ def plugins_doctor_command(
 
     payload = _run(_run_with_services(_action))
     _emit_plugins_doctor(payload, json_output=json_output)
+
+
+@plugins_marketplace_app.command("list")
+def plugins_marketplace_list_command(
+    source: str = typer.Argument(..., help="Local marketplace path or manifest file."),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit marketplace plugins as JSON.",
+    ),
+) -> None:
+    try:
+        payload = _build_plugins_marketplace_list_payload(source)
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    _emit_plugins_marketplace_list(payload, json_output=json_output)
 
 
 @sandbox_app.command("list")
