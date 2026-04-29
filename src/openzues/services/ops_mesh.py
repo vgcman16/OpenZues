@@ -1392,6 +1392,20 @@ def _discord_poll_duration_hours(event: dict[str, Any]) -> int:
     return 24
 
 
+def _validate_telegram_poll_duration_options(
+    *,
+    duration_seconds: int | None,
+    duration_hours: int | None,
+) -> None:
+    if duration_seconds is None and duration_hours is not None:
+        raise ValueError(
+            "Telegram poll durationHours is not supported. "
+            "Use durationSeconds (5-600) instead."
+        )
+    if duration_seconds is not None and not 5 <= duration_seconds <= 600:
+        raise ValueError("Telegram poll durationSeconds must be between 5 and 600")
+
+
 def _whatsapp_messages_endpoint(target: str | None) -> str:
     normalized = str(target or "").strip()
     if _normalized_http_webhook_url(normalized) is None:
@@ -7243,6 +7257,11 @@ class OpsMeshService:
             raise ValueError("poll requires an explicit channel target")
         normalized_question = str(question).strip()
         normalized_options = [str(option).strip() for option in options]
+        if conversation_target.channel == "telegram":
+            _validate_telegram_poll_duration_options(
+                duration_seconds=duration_seconds,
+                duration_hours=duration_hours,
+            )
         payload: dict[str, Any] = {
             "summary": normalized_question,
             "question": normalized_question,
@@ -8488,6 +8507,12 @@ class OpsMeshService:
         if event_type == "gateway/poll":
             options = [str(option).strip() for option in event.get("options", [])]
             options = [option for option in options if option]
+            duration_seconds = _optional_int_payload_value(event, "durationSeconds")
+            duration_hours = _optional_int_payload_value(event, "durationHours")
+            _validate_telegram_poll_duration_options(
+                duration_seconds=duration_seconds,
+                duration_hours=duration_hours,
+            )
             payload: dict[str, Any] = {
                 "chat_id": chat_id,
                 "question": str(event.get("question") or event.get("summary") or ""),
@@ -8498,11 +8523,8 @@ class OpsMeshService:
                     event,
                     "isAnonymous",
                 )
-            if _optional_int_payload_value(event, "durationSeconds") is not None:
-                payload["open_period"] = _optional_int_payload_value(
-                    event,
-                    "durationSeconds",
-                )
+            if duration_seconds is not None:
+                payload["open_period"] = duration_seconds
             if silent is not None:
                 payload["disable_notification"] = silent
             if thread_id:

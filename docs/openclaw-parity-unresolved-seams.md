@@ -448,6 +448,9 @@ continue using `durationHours` where applicable.
 Telegram gateway poll validation now also matches the upstream Telegram adapter
 duration contract by accepting only `durationSeconds` in the 5-600 range and
 rejecting `durationHours` with the OpenClaw-shaped guidance message.
+The same Telegram duration contract is now enforced in the OpsMesh
+route-backed provider path so direct CLI/runtime sends and replays cannot
+bypass the gateway-method validation before posting `sendPoll`.
 
 Current queue-head adjustment: `tools.invoke` plugin execution now routes
 through a fakeable `GatewayPluginRuntimeService`, preserving core mappings

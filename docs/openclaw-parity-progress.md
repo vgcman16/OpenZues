@@ -163,6 +163,17 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_gateway_node_methods.py -q -k "poll_"` (`14 passed`), `ruff check
   src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
   and `mypy src\openzues\services\gateway_node_methods.py`.
+- OpsMesh route-backed Telegram polls now enforce the same OpenClaw duration
+  contract for direct CLI/runtime sends and replays, rejecting invalid
+  `durationSeconds` and Telegram `durationHours` before any provider post.
+- Verified the OpsMesh Telegram duration guard with `python -m pytest
+  tests\test_ops_mesh.py -q -k "telegram_native_poll or
+  rejects_invalid_telegram_durations"` (`2 passed`), adjacent Telegram poll
+  provider proof `python -m pytest tests\test_ops_mesh.py -q -k
+  "send_direct_channel_poll_uses_telegram_native_route or
+  rejects_invalid_telegram_durations or parses_telegram_topic_target"` (`5
+  passed`), `ruff check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`,
+  and `mypy src\openzues\services\ops_mesh.py`.
 
 ## Feature Families
 
