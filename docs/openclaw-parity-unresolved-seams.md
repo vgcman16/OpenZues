@@ -84,6 +84,16 @@ registry-backed plugins, and applies owner-only visibility to registry tools.
 Remaining tool parity is plugin catalog/effective visibility plus any future
 production plugin metadata discovery beyond the fakeable registry adapter.
 
+Current queue-head adjustment: the CLI now exposes `plugins list` with
+OpenClaw-shaped JSON (`workspaceDir`, `plugins`, `diagnostics`) and human
+output projected from the existing Hermes/OpenZues plugin inventory deck. The
+surface supports `--enabled`, `--verbose`, and `--json`, maps ready/partial
+inventory to loaded plugins, keeps source-only Hermes families disabled, and
+does not introduce a second plugin scanner. Remaining plugin CLI parity is
+`plugins inspect/info`, `plugins doctor`, compatibility notices, enable/disable
+mutation, marketplace/install/update/uninstall flows, and deeper production
+plugin metadata discovery.
+
 Current queue-head adjustment: `sessions.spawn` now preserves and applies
 OpenClaw's `gateway.agents.defaults.subagents.runTimeoutSeconds` config default
 when callers omit explicit `runTimeoutSeconds` / legacy `timeoutSeconds`.

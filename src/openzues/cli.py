@@ -110,6 +110,7 @@ agents_app = typer.Typer(help="Inspect configured agent inventory.")
 channels_app = typer.Typer(help="Inspect notification route channels.")
 sandbox_app = typer.Typer(help="Inspect sandbox runtime inventory.")
 sessions_app = typer.Typer(help="Spawn and wait on gateway sessions.")
+plugins_app = typer.Typer(help="Inspect plugin and runtime inventory.")
 hermes_profile_app = typer.Typer(
     help="Inspect or update the saved Hermes runtime profile.",
     invoke_without_command=True,
@@ -131,6 +132,7 @@ app.add_typer(agents_app, name="agents")
 app.add_typer(channels_app, name="channels")
 app.add_typer(sandbox_app, name="sandbox")
 app.add_typer(sessions_app, name="sessions")
+app.add_typer(plugins_app, name="plugins")
 hermes_app.add_typer(hermes_profile_app, name="profile")
 app.add_typer(update_app, name="update")
 app.add_typer(setup_app, name="setup")
@@ -1607,6 +1609,59 @@ def _emit_session_method_result(payload: dict[str, object], *, json_output: bool
         typer.echo(f"error: {error}")
 
 
+def _emit_plugins_inventory(
+    payload: dict[str, object],
+    *,
+    json_output: bool,
+    verbose: bool = False,
+) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+    plugins = payload.get("plugins")
+    plugin_rows = plugins if isinstance(plugins, list) else []
+    if not plugin_rows:
+        typer.echo("No plugins found.")
+        return
+    loaded_count = sum(
+        1
+        for plugin in plugin_rows
+        if isinstance(plugin, dict) and str(plugin.get("status") or "") == "loaded"
+    )
+    typer.echo(f"Plugins ({loaded_count}/{len(plugin_rows)} loaded)")
+    for plugin in plugin_rows:
+        if not isinstance(plugin, dict):
+            continue
+        name = str(plugin.get("name") or plugin.get("id") or "").strip()
+        plugin_id = str(plugin.get("id") or "").strip()
+        status = str(plugin.get("status") or "").strip()
+        format_name = str(plugin.get("format") or "openzues").strip()
+        description = _first_text_line(plugin.get("description"), limit=72)
+        heading = f"- {name or plugin_id} {status} [{format_name}]".strip()
+        if plugin_id and name and plugin_id != name:
+            heading += f" ({plugin_id})"
+        if description:
+            heading += f" - {description}"
+        typer.echo(heading)
+        if not verbose:
+            continue
+        source = str(plugin.get("source") or "").strip()
+        origin = str(plugin.get("origin") or "").strip()
+        parity_status = str(plugin.get("parityStatus") or "").strip()
+        if source:
+            typer.echo(f"  source: {source}")
+        if origin:
+            typer.echo(f"  origin: {origin}")
+        if parity_status:
+            typer.echo(f"  parity: {parity_status}")
+        capabilities = plugin.get("capabilities")
+        if isinstance(capabilities, list) and capabilities:
+            typer.echo(
+                "  capabilities: "
+                + ", ".join(str(item) for item in capabilities if str(item).strip())
+            )
+
+
 def _emit_sandbox_inventory(payload: dict[str, object], *, json_output: bool) -> None:
     if json_output:
         _emit_payload(payload, json_output=True)
@@ -1730,6 +1785,107 @@ async def _call_gateway_node_method(
     if isinstance(result, dict):
         return result
     return {"status": "ok", "result": result}
+
+
+def _model_payload(value: object) -> dict[str, object]:
+    if isinstance(value, dict):
+        return dict(value)
+    model_dump = getattr(value, "model_dump", None)
+    if not callable(model_dump):
+        return {}
+    payload = model_dump(mode="json")
+    return dict(payload) if isinstance(payload, dict) else {}
+
+
+async def _build_plugins_inventory_payload(
+    services: CliServices,
+    *,
+    enabled_only: bool,
+) -> dict[str, object]:
+    view = await services.hermes_platform.get_doctor_view()
+    view_payload = _model_payload(view)
+    profile = view_payload.get("profile")
+    profile_payload = profile if isinstance(profile, dict) else {}
+    workspace_dir = _optional_cli_string(profile_payload.get("hermes_source_path"))
+    plugins_deck = view_payload.get("plugins")
+    deck_payload = plugins_deck if isinstance(plugins_deck, dict) else {}
+    raw_items = deck_payload.get("items")
+    items = raw_items if isinstance(raw_items, list) else []
+    plugins: list[dict[str, object]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        plugin = _plugin_record_from_deck_item(item, workspace_dir=workspace_dir)
+        if plugin is not None:
+            plugins.append(plugin)
+    if enabled_only:
+        plugins = [
+            plugin
+            for plugin in plugins
+            if str(plugin.get("status") or "").strip() == "loaded"
+        ]
+    warnings = view_payload.get("warnings")
+    diagnostics = [
+        {"level": "warn", "message": str(warning)}
+        for warning in (warnings if isinstance(warnings, list) else [])
+        if str(warning).strip()
+    ]
+    return {
+        "workspaceDir": workspace_dir,
+        "plugins": plugins,
+        "diagnostics": diagnostics,
+    }
+
+
+def _plugin_record_from_deck_item(
+    item: dict[str, object],
+    *,
+    workspace_dir: str | None,
+) -> dict[str, object] | None:
+    plugin_id = _optional_cli_string(item.get("key"))
+    if plugin_id is None:
+        return None
+    name = _optional_cli_string(item.get("label")) or plugin_id
+    parity_status = _optional_cli_string(item.get("status")) or "advisory"
+    capabilities = item.get("capabilities")
+    capability_list = [
+        str(capability)
+        for capability in (capabilities if isinstance(capabilities, list) else [])
+        if str(capability).strip()
+    ]
+    record: dict[str, object] = {
+        "id": plugin_id,
+        "name": name,
+        "status": _openclaw_plugin_status(parity_status),
+        "format": "openzues",
+        "source": "openzues",
+        "origin": "runtime",
+        "description": str(item.get("summary") or "").strip(),
+        "capabilities": capability_list,
+        "parityStatus": parity_status,
+    }
+    if plugin_id.startswith("codex_"):
+        record["source"] = "live_codex"
+        record["origin"] = "runtime"
+    elif plugin_id.startswith("hermes_plugin:"):
+        plugin_name = plugin_id.partition(":")[2].strip()
+        record["format"] = "hermes"
+        record["origin"] = "hermes_source"
+        record["source"] = (
+            str(Path(workspace_dir) / "plugins" / plugin_name)
+            if workspace_dir is not None and plugin_name
+            else "hermes_source"
+        )
+    return record
+
+
+def _openclaw_plugin_status(parity_status: str) -> str:
+    normalized = parity_status.strip().lower()
+    if normalized in {"ready", "partial"}:
+        return "loaded"
+    if normalized == "error":
+        return "error"
+    return "disabled"
 
 
 def _first_text_line(value: object, *, limit: int = 220) -> str:
@@ -3912,6 +4068,34 @@ def channels_status(
         _run_with_services(lambda services: services.gateway_channels.build_snapshot())
     )
     _emit_channel_inventory(payload, json_output=json_output)
+
+
+@plugins_app.command("list")
+def plugins_list_command(
+    enabled_only: bool = typer.Option(
+        False,
+        "--enabled",
+        help="Only include plugin records that are currently loaded.",
+    ),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        help="Show detailed plugin inventory in human output.",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit plugin inventory as JSON.",
+    ),
+) -> None:
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_plugins_inventory_payload(
+            services,
+            enabled_only=enabled_only,
+        )
+
+    payload = _run(_run_with_services(_action))
+    _emit_plugins_inventory(payload, json_output=json_output, verbose=verbose)
 
 
 @sandbox_app.command("list")
