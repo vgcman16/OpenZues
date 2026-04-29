@@ -1712,6 +1712,7 @@ class ControlUiGatewayAgentDefaultsConfigView(BaseModel):
     subagents: ControlUiGatewayAgentSubagentsConfigView | None = None
     sandbox: ControlUiGatewayAgentSandboxConfigView | None = None
     models: dict[str, dict[str, Any]] | None = None
+    model: dict[str, Any] | str | None = None
 
 
 class ControlUiGatewayAgentConfigView(BaseModel):

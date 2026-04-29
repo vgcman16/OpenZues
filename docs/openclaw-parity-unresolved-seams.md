@@ -212,9 +212,12 @@ through `GatewayConfigService` into `agents.defaults.models`. `models aliases
 remove` now clears the alias field from the matched configured model, preserves
 the model entry, reports the upstream empty-alias message when none remain, and
 returns the upstream not-found error for missing aliases. No smaller model alias
-CLI command remains; the next model CLI queue head is the fallback/auth-order
-mutation cluster. Live auth probes remain unavailable until the native model
-auth health runtime exists.
+CLI command remains. `models fallbacks list` now projects
+`agents.defaults.model.fallbacks` from the native config snapshot and supports
+the upstream JSON/plain/human output shapes. The next model CLI queue head is
+fallback add/remove/clear, followed by image fallback and auth-order mutation
+clusters. Live auth probes remain unavailable until the native model auth
+health runtime exists.
 Top-level `health`
 now queries the live gateway `/api/health` and `/readyz` owners, emits
 OpenClaw-shaped JSON/human readiness fields, and propagates the configured

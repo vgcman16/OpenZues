@@ -392,6 +392,7 @@ plugins_app = typer.Typer(help="Inspect plugin and runtime inventory.")
 plugins_marketplace_app = typer.Typer(help="Inspect Claude-compatible plugin marketplaces.")
 models_app = typer.Typer(help="Inspect model catalog and runtime posture.")
 models_aliases_app = typer.Typer(help="Inspect configured model aliases.")
+models_fallbacks_app = typer.Typer(help="Inspect configured model fallbacks.")
 hermes_profile_app = typer.Typer(
     help="Inspect or update the saved Hermes runtime profile.",
     invoke_without_command=True,
@@ -430,6 +431,7 @@ app.add_typer(capability_app, name="infer")
 app.add_typer(plugins_app, name="plugins")
 app.add_typer(models_app, name="models")
 models_app.add_typer(models_aliases_app, name="aliases")
+models_app.add_typer(models_fallbacks_app, name="fallbacks")
 plugins_app.add_typer(plugins_marketplace_app, name="marketplace")
 hermes_app.add_typer(hermes_profile_app, name="profile")
 app.add_typer(update_app, name="update")
@@ -3227,6 +3229,29 @@ def _emit_models_aliases(
         typer.echo(f"- {alias} -> {target}")
 
 
+def _emit_models_fallbacks(
+    payload: dict[str, object],
+    *,
+    json_output: bool,
+    plain: bool,
+) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+    raw_fallbacks = payload.get("fallbacks")
+    fallbacks = raw_fallbacks if isinstance(raw_fallbacks, list) else []
+    if plain:
+        for fallback in fallbacks:
+            typer.echo(str(fallback))
+        return
+    typer.echo(f"Fallbacks ({len(fallbacks)}):")
+    if not fallbacks:
+        typer.echo("- none")
+        return
+    for fallback in fallbacks:
+        typer.echo(f"- {fallback}")
+
+
 def _emit_models_status(
     payload: dict[str, object],
     *,
@@ -5510,11 +5535,49 @@ def _model_aliases_from_config_snapshot(snapshot: dict[str, object]) -> dict[str
     return aliases
 
 
+def _model_fallbacks_from_config_snapshot(
+    snapshot: dict[str, object],
+    *,
+    key: str = "model",
+) -> list[str]:
+    roots: list[dict[str, object]] = []
+    top_level_agents = snapshot.get("agents")
+    if isinstance(top_level_agents, dict):
+        roots.append(cast("dict[str, object]", top_level_agents))
+    gateway_config = snapshot.get("gateway")
+    gateway_agents = gateway_config.get("agents") if isinstance(gateway_config, dict) else None
+    if isinstance(gateway_agents, dict):
+        roots.append(cast("dict[str, object]", gateway_agents))
+    for agents_config in roots:
+        defaults = agents_config.get("defaults")
+        if not isinstance(defaults, dict):
+            continue
+        raw_model = defaults.get(key)
+        if not isinstance(raw_model, dict):
+            continue
+        raw_fallbacks = raw_model.get("fallbacks")
+        if not isinstance(raw_fallbacks, list):
+            return []
+        return [
+            fallback
+            for fallback in (_optional_cli_string(item) for item in raw_fallbacks)
+            if fallback is not None
+        ]
+    return []
+
+
 def _model_aliases_from_services_config(services: CliServices) -> dict[str, str]:
     gateway_config = getattr(services, "gateway_config", None)
     if not isinstance(gateway_config, GatewayConfigService):
         return {}
     return _model_aliases_from_config_snapshot(gateway_config.build_snapshot())
+
+
+def _model_fallbacks_from_services_config(services: CliServices) -> list[str]:
+    gateway_config = getattr(services, "gateway_config", None)
+    if not isinstance(gateway_config, GatewayConfigService):
+        return []
+    return _model_fallbacks_from_config_snapshot(gateway_config.build_snapshot())
 
 
 async def _build_models_aliases_payload(services: CliServices) -> dict[str, object]:
@@ -5538,6 +5601,10 @@ async def _build_models_aliases_payload(services: CliServices) -> dict[str, obje
         if alias is not None and target is not None:
             aliases.setdefault(alias, target)
     return {"aliases": aliases}
+
+
+async def _build_models_fallbacks_payload(services: CliServices) -> dict[str, object]:
+    return {"fallbacks": _model_fallbacks_from_services_config(services)}
 
 
 async def _set_model_alias_payload(
@@ -5659,7 +5726,7 @@ async def _build_models_status_payload(
         "ok": True,
         "defaultModel": default_label,
         "resolvedDefault": resolved_default,
-        "fallbacks": [],
+        "fallbacks": _model_fallbacks_from_services_config(services),
         "imageModel": None,
         "imageFallbacks": [],
         "aliases": _model_aliases_from_services_config(services),
@@ -8882,6 +8949,26 @@ def models_aliases_remove_command(
         raise typer.Exit(code=1) from exc
     if payload.get("aliasesRemaining") == 0:
         typer.echo("No aliases configured.")
+
+
+@models_fallbacks_app.command("list")
+def models_fallbacks_list_command(
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit fallback models as JSON.",
+    ),
+    plain: bool = typer.Option(
+        False,
+        "--plain",
+        help="Emit one fallback model per line.",
+    ),
+) -> None:
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_models_fallbacks_payload(services)
+
+    payload = _run(_run_with_services(_action))
+    _emit_models_fallbacks(payload, json_output=json_output, plain=plain)
 
 
 @models_app.command("status")
