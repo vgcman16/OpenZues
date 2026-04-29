@@ -17615,6 +17615,120 @@ async def test_agent_wait_announces_spawn_completion_to_parent_session(tmp_path)
 
 
 @pytest.mark.asyncio
+async def test_agent_wait_thread_bound_completion_uses_completion_delivery_route(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-agent-wait-thread-bound-completion.db")
+    await database.initialize()
+    direct_sends: list[dict[str, object]] = []
+
+    async def fake_chat_send_service(**_kwargs: object) -> dict[str, object]:
+        return {"runId": "run-thread-bound-completion-1", "status": "ok"}
+
+    async def fake_subagent_thread_binder(
+        parent: dict[str, object],
+        child: dict[str, object],
+        context: dict[str, object],
+    ) -> dict[str, object]:
+        del parent, child, context
+        return {
+            "channel": "slack",
+            "to": "channel:C123",
+            "accountId": "workspace-bot",
+            "threadId": "1710000000.000300",
+        }
+
+    async def fake_send_channel_message_service(**kwargs: object) -> dict[str, object]:
+        direct_sends.append(dict(kwargs))
+        return {
+            "ok": True,
+            "deliveryId": 42,
+            "messageId": "msg-thread-bound-completion-1",
+        }
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        hub=BroadcastHub(),
+        sessions_service=GatewaySessionsService(database),
+        chat_send_service=fake_chat_send_service,
+        send_channel_message_service=fake_send_channel_message_service,
+        subagent_thread_binder=fake_subagent_thread_binder,
+    )
+
+    spawn_payload = await service.call(
+        "sessions.spawn",
+        {"task": "Complete and announce in the bound thread.", "thread": True},
+        now_ms=447,
+        requester=GatewayNodeMethodRequester(
+            message_channel="slack",
+            message_to="channel:C123",
+            message_account_id="workspace-bot",
+            message_thread_id="1710000000.000300",
+        ),
+    )
+    child_session_key = str(spawn_payload["childSessionKey"])
+    mission_id = await database.create_mission(
+        name="Thread Bound Spawn Completion Child",
+        objective="Finish the thread-bound child and announce to the bound thread.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread-spawn-bound-completion",
+        session_key=child_session_key,
+        cwd=str(tmp_path),
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=False,
+        run_verification=False,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+    )
+    await database.update_mission(
+        mission_id,
+        status="completed",
+        in_progress=0,
+        phase="completed",
+        last_checkpoint="Thread child produced the requested result.",
+    )
+
+    wait_payload = await service.call(
+        "agent.wait",
+        {"runId": "run-thread-bound-completion-1", "timeoutMs": 0},
+    )
+
+    assert wait_payload["status"] == "ok"
+    assert direct_sends == [
+        {
+            "channel": "slack",
+            "to": "channel:C123",
+            "message": (
+                f"Subagent {child_session_key} completed: "
+                "Thread child produced the requested result."
+            ),
+            "account_id": "workspace-bot",
+            "thread_id": "1710000000.000300",
+            "session_key": child_session_key,
+            "idempotency_key": "subagent-completion:run-thread-bound-completion-1",
+        }
+    ]
+    metadata_row = await database.get_gateway_session_metadata(child_session_key)
+    assert metadata_row is not None
+    assert metadata_row["metadata"]["completionDeliveryResult"] == {
+        "ok": True,
+        "deliveryId": 42,
+        "messageId": "msg-thread-bound-completion-1",
+    }
+
+
+@pytest.mark.asyncio
 async def test_agent_wait_skips_spawn_completion_announcement_when_not_expected(
     tmp_path,
 ) -> None:

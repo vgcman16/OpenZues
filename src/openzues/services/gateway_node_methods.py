@@ -11521,6 +11521,42 @@ class GatewayNodeMethodService:
             session_key=parent_session_key,
         )
         next_metadata = dict(metadata)
+        completion_delivery = metadata.get("completionDelivery")
+        if (
+            isinstance(completion_delivery, dict)
+            and self._send_channel_message_service is not None
+        ):
+            delivery_channel = _string_or_none(completion_delivery.get("channel"))
+            delivery_to = _string_or_none(completion_delivery.get("to"))
+            if delivery_channel is not None and delivery_to is not None:
+                delivery_kwargs: dict[str, object] = {
+                    "channel": delivery_channel,
+                    "to": delivery_to,
+                    "message": message,
+                    "session_key": session_key,
+                    "idempotency_key": f"subagent-completion:{run_id}",
+                }
+                delivery_account_id = _string_or_none(completion_delivery.get("accountId"))
+                delivery_thread_id = _string_or_none(completion_delivery.get("threadId"))
+                if delivery_account_id is not None:
+                    delivery_kwargs["account_id"] = delivery_account_id
+                if delivery_thread_id is not None:
+                    delivery_kwargs["thread_id"] = delivery_thread_id
+                try:
+                    completion_delivery_result = await self._send_channel_message_service(
+                        **delivery_kwargs
+                    )
+                except Exception as exc:  # noqa: BLE001 - metadata should capture delivery posture.
+                    next_metadata["completionDeliveryError"] = (
+                        str(exc).strip() or type(exc).__name__
+                    )
+                else:
+                    if isinstance(completion_delivery_result, dict):
+                        next_metadata["completionDeliveryResult"] = (
+                            _sanitize_gateway_chat_result_payload(
+                                dict(completion_delivery_result)
+                            )
+                        )
         next_metadata["completionAnnouncedRunId"] = run_id
         next_metadata["completionAnnouncedAtMs"] = now_ms
         await self._database.upsert_gateway_session_metadata(

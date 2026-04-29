@@ -57,6 +57,9 @@ ACP/session binding policy breadth.
 Initial thread-bound child runs now dispatch through the chat-send adapter with
 the bound `channel`, `to`, `account_id`, and `thread_id` kwargs instead of
 starting as an unbound control-chat-only turn.
+Terminal `agent.wait` completion announcements now also use the saved
+`completionDelivery` route through the direct channel-send service and persist
+the provider delivery result/error on the child session metadata.
 
 Current queue-head adjustment: provider-native direct `send` now preserves
 OpenClaw runtime delivery fields (`messageThreadId`, `replyToId`,
@@ -1533,6 +1536,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   origin into the chat-send runtime as `deliver=true`, `channel`, `to`,
   `account_id`, and `thread_id`, matching the upstream bind-before-run flow.
 - Verified the thread-bound initial child delivery seam with `python -m pytest tests\test_gateway_node_methods.py -q -k "thread_mode_delivers_initial_child_run"`, adjacent `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_spawn_thread_mode or thread_mode_delivers_initial_child_run or sessions_spawn_session_mode"`, `ruff check src\openzues\services\gateway_node_methods.py src\openzues\app.py tests\test_gateway_node_methods.py`, and `mypy src\openzues\services\gateway_node_methods.py src\openzues\app.py`.
+- Thread-bound `agent.wait` terminal announcements now deliver through the
+  saved `completionDelivery` channel route via `send_channel_message_service`,
+  while retaining parent transcript announcements and idempotent metadata.
+- Verified the thread-bound completion delivery seam with `python -m pytest tests\test_gateway_node_methods.py -q -k "thread_bound_completion_uses_completion_delivery_route"`, adjacent `python -m pytest tests\test_gateway_node_methods.py -q -k "agent_wait_announces_spawn_completion or thread_bound_completion_uses_completion_delivery_route or no_completion_announce or completion_dedupe or sessions_spawn_thread_mode"`, `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`, and `mypy src\openzues\services\gateway_node_methods.py`.
 - `chat.history` and `sessions.history` now mirror OpenClaw's numeric history
   limit parsing: finite JSON numbers are floored and bounded instead of
   requiring integer-only input.
