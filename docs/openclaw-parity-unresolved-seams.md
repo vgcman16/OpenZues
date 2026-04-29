@@ -2208,6 +2208,19 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   rejects_provider_option_caps or rejects_invalid_telegram_durations"`,
   `ruff check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`,
   and `mypy src\openzues\services\ops_mesh.py`.
+- Closed the poll `maxSelections` option-count seam from OpenClaw
+  `normalizePollInput`: Gateway `poll` and OpsMesh direct/native provider poll
+  paths now reject `maxSelections` values above the cleaned option count before
+  runtime dispatch or replay/provider post construction. Verified with
+  `python -m pytest tests\test_gateway_node_methods.py -q -k
+  "poll_rejects_max_selections_above_option_count"`, `python -m pytest
+  tests\test_ops_mesh.py -q -k "rejects_max_selections_above_options"`,
+  adjacent gateway/OpsMesh poll packs, `ruff check
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\ops_mesh.py tests\test_gateway_node_methods.py
+  tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\ops_mesh.py`.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially ACP spawn harness parity, richer `tools.invoke` executor parity
   (real plugin HTTP ordering and any additional intentional high-risk

@@ -5711,6 +5711,7 @@ class GatewayNodeMethodService:
             )
             _validate_gateway_outbound_target(resolved_channel, to)
             _validate_gateway_poll_option_count(resolved_channel, options)
+            _validate_gateway_poll_max_selections(options, max_selections)
             _validate_gateway_poll_duration_options(
                 resolved_channel,
                 duration_seconds=duration_seconds,
@@ -16345,6 +16346,18 @@ def _validate_gateway_poll_option_count(channel: str, options: list[str]) -> Non
         raise GatewayNodeMethodError(
             code="INVALID_REQUEST",
             message=f"Poll supports at most {max_options} options",
+            status_code=400,
+        )
+
+
+def _validate_gateway_poll_max_selections(
+    options: list[str],
+    max_selections: int | None,
+) -> None:
+    if max_selections is not None and max_selections > len(options):
+        raise GatewayNodeMethodError(
+            code="INVALID_REQUEST",
+            message="maxSelections cannot exceed option count",
             status_code=400,
         )
 

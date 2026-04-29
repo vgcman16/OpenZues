@@ -5152,6 +5152,36 @@ async def test_ops_mesh_service_send_direct_channel_poll_rejects_provider_option
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_poll_rejects_max_selections_above_options(
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-poll-max-selections"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    with pytest.raises(ValueError, match="maxSelections cannot exceed option count"):
+        await service.send_direct_channel_poll(
+            channel="telegram",
+            to="channel:-100123",
+            question="Pick several",
+            options=["Yes", "No"],
+            max_selections=3,
+            account_id="telegram-bot",
+            idempotency_key="idem-native-poll-max-selections",
+        )
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_send_direct_channel_poll_parses_telegram_topic_target(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -37067,6 +37067,30 @@ async def test_poll_rejects_channel_specific_option_limit_like_openclaw(
 
 
 @pytest.mark.asyncio
+async def test_poll_rejects_max_selections_above_option_count_like_openclaw() -> None:
+    service = GatewayNodeMethodService(GatewayNodeRegistry())
+
+    with pytest.raises(
+        GatewayNodeMethodError,
+        match="maxSelections cannot exceed option count",
+    ) as exc_info:
+        await service.call(
+            "poll",
+            {
+                "to": "channel:C123",
+                "question": "Ship it?",
+                "options": ["Yes", "No"],
+                "maxSelections": 3,
+                "channel": "slack",
+                "idempotencyKey": "idem-poll-max-selections",
+            },
+        )
+
+    assert exc_info.value.code == "INVALID_REQUEST"
+    assert exc_info.value.status_code == 400
+
+
+@pytest.mark.asyncio
 async def test_poll_allows_large_duration_hours_before_delivery_placeholder() -> None:
     service = GatewayNodeMethodService(GatewayNodeRegistry())
 
