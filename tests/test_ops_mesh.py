@@ -4728,6 +4728,87 @@ async def test_ops_mesh_service_send_direct_channel_poll_uses_telegram_native_ro
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_poll_parses_telegram_topic_target(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-poll-telegram-topic"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Telegram Native Poll Topic Parent",
+        kind="telegram",
+        target="https://api.telegram.org",
+        events=["gateway/poll"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="bot123456:telegram-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "telegram",
+            "account_id": "telegram-bot",
+            "peer_kind": "channel",
+            "peer_id": "channel:-100123",
+        },
+    )
+    telegram_posts: list[tuple[str, dict[str, object]]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self, secret_header_name, secret_token
+        telegram_posts.append((target, payload))
+        return {
+            "ok": True,
+            "result": {
+                "message_id": 47,
+                "chat": {"id": -100123},
+                "poll": {"id": "poll-telegram-topic-1"},
+            },
+        }
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_poll(
+        channel="telegram",
+        to="telegram:group:-100123:topic:77",
+        question="Ship native Telegram topic poll?",
+        options=["Yes", "No"],
+        account_id="telegram-bot",
+        idempotency_key="idem-native-telegram-topic-poll",
+    )
+
+    assert result["messageId"] == "47"
+    assert result["pollId"] == "poll-telegram-topic-1"
+    assert telegram_posts == [
+        (
+            "https://api.telegram.org/bot123456:telegram-token/sendPoll",
+            {
+                "chat_id": "-100123",
+                "question": "Ship native Telegram topic poll?",
+                "options": ["Yes", "No"],
+                "message_thread_id": "77",
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_send_direct_channel_poll_uses_discord_native_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -95,6 +95,10 @@ payload and provider-result metadata. `gifPlayback=true` WhatsApp media sends
 now use Cloud API `type="video"` / `video.link`, mirroring OpenClaw's
 WhatsApp video/GIF outbound behavior while keeping the existing caption and
 saved delivery metadata path.
+Telegram topic-qualified native polls now have the same focused proof as
+topic-qualified sends: parent supergroup routes accept
+`telegram:group:<chatId>:topic:<threadId>` targets, and the Bot API
+`sendPoll` payload carries `message_thread_id`.
 `channels.status --probe` now has the first production route-backed account
 probe: enabled native Slack routes call Slack `auth.test` through the stored
 route secret, while configured/no-account cases return an honest

@@ -994,6 +994,11 @@ These are complete within the bounded OpenZues-local parity contract verified in
   session; omitted or `"rw"` access stays on the writable workspace sandbox
   path.
 - Verified the workspace-access mapping seam with `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_spawn_maps_read_only_workspace_access_to_sandbox_mode"`, adjacent `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_spawn"`, `python -m pytest tests\test_gateway_sandbox_spawn.py -q`, `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`, and `mypy src\openzues\services\gateway_node_methods.py`.
+- Telegram native `sendPoll` topic-qualified targets are now covered by the
+  same OpenClaw-shaped proof as topic-qualified sends: parent supergroup routes
+  accept `telegram:group:<chatId>:topic:<threadId>` and the provider payload
+  carries Bot API `message_thread_id`.
+- Verified the Telegram topic poll proof with `python -m pytest tests\test_ops_mesh.py -q -k "send_direct_channel_poll_parses_telegram_topic_target"`, adjacent `python -m pytest tests\test_ops_mesh.py -q -k "telegram_topic_target or topic_to_parent or send_direct_channel_poll_uses_telegram_native_route or send_direct_channel_poll_parses_telegram_topic_target"`, and `ruff check tests\test_ops_mesh.py`.
 - Next repo-level parity work should continue outside the browser command family, with remaining channel/session transcript/runtime gaps (`chat.*`, `sessions.*`) now the strongest nearby seam.
 
 ## References
