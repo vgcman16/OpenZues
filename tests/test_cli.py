@@ -1392,6 +1392,46 @@ def test_plugins_doctor_human_reports_error_plugins(monkeypatch) -> None:
     assert "- broken_plugin: failed to load plugin: boom (openzues)" in result.stdout
 
 
+def test_plugins_doctor_human_reports_compatibility_notices(monkeypatch) -> None:
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> dict[str, object]:
+            return {
+                "profile": {"hermes_source_path": None},
+                "warnings": [],
+                "plugins": {
+                    "items": [
+                        {
+                            "key": "legacy-hooks",
+                            "label": "Legacy Hooks",
+                            "status": "ready",
+                            "summary": "Legacy hook-only plugin.",
+                            "shape": "hook-only",
+                            "usesLegacyBeforeAgentStart": True,
+                        }
+                    ],
+                },
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(hermes_platform=FakeHermesPlatform()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["plugins", "doctor"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "Compatibility:" in result.stdout
+    assert (
+        "- legacy-hooks still uses legacy before_agent_start; keep regression coverage "
+        "on this plugin, and prefer before_model_resolve/before_prompt_build for new "
+        "work. [warn]"
+    ) in result.stdout
+    assert (
+        "- legacy-hooks is hook-only. This remains a supported compatibility path, "
+        "but it has not migrated to explicit capability registration yet. [info]"
+    ) in result.stdout
+
+
 def test_plugins_inspect_json_returns_plugin_detail(monkeypatch) -> None:
     class FakeHermesPlatform:
         async def get_doctor_view(self) -> dict[str, object]:

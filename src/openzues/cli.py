@@ -2015,9 +2015,11 @@ def _emit_plugins_doctor(payload: dict[str, object], *, json_output: bool) -> No
         return
     errors = payload.get("errors")
     diagnostics = payload.get("diagnostics")
+    compatibility = payload.get("compatibility")
     error_rows = errors if isinstance(errors, list) else []
     diagnostic_rows = diagnostics if isinstance(diagnostics, list) else []
-    if not error_rows and not diagnostic_rows:
+    compatibility_rows = compatibility if isinstance(compatibility, list) else []
+    if not error_rows and not diagnostic_rows and not compatibility_rows:
         typer.echo("No plugin issues detected.")
         return
     if error_rows:
@@ -2041,6 +2043,16 @@ def _emit_plugins_doctor(payload: dict[str, object], *, json_output: bool) -> No
             message = str(entry.get("message") or "").strip()
             prefix = f"{plugin_id}: " if plugin_id else ""
             typer.echo(f"- {prefix}{message}")
+    if compatibility_rows:
+        if error_rows or diagnostic_rows:
+            typer.echo("")
+        typer.echo("Compatibility:")
+        for entry in compatibility_rows:
+            if not isinstance(entry, dict):
+                continue
+            message = _format_plugin_compatibility_notice(entry)
+            severity = str(entry.get("severity") or "info").strip()
+            typer.echo(f"- {message} [{severity}]")
 
 
 def _emit_plugins_toggle(payload: dict[str, object], *, json_output: bool) -> None:
@@ -2896,7 +2908,13 @@ async def _build_plugins_doctor_payload(services: CliServices) -> dict[str, obje
         if isinstance(diagnostic, dict)
         and str(diagnostic.get("level") or "").strip() == "error"
     ]
-    issue_count = len(errors) + len(diagnostics)
+    compatibility = [
+        notice
+        for plugin in plugin_rows
+        if isinstance(plugin, dict)
+        for notice in _plugin_compatibility_notices(plugin)
+    ]
+    issue_count = len(errors) + len(diagnostics) + len(compatibility)
     return {
         "ok": issue_count == 0,
         "summary": (
@@ -2907,6 +2925,7 @@ async def _build_plugins_doctor_payload(services: CliServices) -> dict[str, obje
         "workspaceDir": inventory.get("workspaceDir"),
         "errors": errors,
         "diagnostics": diagnostics,
+        "compatibility": compatibility,
         "docs": "https://docs.openclaw.ai/plugin",
     }
 
@@ -3447,7 +3466,7 @@ def _plugin_inspect_report(plugin: dict[str, object]) -> dict[str, object]:
         "capabilities": [{"kind": "inventory", "ids": capability_ids}]
         if capability_ids
         else [],
-        "compatibility": [],
+        "compatibility": _plugin_compatibility_notices(plugin),
         "bundleCapabilities": [],
         "typedHooks": [],
         "customHooks": [],
@@ -3466,12 +3485,54 @@ def _plugin_inspect_report(plugin: dict[str, object]) -> dict[str, object]:
 
 
 def _plugin_inspect_shape(plugin: dict[str, object]) -> str:
+    shape = _optional_cli_string(plugin.get("shape"))
+    if shape is not None:
+        return shape
     plugin_id = str(plugin.get("id") or "").strip()
     if plugin_id.startswith("hermes_plugin:"):
         return "hermes-inventory"
     if plugin_id.startswith("codex_"):
         return "openzues-runtime-inventory"
     return "openzues-inventory"
+
+
+def _plugin_compatibility_notices(plugin: dict[str, object]) -> list[dict[str, object]]:
+    plugin_id = str(plugin.get("id") or "").strip()
+    if not plugin_id:
+        return []
+    notices: list[dict[str, object]] = []
+    if plugin.get("usesLegacyBeforeAgentStart") is True:
+        notices.append(
+            {
+                "pluginId": plugin_id,
+                "code": "legacy-before-agent-start",
+                "severity": "warn",
+                "message": (
+                    "still uses legacy before_agent_start; keep regression coverage "
+                    "on this plugin, and prefer before_model_resolve/before_prompt_build "
+                    "for new work."
+                ),
+            }
+        )
+    if _plugin_inspect_shape(plugin) == "hook-only":
+        notices.append(
+            {
+                "pluginId": plugin_id,
+                "code": "hook-only",
+                "severity": "info",
+                "message": (
+                    "is hook-only. This remains a supported compatibility path, but it "
+                    "has not migrated to explicit capability registration yet."
+                ),
+            }
+        )
+    return notices
+
+
+def _format_plugin_compatibility_notice(notice: dict[str, object]) -> str:
+    plugin_id = str(notice.get("pluginId") or "").strip()
+    message = str(notice.get("message") or "").strip()
+    return f"{plugin_id} {message}".strip()
 
 
 def _plugin_record_from_deck_item(
@@ -3513,6 +3574,11 @@ def _plugin_record_from_deck_item(
             if workspace_dir is not None and plugin_name
             else "hermes_source"
         )
+    shape = _optional_cli_string(item.get("shape"))
+    if shape is not None:
+        record["shape"] = shape
+    if item.get("usesLegacyBeforeAgentStart") is True:
+        record["usesLegacyBeforeAgentStart"] = True
     return record
 
 
