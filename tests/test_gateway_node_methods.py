@@ -14805,6 +14805,94 @@ async def test_sessions_spawn_rejects_sandboxed_requester_to_unsandboxed_target(
 
 
 @pytest.mark.asyncio
+async def test_sessions_spawn_inherit_dispatches_sandboxed_config_target(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-sessions-spawn-sandbox-inherit.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "agents": {
+                    "defaults": {
+                        "sandbox": {
+                            "mode": "all",
+                        },
+                    },
+                },
+            }
+        )
+    )
+    chat_calls: list[dict[str, object]] = []
+    sandbox_calls: list[dict[str, object]] = []
+
+    async def fake_chat_send_service(**kwargs: object) -> dict[str, object]:
+        chat_calls.append(dict(kwargs))
+        return {"runId": "run-chat-child", "status": "ok"}
+
+    async def fake_sandbox_chat_send_service(**kwargs: object) -> dict[str, object]:
+        sandbox_calls.append(dict(kwargs))
+        return {
+            "runId": "run-sandbox-child",
+            "status": "ok",
+            "runtime": "codex-app-server",
+            "runtimeId": 8,
+            "runtimeThreadId": "thread-sandbox-child",
+            "runtimeSessionId": "thread-sandbox-child",
+            "sandboxed": True,
+            "sandboxMode": "workspace-write",
+            "sandboxPolicy": {"type": "workspaceWrite"},
+        }
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        config_service=config_service,
+        chat_send_service=fake_chat_send_service,
+        sandbox_chat_send_service=fake_sandbox_chat_send_service,
+    )
+
+    payload = await service.call(
+        "sessions.spawn",
+        {
+            "task": "Inherit the configured sandbox.",
+            "sandbox": "inherit",
+        },
+    )
+
+    child_session_key = str(payload["childSessionKey"])
+    metadata_row = await database.get_gateway_session_metadata(child_session_key)
+    assert payload["status"] == "accepted"
+    assert payload["runId"] == "run-sandbox-child"
+    assert chat_calls == []
+    assert sandbox_calls[0]["sandbox"] == "require"
+    assert sandbox_calls[0]["sandbox_mode"] == "workspace-write"
+    assert sandbox_calls[0]["session_key"] == child_session_key
+    assert metadata_row is not None
+    metadata = metadata_row["metadata"]
+    assert metadata["runtime"] == "codex-app-server"
+    assert metadata["sandboxed"] is True
+    assert metadata["sandboxMode"] == "workspace-write"
+    assert metadata["sandboxConfigMode"] == "all"
+
+
+@pytest.mark.asyncio
 async def test_sessions_spawn_rejects_acp_required_sandbox_policy() -> None:
     service = GatewayNodeMethodService(GatewayNodeRegistry())
 

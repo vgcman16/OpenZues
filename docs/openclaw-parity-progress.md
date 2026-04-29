@@ -979,6 +979,11 @@ These are complete within the bounded OpenZues-local parity contract verified in
   an unsandboxed target agent returns the upstream forbidden message before any
   child dispatch.
 - Verified the sandboxed-requester guard with `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_spawn_rejects_sandboxed_requester_to_unsandboxed_target"`, adjacent `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_spawn"`, `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`, and `mypy src\openzues\services\gateway_node_methods.py`.
+- `sessions.spawn sandbox="inherit"` now also honors effective sandboxed child
+  targets from `agents.defaults.sandbox.mode="all"` or `"non-main"` by routing
+  through the native sandbox send adapter and persisting the same sandbox
+  runtime metadata as explicit `sandbox="require"` spawns.
+- Verified the inherited sandbox dispatch seam with `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_spawn_inherit_dispatches_sandboxed_config_target"`, adjacent `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_spawn"`, `python -m pytest tests\test_gateway_sandbox_spawn.py -q`, `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`, and `mypy src\openzues\services\gateway_node_methods.py`.
 - Next repo-level parity work should continue outside the browser command family, with remaining channel/session transcript/runtime gaps (`chat.*`, `sessions.*`) now the strongest nearby seam.
 
 ## References

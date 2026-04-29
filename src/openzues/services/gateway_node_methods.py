@@ -7289,11 +7289,11 @@ class GatewayNodeMethodService:
                 }
             effective_chat_send_service = (
                 self._sandbox_chat_send_service
-                if sandbox == "require"
+                if child_sandbox_status.sandboxed
                 else self._chat_send_service
             )
             if effective_chat_send_service is None:
-                if sandbox == "require":
+                if child_sandbox_status.sandboxed:
                     return {
                         "status": "forbidden",
                         "error": FORBIDDEN_SANDBOX_RUNTIME_UNAVAILABLE,
@@ -7388,7 +7388,7 @@ class GatewayNodeMethodService:
                 "spawnMode": tracked_mode,
                 "cleanup": tracked_cleanup,
             }
-            if sandbox == "require" and child_sandbox_status.sandboxed:
+            if child_sandbox_status.sandboxed:
                 metadata["sandboxed"] = True
                 metadata["sandboxMode"] = "workspace-write"
                 metadata["sandboxConfigMode"] = child_sandbox_status.mode
@@ -7522,7 +7522,7 @@ class GatewayNodeMethodService:
                         "cwd": cwd,
                         "model": model,
                     }
-                    if sandbox == "require"
+                    if child_sandbox_status.sandboxed
                     else {}
                 )
                 delivery_kwargs: dict[str, object] = {"deliver": None}
