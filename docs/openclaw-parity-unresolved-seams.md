@@ -233,8 +233,11 @@ image fallback targets. `models image-fallbacks clear` now empties the
 configured image fallback list while preserving the existing primary image model
 config. No smaller image fallback CLI command remains. `models auth order get`
 now reads the per-agent native `auth-state.json` order override with
-OpenClaw-style provider normalization and JSON/human output. The next model CLI
-queue head is auth-order set/clear mutation. Live auth
+OpenClaw-style provider normalization and JSON/human output. `models auth order
+set` now validates requested profile ids against the target agent's
+`auth-profiles.json`, rejects provider mismatches with OpenClaw-shaped errors,
+dedupes the requested order, and writes the per-agent `auth-state.json` order
+override. The next model CLI queue head is auth-order clear. Live auth
 probes remain unavailable until the native model auth health runtime exists.
 Top-level `health`
 now queries the live gateway `/api/health` and `/readyz` owners, emits

@@ -5653,6 +5653,19 @@ async def _build_models_auth_order_get_payload(
     return dict(gateway_config.get_model_auth_order(provider=provider, agent=agent))
 
 
+async def _set_models_auth_order_payload(
+    services: CliServices,
+    *,
+    provider: str,
+    agent: str | None,
+    order: list[str],
+) -> dict[str, object]:
+    gateway_config = getattr(services, "gateway_config", None)
+    if not isinstance(gateway_config, GatewayConfigService):
+        raise ValueError("model auth order config runtime is unavailable.")
+    return dict(gateway_config.set_model_auth_order(provider=provider, agent=agent, order=order))
+
+
 async def _set_model_alias_payload(
     services: CliServices,
     *,
@@ -9032,6 +9045,37 @@ def models_auth_order_get_command(
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
     _emit_models_auth_order(payload, json_output=json_output)
+
+
+@models_auth_order_app.command("set")
+def models_auth_order_set_command(
+    profile_ids: Annotated[list[str], typer.Argument(help="Auth profile ids.")],
+    provider: str = typer.Option(
+        ...,
+        "--provider",
+        help="Provider id.",
+    ),
+    agent: str | None = typer.Option(
+        None,
+        "--agent",
+        help="Agent id (default: configured default agent).",
+    ),
+) -> None:
+    try:
+        payload = _run(
+            _run_with_services(
+                lambda services: _set_models_auth_order_payload(
+                    services,
+                    provider=provider,
+                    agent=agent,
+                    order=profile_ids,
+                )
+            )
+        )
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    _emit_models_auth_order(payload, json_output=False)
 
 
 @models_aliases_app.command("list")

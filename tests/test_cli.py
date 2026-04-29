@@ -5916,6 +5916,74 @@ def test_models_auth_order_get_json_reads_agent_auth_state(tmp_path, monkeypatch
     }
 
 
+def test_models_auth_order_set_writes_agent_auth_state(tmp_path, monkeypatch) -> None:
+    agent_dir = tmp_path / "agents" / "main" / "agent"
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "auth-profiles.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "profiles": {
+                    "openai:first": {"type": "api_key", "provider": "openai"},
+                    "openai:second": {"type": "api_key", "provider": "openai"},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "agents": {"list": [{"id": "main", "agentDir": str(agent_dir)}]},
+            }
+        )
+    )
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_config=gateway_config))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "models",
+            "auth",
+            "order",
+            "set",
+            "--provider",
+            "openai",
+            "openai:second",
+            "openai:first",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert "Agent: main" in result.stdout
+    assert "Provider: openai" in result.stdout
+    assert "Order override: openai:second, openai:first" in result.stdout
+    state = json.loads((agent_dir / "auth-state.json").read_text(encoding="utf-8"))
+    assert state == {
+        "version": 1,
+        "order": {"openai": ["openai:second", "openai:first"]},
+    }
+
+
 def test_models_status_json_projects_default_catalog_state(monkeypatch) -> None:
     calls: list[tuple[str, dict[str, object]]] = []
 

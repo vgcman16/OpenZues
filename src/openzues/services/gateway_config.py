@@ -350,6 +350,49 @@ class GatewayConfigService:
             "order": order if order else None,
         }
 
+    def set_model_auth_order(
+        self,
+        *,
+        provider: str,
+        order: list[str],
+        agent: str | None = None,
+    ) -> dict[str, Any]:
+        context = _resolve_model_auth_order_context(
+            self.build_snapshot(),
+            data_dir=self._require_data_dir(),
+            provider=provider,
+            agent=agent,
+        )
+        requested = _normalize_string_entries(order)
+        if not requested:
+            raise ValueError("Missing profile ids. Provide one or more profile ids.")
+        profiles = _auth_profiles_from_store(_read_json_object(context["auth_store_path"]))
+        for profile_id in requested:
+            credential = profiles.get(profile_id)
+            if not isinstance(credential, dict):
+                agent_dir = context["agent_dir"]
+                raise ValueError(f'Auth profile "{profile_id}" not found in {agent_dir}.')
+            credential_provider = str(credential.get("provider") or "")
+            if _normalize_model_auth_provider(credential_provider) != context["provider"]:
+                raise ValueError(
+                    f'Auth profile "{profile_id}" is for {credential_provider}, '
+                    f'not {context["provider"]}.'
+                )
+        state = _read_json_object(context["auth_state_path"])
+        next_state = _set_auth_order_in_state(
+            state,
+            provider=context["provider"],
+            order=requested,
+        )
+        _write_json_object(context["auth_state_path"], next_state)
+        return {
+            "agentId": context["agent_id"],
+            "agentDir": str(context["agent_dir"]),
+            "provider": context["provider"],
+            "authStatePath": str(context["auth_state_path"]),
+            "order": requested,
+        }
+
     def record_marketplace_plugin_install(
         self,
         *,
@@ -658,6 +701,31 @@ def _read_json_object(path: Path) -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
+def _write_json_object(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _normalize_string_entries(entries: list[str]) -> list[str]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for entry in entries:
+        value = entry.strip()
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        normalized.append(value)
+    return normalized
+
+
+def _auth_profiles_from_store(store: dict[str, Any]) -> dict[str, Any]:
+    profiles = store.get("profiles")
+    return dict(profiles) if isinstance(profiles, dict) else {}
+
+
 def _auth_order_from_state(state: dict[str, Any], *, provider: str) -> list[str]:
     raw_order = state.get("order")
     if not isinstance(raw_order, dict):
@@ -672,6 +740,41 @@ def _auth_order_from_state(state: dict[str, Any], *, provider: str) -> list[str]
             return []
         return [entry.strip() for entry in raw_entries if isinstance(entry, str) and entry.strip()]
     return []
+
+
+def _set_auth_order_in_state(
+    state: dict[str, Any],
+    *,
+    provider: str,
+    order: list[str],
+) -> dict[str, Any]:
+    provider_key = _normalize_model_auth_provider(provider)
+    raw_order = state.get("order")
+    next_order: dict[str, list[str]] = {}
+    if isinstance(raw_order, dict):
+        for raw_provider, raw_entries in raw_order.items():
+            if not isinstance(raw_provider, str):
+                continue
+            if _normalize_model_auth_provider(raw_provider) == provider_key:
+                continue
+            if not isinstance(raw_entries, list):
+                continue
+            entries = [
+                entry.strip()
+                for entry in raw_entries
+                if isinstance(entry, str) and entry.strip()
+            ]
+            if entries:
+                next_order[raw_provider] = entries
+    next_order[provider_key] = order
+    next_state: dict[str, Any] = {
+        key: value
+        for key, value in state.items()
+        if key in {"lastGood", "usageStats"} and isinstance(value, dict)
+    }
+    next_state["version"] = 1
+    next_state["order"] = next_order
+    return next_state
 
 
 def _model_aliases_from_config_snapshot(snapshot: dict[str, Any]) -> dict[str, str]:
