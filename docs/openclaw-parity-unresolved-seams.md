@@ -217,7 +217,10 @@ CLI command remains. `models fallbacks list` now projects
 the upstream JSON/plain/human output shapes. `models fallbacks add` now resolves
 model aliases to canonical provider/model keys, upserts the configured model
 entry, appends only missing fallback targets, and writes through
-`GatewayConfigService`. The next model CLI queue head is fallback remove/clear,
+`GatewayConfigService`. `models fallbacks remove` now resolves model aliases,
+removes matching canonical fallback targets, preserves the remaining order, and
+returns the upstream not-found error for missing fallback targets. The next
+model CLI queue head is fallback clear,
 followed by image fallback and auth-order mutation clusters. Live auth probes
 remain unavailable until the native model auth health runtime exists.
 Top-level `health`
