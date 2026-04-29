@@ -2719,6 +2719,11 @@ async def _build_capability_image_generate_payload(
             f"{capability} local transport is unavailable until image generation is wired."
         )
     active_model = _require_capability_provider_model_ref(model_ref)
+    resolved_input_files: list[str] | None = None
+    if input_files is not None:
+        if not input_files:
+            raise ValueError("At least one --file value is required.")
+        resolved_input_files = [str(Path(file_path).resolve()) for file_path in input_files]
     result = await generate_image(
         prompt=prompt,
         active_model=active_model,
@@ -2727,7 +2732,7 @@ async def _build_capability_image_generate_payload(
         aspect_ratio=aspect_ratio,
         resolution=resolution,
         output_path=output_path,
-        input_files=input_files,
+        input_files=resolved_input_files,
     )
     result_payload = dict(result) if isinstance(result, dict) else {}
     provider = _optional_cli_string(result_payload.get("provider"))
@@ -8151,6 +8156,36 @@ def capability_image_generate_command(
             resolution=resolution,
             output_path=output,
             input_files=None,
+        )
+
+    try:
+        payload = _run(_run_with_services(_action))
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    _emit_capability_model_run(payload, json_output=json_output)
+
+
+@capability_image_app.command("edit")
+def capability_image_edit_command(
+    file_paths: Annotated[list[str] | None, typer.Option("--file", help="Input file.")] = None,
+    prompt: str = typer.Option(..., "--prompt", help="Prompt text."),
+    model: str | None = typer.Option(None, "--model", help="Model override."),
+    output: str | None = typer.Option(None, "--output", help="Output path."),
+    json_output: bool = typer.Option(False, "--json", help="Output JSON."),
+) -> None:
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_capability_image_generate_payload(
+            services,
+            capability="image.edit",
+            prompt=prompt,
+            model_ref=model,
+            count=None,
+            size=None,
+            aspect_ratio=None,
+            resolution=None,
+            output_path=output,
+            input_files=file_paths or [],
         )
 
     try:

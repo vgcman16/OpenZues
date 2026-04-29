@@ -3798,6 +3798,103 @@ def test_infer_image_generate_json_wraps_native_image_generation(monkeypatch) ->
     ]
 
 
+def test_capability_image_edit_json_wraps_native_image_generation(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeImageGeneration:
+        async def generate_image(
+            self,
+            *,
+            prompt: str,
+            active_model: dict[str, str] | None,
+            count: int | None,
+            size: str | None,
+            aspect_ratio: str | None,
+            resolution: str | None,
+            output_path: str | None,
+            input_files: list[str] | None,
+        ) -> dict[str, object]:
+            calls.append(
+                {
+                    "prompt": prompt,
+                    "active_model": active_model,
+                    "count": count,
+                    "size": size,
+                    "aspect_ratio": aspect_ratio,
+                    "resolution": resolution,
+                    "output_path": output_path,
+                    "input_files": input_files,
+                }
+            )
+            return {
+                "provider": "vision-one",
+                "model": "paint-v1",
+                "attempts": [],
+                "outputs": [
+                    {
+                        "path": str((Path.cwd() / "edited" / "moon.png").resolve()),
+                        "mimeType": "image/png",
+                    }
+                ],
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(image_generation=FakeImageGeneration()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "capability",
+            "image",
+            "edit",
+            "--file",
+            "moon-source.png",
+            "--file",
+            "mask.png",
+            "--prompt",
+            "add stars",
+            "--model",
+            "vision-one/paint-v1",
+            "--output",
+            "edited/moon.png",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout) == {
+        "ok": True,
+        "capability": "image.edit",
+        "transport": "local",
+        "provider": "vision-one",
+        "model": "paint-v1",
+        "attempts": [],
+        "outputs": [
+            {
+                "path": str((Path.cwd() / "edited" / "moon.png").resolve()),
+                "mimeType": "image/png",
+            }
+        ],
+    }
+    assert calls == [
+        {
+            "prompt": "add stars",
+            "active_model": {"provider": "vision-one", "model": "paint-v1"},
+            "count": None,
+            "size": None,
+            "aspect_ratio": None,
+            "resolution": None,
+            "output_path": "edited/moon.png",
+            "input_files": [
+                str((Path.cwd() / "moon-source.png").resolve()),
+                str((Path.cwd() / "mask.png").resolve()),
+            ],
+        }
+    ]
+
+
 def test_capability_model_run_rejects_local_and_gateway_together() -> None:
     result = runner.invoke(
         app,
