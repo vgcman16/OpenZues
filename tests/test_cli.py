@@ -736,6 +736,74 @@ def test_plugins_doctor_human_reports_error_plugins(monkeypatch) -> None:
     assert "- broken_plugin: failed to load plugin: boom (openzues)" in result.stdout
 
 
+def test_plugins_inspect_json_returns_plugin_detail(monkeypatch) -> None:
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> dict[str, object]:
+            return {
+                "profile": {"hermes_source_path": r"C:\Hermes"},
+                "warnings": [],
+                "plugins": {
+                    "items": [
+                        {
+                            "key": "hermes_plugin:slack",
+                            "label": "Hermes Plugin: Slack",
+                            "status": "advisory",
+                            "summary": "Hermes source tree includes this plugin family.",
+                            "capabilities": ["plugin discovery", "future activation/config"],
+                        }
+                    ],
+                },
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(hermes_platform=FakeHermesPlatform()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["plugins", "inspect", "hermes_plugin:slack", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["plugin"]["id"] == "hermes_plugin:slack"
+    assert payload["plugin"]["status"] == "disabled"
+    assert payload["shape"] == "hermes-inventory"
+    assert payload["capabilityMode"] == "inventory"
+    assert payload["capabilities"] == [
+        {"kind": "inventory", "ids": ["plugin discovery", "future activation/config"]}
+    ]
+
+
+def test_plugins_info_alias_json_uses_inspect_payload(monkeypatch) -> None:
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> dict[str, object]:
+            return {
+                "profile": {"hermes_source_path": None},
+                "warnings": [],
+                "plugins": {
+                    "items": [
+                        {
+                            "key": "codex_plugins",
+                            "label": "Live Codex Plugins",
+                            "status": "ready",
+                            "summary": "Connected lanes expose plugins.",
+                        }
+                    ],
+                },
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(hermes_platform=FakeHermesPlatform()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["plugins", "info", "codex_plugins", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["plugin"]["id"] == "codex_plugins"
+    assert payload["shape"] == "openzues-runtime-inventory"
+
+
 def test_control_plane_base_url_prefers_lease_metadata(tmp_path, monkeypatch) -> None:
     data_dir = tmp_path / "data"
     data_dir.mkdir(parents=True, exist_ok=True)

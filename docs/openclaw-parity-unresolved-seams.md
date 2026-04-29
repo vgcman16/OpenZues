@@ -91,10 +91,13 @@ surface supports `--enabled`, `--verbose`, and `--json`, maps ready/partial
 inventory to loaded plugins, keeps source-only Hermes families disabled, and
 does not introduce a second plugin scanner. `plugins doctor` now reports plugin
 load errors from the same projection and preserves OpenClaw's
-`No plugin issues detected.` clean snapshot behavior. Remaining plugin CLI
-parity is `plugins inspect/info`, compatibility notices, enable/disable
-mutation, marketplace/install/update/uninstall flows, and deeper production
-plugin metadata discovery.
+`No plugin issues detected.` clean snapshot behavior. `plugins inspect` and
+its `plugins info` alias now return OpenClaw-shaped JSON reports with
+`plugin`, `shape`, `capabilityMode`, capability kinds, diagnostics, policy, and
+install placeholders projected from the same inventory, and `inspect --all`
+returns all records. Remaining plugin CLI parity is compatibility notices,
+enable/disable mutation, marketplace/install/update/uninstall flows, and deeper
+production plugin metadata discovery.
 
 Current queue-head adjustment: `sessions.spawn` now preserves and applies
 OpenClaw's `gateway.agents.defaults.subagents.runTimeoutSeconds` config default

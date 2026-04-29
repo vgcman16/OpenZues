@@ -1696,6 +1696,48 @@ def _emit_plugins_doctor(payload: dict[str, object], *, json_output: bool) -> No
             typer.echo(f"- {prefix}{message}")
 
 
+def _emit_plugin_inspect(payload: object, *, json_output: bool) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+    if isinstance(payload, list):
+        if not payload:
+            typer.echo("No plugins found.")
+            return
+        for item in payload:
+            if isinstance(item, dict):
+                plugin = item.get("plugin")
+                if isinstance(plugin, dict):
+                    typer.echo(
+                        f"{plugin.get('name') or plugin.get('id')} "
+                        f"({plugin.get('status') or 'unknown'})"
+                    )
+        return
+    if not isinstance(payload, dict):
+        typer.echo(str(payload))
+        return
+    plugin = payload.get("plugin")
+    if not isinstance(plugin, dict):
+        _emit_payload(payload, json_output=False)
+        return
+    typer.echo(str(plugin.get("name") or plugin.get("id") or "Plugin"))
+    plugin_id = str(plugin.get("id") or "").strip()
+    if plugin_id:
+        typer.echo(f"id: {plugin_id}")
+    status = str(plugin.get("status") or "").strip()
+    if status:
+        typer.echo(f"status: {status}")
+    format_name = str(plugin.get("format") or "").strip()
+    if format_name:
+        typer.echo(f"format: {format_name}")
+    source = str(plugin.get("source") or "").strip()
+    if source:
+        typer.echo(f"source: {source}")
+    shape = str(payload.get("shape") or "").strip()
+    if shape:
+        typer.echo(f"shape: {shape}")
+
+
 def _emit_sandbox_inventory(payload: dict[str, object], *, json_output: bool) -> None:
     if json_output:
         _emit_payload(payload, json_output=True)
@@ -1909,6 +1951,83 @@ async def _build_plugins_doctor_payload(services: CliServices) -> dict[str, obje
         "diagnostics": diagnostics,
         "docs": "https://docs.openclaw.ai/plugin",
     }
+
+
+async def _build_plugin_inspect_payload(
+    services: CliServices,
+    *,
+    plugin_id: str | None,
+    inspect_all: bool,
+) -> dict[str, object] | list[dict[str, object]]:
+    inventory = await _build_plugins_inventory_payload(services, enabled_only=False)
+    plugins = inventory.get("plugins")
+    plugin_rows = [plugin for plugin in plugins if isinstance(plugin, dict)] if isinstance(
+        plugins,
+        list,
+    ) else []
+    if inspect_all:
+        return [_plugin_inspect_report(plugin) for plugin in plugin_rows]
+    normalized_id = _optional_cli_string(plugin_id)
+    if normalized_id is None:
+        raise ValueError("Provide a plugin id or use --all.")
+    plugin = _find_plugin_record(plugin_rows, normalized_id)
+    if plugin is None:
+        raise KeyError(normalized_id)
+    return _plugin_inspect_report(plugin)
+
+
+def _find_plugin_record(
+    plugins: list[dict[str, object]],
+    plugin_id: str,
+) -> dict[str, object] | None:
+    needle = plugin_id.strip().lower()
+    for plugin in plugins:
+        candidate_id = str(plugin.get("id") or "").strip().lower()
+        candidate_name = str(plugin.get("name") or "").strip().lower()
+        if needle in {candidate_id, candidate_name}:
+            return plugin
+    return None
+
+
+def _plugin_inspect_report(plugin: dict[str, object]) -> dict[str, object]:
+    capabilities = plugin.get("capabilities")
+    capability_ids = [
+        str(capability)
+        for capability in (capabilities if isinstance(capabilities, list) else [])
+        if str(capability).strip()
+    ]
+    return {
+        "plugin": dict(plugin),
+        "shape": _plugin_inspect_shape(plugin),
+        "capabilityMode": "inventory",
+        "capabilities": [{"kind": "inventory", "ids": capability_ids}]
+        if capability_ids
+        else [],
+        "compatibility": [],
+        "bundleCapabilities": [],
+        "typedHooks": [],
+        "customHooks": [],
+        "tools": [],
+        "commands": [],
+        "cliCommands": [],
+        "services": [],
+        "gatewayMethods": [],
+        "mcpServers": [],
+        "lspServers": [],
+        "httpRouteCount": 0,
+        "policy": {},
+        "diagnostics": [],
+        "install": None,
+    }
+
+
+def _plugin_inspect_shape(plugin: dict[str, object]) -> str:
+    plugin_id = str(plugin.get("id") or "").strip()
+    if plugin_id.startswith("hermes_plugin:"):
+        return "hermes-inventory"
+    if plugin_id.startswith("codex_"):
+        return "openzues-runtime-inventory"
+    return "openzues-inventory"
 
 
 def _plugin_record_from_deck_item(
@@ -4170,6 +4289,60 @@ def plugins_list_command(
 
     payload = _run(_run_with_services(_action))
     _emit_plugins_inventory(payload, json_output=json_output, verbose=verbose)
+
+
+def _plugins_inspect_command_impl(
+    plugin_id: str | None,
+    *,
+    inspect_all: bool,
+    json_output: bool,
+) -> None:
+    if inspect_all and _optional_cli_string(plugin_id) is not None:
+        raise typer.BadParameter("Pass either a plugin id or --all, not both.")
+
+    async def _action(services: CliServices) -> dict[str, object] | list[dict[str, object]]:
+        return await _build_plugin_inspect_payload(
+            services,
+            plugin_id=plugin_id,
+            inspect_all=inspect_all,
+        )
+
+    try:
+        payload = _run(_run_with_services(_action))
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    except KeyError as exc:
+        missing = str(exc.args[0]) if exc.args else str(plugin_id or "")
+        typer.echo(f"Plugin not found: {missing}", err=True)
+        raise typer.Exit(code=1) from exc
+    _emit_plugin_inspect(payload, json_output=json_output)
+
+
+@plugins_app.command("inspect")
+def plugins_inspect_command(
+    plugin_id: str | None = typer.Argument(None, help="Plugin id."),
+    inspect_all: bool = typer.Option(False, "--all", help="Inspect all plugins."),
+    json_output: bool = typer.Option(False, "--json", help="Emit plugin details as JSON."),
+) -> None:
+    _plugins_inspect_command_impl(
+        plugin_id,
+        inspect_all=inspect_all,
+        json_output=json_output,
+    )
+
+
+@plugins_app.command("info")
+def plugins_info_command(
+    plugin_id: str | None = typer.Argument(None, help="Plugin id."),
+    inspect_all: bool = typer.Option(False, "--all", help="Inspect all plugins."),
+    json_output: bool = typer.Option(False, "--json", help="Emit plugin details as JSON."),
+) -> None:
+    _plugins_inspect_command_impl(
+        plugin_id,
+        inspect_all=inspect_all,
+        json_output=json_output,
+    )
 
 
 @plugins_app.command("doctor")
