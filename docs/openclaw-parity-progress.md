@@ -1358,9 +1358,23 @@ These are complete within the bounded OpenZues-local parity contract verified in
   routes_poll_human_output_calls_native_direct_poll_runtime"` (`19 passed`),
   `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
   src\openzues\cli.py`.
-- Next cron CLI parity should continue with `cron edit` payload/session/delivery
-  patching, then failure-alert and existing-cron schedule patch breadth before
-  returning to backend-only cron add gaps.
+- `cron edit` now also patches the native-supported upstream session, agent,
+  payload, and delivery fields: `--session`, `--session-key`,
+  `--clear-session-key`, `--wake`, `--agent`, `--clear-agent`,
+  `--message`, `--system-event`, `--model`, `--announce`, `--deliver`,
+  `--no-deliver`, `--channel`, `--to`, `--account`,
+  `--best-effort-deliver`, and `--no-best-effort-deliver`.
+- Verified the cron edit payload/session/delivery slice with `python -m pytest
+  tests\test_cli.py -q -k
+  "cron_edit_agent_turn_delivery_patch_calls_gateway_method_owner"` (`1
+  passed`), adjacent CLI pack `python -m pytest tests\test_cli.py -q -k
+  "cron_ or sessions_ or routes_send_json_calls_native_direct_send_runtime or
+  routes_poll_human_output_calls_native_direct_poll_runtime"` (`20 passed`),
+  `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+- Next cron CLI parity should continue with `cron edit` failure-alert and
+  existing-cron schedule patch breadth before returning to backend-only cron add
+  gaps.
 
 ## References
 

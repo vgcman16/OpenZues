@@ -9823,16 +9823,49 @@ def cron_edit_command(
     description: str | None = typer.Option(None, "--description", help="Set description."),
     enable: bool = typer.Option(False, "--enable", help="Enable job."),
     disable: bool = typer.Option(False, "--disable", help="Disable job."),
+    session: str | None = typer.Option(None, "--session", help="Session target."),
+    agent: str | None = typer.Option(None, "--agent", help="Set agent id."),
+    clear_agent: bool = typer.Option(False, "--clear-agent", help="Clear agent id."),
+    session_key: str | None = typer.Option(None, "--session-key", help="Session routing key."),
+    clear_session_key: bool = typer.Option(
+        False,
+        "--clear-session-key",
+        help="Clear session routing key.",
+    ),
+    wake: str | None = typer.Option(None, "--wake", help="Wake mode: now or next-heartbeat."),
     cron_expr: str | None = typer.Option(None, "--cron", help="Set cron expression."),
     every: str | None = typer.Option(None, "--every", help="Set interval duration."),
     at: str | None = typer.Option(None, "--at", help="Set one-shot time."),
     tz: str | None = typer.Option(None, "--tz", help="Timezone for cron expressions."),
     stagger: str | None = typer.Option(None, "--stagger", help="Cron stagger window."),
     exact: bool = typer.Option(False, "--exact", help="Disable cron staggering."),
+    system_event: str | None = typer.Option(None, "--system-event", help="Set system event."),
+    message: str | None = typer.Option(None, "--message", help="Set agent message."),
+    model: str | None = typer.Option(None, "--model", help="Set model override."),
+    announce: bool = typer.Option(False, "--announce", help="Announce summary delivery."),
+    deliver: bool = typer.Option(False, "--deliver", help="Deprecated alias for --announce."),
+    no_deliver: bool = typer.Option(False, "--no-deliver", help="Disable announce delivery."),
+    channel: str | None = typer.Option(None, "--channel", help="Delivery channel."),
+    to: str | None = typer.Option(None, "--to", help="Delivery destination."),
+    account: str | None = typer.Option(None, "--account", help="Delivery account id."),
+    best_effort_deliver: bool = typer.Option(
+        False,
+        "--best-effort-deliver",
+        help="Do not fail the job if delivery fails.",
+    ),
+    no_best_effort_deliver: bool = typer.Option(
+        False,
+        "--no-best-effort-deliver",
+        help="Fail the job if delivery fails.",
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit updated cron job as JSON."),
 ) -> None:
     if enable and disable:
         raise typer.BadParameter("Choose --enable or --disable, not both")
+    if announce and (deliver or no_deliver) or deliver and no_deliver:
+        raise typer.BadParameter("Choose --announce or --no-deliver (not multiple)")
+    if best_effort_deliver and no_best_effort_deliver:
+        raise typer.BadParameter("Choose --best-effort-deliver or --no-best-effort-deliver")
     patch: dict[str, object] = {}
     normalized_name = _optional_cli_string(name)
     if normalized_name is not None:
@@ -9844,6 +9877,36 @@ def cron_edit_command(
         patch["enabled"] = True
     if disable:
         patch["enabled"] = False
+    normalized_session = _optional_cli_string(session)
+    normalized_message = _optional_cli_string(message)
+    normalized_system_event = _optional_cli_string(system_event)
+    if normalized_session == "main" and normalized_message is not None:
+        raise typer.BadParameter(
+            "Main jobs cannot use --message; use --system-event or --session isolated"
+        )
+    if normalized_session == "isolated" and normalized_system_event is not None:
+        raise typer.BadParameter(
+            "Isolated jobs cannot use --system-event; use --message or --session main"
+        )
+    if normalized_session is not None:
+        patch["sessionTarget"] = normalized_session
+    normalized_wake = _optional_cli_string(wake)
+    if normalized_wake is not None:
+        patch["wakeMode"] = normalized_wake
+    normalized_agent = _optional_cli_string(agent)
+    if normalized_agent is not None and clear_agent:
+        raise typer.BadParameter("Use --agent or --clear-agent, not both")
+    if normalized_agent is not None:
+        patch["agentId"] = normalized_agent
+    if clear_agent:
+        patch["agentId"] = None
+    normalized_session_key = _optional_cli_string(session_key)
+    if normalized_session_key is not None and clear_session_key:
+        raise typer.BadParameter("Use --session-key or --clear-session-key, not both")
+    if normalized_session_key is not None:
+        patch["sessionKey"] = normalized_session_key
+    if clear_session_key:
+        patch["sessionKey"] = None
     if _cron_has_schedule_options(
         cron_expr=cron_expr,
         every=every,
@@ -9860,6 +9923,50 @@ def cron_edit_command(
             stagger=stagger,
             exact=exact,
         )
+    normalized_model = _optional_cli_string(model)
+    has_delivery_mode_flag = announce or deliver or no_deliver
+    has_delivery_target = any(
+        _optional_cli_string(value) is not None for value in (channel, to, account)
+    )
+    has_best_effort = best_effort_deliver or no_best_effort_deliver
+    has_agent_turn_patch = any(
+        (
+            normalized_message is not None,
+            normalized_model is not None,
+            has_delivery_mode_flag,
+            has_delivery_target,
+            has_best_effort,
+        )
+    )
+    if normalized_system_event is not None and has_agent_turn_patch:
+        raise typer.BadParameter("Choose at most one payload change")
+    if normalized_system_event is not None:
+        patch["payload"] = {"kind": "systemEvent", "text": normalized_system_event}
+    elif has_agent_turn_patch:
+        payload: dict[str, object] = {"kind": "agentTurn"}
+        if normalized_message is not None:
+            payload["message"] = normalized_message
+        if normalized_model is not None:
+            payload["model"] = normalized_model
+        patch["payload"] = payload
+    if has_delivery_mode_flag or has_delivery_target or has_best_effort:
+        delivery: dict[str, object] = {}
+        if has_delivery_mode_flag:
+            delivery["mode"] = "none" if no_deliver else "announce"
+        elif has_best_effort:
+            delivery["mode"] = "announce"
+        normalized_channel = _optional_cli_string(channel)
+        if normalized_channel is not None:
+            delivery["channel"] = normalized_channel
+        normalized_to = _optional_cli_string(to)
+        if normalized_to is not None:
+            delivery["to"] = normalized_to
+        normalized_account = _optional_cli_string(account)
+        if normalized_account is not None:
+            delivery["accountId"] = normalized_account
+        if has_best_effort:
+            delivery["bestEffort"] = best_effort_deliver
+        patch["delivery"] = delivery
     params: dict[str, object] = {"id": job_id, "patch": patch}
 
     async def _action(services: CliServices) -> dict[str, object]:

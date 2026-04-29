@@ -2993,6 +2993,81 @@ def test_cron_edit_basic_patch_calls_gateway_method_owner(monkeypatch) -> None:
     ]
 
 
+def test_cron_edit_agent_turn_delivery_patch_calls_gateway_method_owner(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {"id": params.get("id"), "patch": params.get("patch")}
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "cron",
+            "edit",
+            "task-blueprint:7",
+            "--session",
+            "isolated",
+            "--session-key",
+            "agent:parity",
+            "--wake",
+            "next-heartbeat",
+            "--message",
+            "Update report.",
+            "--model",
+            " gpt-5.4 ",
+            "--announce",
+            "--channel",
+            "telegram",
+            "--to",
+            "chat-ops",
+            "--account",
+            "ops",
+            "--best-effort-deliver",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["id"] == "task-blueprint:7"
+    assert calls == [
+        (
+            "cron.update",
+            {
+                "id": "task-blueprint:7",
+                "patch": {
+                    "sessionTarget": "isolated",
+                    "sessionKey": "agent:parity",
+                    "wakeMode": "next-heartbeat",
+                    "payload": {
+                        "kind": "agentTurn",
+                        "message": "Update report.",
+                        "model": "gpt-5.4",
+                    },
+                    "delivery": {
+                        "mode": "announce",
+                        "channel": "telegram",
+                        "to": "chat-ops",
+                        "accountId": "ops",
+                        "bestEffort": True,
+                    },
+                },
+            },
+        )
+    ]
+
+
 def test_sessions_spawn_json_calls_gateway_method_owner(monkeypatch) -> None:
     calls: list[tuple[str, dict[str, object]]] = []
 
