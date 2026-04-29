@@ -4451,6 +4451,70 @@ def test_infer_embedding_providers_json_projects_native_registry(monkeypatch) ->
     assert calls == ["list_providers"]
 
 
+def test_capability_embedding_create_json_wraps_native_embedding_runtime(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeEmbeddingRuntime:
+        async def create_embeddings(
+            self,
+            *,
+            texts: list[str],
+            provider: str | None,
+            model: str | None,
+        ) -> dict[str, object]:
+            calls.append({"texts": texts, "provider": provider, "model": model})
+            return {
+                "provider": "openai",
+                "model": "text-embedding-3-small",
+                "attempts": [],
+                "embeddings": [[0.1, 0.2], [0.3, 0.4]],
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(embedding_runtime=FakeEmbeddingRuntime()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "capability",
+            "embedding",
+            "create",
+            "--text",
+            "alpha",
+            "--text",
+            "beta",
+            "--provider",
+            "openai",
+            "--model",
+            "openai/text-embedding-3-small",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout) == {
+        "ok": True,
+        "capability": "embedding.create",
+        "transport": "local",
+        "provider": "openai",
+        "model": "text-embedding-3-small",
+        "attempts": [],
+        "outputs": [
+            {"text": "alpha", "embedding": [0.1, 0.2], "dimensions": 2},
+            {"text": "beta", "embedding": [0.3, 0.4], "dimensions": 2},
+        ],
+    }
+    assert calls == [
+        {
+            "texts": ["alpha", "beta"],
+            "provider": "openai",
+            "model": "text-embedding-3-small",
+        }
+    ]
+
+
 def test_capability_model_run_rejects_local_and_gateway_together() -> None:
     result = runner.invoke(
         app,

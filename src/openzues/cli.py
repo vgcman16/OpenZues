@@ -3130,6 +3130,79 @@ async def _build_capability_embedding_providers_payload(
     return providers
 
 
+async def _build_capability_embedding_create_payload(
+    services: CliServices,
+    *,
+    texts: list[str],
+    provider: str | None,
+    model_ref: str | None,
+) -> dict[str, object]:
+    if not texts:
+        raise ValueError("At least one --text value is required.")
+    runtime = _embedding_runtime(services)
+    create_embeddings = (
+        getattr(runtime, "create_embeddings", None) if runtime is not None else None
+    )
+    if not callable(create_embeddings):
+        raise ValueError(
+            "embedding.create local transport is unavailable until embedding runtime is wired."
+        )
+    active_model = _require_capability_provider_model_ref(model_ref)
+    requested_provider = provider
+    requested_model: str | None = None
+    if active_model is not None:
+        requested_provider = requested_provider or active_model["provider"]
+        requested_model = active_model["model"]
+    result = await create_embeddings(
+        texts=texts,
+        provider=requested_provider,
+        model=requested_model,
+    )
+    result_payload = dict(result) if isinstance(result, dict) else {}
+    raw_outputs = result_payload.get("outputs")
+    outputs: list[dict[str, object]]
+    if isinstance(raw_outputs, list):
+        outputs = [dict(item) for item in raw_outputs if isinstance(item, dict)]
+    else:
+        outputs = []
+        embeddings = result_payload.get("embeddings")
+        if isinstance(embeddings, list):
+            for index, embedding in enumerate(embeddings):
+                if not isinstance(embedding, list):
+                    continue
+                vector = [
+                    value
+                    for value in embedding
+                    if isinstance(value, (int, float)) and not isinstance(value, bool)
+                ]
+                if index >= len(texts):
+                    continue
+                outputs.append(
+                    {
+                        "text": texts[index],
+                        "embedding": vector,
+                        "dimensions": len(vector),
+                    }
+                )
+    attempts = result_payload.get("attempts")
+    envelope: dict[str, object] = {
+        "ok": True,
+        "capability": "embedding.create",
+        "transport": "local",
+        "attempts": [dict(item) for item in attempts if isinstance(item, dict)]
+        if isinstance(attempts, list)
+        else [],
+        "outputs": outputs,
+    }
+    provider_id = _optional_cli_string(result_payload.get("provider"))
+    if provider_id is not None:
+        envelope["provider"] = provider_id
+    model = _optional_cli_string(result_payload.get("model"))
+    if model is not None:
+        envelope["model"] = model
+    return envelope
+
+
 async def _build_capability_video_describe_payload(
     services: CliServices,
     *,
@@ -8753,6 +8826,29 @@ def capability_embedding_providers_command(
 
     payload = _run(_run_with_services(_action))
     _emit_capability_provider_summary(payload, json_output=json_output)
+
+
+@capability_embedding_app.command("create")
+def capability_embedding_create_command(
+    texts: Annotated[list[str] | None, typer.Option("--text", help="Input text.")] = None,
+    provider: str | None = typer.Option(None, "--provider", help="Provider id."),
+    model: str | None = typer.Option(None, "--model", help="Model override."),
+    json_output: bool = typer.Option(False, "--json", help="Output JSON."),
+) -> None:
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_capability_embedding_create_payload(
+            services,
+            texts=texts or [],
+            provider=provider,
+            model_ref=model,
+        )
+
+    try:
+        payload = _run(_run_with_services(_action))
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    _emit_capability_model_run(payload, json_output=json_output)
 
 
 @capability_video_app.command("describe")
