@@ -60,6 +60,7 @@ from openzues.services.gateway_capability import GatewayCapabilityService
 from openzues.services.gateway_channels import GatewayChannelsService
 from openzues.services.gateway_commands import GatewayCommandsService
 from openzues.services.gateway_config import GatewayConfigService
+from openzues.services.gateway_logs import GatewayLogsService, GatewayLogsUnavailableError
 from openzues.services.gateway_models import GatewayModelsService
 from openzues.services.gateway_node_methods import GatewayNodeMethodService
 from openzues.services.gateway_node_registry import GatewayNodeRegistry
@@ -95,6 +96,8 @@ _BROWSER_RENDERED_SCREENSHOT_MIN_BYTES = 32_768
 _BROWSER_BLANK_SCREENSHOT_MAX_BYTES = 8_192
 _BROWSER_SNAPSHOT_CHAR_LIMIT = 24_000
 _BROWSER_SNAPSHOT_LINE_LIMIT = 240
+_CHANNEL_LOG_DEFAULT_LIMIT = 200
+_CHANNEL_LOG_MAX_BYTES = 1_000_000
 _CHANNEL_CAPABILITY_SUPPORT: dict[str, dict[str, object]] = {
     "discord": {
         "chatTypes": ["direct", "channel"],
@@ -457,6 +460,7 @@ class CliServices:
     gateway_channels: GatewayChannelsService
     gateway_commands: GatewayCommandsService
     gateway_config: GatewayConfigService
+    gateway_logs: GatewayLogsService
     gateway_node_methods: GatewayNodeMethodService
     ops_mesh: OpsMeshService
     recall: RecallService
@@ -531,6 +535,7 @@ async def _build_services(app_settings: Settings) -> CliServices:
     gateway_channels = GatewayChannelsService(
         list_notification_route_views=ops_mesh.list_notification_route_views,
     )
+    gateway_logs = GatewayLogsService(logs_root=app_settings.data_dir.parent / "logs")
     control_chat = ControlChatService(
         database,
         mission_service,
@@ -576,6 +581,7 @@ async def _build_services(app_settings: Settings) -> CliServices:
                 gateway_channels=gateway_channels,
                 gateway_commands=gateway_commands,
                 gateway_node_methods=None,
+                gateway_logs=gateway_logs,
                 ops_mesh=ops_mesh,
                 recall=None,
                 hermes_platform=None,
@@ -597,6 +603,7 @@ async def _build_services(app_settings: Settings) -> CliServices:
         commands_service=gateway_commands,
         config_service=gateway_config,
         list_notification_route_views=ops_mesh.list_notification_route_views,
+        logs_service=gateway_logs,
         models_service=GatewayModelsService(list_instance_views=manager.list_views),
         send_channel_message_service=ops_mesh.send_direct_channel_message,
         send_channel_poll_service=ops_mesh.send_direct_channel_poll,
@@ -645,6 +652,7 @@ async def _build_services(app_settings: Settings) -> CliServices:
         gateway_channels=gateway_channels,
         gateway_commands=gateway_commands,
         gateway_config=gateway_config,
+        gateway_logs=gateway_logs,
         gateway_node_methods=gateway_node_methods,
         ops_mesh=ops_mesh,
         recall=recall,
@@ -943,6 +951,29 @@ def _emit_channel_resolve_results(
             typer.echo(line)
             continue
         typer.echo(f"{entry} -> unresolved")
+
+
+def _emit_channel_logs(payload: dict[str, object], *, json_output: bool) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+    typer.echo(f"Log file: {payload.get('file') or ''}")
+    channel = str(payload.get("channel") or "all").strip()
+    if channel and channel != "all":
+        typer.echo(f"Channel: {channel}")
+    lines = payload.get("lines")
+    if not isinstance(lines, list) or not lines:
+        typer.echo("No matching log lines.")
+        return
+    for line in lines:
+        if not isinstance(line, dict):
+            continue
+        parts = [
+            str(line.get(key) or "").strip()
+            for key in ("time", "level", "message")
+            if str(line.get(key) or "").strip()
+        ]
+        typer.echo(" ".join(parts))
 
 
 def _emit_gateway_bootstrap(payload: dict[str, object], *, json_output: bool) -> None:
@@ -4757,6 +4788,128 @@ async def _build_channel_resolve_results(
     return results
 
 
+def _normalize_channel_logs_channel(channel: str | None) -> str:
+    normalized = (_optional_cli_string(channel) or "all").lower()
+    if normalized == "all" or normalized in _CHANNEL_CAPABILITY_SUPPORT:
+        return normalized
+    return "all"
+
+
+def _coerce_channel_logs_limit(lines: str | int | None) -> int:
+    try:
+        value = int(str(lines).strip()) if lines is not None else _CHANNEL_LOG_DEFAULT_LIMIT
+    except ValueError:
+        return _CHANNEL_LOG_DEFAULT_LIMIT
+    if value <= 0:
+        return _CHANNEL_LOG_DEFAULT_LIMIT
+    return value
+
+
+def _parse_channel_log_meta_name(raw: object) -> dict[str, str]:
+    if not isinstance(raw, str):
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+    result: dict[str, str] = {}
+    for source_key, target_key in (("subsystem", "subsystem"), ("module", "module")):
+        text = _optional_cli_string(parsed.get(source_key))
+        if text is not None:
+            result[target_key] = text
+    return result
+
+
+def _extract_channel_log_message(parsed: dict[str, object]) -> str:
+    parts: list[str] = []
+    numeric_keys = sorted(
+        (key for key in parsed if key.isdecimal()),
+        key=lambda item: int(item),
+    )
+    for key in numeric_keys:
+        value = parsed.get(key)
+        if isinstance(value, str):
+            parts.append(value)
+        elif value is not None:
+            parts.append(json.dumps(value))
+    return " ".join(parts)
+
+
+def _parse_channel_log_line(raw: str) -> dict[str, object] | None:
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    typed_parsed = cast(dict[str, object], parsed)
+    meta = typed_parsed.get("_meta")
+    typed_meta = cast(dict[str, object], meta) if isinstance(meta, dict) else {}
+    name_meta = _parse_channel_log_meta_name(typed_meta.get("name"))
+    result: dict[str, object] = {}
+    time_text = _optional_cli_string(typed_parsed.get("time")) or _optional_cli_string(
+        typed_meta.get("date")
+    )
+    if time_text is not None:
+        result["time"] = time_text
+    level = _optional_cli_string(typed_meta.get("logLevelName"))
+    if level is not None:
+        result["level"] = level.lower()
+    result.update(name_meta)
+    result["message"] = _extract_channel_log_message(typed_parsed)
+    result["raw"] = raw
+    return result
+
+
+def _channel_log_matches_channel(line: dict[str, object], channel: str) -> bool:
+    if channel == "all":
+        return True
+    subsystem = _optional_cli_string(line.get("subsystem")) or ""
+    module = _optional_cli_string(line.get("module")) or ""
+    return f"gateway/channels/{channel}" in subsystem or channel in module
+
+
+async def _build_channel_logs_payload(
+    services: CliServices,
+    *,
+    channel: str | None,
+    lines: str | int | None,
+) -> dict[str, object]:
+    normalized_channel = _normalize_channel_logs_channel(channel)
+    limit = _coerce_channel_logs_limit(lines)
+    try:
+        tail = await services.gateway_logs.read_tail(
+            limit=limit * 4,
+            max_bytes=_CHANNEL_LOG_MAX_BYTES,
+        )
+    except GatewayLogsUnavailableError as exc:
+        raise ValueError(str(exc)) from exc
+    raw_lines = tail.get("lines")
+    if not isinstance(raw_lines, list):
+        raw_lines = []
+    parsed_lines = [
+        parsed
+        for parsed in (
+            _parse_channel_log_line(str(raw_line))
+            for raw_line in raw_lines
+            if isinstance(raw_line, str)
+        )
+        if parsed is not None
+    ]
+    filtered_lines = [
+        line
+        for line in parsed_lines
+        if _channel_log_matches_channel(line, normalized_channel)
+    ]
+    return {
+        "file": str(tail.get("file") or ""),
+        "channel": normalized_channel,
+        "lines": filtered_lines[-limit:],
+    }
+
+
 async def _build_operator_dashboard(services: CliServices) -> DashboardView | SimpleNamespace:
     live_dashboard = await _try_live_dashboard_view(services.settings)
     if live_dashboard is not None:
@@ -5754,6 +5907,39 @@ def channels_resolve(
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
     _emit_channel_resolve_results(results, json_output=json_output)
+
+
+@channels_app.command("logs")
+def channels_logs(
+    channel: str = typer.Option(
+        "all",
+        "--channel",
+        help="Channel id to filter, or all.",
+    ),
+    lines: str = typer.Option(
+        str(_CHANNEL_LOG_DEFAULT_LIMIT),
+        "--lines",
+        help="Number of lines to show.",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit recent channel logs as JSON.",
+    ),
+) -> None:
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_channel_logs_payload(
+            services,
+            channel=channel,
+            lines=lines,
+        )
+
+    try:
+        payload = _run(_run_with_services(_action))
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    _emit_channel_logs(payload, json_output=json_output)
 
 
 @models_app.command("list")

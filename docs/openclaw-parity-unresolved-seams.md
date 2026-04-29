@@ -105,14 +105,16 @@ OpenClaw-shaped JSON/human readiness fields, and propagates the configured
 connection timeout. `channels status --probe --timeout <ms> --json` now
 accepts the upstream options and preserves probe/timeout metadata with an
 honest unavailable provider-probe posture; remaining channel CLI parity is the
-real provider credential probe runtime, provider-backed live resolve adapters,
-and broader channel subcommands such as logs. `channels capabilities --channel/--account/--target --timeout
+real provider credential probe runtime and provider-backed live resolve
+adapters. `channels capabilities --channel/--account/--target --timeout
 --json` now returns a native OpenClaw-shaped capability report over
 route-backed channel metadata, including support/actions and an honest
 unavailable probe envelope. `channels resolve` now accepts upstream-shaped
 entries/channel/account/kind/JSON options and resolves saved route-backed
 conversation targets into OpenClaw-shaped result rows before provider-native
-lookup exists.
+lookup exists. `channels logs` now reads the native workspace log tail, parses
+OpenClaw-shaped structured log lines, filters by channel, applies the upstream
+limit-after-filtering rule, and emits JSON/human output.
 
 Current queue-head adjustment: `tools.invoke` plugin execution now routes
 through a fakeable `GatewayPluginRuntimeService`, preserving core mappings

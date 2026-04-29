@@ -515,6 +515,83 @@ def test_channels_resolve_json_uses_saved_conversation_targets(tmp_path, monkeyp
     ]
 
 
+def test_channels_logs_json_filters_channel_and_limits_lines(tmp_path, monkeypatch) -> None:
+    _bootstrap_cli_workspace(tmp_path, monkeypatch, task_name="CLI Channel Logs")
+    logs_dir = tmp_path / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    log_path = logs_dir / "openzues-2026-04-29.log"
+
+    def log_line(
+        *,
+        channel: str,
+        module: str,
+        message: str,
+        timestamp: str,
+    ) -> str:
+        return json.dumps(
+            {
+                "time": timestamp,
+                "0": message,
+                "_meta": {
+                    "logLevelName": "INFO",
+                    "name": json.dumps(
+                        {
+                            "subsystem": f"gateway/channels/{channel}",
+                            "module": module,
+                        }
+                    ),
+                },
+            }
+        )
+
+    log_path.write_text(
+        "\n".join(
+            [
+                log_line(
+                    channel="slack",
+                    module="openzues.slack",
+                    message="old slack delivery",
+                    timestamp="2026-04-29T10:00:00.000Z",
+                ),
+                log_line(
+                    channel="discord",
+                    module="openzues.discord",
+                    message="discord delivery",
+                    timestamp="2026-04-29T10:00:01.000Z",
+                ),
+                log_line(
+                    channel="slack",
+                    module="openzues.slack",
+                    message="new slack delivery",
+                    timestamp="2026-04-29T10:00:02.000Z",
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(
+        app,
+        ["channels", "logs", "--channel", "slack", "--lines", "1", "--json"],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["file"] == str(log_path)
+    assert payload["channel"] == "slack"
+    assert payload["lines"] == [
+        {
+            "time": "2026-04-29T10:00:02.000Z",
+            "level": "info",
+            "subsystem": "gateway/channels/slack",
+            "module": "openzues.slack",
+            "message": "new slack delivery",
+            "raw": log_path.read_text(encoding="utf-8").splitlines()[-1],
+        }
+    ]
+
+
 def test_sandbox_list_json_returns_openclaw_shaped_inventory(monkeypatch) -> None:
     class FakeDatabase:
         async def list_gateway_session_metadata_rows(self) -> list[dict[str, object]]:
