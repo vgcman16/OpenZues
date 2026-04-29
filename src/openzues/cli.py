@@ -2824,6 +2824,49 @@ async def _build_capability_audio_providers_payload(
     return providers
 
 
+async def _build_capability_audio_transcribe_payload(
+    services: CliServices,
+    *,
+    file_path: str,
+    language: str | None,
+    model_ref: str | None,
+    prompt: str | None,
+) -> dict[str, object]:
+    active_model = _require_capability_provider_model_ref(model_ref)
+    runtime = _optional_media_understanding_runtime(services)
+    transcribe_audio_file = (
+        getattr(runtime, "transcribe_audio_file", None) if runtime is not None else None
+    )
+    if not callable(transcribe_audio_file):
+        raise ValueError(
+            "audio.transcribe local transport is unavailable until media understanding is wired."
+        )
+    resolved_path = str(Path(file_path).resolve())
+    result = await transcribe_audio_file(
+        file_path=resolved_path,
+        active_model=active_model,
+        language=language,
+        prompt=prompt,
+    )
+    result_payload = dict(result) if isinstance(result, dict) else {}
+    text = _optional_cli_string(result_payload.get("text"))
+    if text is None:
+        raise ValueError(f"No transcript returned for audio: {resolved_path}")
+    return {
+        "ok": True,
+        "capability": "audio.transcribe",
+        "transport": "local",
+        "attempts": [],
+        "outputs": [
+            {
+                "path": resolved_path,
+                "text": text,
+                "kind": "audio.transcription",
+            }
+        ],
+    }
+
+
 def _require_capability_provider_model_ref(
     model_ref: str | None,
 ) -> dict[str, str] | None:
@@ -8259,6 +8302,31 @@ def capability_audio_providers_command(
 
     payload = _run(_run_with_services(_action))
     _emit_capability_provider_summary(payload, json_output=json_output)
+
+
+@capability_audio_app.command("transcribe")
+def capability_audio_transcribe_command(
+    file_path: str = typer.Option(..., "--file", help="Audio file."),
+    language: str | None = typer.Option(None, "--language", help="Language hint."),
+    prompt: str | None = typer.Option(None, "--prompt", help="Prompt hint."),
+    model: str | None = typer.Option(None, "--model", help="Model override."),
+    json_output: bool = typer.Option(False, "--json", help="Output JSON."),
+) -> None:
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_capability_audio_transcribe_payload(
+            services,
+            file_path=file_path,
+            language=language,
+            model_ref=model,
+            prompt=prompt,
+        )
+
+    try:
+        payload = _run(_run_with_services(_action))
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    _emit_capability_model_run(payload, json_output=json_output)
 
 
 @capability_image_app.command("describe")

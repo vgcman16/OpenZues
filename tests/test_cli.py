@@ -3936,6 +3936,79 @@ def test_infer_audio_providers_json_filters_audio_capable_registry(monkeypatch) 
     assert calls == ["list_providers"]
 
 
+def test_infer_audio_transcribe_json_wraps_native_media_understanding(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeMediaUnderstanding:
+        async def transcribe_audio_file(
+            self,
+            *,
+            file_path: str,
+            active_model: dict[str, str] | None,
+            language: str | None,
+            prompt: str | None,
+        ) -> dict[str, object]:
+            calls.append(
+                {
+                    "file_path": file_path,
+                    "active_model": active_model,
+                    "language": language,
+                    "prompt": prompt,
+                }
+            )
+            return {
+                "text": "Meeting notes and next steps.",
+                "provider": "openai",
+                "model": "whisper-1",
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(media_understanding=FakeMediaUnderstanding()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "infer",
+            "audio",
+            "transcribe",
+            "--file",
+            "memo.m4a",
+            "--language",
+            "en",
+            "--prompt",
+            "Names: Ada, Grace",
+            "--model",
+            "openai/whisper-1",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout) == {
+        "ok": True,
+        "capability": "audio.transcribe",
+        "transport": "local",
+        "attempts": [],
+        "outputs": [
+            {
+                "path": str((Path.cwd() / "memo.m4a").resolve()),
+                "text": "Meeting notes and next steps.",
+                "kind": "audio.transcription",
+            }
+        ],
+    }
+    assert calls == [
+        {
+            "file_path": str((Path.cwd() / "memo.m4a").resolve()),
+            "active_model": {"provider": "openai", "model": "whisper-1"},
+            "language": "en",
+            "prompt": "Names: Ada, Grace",
+        }
+    ]
+
+
 def test_capability_model_run_rejects_local_and_gateway_together() -> None:
     result = runner.invoke(
         app,
