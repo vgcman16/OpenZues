@@ -10020,6 +10020,24 @@ def cron_edit_command(
     system_event: str | None = typer.Option(None, "--system-event", help="Set system event."),
     message: str | None = typer.Option(None, "--message", help="Set agent message."),
     model: str | None = typer.Option(None, "--model", help="Set model override."),
+    thinking: str | None = typer.Option(None, "--thinking", help="Set thinking level."),
+    timeout_seconds: str | None = typer.Option(
+        None,
+        "--timeout-seconds",
+        help="Set timeout seconds.",
+    ),
+    light_context: bool = typer.Option(
+        False,
+        "--light-context",
+        help="Enable lightweight context.",
+    ),
+    no_light_context: bool = typer.Option(
+        False,
+        "--no-light-context",
+        help="Disable lightweight context.",
+    ),
+    tools: str | None = typer.Option(None, "--tools", help="Set tool allow-list."),
+    clear_tools: bool = typer.Option(False, "--clear-tools", help="Clear tool allow-list."),
     announce: bool = typer.Option(False, "--announce", help="Announce summary delivery."),
     deliver: bool = typer.Option(False, "--deliver", help="Deprecated alias for --announce."),
     no_deliver: bool = typer.Option(False, "--no-deliver", help="Disable announce delivery."),
@@ -10080,6 +10098,10 @@ def cron_edit_command(
         raise typer.BadParameter("Choose --announce or --no-deliver (not multiple)")
     if best_effort_deliver and no_best_effort_deliver:
         raise typer.BadParameter("Choose --best-effort-deliver or --no-best-effort-deliver")
+    if light_context and no_light_context:
+        raise typer.BadParameter("Choose --light-context or --no-light-context")
+    if _cron_cli_tools_allow(tools) is not None and clear_tools:
+        raise typer.BadParameter("Use --tools or --clear-tools, not both")
     patch: dict[str, object] = {}
     normalized_name = _optional_cli_string(name)
     if normalized_name is not None:
@@ -10147,6 +10169,9 @@ def cron_edit_command(
             exact=exact,
         )
     normalized_model = _optional_cli_string(model)
+    normalized_thinking = _optional_cli_string(thinking)
+    parsed_timeout_seconds = _cron_positive_int(timeout_seconds)
+    tools_allow = _cron_cli_tools_allow(tools)
     has_delivery_mode_flag = announce or deliver or no_deliver
     has_delivery_target = any(
         _optional_cli_string(value) is not None for value in (channel, to, account)
@@ -10156,6 +10181,12 @@ def cron_edit_command(
         (
             normalized_message is not None,
             normalized_model is not None,
+            normalized_thinking is not None,
+            parsed_timeout_seconds is not None,
+            light_context,
+            no_light_context,
+            tools_allow is not None,
+            clear_tools,
             has_delivery_mode_flag,
             has_delivery_target,
             has_best_effort,
@@ -10171,6 +10202,18 @@ def cron_edit_command(
             payload["message"] = normalized_message
         if normalized_model is not None:
             payload["model"] = normalized_model
+        if normalized_thinking is not None:
+            payload["thinking"] = normalized_thinking
+        if parsed_timeout_seconds is not None:
+            payload["timeoutSeconds"] = parsed_timeout_seconds
+        if light_context:
+            payload["lightContext"] = True
+        if no_light_context:
+            payload["lightContext"] = False
+        if clear_tools:
+            payload["toolsAllow"] = None
+        elif tools_allow is not None:
+            payload["toolsAllow"] = tools_allow
         patch["payload"] = payload
     if has_delivery_mode_flag or has_delivery_target or has_best_effort:
         delivery: dict[str, object] = {}

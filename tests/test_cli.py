@@ -3134,6 +3134,88 @@ def test_cron_edit_agent_turn_delivery_patch_calls_gateway_method_owner(monkeypa
     ]
 
 
+def test_cron_edit_payload_extra_flags_shape_agent_turn_patch(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {"id": params.get("id"), "patch": params.get("patch")}
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    set_result = runner.invoke(
+        app,
+        [
+            "cron",
+            "edit",
+            "task-blueprint:7",
+            "--message",
+            "Patch with extras.",
+            "--thinking",
+            " high ",
+            "--timeout-seconds",
+            "240",
+            "--light-context",
+            "--tools",
+            "exec,read write",
+            "--json",
+        ],
+    )
+    clear_result = runner.invoke(
+        app,
+        [
+            "cron",
+            "edit",
+            "task-blueprint:7",
+            "--no-light-context",
+            "--clear-tools",
+            "--json",
+        ],
+    )
+
+    assert set_result.exit_code == 0, set_result.stdout
+    assert clear_result.exit_code == 0, clear_result.stdout
+    assert calls == [
+        (
+            "cron.update",
+            {
+                "id": "task-blueprint:7",
+                "patch": {
+                    "payload": {
+                        "kind": "agentTurn",
+                        "message": "Patch with extras.",
+                        "thinking": "high",
+                        "timeoutSeconds": 240,
+                        "lightContext": True,
+                        "toolsAllow": ["exec", "read", "write"],
+                    }
+                },
+            },
+        ),
+        (
+            "cron.update",
+            {
+                "id": "task-blueprint:7",
+                "patch": {
+                    "payload": {
+                        "kind": "agentTurn",
+                        "lightContext": False,
+                        "toolsAllow": None,
+                    }
+                },
+            },
+        ),
+    ]
+
+
 def test_cron_edit_failure_alert_patch_calls_gateway_method_owner(monkeypatch) -> None:
     calls: list[tuple[str, dict[str, object]]] = []
 

@@ -1433,8 +1433,19 @@ These are complete within the bounded OpenZues-local parity contract verified in
   routes_poll_human_output_calls_native_direct_poll_runtime"` (`23 passed`),
   `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
   src\openzues\cli.py`.
-- Next cron parity should expose the matching `cron edit` CLI flags before
-  returning to delete-after-run behavior.
+- `cron edit` now exposes the matching payload extra flags and clear forms:
+  `--thinking`, `--timeout-seconds`, `--light-context`,
+  `--no-light-context`, `--tools`, and `--clear-tools`.
+- Verified the cron edit payload-extra CLI slice with `python -m pytest
+  tests\test_cli.py -q -k
+  "cron_edit_payload_extra_flags_shape_agent_turn_patch"` (`1 passed`),
+  adjacent CLI pack `python -m pytest tests\test_cli.py -q -k "cron_ or
+  sessions_ or routes_send_json_calls_native_direct_send_runtime or
+  routes_poll_human_output_calls_native_direct_poll_runtime"` (`24 passed`),
+  `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+- Next cron parity should return to delete-after-run behavior and the remaining
+  direct `--at` timezone normalization breadth.
 
 ## References
 
