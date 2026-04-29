@@ -4909,6 +4909,145 @@ class OpsMeshService:
             return DEFAULT_ACCOUNT_ID
         return sorted(account_ids)[0]
 
+    async def _provider_route_for_channel_account(
+        self,
+        *,
+        channel: str,
+        account_id: str,
+    ) -> dict[str, Any] | None:
+        normalized_channel = str(channel or "").strip().lower()
+        normalized_account_id = (
+            normalize_optional_account_id(str(account_id or "").strip())
+            or DEFAULT_ACCOUNT_ID
+        )
+        if not normalized_channel:
+            return None
+        for route in await self.database.list_notification_routes():
+            if not bool(route.get("enabled")):
+                continue
+            route_kind = str(route.get("kind") or "").strip().lower()
+            if route_kind != normalized_channel or route_kind not in NATIVE_PROVIDER_ROUTE_KINDS:
+                continue
+            route_target = _normalize_conversation_target(route.get("conversation_target"))
+            if route_target is None:
+                if normalized_account_id == DEFAULT_ACCOUNT_ID:
+                    return route
+                continue
+            route_channel = str(route_target.get("channel") or "").strip().lower()
+            if route_channel != normalized_channel:
+                continue
+            route_account_id = (
+                normalize_optional_account_id(
+                    str(route_target.get("account_id") or "").strip()
+                )
+                or DEFAULT_ACCOUNT_ID
+            )
+            if route_account_id == normalized_account_id:
+                return route
+        return None
+
+    async def probe_channel_account(
+        self,
+        *,
+        channel: str,
+        account_id: str,
+        timeout_ms: int,
+    ) -> dict[str, Any]:
+        normalized_channel = str(channel or "").strip().lower()
+        normalized_account_id = (
+            normalize_optional_account_id(str(account_id or "").strip())
+            or DEFAULT_ACCOUNT_ID
+        )
+        route = await self._provider_route_for_channel_account(
+            channel=normalized_channel,
+            account_id=normalized_account_id,
+        )
+        if route is None:
+            return {
+                "ok": False,
+                "status": "unavailable",
+                "reason": "native_provider_route_unavailable",
+                "provider": normalized_channel,
+                "accountId": normalized_account_id,
+                "summary": "No enabled native provider route is configured for this account.",
+                "timeoutMs": timeout_ms,
+            }
+        route_kind = str(route.get("kind") or "").strip().lower()
+        secret_token = await self._notification_route_secret_token(route)
+        if not secret_token:
+            return {
+                "ok": False,
+                "status": "unavailable",
+                "reason": "native_provider_secret_unavailable",
+                "provider": route_kind,
+                "accountId": normalized_account_id,
+                "summary": "Native provider route is missing a credential secret.",
+                "timeoutMs": timeout_ms,
+            }
+        if route_kind != "slack":
+            return {
+                "ok": False,
+                "status": "unavailable",
+                "reason": "native_provider_probe_unsupported",
+                "provider": route_kind,
+                "accountId": normalized_account_id,
+                "summary": "Native provider route probes are not implemented for this channel yet.",
+                "timeoutMs": timeout_ms,
+            }
+        try:
+            return await asyncio.to_thread(
+                self._probe_slack_provider_route,
+                route,
+                secret_token,
+                timeout_ms,
+            )
+        except Exception as exc:
+            return {
+                "ok": False,
+                "status": "error",
+                "provider": route_kind,
+                "runtime": "native-provider-backed",
+                "accountId": normalized_account_id,
+                "error": str(exc).strip() or type(exc).__name__,
+                "timeoutMs": timeout_ms,
+            }
+
+    def _probe_slack_provider_route(
+        self,
+        route: dict[str, Any],
+        secret_token: str,
+        timeout_ms: int,
+    ) -> dict[str, Any]:
+        result = self._post_json_webhook(
+            _slack_api_endpoint(str(route.get("target") or ""), "auth.test"),
+            {},
+            secret_header_name="Authorization",
+            secret_token=_slack_bearer_token(secret_token),
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Slack API returned a non-JSON response.")
+        if result.get("ok") is False:
+            error = str(result.get("error") or "unknown_error")
+            return {
+                "ok": False,
+                "status": "error",
+                "provider": "slack",
+                "runtime": "native-provider-backed",
+                "error": error,
+                "timeoutMs": timeout_ms,
+            }
+        return {
+            "ok": True,
+            "status": "ok",
+            "provider": "slack",
+            "runtime": "native-provider-backed",
+            "team": str(result.get("team") or ""),
+            "teamId": str(result.get("team_id") or ""),
+            "user": str(result.get("user") or ""),
+            "userId": str(result.get("user_id") or ""),
+            "timeoutMs": timeout_ms,
+        }
+
     async def _resolve_explicit_delivery_conversation_target(
         self,
         conversation_target: ConversationTargetView,

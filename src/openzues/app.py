@@ -1954,9 +1954,6 @@ def create_app(
     async def list_gateway_notification_route_views() -> list[NotificationRouteView]:
         return await active_ops_mesh_service.list_notification_route_views()
 
-    active_gateway_channels_service = GatewayChannelsService(
-        list_notification_route_views=list_gateway_notification_route_views
-    )
     active_gateway_logs_service = GatewayLogsService(
         logs_root=active_settings.data_dir.parent / "logs"
     )
@@ -2002,6 +1999,10 @@ def create_app(
         cron_webhook_token=active_settings.cron_webhook_token,
         outbound_runtime_service=GatewayOutboundRuntimeService(),
         canvas_state_dir=active_settings.data_dir,
+    )
+    active_gateway_channels_service = GatewayChannelsService(
+        list_notification_route_views=list_gateway_notification_route_views,
+        probe_account=active_ops_mesh_service.probe_channel_account,
     )
     active_setup_service = SetupService(
         active_database,

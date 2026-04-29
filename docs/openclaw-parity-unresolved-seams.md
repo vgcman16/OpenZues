@@ -77,6 +77,10 @@ payload and provider-result metadata. `gifPlayback=true` WhatsApp media sends
 now use Cloud API `type="video"` / `video.link`, mirroring OpenClaw's
 WhatsApp video/GIF outbound behavior while keeping the existing caption and
 saved delivery metadata path.
+`channels.status --probe` now has the first production route-backed account
+probe: enabled native Slack routes call Slack `auth.test` through the stored
+route secret, while configured/no-account cases return an honest
+`native_provider_route_unavailable` posture instead of a vacuous success.
 
 Current queue-head adjustment: the CLI now exposes `sessions spawn` and
 `sessions wait` as thin JSON/human wrappers over the production
@@ -1495,6 +1499,12 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   unless `thread=true`, and the RuntimeManager thread/turn dispatch path is not
   touched for that rejected request.
 - Verified the ACP session-mode runtime guard with `python -m pytest tests\test_gateway_acp_spawn.py -q -k "rejects_session_mode_without_thread"`, adjacent `python -m pytest tests\test_gateway_acp_spawn.py -q`, gateway projection `python -m pytest tests\test_gateway_node_methods.py -q -k "acp and spawn"`, `ruff check src\openzues\services\gateway_acp_spawn.py tests\test_gateway_acp_spawn.py`, and `mypy src\openzues\services\gateway_acp_spawn.py`.
+- `channels.status --probe` now wires the production Ops Mesh channel-account
+  probe path into the app and CLI GatewayChannelsService owners. Slack native
+  notification routes probe `auth.test` with the saved bot token; no configured
+  account returns `native_provider_route_unavailable` instead of reporting an
+  empty `ok` probe.
+- Verified the route-backed Slack probe seam with `python -m pytest tests\test_cli.py -q -k "route_backed_slack_probe"`, adjacent `python -m pytest tests\test_cli.py -q -k "channels_status_json or channels_capabilities_json or channels_resolve_json"`, gateway projection `python -m pytest tests\test_gateway_node_methods.py -q -k "channels_status"`, `ruff check src\openzues\app.py src\openzues\cli.py src\openzues\services\gateway_channels.py src\openzues\services\ops_mesh.py tests\test_cli.py`, and `mypy src\openzues\app.py src\openzues\cli.py src\openzues\services\gateway_channels.py src\openzues\services\ops_mesh.py`.
 - `chat.history` and `sessions.history` now mirror OpenClaw's numeric history
   limit parsing: finite JSON numbers are floored and bounded instead of
   requiring integer-only input.

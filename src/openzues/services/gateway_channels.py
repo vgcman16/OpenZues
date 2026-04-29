@@ -223,8 +223,10 @@ class GatewayChannelsService:
             }
 
         all_ok = True
+        probed_account_count = 0
         for channel_id, accounts in channel_accounts_payload.items():
             for account in accounts:
+                probed_account_count += 1
                 account_id = str(account.get("accountId") or "").strip() or DEFAULT_ACCOUNT_ID
                 try:
                     probe_result = await self._probe_account(
@@ -241,6 +243,13 @@ class GatewayChannelsService:
                 if probe_result.get("ok") is False:
                     all_ok = False
                 account["probe"] = dict(probe_result)
+        if probed_account_count == 0:
+            return {
+                "status": "unavailable",
+                "reason": "native_provider_route_unavailable",
+                "summary": "No configured channel accounts are available to probe.",
+                "timeoutMs": timeout_ms,
+            }
         return {
             "status": "ok" if all_ok else "degraded",
             "timeoutMs": timeout_ms,

@@ -399,7 +399,86 @@ def test_channels_status_json_accepts_probe_timeout_options(tmp_path, monkeypatc
     assert payload["probe"] is True
     assert payload["timeoutMs"] == 2500
     assert payload["probeStatus"]["status"] == "unavailable"
-    assert payload["probeStatus"]["reason"] == "native_probe_runtime_unavailable"
+    assert payload["probeStatus"]["reason"] == "native_provider_route_unavailable"
+
+
+def test_channels_status_json_uses_route_backed_slack_probe(tmp_path, monkeypatch) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch, task_name="CLI Slack Probe")
+
+    database = Database(data_dir / "openzues.db")
+    asyncio.run(database.initialize())
+    asyncio.run(
+        database.create_notification_route(
+            name="Slack Native Probe Route",
+            kind="slack",
+            target="https://slack.com/api",
+            events=["gateway/send"],
+            conversation_target={
+                "channel": "slack",
+                "account_id": "workspace-bot",
+                "peer_kind": "channel",
+                "peer_id": "deploy-room",
+                "summary": "slack workspace-bot channel deploy-room",
+            },
+            enabled=True,
+            secret_header_name=None,
+            secret_token="xoxb-probe-token",
+            vault_secret_id=None,
+        )
+    )
+    slack_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_post_json_webhook(
+        self: object,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        slack_posts.append((target, payload, secret_header_name, secret_token))
+        return {
+            "ok": True,
+            "team": "OpenZues",
+            "team_id": "T123",
+            "user": "deploybot",
+            "user_id": "U123",
+        }
+
+    monkeypatch.setattr(
+        "openzues.services.ops_mesh.OpsMeshService._post_json_webhook",
+        fake_post_json_webhook,
+    )
+
+    result = runner.invoke(
+        app,
+        ["channels", "status", "--probe", "--timeout", "2500", "--json"],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["probeStatus"] == {"status": "ok", "timeoutMs": 2500}
+    assert payload["channelAccounts"]["slack"][0]["probe"] == {
+        "ok": True,
+        "status": "ok",
+        "provider": "slack",
+        "runtime": "native-provider-backed",
+        "team": "OpenZues",
+        "teamId": "T123",
+        "user": "deploybot",
+        "userId": "U123",
+        "timeoutMs": 2500,
+    }
+    assert slack_posts == [
+        (
+            "https://slack.com/api/auth.test",
+            {},
+            "Authorization",
+            "Bearer xoxb-probe-token",
+        )
+    ]
 
 
 def test_channels_status_json_calls_gateway_method_owner_with_probe(monkeypatch) -> None:
