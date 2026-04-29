@@ -4034,6 +4034,60 @@ def test_sessions_cleanup_enforce_deletes_disk_budget_evicted_metadata_rows(monk
     assert deleted == ["agent:worker:oldest", "agent:worker:middle"]
 
 
+def test_sessions_cleanup_all_agents_dry_run_json_groups_native_agent_summaries(
+    monkeypatch,
+) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {
+                "count": 2,
+                "sessions": [
+                    {
+                        "key": "agent:main:old",
+                        "sessionKey": "agent:main:old",
+                        "updatedAt": 1,
+                    },
+                    {
+                        "key": "agent:work:old",
+                        "sessionKey": "agent:work:old",
+                        "updatedAt": 1,
+                    },
+                ],
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "sessions",
+            "cleanup",
+            "--all-agents",
+            "--dry-run",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["allAgents"] is True
+    assert payload["mode"] == "warn"
+    assert payload["dryRun"] is True
+    assert [store["agentId"] for store in payload["stores"]] == ["main", "work"]
+    assert [store["pruned"] for store in payload["stores"]] == [1, 1]
+    assert calls == [("sessions.list", {"includeGlobal": True})]
+
+
 def test_tasks_list_json_filters_native_background_tasks(monkeypatch) -> None:
     calls: list[str] = []
     created_at = datetime(2026, 4, 29, 14, 30, tzinfo=UTC)

@@ -148,9 +148,12 @@ metadata rows. Native disk-budget maintenance now mirrors OpenClaw's
 post-prune budget envelope over SQLite metadata rows: configured
 `maxDiskBytes` / `highWaterBytes` preview oldest non-active evictions, protect
 `--active-key`, return `diskBudget` result metadata, and delete evicted rows
-under `--enforce`. Remaining cleanup parity is richer multi-store/all-agent
-mutation semantics over OpenZues' native session store. The CLI now also
-exposes read-only `tasks`, `tasks list`, and
+under `--enforce`. `sessions cleanup --all-agents --json` now returns
+OpenClaw-shaped grouped `stores` summaries by native session-key agent while
+retaining the single SQLite-backed physical store. No smaller native
+`sessions cleanup` seam remains; any deeper cleanup work would require a
+future first-class multi-store transcript owner beyond OpenZues' current
+session store. The CLI now also exposes read-only `tasks`, `tasks list`, and
 `tasks show` inspection over native OpenZues mission and task-blueprint state,
 returning OpenClaw-shaped task records with `runtime`, `status`, `taskId`,
 session/run lookup, delivery, notify, timestamp, progress, and terminal summary

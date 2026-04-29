@@ -2719,6 +2719,47 @@ def _sessions_cleanup_summary(
     return summary
 
 
+def _sessions_cleanup_agent_id_for_row(row: object) -> str:
+    if not isinstance(row, dict):
+        return "unknown"
+    key = _sessions_cli_session_key(row)
+    agent_id = _agent_id_from_session_key(key)
+    if agent_id is not None:
+        return agent_id
+    if key == "global":
+        return "global"
+    return "unknown"
+
+
+def _sessions_cleanup_grouped_summaries(
+    payload: dict[str, object],
+    *,
+    services: object,
+    mode: str,
+    dry_run: bool,
+    missing_keys: list[str],
+    active_key: str | None,
+) -> list[dict[str, object]]:
+    raw_sessions = payload.get("sessions")
+    sessions = raw_sessions if isinstance(raw_sessions, list) else []
+    grouped: dict[str, list[object]] = {}
+    for row in sessions:
+        agent_id = _sessions_cleanup_agent_id_for_row(row)
+        grouped.setdefault(agent_id, []).append(row)
+    return [
+        _sessions_cleanup_summary(
+            {"count": len(rows), "sessions": rows},
+            services=services,
+            agent_id=agent_id,
+            mode=mode,
+            dry_run=dry_run,
+            missing_keys=missing_keys,
+            active_key=active_key,
+        )
+        for agent_id, rows in grouped.items()
+    ]
+
+
 async def _sessions_cleanup_missing_metadata_keys(
     services: object,
     *,
@@ -13743,15 +13784,30 @@ def sessions_cleanup_command(
         )
         if fix_missing and not dry_run:
             await _sessions_cleanup_delete_metadata_keys(services, missing_keys)
-        summary = _sessions_cleanup_summary(
-            inventory,
-            services=services,
-            agent_id=normalized_agent,
-            mode=mode,
-            dry_run=dry_run,
-            missing_keys=missing_keys,
-            active_key=active_key,
-        )
+        if include_all_agents and json_output:
+            summary: dict[str, object] = {
+                "allAgents": True,
+                "mode": mode,
+                "dryRun": dry_run,
+                "stores": _sessions_cleanup_grouped_summaries(
+                    inventory,
+                    services=services,
+                    mode=mode,
+                    dry_run=dry_run,
+                    missing_keys=missing_keys,
+                    active_key=active_key,
+                ),
+            }
+        else:
+            summary = _sessions_cleanup_summary(
+                inventory,
+                services=services,
+                agent_id=normalized_agent,
+                mode=mode,
+                dry_run=dry_run,
+                missing_keys=missing_keys,
+                active_key=active_key,
+            )
         if not dry_run and mode == "enforce":
             raw_sessions = inventory.get("sessions")
             sessions = raw_sessions if isinstance(raw_sessions, list) else []
