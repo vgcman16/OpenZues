@@ -55,8 +55,11 @@ payloads. The provider runtime result envelope now also persists `messageId`,
 route sends use `replyToId` as the thread fallback, Discord route sends preserve
 reply and silent flags, and saved failed `gateway/send` / `gateway/poll` rows
 replay through provider-native runtime calls with their original OpenClaw-style
-delivery options. Remaining provider work is CLI/runtime send surfaces and any
-deeper provider-specific edge cases not yet exposed by focused tests.
+delivery options. The CLI now exposes `routes send` and `routes poll` as thin
+JSON/human wrappers over the same native direct send/poll runtime owner,
+including reply/thread/media/silent/document/idempotency options. Remaining
+provider work is deeper provider-specific edge cases not yet exposed by focused
+tests and broader non-route CLI ergonomics.
 
 Current queue-head adjustment: `tools.invoke` plugin execution now routes
 through a fakeable `GatewayPluginRuntimeService`, preserving core mappings

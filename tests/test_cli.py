@@ -1317,6 +1317,157 @@ def test_routes_create_command_productizes_native_provider_routes(tmp_path, monk
     assert routes[0]["events"] == ["gateway/send", "gateway/poll"]
 
 
+def test_routes_send_json_calls_native_direct_send_runtime(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeOpsMesh:
+        async def send_direct_channel_message(self, **kwargs: object) -> dict[str, object]:
+            calls.append(kwargs)
+            return {
+                "ok": True,
+                "sessionKey": "agent:main:channel:slack:account:workspace:peer:channel:C123",
+                "deliveryId": 41,
+                "messageId": "slack-41",
+                "channel": "slack",
+                "transport": {"transport": "slack", "messageId": "slack-41"},
+                "provider": "slack",
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(ops_mesh=FakeOpsMesh()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "routes",
+            "send",
+            "--channel",
+            "slack",
+            "--to",
+            "channel:C123",
+            "--message",
+            "Deploy is green.",
+            "--account",
+            "workspace",
+            "--thread",
+            "1700.2",
+            "--reply-to",
+            "1699.1",
+            "--media-url",
+            "https://example.invalid/report.png",
+            "--gif-playback",
+            "--silent",
+            "--force-document",
+            "--agent-id",
+            "main",
+            "--session-key",
+            "agent:main:main",
+            "--idempotency-key",
+            "cli-send-1",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["deliveryId"] == 41
+    assert payload["messageId"] == "slack-41"
+    assert payload["transport"]["transport"] == "slack"
+    assert calls == [
+        {
+            "channel": "slack",
+            "to": "channel:C123",
+            "message": "Deploy is green.",
+            "media_urls": ["https://example.invalid/report.png"],
+            "gif_playback": True,
+            "reply_to_id": "1699.1",
+            "silent": True,
+            "force_document": True,
+            "account_id": "workspace",
+            "agent_id": "main",
+            "thread_id": "1700.2",
+            "session_key": "agent:main:main",
+            "idempotency_key": "cli-send-1",
+        }
+    ]
+
+
+def test_routes_poll_human_output_calls_native_direct_poll_runtime(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeOpsMesh:
+        async def send_direct_channel_poll(self, **kwargs: object) -> dict[str, object]:
+            calls.append(kwargs)
+            return {
+                "ok": True,
+                "sessionKey": "agent:main:channel:telegram:account:ops:peer:channel:deploy",
+                "deliveryId": 42,
+                "messageId": "telegram-poll-42",
+                "pollId": "poll-42",
+                "channel": "telegram",
+                "transport": {"transport": "telegram", "messageId": "telegram-poll-42"},
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(ops_mesh=FakeOpsMesh()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "routes",
+            "poll",
+            "--channel",
+            "telegram",
+            "--to",
+            "channel:deploy",
+            "--question",
+            "Ship the release?",
+            "--option",
+            "yes",
+            "--option",
+            "no",
+            "--max-selections",
+            "1",
+            "--duration-seconds",
+            "3600",
+            "--silent",
+            "--anonymous",
+            "--account",
+            "ops",
+            "--thread",
+            "123",
+            "--idempotency-key",
+            "cli-poll-1",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert "ok: True" in result.stdout
+    assert "delivery: 42" in result.stdout
+    assert "message: telegram-poll-42" in result.stdout
+    assert "poll: poll-42" in result.stdout
+    assert calls == [
+        {
+            "channel": "telegram",
+            "to": "channel:deploy",
+            "question": "Ship the release?",
+            "options": ["yes", "no"],
+            "max_selections": 1,
+            "duration_seconds": 3600,
+            "duration_hours": None,
+            "silent": True,
+            "is_anonymous": True,
+            "account_id": "ops",
+            "thread_id": "123",
+            "idempotency_key": "cli-poll-1",
+        }
+    ]
+
+
 def test_routes_deliveries_json_surfaces_saved_outbound_deliveries(tmp_path, monkeypatch) -> None:
     data_dir = tmp_path / "data"
     _bootstrap_cli_workspace(tmp_path, monkeypatch)

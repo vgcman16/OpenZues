@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Literal, cast
+from typing import Annotated, Any, Literal, cast
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -1457,6 +1457,31 @@ def _emit_outbound_delivery_replay(payload: dict[str, object], *, json_output: b
         error = str(item.get("error") or "").strip()
         if error:
             typer.echo(f"  error: {error}")
+
+
+def _emit_direct_channel_delivery(payload: dict[str, object], *, json_output: bool) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+    typer.echo(f"ok: {bool(payload.get('ok'))}")
+    delivery_id = payload.get("deliveryId") or payload.get("delivery_id")
+    if delivery_id is not None:
+        typer.echo(f"delivery: {delivery_id}")
+    channel = str(payload.get("channel") or "").strip()
+    if channel:
+        typer.echo(f"channel: {channel}")
+    session_key = str(payload.get("sessionKey") or payload.get("session_key") or "").strip()
+    if session_key:
+        typer.echo(f"session: {session_key}")
+    run_id = str(payload.get("runId") or payload.get("run_id") or "").strip()
+    if run_id:
+        typer.echo(f"run: {run_id}")
+    message_id = str(payload.get("messageId") or payload.get("message_id") or "").strip()
+    if message_id:
+        typer.echo(f"message: {message_id}")
+    poll_id = str(payload.get("pollId") or payload.get("poll_id") or "").strip()
+    if poll_id:
+        typer.echo(f"poll: {poll_id}")
 
 
 def _first_text_line(value: object, *, limit: int = 220) -> str:
@@ -3924,6 +3949,148 @@ def routes_create_command(
 
     result = _run(_run_with_services(_action))
     _emit_payload(result, json_output=json_output)
+
+
+@routes_app.command("send")
+def routes_send_command(
+    channel: str = typer.Option(..., "--channel", help="Outbound provider channel."),
+    to: str = typer.Option(..., "--to", help="Explicit provider target."),
+    message: str = typer.Option("", "--message", "-m", help="Message text to send."),
+    media_urls: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--media-url",
+            help="Media URL to attach. Repeat for multiple media items.",
+        ),
+    ] = None,
+    gif_playback: bool = typer.Option(
+        False,
+        "--gif-playback",
+        help="Ask capable providers to send animated media as a GIF.",
+    ),
+    reply_to_id: str | None = typer.Option(
+        None,
+        "--reply-to",
+        help="Provider message id to reply to.",
+    ),
+    silent: bool = typer.Option(
+        False,
+        "--silent",
+        help="Send without notification when supported.",
+    ),
+    force_document: bool = typer.Option(
+        False,
+        "--force-document",
+        help="Send media as a document when supported.",
+    ),
+    account_id: str | None = typer.Option(None, "--account", help="Provider account id."),
+    agent_id: str | None = typer.Option(None, "--agent-id", help="Originating agent id."),
+    thread_id: str | None = typer.Option(None, "--thread", help="Provider thread/topic id."),
+    session_key: str | None = typer.Option(
+        None,
+        "--session-key",
+        help="Originating OpenZues session key.",
+    ),
+    idempotency_key: str | None = typer.Option(
+        None,
+        "--idempotency-key",
+        help="Stable idempotency key for retry-safe delivery.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit the send result as JSON."),
+) -> None:
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await services.ops_mesh.send_direct_channel_message(
+            channel=channel,
+            to=to,
+            message=message,
+            media_urls=list(media_urls or []),
+            gif_playback=True if gif_playback else None,
+            reply_to_id=reply_to_id,
+            silent=True if silent else None,
+            force_document=True if force_document else None,
+            account_id=account_id,
+            agent_id=agent_id,
+            thread_id=thread_id,
+            session_key=session_key,
+            idempotency_key=idempotency_key,
+        )
+
+    result = _run(_run_with_services(_action))
+    _emit_direct_channel_delivery(result, json_output=json_output)
+
+
+@routes_app.command("poll")
+def routes_poll_command(
+    channel: str = typer.Option(..., "--channel", help="Outbound provider channel."),
+    to: str = typer.Option(..., "--to", help="Explicit provider target."),
+    question: str = typer.Option(..., "--question", help="Poll question."),
+    options: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--option",
+            "-o",
+            help="Poll option. Repeat for each choice.",
+        ),
+    ] = None,
+    max_selections: int | None = typer.Option(
+        None,
+        "--max-selections",
+        min=1,
+        help="Maximum selectable poll options.",
+    ),
+    duration_seconds: int | None = typer.Option(
+        None,
+        "--duration-seconds",
+        min=1,
+        help="Poll duration in seconds.",
+    ),
+    duration_hours: int | None = typer.Option(
+        None,
+        "--duration-hours",
+        min=1,
+        help="Poll duration in hours.",
+    ),
+    silent: bool = typer.Option(
+        False,
+        "--silent",
+        help="Send without notification when supported.",
+    ),
+    is_anonymous: bool | None = typer.Option(
+        None,
+        "--anonymous/--named",
+        help="Request anonymous or named poll behavior when supported.",
+    ),
+    account_id: str | None = typer.Option(None, "--account", help="Provider account id."),
+    thread_id: str | None = typer.Option(None, "--thread", help="Provider thread/topic id."),
+    idempotency_key: str | None = typer.Option(
+        None,
+        "--idempotency-key",
+        help="Stable idempotency key for retry-safe delivery.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit the poll result as JSON."),
+) -> None:
+    poll_options = [str(option).strip() for option in options or [] if str(option).strip()]
+    if len(poll_options) < 2:
+        raise typer.BadParameter("provide at least two --option values")
+
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await services.ops_mesh.send_direct_channel_poll(
+            channel=channel,
+            to=to,
+            question=question,
+            options=poll_options,
+            max_selections=max_selections,
+            duration_seconds=duration_seconds,
+            duration_hours=duration_hours,
+            silent=True if silent else None,
+            is_anonymous=is_anonymous,
+            account_id=account_id,
+            thread_id=thread_id,
+            idempotency_key=idempotency_key,
+        )
+
+    result = _run(_run_with_services(_action))
+    _emit_direct_channel_delivery(result, json_output=json_output)
 
 
 @routes_app.command("list")
